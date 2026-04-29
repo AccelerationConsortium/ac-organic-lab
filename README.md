@@ -1,2 +1,2 @@
-# ac-organic-sdl
-Codebase for controlling and managing the Acceleration Consortium (AC) Organic Self-driving Lab.
+# ac-organic-dashboard
+Codebase for displaying the Acceleration Consortium (AC) Organic Self-driving Lab.
