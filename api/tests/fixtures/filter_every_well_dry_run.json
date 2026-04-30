@@ -1,0 +1,13 @@
+{
+  "_http_status": 200,
+  "_body": {
+    "equipment_name": "waters_filtration_pressor",
+    "equipment_ip": null,
+    "equipment_tailscale": null,
+    "equipment_status": "dry-run",
+    "message": "Hardware drivers not imported; running in simulation mode",
+    "system_state": null,
+    "press_state": "unknown",
+    "plate_state": "unknown"
+  }
+}

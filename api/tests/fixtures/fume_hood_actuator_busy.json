@@ -1,0 +1,15 @@
+{
+  "_http_status": 200,
+  "_body": {
+    "equipment_name": "hood_sash_actuator",
+    "equipment_ip": "10.0.0.55",
+    "equipment_tailscale": "100.65.4.8",
+    "equipment_status": "moving",
+    "message": "Moving from preset 2 to preset 4",
+    "system_state": "active",
+    "sash_position": 2,
+    "target_position": 4,
+    "sash_state": "moving",
+    "is_moving": true
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "_http_status": 200,
+  "_body": {
+    "plate_loaded": true,
+    "plate_weigher": {
+      "plate_loaded": true,
+      "balance_port": "/dev/ttyUSB0",
+      "balance_connected": true,
+      "plate_type": "96-well-2ml"
+    },
+    "gantry_connected": true,
+    "solid_doser_connected": true,
+    "flow_rate_mg_per_s": 12.5,
+    "plate": {
+      "name": "demo_plate",
+      "total_wells": 96,
+      "dosed_wells": 12,
+      "undosed_wells": 84
+    },
+    "gantry_position": {"x": 12.0, "y": 5.5, "z": 0.0},
+    "solid_doser": {"gate_position": "closed", "motor_running": false, "is_dispensing": false},
+    "config": "with_cnc_solid_doser"
+  }
+}

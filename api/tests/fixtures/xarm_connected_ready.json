@@ -1,0 +1,15 @@
+{
+  "_http_status": 200,
+  "_body": {
+    "connection_state": "connected",
+    "connection_details": {"profile": "demo", "host": "192.168.1.213"},
+    "arm_state": "idle",
+    "gripper_state": "open",
+    "track_state": "idle",
+    "is_alive": true,
+    "current_position": {"x": 200.0, "y": 0.0, "z": 150.0, "roll": 180.0, "pitch": 0.0, "yaw": 0.0},
+    "current_joints": [0, 0, 0, 0, 0, 0, 0],
+    "track_position": {"value": 0.0, "unit": "mm"},
+    "last_error": null
+  }
+}

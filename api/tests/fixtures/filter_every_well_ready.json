@@ -1,0 +1,13 @@
+{
+  "_http_status": 200,
+  "_body": {
+    "equipment_name": "waters_filtration_pressor",
+    "equipment_ip": "10.0.0.42",
+    "equipment_tailscale": "100.65.4.7",
+    "equipment_status": "ready",
+    "message": "System ready",
+    "system_state": "stopped",
+    "press_state": "up",
+    "plate_state": "out"
+  }
+}

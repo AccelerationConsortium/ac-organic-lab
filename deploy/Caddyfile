@@ -1,0 +1,14 @@
+# Optional: front the dashboard with Caddy on the Tailscale-attached server.
+# Caddy uses Tailscale's `tailscale cert` for TLS automatically when the
+# hostname matches a tailnet name.
+#
+# Usage:
+#   sudo cp Caddyfile /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+
+lab-dashboard.tail-XXXX.ts.net {
+    encode gzip
+
+    # Next.js handles both / and /api/* (the latter via its rewrite to FastAPI).
+    reverse_proxy 127.0.0.1:3000
+}

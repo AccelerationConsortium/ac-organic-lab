@@ -1,0 +1,137 @@
+# Equipment registry for the AC Organic Self-driving Lab dashboard.
+#
+# This file is committed. Tailscale hostnames are NOT treated as secrets - they
+# require tailnet membership to be reachable. Real secrets (control tokens,
+# webhook URLs, etc.) live in `.env`, gitignored.
+#
+# Adapter values:
+#   http        -> equipment conforms to docs/STATUS_SPEC.md
+#   legacy_http -> pre-migration shape; aggregator translates per-device
+#   mock        -> placeholder; emits an `unknown`-status envelope
+#
+# Replace the `tail-XXXX` segments below with your actual Tailscale magicDNS
+# names or tailnet-IPv4 addresses before deploying.
+
+equipment:
+  # ---------------------------------------------------------------------
+  # HTE platform - displayed in this order on the overview / HTE pages.
+  # The list above drives both the order of the Equipment tiles inside
+  # the HTE platform card and the order on the HTE detail page.
+  #
+  # Tile sizing (`tile: { w, h }`):
+  #   - The platform card lays its equipment out on a 4-column CSS grid
+  #     with fixed-height rows. `w` is how many columns a tile spans
+  #     (1..4) and `h` is how many rows it spans (1..4).
+  #   - Default is 2x1 (half-row, single-row tall). Omit `tile:` to use it.
+  #   - Set `w: 4` for a full-row banner; `w: 2, h: 2` for a square hero.
+  # ---------------------------------------------------------------------
+
+  - id: xarm_translocation
+    name: UFactory xArm5
+    platform: hte
+    kind: robot_arm
+    adapter: legacy_http
+    base_url: http://xarm.tail-XXXX.ts.net:8000
+    status_path: /status
+    poll_timeout_seconds: 2.0
+    do_not_call_connect: true
+    tile: { w: 2, h: 2 }
+
+  - id: ot2
+    name: Opentrons OT-2
+    platform: hte
+    kind: liquid_handler
+    adapter: mock
+    tile: { w: 2, h: 2 }
+
+  - id: fume_hood_actuator
+    name: Fume Hood Actuator
+    platform: hte
+    kind: fume_hood
+    adapter: legacy_http
+    base_url: http://100.64.254.100:5000
+    status_path: /equipment/status
+    poll_timeout_seconds: 2.0
+    tile: { w: 2, h: 1 }
+
+  - id: agilent_uplc_ms
+    name: Agilent UPLC-MS
+    platform: hte
+    kind: hplc
+    adapter: mock
+
+  - id: dose_every_well
+    name: Dose Every Well
+    platform: hte
+    kind: solid_doser
+    adapter: legacy_http
+    base_url: http://doser.tail-XXXX.ts.net:8000
+    status_path: /status
+    poll_timeout_seconds: 2.0
+
+  - id: filter_every_well
+    name: Waters Filtration
+    platform: hte
+    kind: press
+    adapter: legacy_http
+    base_url: http://100.64.254.104:8000
+    status_path: /status
+    poll_timeout_seconds: 2.0
+
+  - id: agilent_biostack
+    name: Agilent BioStack
+    platform: hte
+    kind: plate_stacker
+    adapter: mock
+
+  - id: cytation_5
+    name: BioTek Cytation 5
+    platform: hte
+    kind: plate_reader
+    adapter: mock
+
+  - id: plateloc
+    name: Agilent PlateLoc
+    platform: hte
+    kind: plate_sealer
+    adapter: mock
+
+  # Environmental sensor stations. Add one entry per physical sensor unit.
+  # The lab map is rotated 90° clockwise from the building plan, so on screen
+  # north is up and south is down. Zones (in % of map width × height):
+  #   * Stairs      - top-left  quadrant (x 0..50,  y  0..25)  - greyed out
+  #   * Sample Prep - top-right quadrant (x 50..100, y  0..25)
+  #   * Storage     - middle horizontal band (x 0..100, y 25..50)
+  #   * Lab 499     - bottom half (x 0..100, y 50..100)         - main lab
+  # `location.x` and `location.y` are percentages (0-100) on that map.
+  # Currently mock-only with synthesized readings until the env_sensors repo
+  # is deployed; switch `adapter: mock` -> `http` + `base_url` once each
+  # sensor service is up.
+
+  - id: env_sample_prep
+    name: Sample Prep Sensors
+    platform: lab
+    kind: environmental_sensor
+    adapter: mock
+    location: { x: 75, y: 12, label: "Sample Prep" }
+
+  - id: env_storage
+    name: Storage Sensors
+    platform: lab
+    kind: environmental_sensor
+    adapter: mock
+    location: { x: 50, y: 37, label: "Storage" }
+
+  - id: env_lab499_west
+    name: Lab 499 (West) Sensors
+    platform: lab
+    kind: environmental_sensor
+    adapter: mock
+    location: { x: 20, y: 75, label: "Lab 499 · West" }
+
+  - id: env_lab499_east
+    name: Lab 499 (East) Sensors
+    platform: lab
+    kind: environmental_sensor
+    adapter: mock
+    location: { x: 80, y: 75, label: "Lab 499 · East" }

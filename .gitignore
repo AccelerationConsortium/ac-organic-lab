@@ -169,3 +169,38 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Local secrets and overrides
+.env
+.env.local
+.env.*.local
+api/.env
+web/.env.local
+
+# Local equipment registry override (committed equipment.yaml is the source of truth)
+equipment.local.yaml
+
+# Python venv at repo root (api/ has its own)
+.venv/
+
+# Saved chat transcripts (kept locally for reference, not version-controlled)
+.chats/

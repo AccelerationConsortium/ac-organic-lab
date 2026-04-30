@@ -1,0 +1,6 @@
+{
+  "_http_status": 400,
+  "_body": {
+    "error": "PlateDoser system not initialized. POST /startup first."
+  }
+}

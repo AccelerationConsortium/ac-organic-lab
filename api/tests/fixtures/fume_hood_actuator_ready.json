@@ -1,0 +1,15 @@
+{
+  "_http_status": 200,
+  "_body": {
+    "equipment_name": "hood_sash_actuator",
+    "equipment_ip": "10.0.0.55",
+    "equipment_tailscale": "100.65.4.8",
+    "equipment_status": "ready",
+    "message": "Sash stationary",
+    "system_state": "stopped",
+    "sash_position": 3,
+    "target_position": 3,
+    "sash_state": "stationary",
+    "is_moving": false
+  }
+}

@@ -1,0 +1,52 @@
+[Unit]
+Description=AC Organic Self-driving Lab dashboard API (FastAPI aggregator)
+Documentation=https://github.com/<your-org>/ac-organic-dashboard
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ac
+Group=ac
+WorkingDirectory=/opt/ac-organic-dashboard/api
+# Optional `.env` at the repo root; not required for v1 (read-only).
+EnvironmentFile=-/opt/ac-organic-dashboard/.env
+
+# Reads ../equipment.yaml relative to WorkingDirectory unless LAB_REGISTRY_PATH
+# is set in the EnvironmentFile.
+ExecStart=/opt/ac-organic-dashboard/api/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8001 \
+    --no-server-header \
+    --log-level info
+
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+
+# Logging
+SyslogIdentifier=ac-dashboard-api
+StandardOutput=journal
+StandardError=journal
+
+# Resources
+LimitNOFILE=65536
+
+# Basic systemd sandboxing. These are safe for a Python FastAPI process
+# that only makes outbound HTTP to the tailnet and reads a YAML file from
+# WorkingDirectory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Allow writing only to the python bytecode cache dirs under the repo.
+ReadWritePaths=/opt/ac-organic-dashboard/api
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,56 @@
+[Unit]
+Description=AC Organic Self-driving Lab dashboard web (Next.js standalone)
+Documentation=https://github.com/<your-org>/ac-organic-dashboard
+After=network-online.target ac-dashboard-api.service
+Wants=network-online.target
+Requires=ac-dashboard-api.service
+
+[Service]
+Type=simple
+User=ac
+Group=ac
+
+# The standalone build produces a self-contained server.js at
+# .next/standalone/server.js. That directory must be the working
+# directory because server.js resolves static assets with process.cwd().
+# Deploy step must copy .next/static and public/ into this directory.
+WorkingDirectory=/opt/ac-organic-dashboard/web/.next/standalone
+
+Environment=NODE_ENV=production
+Environment=PORT=3000
+# HOSTNAME=127.0.0.1 keeps the dashboard loopback-only; put Caddy/nginx
+# in front (see Caddyfile) and have it bind the tailnet hostname.
+# To bypass a reverse proxy, change to HOSTNAME=0.0.0.0 (binds all ifaces,
+# including the Tailscale interface) or to the specific tailnet IP.
+Environment=HOSTNAME=127.0.0.1
+Environment=DASHBOARD_API_BASE=http://127.0.0.1:8001
+
+ExecStart=/usr/bin/node server.js
+
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+
+# Logging
+SyslogIdentifier=ac-dashboard-web
+StandardOutput=journal
+StandardError=journal
+
+# Resources
+LimitNOFILE=65536
+
+# Basic systemd sandboxing.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/opt/ac-organic-dashboard/web/.next
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+{
+  "_http_status": 200,
+  "_body": {
+    "protocol_version": "1.0",
+    "equipment_id": "env_sensors",
+    "equipment_name": "Lab Environmental Sensors",
+    "equipment_kind": "environmental_sensor",
+    "equipment_status": "ready",
+    "device_time": "2026-04-29T22:50:01Z",
+    "metrics": {
+      "temperature": {"value": 22.3, "unit": "C"},
+      "humidity":    {"value": 45.1, "unit": "%RH"},
+      "voc":         {"value": 120,  "unit": "ppb"}
+    }
+  }
+}

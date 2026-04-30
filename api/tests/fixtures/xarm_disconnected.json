@@ -1,0 +1,14 @@
+{
+  "_http_status": 200,
+  "_body": {
+    "connection_state": "disconnected",
+    "arm_state": "unknown",
+    "gripper_state": "unknown",
+    "track_state": "unknown",
+    "is_alive": false,
+    "current_position": null,
+    "current_joints": null,
+    "track_position": null,
+    "last_error": null
+  }
+}
