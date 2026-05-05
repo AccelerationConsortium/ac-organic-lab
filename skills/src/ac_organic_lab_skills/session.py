@@ -31,6 +31,7 @@ from .exceptions import (
     EquipmentUnreachable,
     RegistryError,
 )
+from .kinds import client_for
 from .models import EquipmentStatus
 from .registry import EquipmentEntry, Registry
 
@@ -96,7 +97,7 @@ class LabSession:
             raise RuntimeError(
                 "LabSession is not active; use `async with Lab.connect(...) as lab:`"
             )
-        return EquipmentClient(entry, self._http)
+        return client_for(entry, self._http)
 
     def role(self, role_name: str) -> EquipmentClient:
         """Resolve a role binding to an ``EquipmentClient``.

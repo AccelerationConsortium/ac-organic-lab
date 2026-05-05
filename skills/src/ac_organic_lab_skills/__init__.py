@@ -17,6 +17,13 @@ from __future__ import annotations
 from .aggregator import EquipmentAggregator
 from .catalog import SKILL_REGISTRY, Skill, SkillDef
 from .client import EquipmentClient
+from .kinds import (
+    FumeHoodClient,
+    PlateSealerClient,
+    PressClient,
+    RobotArmClient,
+    SolidDoserClient,
+)
 from .exceptions import (
     BadRequest,
     Degraded,
@@ -77,6 +84,7 @@ __all__ = [
     "ErrorSeverity",
     "FetchError",
     "FetchErrorKind",
+    "FumeHoodClient",
     "HealthResponse",
     "Lab",
     "LabError",
@@ -84,13 +92,17 @@ __all__ = [
     "Maintenance",
     "MetricValue",
     "PROTOCOL_VERSION",
+    "PlateSealerClient",
+    "PressClient",
     "ProbeResponse",
     "Registry",
     "RegistryError",
     "RequiresInit",
+    "RobotArmClient",
     "SKILL_REGISTRY",
     "Skill",
     "SkillDef",
+    "SolidDoserClient",
     "WaitTimeout",
     "__version__",
     "load_registry",
