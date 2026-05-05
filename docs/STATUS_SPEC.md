@@ -1,9 +1,11 @@
 # Lab Equipment Status Spec
 
 **Version:** `1.0`
-**Status:** stable for v1 dashboard
+**Status:** stable for v1 dashboard. Superseded for new work by `docs/STATUS_SPEC_v1_1.md`, which is fully back-compatible (every v1.0 device continues to work without changes).
 
 This document is the authoritative contract every lab equipment REST API must implement to be displayed on the AC Organic Self-driving Lab dashboard. Each equipment repository copies the Pydantic models below into its own `models.py`. Once the spec has been stable for ~1 month and 3+ repos have migrated cleanly, these types are promoted to a shared `lab-status-contract` Python package.
+
+> **Migrating to v1.1?** See `docs/STATUS_SPEC_v1_1.md` for the claim/heartbeat/release additions and the `allowed_actions` field. Devices that do not opt in stay on v1.0 unchanged; the SDK degrades gracefully.
 
 ## Required HTTP Surface
 

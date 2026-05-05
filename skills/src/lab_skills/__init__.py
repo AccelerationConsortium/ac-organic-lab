@@ -15,6 +15,7 @@ layer for control and runtime equipment state.
 from __future__ import annotations
 
 from .aggregator import EquipmentAggregator
+from .claims import ClaimManager
 from .skill_catalog import SKILL_REGISTRY, Skill, SkillDef
 from .client import EquipmentClient
 from .typed_clients import (
@@ -26,6 +27,7 @@ from .typed_clients import (
 )
 from .exceptions import (
     BadRequest,
+    ClaimRejected,
     Degraded,
     EquipmentBusy,
     EquipmentInMaintenance,
@@ -34,6 +36,13 @@ from .exceptions import (
     RegistryError,
     RequiresInit,
     WaitTimeout,
+)
+from .interlocks import (
+    InterlockFn,
+    Violation,
+    clear_interlocks,
+    register_interlock,
+    registered_interlocks,
 )
 from .lab import Lab
 from .models import (
@@ -59,6 +68,7 @@ from .registry import (
     Registry,
     load_registry,
 )
+from .plan import Plan, PlanReport, Step, StepReport, validate_plan
 from .session import LabSession
 from .waiting import wait_until_state
 
@@ -67,6 +77,8 @@ __version__ = "0.1.0"
 __all__ = [
     "AdapterKind",
     "BadRequest",
+    "ClaimManager",
+    "ClaimRejected",
     "ComponentStatus",
     "Degraded",
     "EquipmentAggregator",
@@ -86,12 +98,15 @@ __all__ = [
     "FetchErrorKind",
     "FumeHoodClient",
     "HealthResponse",
+    "InterlockFn",
     "Lab",
     "LabError",
     "LabSession",
     "Maintenance",
     "MetricValue",
     "PROTOCOL_VERSION",
+    "Plan",
+    "PlanReport",
     "PlateSealerClient",
     "PressClient",
     "ProbeResponse",
@@ -103,8 +118,15 @@ __all__ = [
     "Skill",
     "SkillDef",
     "SolidDoserClient",
+    "Step",
+    "StepReport",
+    "Violation",
     "WaitTimeout",
     "__version__",
+    "clear_interlocks",
     "load_registry",
+    "register_interlock",
+    "registered_interlocks",
+    "validate_plan",
     "wait_until_state",
 ]

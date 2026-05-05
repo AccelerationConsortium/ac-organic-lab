@@ -12,12 +12,15 @@ inspecting HTTP status codes.
   message), :class:`BadRequest` (other 4xx validation failures), and
   :class:`Degraded` (raised by skill availability and waiting helpers when a
   device reports ``equipment_status: degraded``).
-* v0.3 will add claim-related ones (``ClaimRejected``, ``ClaimRequired``).
+* v0.3 adds the claim-protocol exception :class:`ClaimRejected` (raised by
+  :class:`lab_skills.ClaimManager` on HTTP 409 / 423 from
+  ``/control/claim``).
 """
 
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 
 
 class LabError(Exception):
@@ -139,6 +142,39 @@ class BadRequest(_CommandError):
     """
 
 
+class ClaimRejected(LabError):
+    """Raised when ``POST /control/claim`` is refused by a v1.1 device.
+
+    Mapped from HTTP 409 / 423 on ``/control/claim``. The device was reachable
+    but is currently held by another session, or otherwise will not issue a
+    claim right now. ``retry_after_s`` (parsed from the JSON body or the
+    ``Retry-After`` HTTP header) is the device's hint for how long to wait
+    before retrying. ``claimed_by`` identifies the current holder when the
+    device chose to publish it.
+
+    Note: HTTP 404 / 405 from ``/control/claim`` is *not* a rejection. The
+    SDK treats it as "this device is v1.0 and has no claim semantics" and
+    silently degrades :class:`ClaimManager` to a no-op. See
+    ``docs/STATUS_SPEC_v1_1.md``.
+    """
+
+    def __init__(
+        self,
+        equipment_id: str,
+        message: str,
+        *,
+        http_status: int | None = None,
+        retry_after_s: float | None = None,
+        claimed_by: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(f"{equipment_id}: {message}")
+        self.equipment_id = equipment_id
+        self.message = message
+        self.http_status = http_status
+        self.retry_after_s = retry_after_s
+        self.claimed_by = claimed_by
+
+
 class Degraded(LabError):
     """Raised by waiting / skill helpers when a device reports a degraded state.
 
@@ -159,6 +195,7 @@ class Degraded(LabError):
 
 __all__ = [
     "BadRequest",
+    "ClaimRejected",
     "Degraded",
     "EquipmentBusy",
     "EquipmentInMaintenance",

@@ -25,6 +25,14 @@ from .models import EquipmentKind
 AdapterKind = Literal["http", "legacy_http", "mock"]
 
 
+# Protocol version a device claims to implement. Drives client-side behavior
+# for the claim/heartbeat/release protocol introduced in
+# ``docs/STATUS_SPEC_v1_1.md``. Devices stay on ``"1.0"`` (the default) until
+# their repo has been migrated and the yaml entry flips this field. The SDK
+# never auto-detects from a live ``/status`` to keep ``validate_plan`` offline.
+DeviceProtocol = Literal["1.0", "1.1"]
+
+
 class Maintenance(BaseModel):
     """Soft-maintenance metadata for an equipment registry entry.
 
@@ -56,6 +64,13 @@ class EquipmentEntry(BaseModel):
     status_path: str = "/status"
     poll_timeout_seconds: float = 2.0
     do_not_call_connect: bool = False
+
+    # STATUS_SPEC version the device implements. ``"1.1"`` means the device
+    # exposes ``POST /control/{claim,heartbeat,release}`` and populates
+    # ``allowed_actions`` on ``/status``. ``"1.0"`` (the default) means the
+    # device follows the v1.0 contract and the SDK degrades claim semantics
+    # to a no-op for it.
+    protocol: DeviceProtocol = "1.0"
 
     # Soft maintenance toggling. ``enabled: false`` (or a non-null
     # ``maintenance``) makes ``Lab.get(<id>)`` raise
