@@ -33,7 +33,7 @@ graph TB
 |---|---|---|---|
 | 1. Hardware limits | Per-device repos (`models.py`, firmware) | Argument out of range; device complains | HTTP 422 from `/control/*`; device error log |
 | 2. Device state machine | Per-device repos (`service.py`) | Command issued in wrong state | HTTP 409 from `/control/*`; structured `EquipmentBusy`/`RequiresInit` |
-| 3. Skill preconditions | `skills/` SDK (`catalog/`, `claims.py`) | SDK refuses to even send the request | `EquipmentBusy`, `EquipmentInMaintenance`, `ClaimRequired`, schema `ValidationError` |
+| 3. Skill preconditions | `skills/` SDK (`skill_catalog/`, `claims.py`) | SDK refuses to even send the request | `EquipmentBusy`, `EquipmentInMaintenance`, `ClaimRequired`, schema `ValidationError` |
 | 4. Project plan interlocks | Project repos (e.g. `solubility-screening`) | A *plan* (not a single command) violates a chemistry/spatial rule | `InterlockViolation` from `validate_plan()` or `execute_plan()` |
 
 Each layer is enforced by the closest authority. Workflows do not duplicate device-side checks; devices do not know about cross-device physics.
@@ -88,7 +88,7 @@ These belong in **project repos** because they depend on the project's data mode
 Project repos register interlocks on a `LabSession`:
 
 ```python
-from ac_organic_lab_skills import Lab, interlock, InterlockResult, Plan, Step
+from lab_skills import Lab, interlock, InterlockResult, Plan, Step
 
 @interlock
 async def stage_must_be_out_before_xarm_to_sealer(plan, lab):

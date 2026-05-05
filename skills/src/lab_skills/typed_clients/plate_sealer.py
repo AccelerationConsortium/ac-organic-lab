@@ -2,7 +2,7 @@
 
 Method names are snake_case translations of the catalog
 :attr:`SkillDef.name` values (e.g. ``seal.start`` -> ``seal_start``). Args
-schemas come from :mod:`ac_organic_lab_skills.catalog.plate_sealer` so the
+schemas come from :mod:`lab_skills.skill_catalog.plate_sealer` so the
 catalog is the single source of truth for argument ranges; this file is the
 ergonomic layer that workflow code calls.
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..catalog.plate_sealer import (
+from ..skill_catalog.plate_sealer import (
     SealStartArgs,
     SealStopArgs,
     SetSealingTemperatureArgs,

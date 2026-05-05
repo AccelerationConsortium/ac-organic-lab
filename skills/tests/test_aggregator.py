@@ -12,8 +12,8 @@ import httpx
 import pytest
 import respx
 
-from ac_organic_lab_skills import EquipmentAggregator, Registry
-from ac_organic_lab_skills.registry import EquipmentEntry
+from lab_skills import EquipmentAggregator, Registry
+from lab_skills.registry import EquipmentEntry
 
 
 def _spec_envelope(entry: EquipmentEntry, state: str) -> dict:

@@ -1,6 +1,6 @@
 """Dashboard-only presentation layer.
 
-Houses the types and helpers that the SDK (``ac_organic_lab_skills``)
+Houses the types and helpers that the SDK (``lab_skills``)
 deliberately does not carry: tile sizing for the equipment grid, location
 coordinates on the lab floorplan map, the dashboard-side ``EquipmentSnapshot``
 that mirrors ``enabled`` / ``maintenance`` from the registry into the response
@@ -23,7 +23,7 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
-from ac_organic_lab_skills import (
+from lab_skills import (
     EquipmentList as SkillEquipmentList,
     EquipmentSnapshot as SkillEquipmentSnapshot,
     Maintenance,
@@ -106,7 +106,7 @@ def load_dashboard_overrides(
 ) -> dict[str, DashboardEquipmentOverride]:
     """Re-parse the equipment registry to extract dashboard-only fields.
 
-    Path resolution order matches :func:`ac_organic_lab_skills.load_registry`:
+    Path resolution order matches :func:`lab_skills.load_registry`:
     explicit ``path``, ``LAB_REGISTRY_PATH`` env var, or the first
     ``equipment.yaml`` found by walking up from this module.
     """

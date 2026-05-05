@@ -11,7 +11,7 @@ import httpx
 import pytest
 import respx
 
-from ac_organic_lab_skills.adapters import (
+from lab_skills.status_adapters import (
     HttpStatusAdapter,
     LegacyDoseEveryWellAdapter,
     LegacyFilterEveryWellAdapter,
@@ -19,7 +19,7 @@ from ac_organic_lab_skills.adapters import (
     LegacyXArmAdapter,
     MockAdapter,
 )
-from ac_organic_lab_skills.registry import EquipmentEntry
+from lab_skills.registry import EquipmentEntry
 
 
 def _entry(**overrides) -> EquipmentEntry:

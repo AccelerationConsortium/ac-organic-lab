@@ -19,7 +19,7 @@ import httpx
 import pytest
 import respx
 
-from ac_organic_lab_skills import (
+from lab_skills import (
     EquipmentClient,
     EquipmentEntry,
     FumeHoodClient,

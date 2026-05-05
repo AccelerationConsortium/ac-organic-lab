@@ -9,7 +9,7 @@ even when there are no typed control methods. ``status()`` / ``probe()`` /
 ``health()`` are inherited from :class:`EquipmentClient`. When the xArm
 repo migrates to STATUS_SPEC v1.x and ``do_not_call_connect`` is removed,
 populate this module with the proper typed methods (move, gripper, home,
-etc.) - the catalog file in ``ac_organic_lab_skills.catalog.robot_arm``
+etc.) - the catalog file in ``lab_skills.skill_catalog.robot_arm``
 will declare the SkillDefs first; method signatures here mirror them.
 """
 

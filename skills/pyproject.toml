@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ac-organic-lab-skills"
+name = "lab-skills"
 version = "0.1.0"
 description = "SDK and aggregator for the AC Organic Self-driving Lab. Provides equipment registry, async polling aggregator, per-device adapters, and the workflow-facing session API."
 requires-python = ">=3.10"

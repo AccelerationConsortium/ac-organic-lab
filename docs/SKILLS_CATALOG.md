@@ -55,8 +55,8 @@ class Skill(BaseModel):
 ## Where the catalog lives
 
 ```
-skills/src/ac_organic_lab_skills/
-├── catalog/
+skills/src/lab_skills/
+├── skill_catalog/
 │   ├── __init__.py
 │   ├── registry.py        # SKILL_REGISTRY: dict[EquipmentKind, list[SkillDef]]
 │   ├── plate_sealer.py    # skill defs for kind = plate_sealer
@@ -76,7 +76,7 @@ One module per `EquipmentKind`, each populating `SKILL_REGISTRY`. Adding a new d
 Example for `plate_sealer`:
 
 ```python
-# skills/.../catalog/plate_sealer.py
+# skills/.../skill_catalog/plate_sealer.py
 from pydantic import BaseModel, Field
 from .registry import register
 

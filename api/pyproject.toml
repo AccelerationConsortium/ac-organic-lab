@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ac-organic-lab-dashboard-api"
 version = "0.1.0"
-description = "Dashboard FastAPI server for the AC Organic Self-driving Lab. Thin presentation layer over ac-organic-lab-skills."
+description = "Dashboard FastAPI server for the AC Organic Self-driving Lab. Thin presentation layer over lab-skills."
 requires-python = ">=3.10"
 dependencies = [
-    "ac-organic-lab-skills",
+    "lab-skills",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
@@ -25,7 +25,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-ac-organic-lab-skills = { workspace = true }
+lab-skills = { workspace = true }
 
 [tool.setuptools.packages.find]
 where = ["."]

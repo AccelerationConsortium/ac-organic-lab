@@ -17,14 +17,14 @@ import httpx
 import pytest
 import respx
 
-from ac_organic_lab_skills import (
+from lab_skills import (
     EquipmentEntry,
     Lab,
     Registry,
     SKILL_REGISTRY,
     Skill,
 )
-from ac_organic_lab_skills.registry import Maintenance
+from lab_skills.registry import Maintenance
 
 
 def _entry(

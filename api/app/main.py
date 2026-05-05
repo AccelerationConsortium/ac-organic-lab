@@ -1,7 +1,7 @@
 """FastAPI entry point for the dashboard.
 
 Imports the registry, polling aggregator, and per-device adapters from the
-``ac-organic-lab-skills`` SDK; composes the SDK's snapshots with dashboard
+``lab-skills`` SDK; composes the SDK's snapshots with dashboard
 presentation fields (``tile``, ``location``) plus the registry's
 ``enabled`` / ``maintenance`` mirrors before returning them on
 ``/api/equipment`` and ``/api/equipment/{id}/status``.
@@ -14,7 +14,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from ac_organic_lab_skills import EquipmentAggregator, load_registry
+from lab_skills import EquipmentAggregator, load_registry
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 

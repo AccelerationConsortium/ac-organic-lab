@@ -65,7 +65,7 @@ The pieces inside `ac-organic-lab/` change together. Putting them in one repo me
 - One PR for cross-package changes (e.g. registry schema bumps that touch `skills/`, `api/`, and `web/` simultaneously)
 - One canonical `equipment.yaml` at the root, no path/URL/sync games
 - One CI pipeline with package-scoped jobs
-- The Python packages still publish independently — workflow project repos depend on `ac-organic-lab-skills` via package, not on the whole monorepo
+- The Python packages still publish independently — workflow project repos depend on `lab-skills` via package, not on the whole monorepo
 
 The pieces *outside* are deliberately separate repos because they have different lifecycles, audiences, and dependency profiles:
 
@@ -85,9 +85,9 @@ ac-organic-lab/
 │   ├── ARCHITECTURE.md             # this document
 │   └── design.md                   # design rationale archive
 ├── deploy/
-├── skills/                         # PYTHON: ac-organic-lab-skills
+├── skills/                         # PYTHON: lab-skills
 │   ├── pyproject.toml
-│   └── src/ac_organic_lab_skills/
+│   └── src/lab_skills/
 ├── api/                            # PYTHON: dashboard web server
 │   ├── pyproject.toml              # depends on ../skills
 │   └── app/
@@ -98,7 +98,7 @@ Two Python packages, one Next.js app, one inventory YAML, one set of docs.
 
 ## Component responsibilities
 
-### `skills/` — `ac-organic-lab-skills`
+### `skills/` — `lab-skills`
 
 The Python SDK and aggregator. **The single authoritative layer for control and runtime state.**
 
@@ -168,9 +168,9 @@ The dashboard does **not** write to devices. Workflows do. This split keeps the 
 
 The dashboard's aggregator and the SDK both *cache* device status. Neither is ever the source of truth — the device itself is. A workflow about to issue a control command always re-reads `/status` directly from the device, never from a cache, because cache staleness measured in seconds is forever in robotics.
 
-### 3. Project repos depend only on `ac-organic-lab-skills`
+### 3. Project repos depend only on `lab-skills`
 
-A workflow author writing `solubility-screening` adds **one** dependency: `ac-organic-lab-skills`. They never `pip install ac-organic-lab` (too heavy) or import from `api/` (presentation, not control). They certainly never add per-device repos as dependencies — every device is reached through the SDK.
+A workflow author writing `solubility-screening` adds **one** dependency: `lab-skills`. They never `pip install ac-organic-lab` (too heavy) or import from `api/` (presentation, not control). They certainly never add per-device repos as dependencies — every device is reached through the SDK.
 
 ### 4. Roles, not equipment IDs, in workflow code
 
@@ -243,4 +243,4 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 - `equipment.yaml` — the lab's inventory
 - `skills/README.md` — SDK usage (created when v0.1 ships)
 - `api/README.md` — dashboard server (created when api/ is reorganized in v0.1)
-- `.cursor/plans/build_ac-organic-lab-skills_*.plan.md` — current working milestone plan
+- `.cursor/plans/build_lab-skills_*.plan.md` — current working milestone plan

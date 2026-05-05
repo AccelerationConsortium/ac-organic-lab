@@ -1,8 +1,8 @@
-"""Catalog registry tests.
+"""Skill catalog registry tests.
 
-Validates that importing :mod:`ac_organic_lab_skills.catalog` populates the
-process-wide :data:`SKILL_REGISTRY` with the expected per-kind entries, that
-each :class:`SkillDef` carries a Pydantic args schema, and that names are
+Validates that importing :mod:`lab_skills.skill_catalog` populates
+the process-wide :data:`SKILL_REGISTRY` with the expected per-kind entries,
+that each :class:`SkillDef` carries a Pydantic args schema, and that names are
 unique within a kind.
 """
 
@@ -11,8 +11,8 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from ac_organic_lab_skills import SKILL_REGISTRY, Skill, SkillDef
-from ac_organic_lab_skills.catalog import register
+from lab_skills import SKILL_REGISTRY, Skill, SkillDef
+from lab_skills.skill_catalog import register
 
 
 def test_registry_populated_for_active_kinds() -> None:
@@ -85,7 +85,7 @@ def test_register_rejects_mismatched_kind() -> None:
 
 
 def test_seal_start_args_schema_validates_ranges() -> None:
-    from ac_organic_lab_skills.catalog.plate_sealer import SealStartArgs
+    from lab_skills.skill_catalog.plate_sealer import SealStartArgs
 
     SealStartArgs(temperature_c=170, seconds=3.0)  # ok
     with pytest.raises(Exception):
@@ -99,7 +99,7 @@ def test_skill_runtime_model_accepts_args_schema_class() -> None:
     model accepts it without coercing to an instance.
     """
 
-    from ac_organic_lab_skills.catalog.plate_sealer import SealStartArgs
+    from lab_skills.skill_catalog.plate_sealer import SealStartArgs
 
     sk = Skill(
         name="seal.start",

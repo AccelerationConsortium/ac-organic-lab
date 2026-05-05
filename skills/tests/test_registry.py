@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from ac_organic_lab_skills import load_registry
-from ac_organic_lab_skills.registry import Maintenance
+from lab_skills import load_registry
+from lab_skills.registry import Maintenance
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

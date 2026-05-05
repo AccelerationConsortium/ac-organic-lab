@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..catalog.fume_hood import MoveArgs, StopArgs
+from ..skill_catalog.fume_hood import MoveArgs, StopArgs
 from ..client import EquipmentClient
 
 

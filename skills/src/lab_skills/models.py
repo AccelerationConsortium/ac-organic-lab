@@ -13,7 +13,7 @@ The aggregator-only types at the bottom (``FetchError`` family,
 (workflow scripts via the SDK, the dashboard's web server, and eventually the
 ``serve`` mode HTTP service in v0.5).
 
-Conformance: ``ac-organic-lab-skills`` SDK conforms to lab status spec v1.0.
+Conformance: ``lab-skills`` SDK conforms to lab status spec v1.0.
 """
 
 from __future__ import annotations

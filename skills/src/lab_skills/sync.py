@@ -9,7 +9,7 @@ session.
 
 Example::
 
-    from ac_organic_lab_skills.sync import Lab
+    from lab_skills.sync import Lab
 
     with Lab.connect(binding={"sealer": "plateloc"}) as lab:
         sealer = lab.role("sealer")
@@ -41,7 +41,7 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel
 
-from .catalog import Skill
+from .skill_catalog import Skill
 from .client import EquipmentClient as _AsyncEquipmentClient
 from .lab import Lab as _AsyncLab
 from .models import EquipmentStatus, HealthResponse, ProbeResponse
@@ -162,7 +162,7 @@ class SyncLabSession:
 class Lab:
     """Static factory for :class:`SyncLabSession` instances.
 
-    Mirrors the async :class:`ac_organic_lab_skills.Lab` surface, returning a
+    Mirrors the async :class:`lab_skills.Lab` surface, returning a
     sync session that can be used with a plain ``with`` statement instead of
     ``async with``.
     """

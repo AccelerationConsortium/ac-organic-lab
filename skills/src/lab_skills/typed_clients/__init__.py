@@ -1,9 +1,9 @@
 """Per-equipment-kind :class:`EquipmentClient` subclasses + dispatch.
 
 Each module here defines one subclass of
-:class:`ac_organic_lab_skills.EquipmentClient` with hand-written typed methods
+:class:`lab_skills.EquipmentClient` with hand-written typed methods
 for the catalog entries declared in
-``ac_organic_lab_skills.catalog.<kind>``. Args schemas are imported from the
+``lab_skills.skill_catalog.<kind>``. Args schemas are imported from the
 catalog (single source of truth); the method bodies are thin wrappers over
 :meth:`EquipmentClient.command`.
 

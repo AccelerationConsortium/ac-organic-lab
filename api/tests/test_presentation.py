@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from ac_organic_lab_skills import (
+from lab_skills import (
     EquipmentList as SkillEquipmentList,
     EquipmentSnapshot as SkillEquipmentSnapshot,
     EquipmentStatus,
@@ -22,7 +22,7 @@ from ac_organic_lab_skills import (
     Registry,
     load_registry,
 )
-from ac_organic_lab_skills.registry import EquipmentEntry
+from lab_skills.registry import EquipmentEntry
 
 from app.presentation import (
     DashboardEquipmentOverride,

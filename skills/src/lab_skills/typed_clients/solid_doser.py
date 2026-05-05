@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..catalog.solid_doser import (
+from ..skill_catalog.solid_doser import (
     CalibrateFlowRateArgs,
     DoseColumnArgs,
     DoseMultipleArgs,

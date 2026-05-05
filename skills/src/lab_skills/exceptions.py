@@ -21,7 +21,7 @@ from datetime import date
 
 
 class LabError(Exception):
-    """Base class for all SDK exceptions raised by ``ac_organic_lab_skills``."""
+    """Base class for all SDK exceptions raised by ``lab_skills``."""
 
 
 class RegistryError(LabError):

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..catalog.press import (
+from ..skill_catalog.press import (
     InitArgs,
     PlateMoveArgs,
     PressMoveArgs,

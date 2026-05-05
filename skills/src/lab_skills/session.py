@@ -24,14 +24,14 @@ from typing import Mapping
 
 import httpx
 
-from .catalog import Skill, SkillDef, skills_for
+from .skill_catalog import Skill, SkillDef, skills_for
 from .client import EquipmentClient
 from .exceptions import (
     EquipmentInMaintenance,
     EquipmentUnreachable,
     RegistryError,
 )
-from .kinds import client_for
+from .typed_clients import client_for
 from .models import EquipmentStatus
 from .registry import EquipmentEntry, Registry
 

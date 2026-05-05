@@ -7,12 +7,12 @@ The dashboard runs on a single Tailscale-attached server and aggregates status f
 ## Architecture
 
 ```
-Browser  ->  Next.js (web/, port 3000)  ->  FastAPI (api/, port 8001)  ->  ac-organic-lab-skills (skills/)  ->  Equipment APIs over Tailscale
+Browser  ->  Next.js (web/, port 3000)  ->  FastAPI (api/, port 8001)  ->  lab-skills (skills/)  ->  Equipment APIs over Tailscale
                                                                                        ^
                                                        Workflow scripts ----------------+
 ```
 
-- **`skills/`** - `ac-organic-lab-skills` Python SDK. Owns the registry, polling aggregator, per-device adapters, and the workflow-facing session API. Imported by `api/` and by project workflow repos.
+- **`skills/`** - `lab-skills` Python SDK. Owns the registry, polling aggregator, per-device adapters, and the workflow-facing session API. Imported by `api/` and by project workflow repos.
 - **`api/`** - FastAPI dashboard server. Thin presentation layer over `skills/`.
 - **`web/`** - Next.js 14 (App Router) + TypeScript + TanStack Query.
 - **`docs/STATUS_SPEC.md`** - the authoritative unified equipment status contract every equipment repo must implement.

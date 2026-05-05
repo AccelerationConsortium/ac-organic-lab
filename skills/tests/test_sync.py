@@ -1,4 +1,4 @@
-"""Sync-wrapper tests for ``ac_organic_lab_skills.sync``.
+"""Sync-wrapper tests for ``lab_skills.sync``.
 
 The wrapper translates ``async with Lab.connect(...)`` into a plain ``with``
 context, with status / probe / health / command available without ``await``.
@@ -15,12 +15,12 @@ import httpx
 import pytest
 import respx
 
-from ac_organic_lab_skills import (
+from lab_skills import (
     EquipmentBusy,
     EquipmentEntry,
     Registry,
 )
-from ac_organic_lab_skills.sync import Lab, SyncLabSession
+from lab_skills.sync import Lab, SyncLabSession
 
 
 def _entry() -> EquipmentEntry:

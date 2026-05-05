@@ -1,4 +1,4 @@
-"""ac-organic-lab-skills: SDK and aggregator for the AC Organic Self-driving Lab.
+"""lab-skills: SDK and aggregator for the AC Organic Self-driving Lab.
 
 This package owns:
 
@@ -15,9 +15,9 @@ layer for control and runtime equipment state.
 from __future__ import annotations
 
 from .aggregator import EquipmentAggregator
-from .catalog import SKILL_REGISTRY, Skill, SkillDef
+from .skill_catalog import SKILL_REGISTRY, Skill, SkillDef
 from .client import EquipmentClient
-from .kinds import (
+from .typed_clients import (
     FumeHoodClient,
     PlateSealerClient,
     PressClient,

@@ -9,7 +9,7 @@ import httpx
 import pytest
 import respx
 
-from ac_organic_lab_skills import (
+from lab_skills import (
     EquipmentClient,
     EquipmentInMaintenance,
     Lab,
@@ -17,7 +17,7 @@ from ac_organic_lab_skills import (
     load_registry,
     wait_until_state,
 )
-from ac_organic_lab_skills.exceptions import WaitTimeout
+from lab_skills.exceptions import WaitTimeout
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
@@ -100,7 +100,7 @@ async def test_wait_until_state_succeeds(fixture_registry) -> None:
     # Use a fixture entry that has a base_url
     registry = load_registry(FIXTURE_DIR / "equipment_with_maintenance.yaml")
     # filtration_press is in maintenance; build a fresh entry without it.
-    from ac_organic_lab_skills import Registry, EquipmentEntry
+    from lab_skills import Registry, EquipmentEntry
 
     entry = EquipmentEntry(
         id="ready_dev",
@@ -132,7 +132,7 @@ async def test_wait_until_state_succeeds(fixture_registry) -> None:
 
 @pytest.mark.asyncio
 async def test_wait_until_state_times_out() -> None:
-    from ac_organic_lab_skills import EquipmentEntry, Registry
+    from lab_skills import EquipmentEntry, Registry
 
     entry = EquipmentEntry(
         id="busy_dev",

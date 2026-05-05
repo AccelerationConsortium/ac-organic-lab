@@ -2,7 +2,7 @@
 
 Usage::
 
-    from ac_organic_lab_skills import Lab, wait_until_state
+    from lab_skills import Lab, wait_until_state
 
     async with Lab.connect(binding={"sealer": "plateloc"}) as lab:
         sealer = lab.role("sealer")
@@ -10,7 +10,7 @@ Usage::
         envelope = await sealer.status()
 
 The class is currently a thin factory; v0.5 will add a ``service_url=...``
-mode that talks to a running ``ac-organic-lab-skills serve`` HTTP service
+mode that talks to a running ``lab-skills serve`` HTTP service
 instead of loading the registry locally.
 """
 

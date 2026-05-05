@@ -10,10 +10,10 @@ are:
 * :class:`Skill` - runtime view returned by ``await session.skills()`` that
   binds a :class:`SkillDef` to a project role and a live availability flag.
 
-Adding a new equipment kind is exactly one new module under ``catalog/`` that
+Adding a new equipment kind is exactly one new module under ``skill_catalog/`` that
 imports :func:`register` and calls it with a list of :class:`SkillDef`s.
 
-Importing this package (``from ac_organic_lab_skills.catalog import ...``) is
+Importing this package (``from lab_skills.skill_catalog import ...``) is
 sufficient to populate the registry; the per-kind modules are imported here
 purely for their side effects.
 """

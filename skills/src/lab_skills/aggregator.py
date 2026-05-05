@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from .adapters import AdapterResult, EquipmentAdapter, build_adapter
+from .status_adapters import AdapterResult, EquipmentAdapter, build_adapter
 from .models import EquipmentList, EquipmentSnapshot
 from .registry import EquipmentEntry, Registry
 
