@@ -31,21 +31,33 @@ These three steps run **once per PC**, not per service. Run from an elevated Pow
 ### 2.1 Install uv to a system-wide path
 
 ```powershell
-# Install uv via the official installer (drops it under %USERPROFILE%\.local\bin)
+# Run from an elevated PowerShell.
+New-Item -ItemType Directory -Force C:\SDL_Tools | Out-Null
+
+# Install uv via the official installer (drops it under %USERPROFILE%\.local\bin).
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
-# Copy to a system-wide path so the Windows Service account can find it.
+# Copy to a stable service path so the Windows Service account can find it.
 # Services do NOT inherit the interactive user's PATH, so a per-user install
-# alone is not enough.
-New-Item -ItemType Directory -Force C:\SDL_Tools | Out-Null
-Copy-Item "$env:USERPROFILE\.local\bin\uv.exe" C:\SDL_Tools\uv.exe -Force
+# alone is not enough. The fallback handles shells where PATH has already
+# been refreshed and uv is discoverable via Get-Command.
+$uvUser = Join-Path $env:USERPROFILE ".local\bin\uv.exe"
+if (!(Test-Path $uvUser)) {
+    $uvUser = (Get-Command uv -ErrorAction Stop).Source
+}
+Copy-Item $uvUser C:\SDL_Tools\uv.exe -Force
+
+# Verify the exact binary NSSM will call later.
 C:\SDL_Tools\uv.exe --version
 ```
 
 ### 2.2 Install NSSM
 
 ```powershell
-# Either via Chocolatey
+# Preferred: install via winget (built into modern Windows).
+winget install -e --id NSSM.NSSM
+
+# Alternative: install via Chocolatey.
 choco install nssm -y
 
 # Or download nssm.exe from https://nssm.cc/download and drop it on PATH
@@ -57,11 +69,11 @@ choco install nssm -y
 ### 2.3 Create the lab directory layout
 
 ```powershell
-New-Item -ItemType Directory -Force C:\labs       | Out-Null
-New-Item -ItemType Directory -Force C:\labs\logs  | Out-Null
+New-Item -ItemType Directory -Force C:\Users\sdl2\Projects | Out-Null
+New-Item -ItemType Directory -Force C:\SDL_Logs            | Out-Null
 ```
 
-Convention: every device repo lives at `C:\labs\<repo-name>\` and writes its logs to `C:\labs\logs\<service-name>.{out,err}.log`. Stick to this layout — the troubleshooting and update scripts below assume it.
+Convention: every device repo lives at `C:\Users\sdl2\Projects\<repo-name>\` and writes its logs to `C:\SDL_Logs\<service-name>.{out,err}.log`. Stick to this layout — the troubleshooting and update scripts below assume it. If the service runs under a different lab user, replace `sdl2` with that Windows username consistently.
 
 ## 3. Install a single device service
 
@@ -69,9 +81,9 @@ Run from an elevated PowerShell. Replace `<repo>`, `<svc>`, and `<port>` with th
 
 ```powershell
 # 3.1 Clone the device repo into the lab directory
-cd C:\labs
+cd C:\Users\sdl2\Projects
 git clone https://github.com/cyrilcaoyang/<repo>.git
-cd C:\labs\<repo>
+cd C:\Users\sdl2\Projects\<repo>
 
 # 3.2 Copy the example config and edit for this PC
 Copy-Item config.example.toml config.toml
@@ -86,15 +98,15 @@ C:\SDL_Tools\uv.exe run --extra api <svc>-serve --port <port>
 
 # 3.5 Install the Windows Service
 nssm install <svc> C:\SDL_Tools\uv.exe `
-    run --project C:\labs\<repo> --extra api <svc>-serve
+    run --project C:\Users\sdl2\Projects\<repo> --extra api <svc>-serve
 
 # 3.6 Configure it
-nssm set <svc> AppDirectory       C:\labs\<repo>
+nssm set <svc> AppDirectory       C:\Users\sdl2\Projects\<repo>
 nssm set <svc> DisplayName        "<Human-readable device name> REST service"
 nssm set <svc> Description        "STATUS_SPEC service for <device>"
 nssm set <svc> Start              SERVICE_AUTO_START
-nssm set <svc> AppStdout          C:\labs\logs\<svc>.out.log
-nssm set <svc> AppStderr          C:\labs\logs\<svc>.err.log
+nssm set <svc> AppStdout          C:\SDL_Logs\<svc>.out.log
+nssm set <svc> AppStderr          C:\SDL_Logs\<svc>.err.log
 nssm set <svc> AppRotateFiles     1
 nssm set <svc> AppRotateBytes     10485760           # 10 MB
 nssm set <svc> AppExit Default    Restart            # like Restart=on-failure
@@ -111,7 +123,7 @@ Verify:
 
 ```powershell
 sc query <svc>                                       # STATE = RUNNING
-Get-Content C:\labs\logs\<svc>.out.log -Tail 20      # uvicorn startup messages
+Get-Content C:\SDL_Logs\<svc>.out.log -Tail 20       # uvicorn startup messages
 curl http://127.0.0.1:<port>/                        # protocol_version field
 curl http://127.0.0.1:<port>/status | ConvertFrom-Json | Format-List
 ```
@@ -121,7 +133,7 @@ curl http://127.0.0.1:<port>/status | ConvertFrom-Json | Format-List
 Per-service update (run any time after a `git push` to the device repo):
 
 ```powershell
-# C:\labs\update.ps1
+# C:\Users\sdl2\Projects\update.ps1
 param([string]$Service, [string]$RepoDir)
 Push-Location $RepoDir
 git pull
@@ -131,17 +143,17 @@ Pop-Location
 ```
 
 ```powershell
-.\update.ps1 plateloc C:\labs\agilent_plateloc
+.\update.ps1 plateloc C:\Users\sdl2\Projects\agilent_plateloc
 ```
 
 Multi-service "update everything" (run nightly via Task Scheduler, or manually after an SDK release):
 
 ```powershell
-# C:\labs\update_all.ps1
+# C:\Users\sdl2\Projects\update_all.ps1
 $services = @(
-    @{ Name = "plateloc";     Repo = "C:\labs\agilent_plateloc"     },
-    @{ Name = "platereader";  Repo = "C:\labs\bmg_platereader"      },
-    @{ Name = "platestacker"; Repo = "C:\labs\agilent_platestacker" }
+    @{ Name = "plateloc";     Repo = "C:\Users\sdl2\Projects\agilent_plateloc"     },
+    @{ Name = "platereader";  Repo = "C:\Users\sdl2\Projects\bmg_platereader"      },
+    @{ Name = "platestacker"; Repo = "C:\Users\sdl2\Projects\agilent_platestacker" }
 )
 foreach ($s in $services) {
     Write-Host "=== $($s.Name) ===" -ForegroundColor Cyan
@@ -201,7 +213,7 @@ After install + smoke, register the service in the monorepo's `equipment.yaml` w
 ```powershell
 nssm stop <svc>
 nssm remove <svc> confirm
-Remove-Item -Recurse -Force C:\labs\<repo>
+Remove-Item -Recurse -Force C:\Users\sdl2\Projects\<repo>
 ```
 
 The lab user account, uv binary, and NSSM stay; uninstalling one device does not affect the others.
