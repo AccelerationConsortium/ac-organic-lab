@@ -17,10 +17,14 @@ from __future__ import annotations
 from .aggregator import EquipmentAggregator
 from .client import EquipmentClient
 from .exceptions import (
+    BadRequest,
+    Degraded,
+    EquipmentBusy,
     EquipmentInMaintenance,
     EquipmentUnreachable,
     LabError,
     RegistryError,
+    RequiresInit,
     WaitTimeout,
 )
 from .lab import Lab
@@ -54,8 +58,11 @@ __version__ = "0.1.0"
 
 __all__ = [
     "AdapterKind",
+    "BadRequest",
     "ComponentStatus",
+    "Degraded",
     "EquipmentAggregator",
+    "EquipmentBusy",
     "EquipmentClient",
     "EquipmentEntry",
     "EquipmentInMaintenance",
@@ -79,6 +86,7 @@ __all__ = [
     "ProbeResponse",
     "Registry",
     "RegistryError",
+    "RequiresInit",
     "WaitTimeout",
     "__version__",
     "load_registry",
