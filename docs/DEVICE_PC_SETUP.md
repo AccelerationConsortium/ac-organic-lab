@@ -7,9 +7,9 @@ This document is the **canonical install recipe** for any device repo that confo
 
 ## TL;DR
 
-- One **uv** binary, copied to `C:\Tools\uv.exe`, manages every device repo's Python environment.
+- One **uv** binary, copied to `C:\SDL_Tools\uv.exe`, manages every device repo's Python environment. (`SDL_Tools` is namespaced to the Self-Driving Lab so it does not collide with arbitrary other software dropped into `C:\Tools` by IT or third-party installers.)
 - Each device repo has its own `.venv\` and its own pinned `uv.lock`, so dependency upgrades on one service cannot break another.
-- **NSSM** (the Non-Sucking Service Manager) wraps each service into a real Windows Service that auto-starts on boot, restarts on crash, and writes rotated log files.
+- **NSSM** (the Non-Sucking Service Manager) wraps each service into a real Windows Service that auto-starts on boot, restarts on crash, and writes rotated log files. We keep `nssm.exe` next to `uv.exe` in `C:\SDL_Tools\`.
 - One PowerShell script (`update_all.ps1`) pulls + re-syncs + restarts every service in a single pass.
 
 If you only ever read one section, read [§3 Install a single device service](#3-install-a-single-device-service).
@@ -37,9 +37,9 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 # Copy to a system-wide path so the Windows Service account can find it.
 # Services do NOT inherit the interactive user's PATH, so a per-user install
 # alone is not enough.
-New-Item -ItemType Directory -Force C:\Tools | Out-Null
-Copy-Item "$env:USERPROFILE\.local\bin\uv.exe" C:\Tools\uv.exe -Force
-C:\Tools\uv.exe --version
+New-Item -ItemType Directory -Force C:\SDL_Tools | Out-Null
+Copy-Item "$env:USERPROFILE\.local\bin\uv.exe" C:\SDL_Tools\uv.exe -Force
+C:\SDL_Tools\uv.exe --version
 ```
 
 ### 2.2 Install NSSM
@@ -49,7 +49,7 @@ C:\Tools\uv.exe --version
 choco install nssm -y
 
 # Or download nssm.exe from https://nssm.cc/download and drop it on PATH
-# (typically C:\Tools\nssm.exe)
+# (typically C:\SDL_Tools\nssm.exe)
 ```
 
 `nssm --version` should print `NSSM 2.24-101-g897c7ad` or similar.
@@ -78,14 +78,14 @@ Copy-Item config.example.toml config.toml
 notepad config.toml      # set com_port, profile, port, enforce_claims, etc.
 
 # 3.3 Create the .venv and install runtime deps
-C:\Tools\uv.exe sync --extra api
+C:\SDL_Tools\uv.exe sync --extra api
 
 # 3.4 Smoke-test in the foreground (Ctrl-C to stop)
-C:\Tools\uv.exe run --extra api <svc>-serve --port <port>
+C:\SDL_Tools\uv.exe run --extra api <svc>-serve --port <port>
 # In another shell:  curl http://127.0.0.1:<port>/   -> protocol_version field
 
 # 3.5 Install the Windows Service
-nssm install <svc> C:\Tools\uv.exe `
+nssm install <svc> C:\SDL_Tools\uv.exe `
     run --project C:\labs\<repo> --extra api <svc>-serve
 
 # 3.6 Configure it
@@ -125,7 +125,7 @@ Per-service update (run any time after a `git push` to the device repo):
 param([string]$Service, [string]$RepoDir)
 Push-Location $RepoDir
 git pull
-C:\Tools\uv.exe sync --extra api
+C:\SDL_Tools\uv.exe sync --extra api
 nssm restart $Service
 Pop-Location
 ```
@@ -147,7 +147,7 @@ foreach ($s in $services) {
     Write-Host "=== $($s.Name) ===" -ForegroundColor Cyan
     Push-Location $s.Repo
     git pull
-    C:\Tools\uv.exe sync --extra api
+    C:\SDL_Tools\uv.exe sync --extra api
     nssm restart $s.Name
     Pop-Location
 }
@@ -189,7 +189,7 @@ After install + smoke, register the service in the monorepo's `equipment.yaml` w
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `sc query <svc>` says `STOPPED` immediately after `nssm start` | wrong `AppDirectory` or `.venv` not synced | Run `C:\Tools\uv.exe sync --extra api` from the repo dir; check `<svc>.err.log`. |
+| `sc query <svc>` says `STOPPED` immediately after `nssm start` | wrong `AppDirectory` or `.venv` not synced | Run `C:\SDL_Tools\uv.exe sync --extra api` from the repo dir; check `<svc>.err.log`. |
 | `/control/startup` returns 503 with "profile not found" | service is running as `LocalSystem` | Reset `ObjectName` to `.\labuser` (see §5). |
 | `/control/seal/start` returns 423 | strict claim enforcement, no `X-Claim-Token` | The SDK's `ClaimManager` handles this automatically. For manual `curl` debugging, acquire a claim first via `POST /control/claim`. |
 | Logs grow without bound | `AppRotateBytes` not set | `nssm set <svc> AppRotateFiles 1; nssm set <svc> AppRotateBytes 10485760`. |
