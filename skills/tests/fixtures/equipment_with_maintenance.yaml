@@ -1,0 +1,29 @@
+# Test fixture for the SDK registry loader.
+# Includes one healthy entry, one explicitly disabled entry, and one entry with
+# a full maintenance block. Drives `EquipmentInMaintenance` tests.
+
+equipment:
+  - id: plateloc
+    name: Agilent PlateLoc
+    platform: hte
+    kind: plate_sealer
+    adapter: http
+    base_url: http://plateloc.test:8000
+    enabled: false
+
+  - id: filtration_press
+    name: Waters Filtration
+    platform: hte
+    kind: press
+    adapter: legacy_http
+    base_url: http://filter.test:8000
+    maintenance:
+      reason: "Awaiting replacement seal foil"
+      until: "2026-06-15"
+      contact: "alice@lab"
+
+  - id: env_north
+    name: North Bench Sensors
+    platform: lab
+    kind: environmental_sensor
+    adapter: mock

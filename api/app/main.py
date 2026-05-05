@@ -1,4 +1,11 @@
-"""FastAPI entry point for the dashboard aggregator."""
+"""FastAPI entry point for the dashboard.
+
+Imports the registry, polling aggregator, and per-device adapters from the
+``ac-organic-lab-skills`` SDK; composes the SDK's snapshots with dashboard
+presentation fields (``tile``, ``location``) plus the registry's
+``enabled`` / ``maintenance`` mirrors before returning them on
+``/api/equipment`` and ``/api/equipment/{id}/status``.
+"""
 
 from __future__ import annotations
 
@@ -7,17 +14,19 @@ import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+from ac_organic_lab_skills import EquipmentAggregator, load_registry
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
-from .aggregator import EquipmentAggregator
-from .models import (
+from .presentation import (
     AggregatorHealth,
     EquipmentList,
     EquipmentSnapshot,
+    _snapshot,
+    compose_equipment_list,
+    load_dashboard_overrides,
 )
-from .registry import load_registry
 
 logger = logging.getLogger("ac_dashboard.api")
 
@@ -33,6 +42,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     aggregator = EquipmentAggregator(registry)
     await aggregator.startup()
     app.state.aggregator = aggregator
+    app.state.registry = registry
+    app.state.overrides = load_dashboard_overrides()
     logger.info(
         "Loaded equipment registry: %d entries", aggregator.equipment_count
     )
@@ -81,7 +92,12 @@ async def list_equipment() -> EquipmentList:
     """Return the latest status of every registered equipment in parallel."""
 
     aggregator = _aggregator()
-    return await aggregator.fetch_all()
+    skill_list = await aggregator.fetch_all()
+    return compose_equipment_list(
+        skill_list,
+        app.state.overrides,
+        app.state.registry,
+    )
 
 
 @app.get(
@@ -93,7 +109,8 @@ async def get_equipment(equipment_id: str) -> EquipmentSnapshot:
     """Live status fetch for a single equipment."""
 
     aggregator = _aggregator()
-    snapshot = await aggregator.fetch_one(equipment_id)
-    if snapshot is None:
+    sdk_snapshot = await aggregator.fetch_one(equipment_id)
+    if sdk_snapshot is None:
         raise HTTPException(status_code=404, detail=f"Unknown equipment id: {equipment_id}")
-    return snapshot
+    override = app.state.overrides.get(equipment_id)
+    return _snapshot(sdk_snapshot, override, app.state.registry)

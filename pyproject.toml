@@ -1,0 +1,23 @@
+# Workspace root for the AC Organic Self-driving Lab monorepo (`ac-organic-lab`).
+#
+# This is a "virtual workspace": there is no [project] table because the repo
+# root is not itself a publishable Python package. The two real packages live
+# in `skills/` and `api/` and are declared as workspace members below. uv
+# manages a single shared `.venv/` at this root and installs both members
+# editable.
+#
+# Usage:
+#   uv sync                                  # one venv at the root, both members editable
+#   uv run uvicorn api.app.main:app          # dashboard server
+#   uv run pytest skills/tests api/tests     # all tests
+
+[tool.uv.workspace]
+members = ["skills", "api"]
+
+# Workspace-level pytest config so `uv run pytest` (or `pytest skills/tests api/tests`)
+# from the repo root picks up the right asyncio mode and test paths. Each
+# member's own pyproject keeps its own [tool.pytest.ini_options] for when the
+# package is run in isolation.
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["skills/tests", "api/tests"]

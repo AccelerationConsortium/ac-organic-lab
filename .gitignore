@@ -199,7 +199,7 @@ web/.env.local
 # Local equipment registry override (committed equipment.yaml is the source of truth)
 equipment.local.yaml
 
-# Python venv at repo root (api/ has its own)
+# uv workspace virtualenv (one shared venv at the repo root for both `skills/` and `api/`).
 .venv/
 
 # Saved chat transcripts (kept locally for reference, not version-controlled)

@@ -75,9 +75,6 @@ class EquipmentAggregator:
 
 
 def _snapshot(entry: EquipmentEntry, result: AdapterResult) -> EquipmentSnapshot:
-    location = None
-    if entry.location is not None:
-        location = entry.location.model_dump()
     return EquipmentSnapshot(
         id=entry.id,
         name=entry.name,
@@ -89,6 +86,4 @@ def _snapshot(entry: EquipmentEntry, result: AdapterResult) -> EquipmentSnapshot
         latency_ms=result.latency_ms,
         fetch_error=result.error,
         base_url=entry.base_url,
-        location=location,
-        tile=entry.tile,
     )

@@ -1,8 +1,19 @@
-"""Pydantic models implementing the unified equipment status spec.
+"""Lab equipment status spec v1.0 + aggregator runtime types.
 
-The authoritative copy of these definitions lives in `docs/STATUS_SPEC.md` at the
-repository root. Equipment repos copy this file into their own packages until the
-spec is promoted into a `lab-status-contract` Python package.
+The STATUS_SPEC v1.0 portion of this file (everything from ``PROTOCOL_VERSION``
+down through ``HealthResponse``) is the authoritative copy that mirrors
+``docs/STATUS_SPEC.md`` at the repo root and is kept verbatim-identical to the
+copies vendored into per-device repos (see ``agilent_plateloc/src/agilent_plateloc/models.py``).
+Once a shared ``lab-status-contract`` package ships, this section will be
+replaced by ``from lab_status_contract import ...``.
+
+The aggregator-only types at the bottom (``FetchError`` family,
+``EquipmentSnapshot``, ``EquipmentList``) are not part of the device contract
+- they describe what the in-process aggregator emits to its consumers
+(workflow scripts via the SDK, the dashboard's web server, and eventually the
+``serve`` mode HTTP service in v0.5).
+
+Conformance: ``ac-organic-lab-skills`` SDK conforms to lab status spec v1.0.
 """
 
 from __future__ import annotations
@@ -30,14 +41,14 @@ EquipmentKind = Literal[
 ]
 
 EquipmentState = Literal[
-    "ready",
-    "busy",
-    "requires_init",
-    "degraded",
-    "dry_run",
-    "error",
-    "e_stop",
-    "unknown",
+    "ready",          # initialized, idle, can accept commands
+    "busy",           # performing an operation
+    "requires_init",  # service up but hardware not initialized (e.g. needs POST /control/startup)
+    "degraded",       # running but a sub-component is unhealthy
+    "dry_run",        # simulation mode, no hardware connected
+    "error",          # hardware reported an error
+    "e_stop",         # emergency stopped
+    "unknown",        # state cannot be determined
 ]
 
 ErrorSeverity = Literal["info", "warning", "error", "critical"]
@@ -45,7 +56,7 @@ ErrorSeverity = Literal["info", "warning", "error", "critical"]
 
 class ComponentStatus(BaseModel):
     connected: bool
-    state: str
+    state: str  # equipment-defined string; pick a small enum per equipment kind
     message: str | None = None
     last_event_at: datetime | None = None
 
@@ -68,37 +79,46 @@ class EquipmentStatus(BaseModel):
 
     protocol_version: str = PROTOCOL_VERSION
 
+    # Identity
     equipment_id: str
     equipment_name: str
     equipment_kind: EquipmentKind
     equipment_version: str | None = None
-    host: str | None = None
+    host: str | None = None  # local hostname only (output of `hostname`)
 
+    # Operational state
     equipment_status: EquipmentState
     message: str | None = None
     required_actions: list[str] = Field(default_factory=list)
 
+    # Timing
     device_time: datetime
     uptime_seconds: float | None = None
 
+    # Sub-equipment / measurements
     components: dict[str, ComponentStatus] = Field(default_factory=dict)
     metrics: dict[str, MetricValue] = Field(default_factory=dict)
     last_error: ErrorInfo | None = None
 
+    # Free-form per-equipment data; safe to display in a debug/details panel.
     details: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProbeResponse(BaseModel):
+    """Body of `GET /` - the cheapest possible identity probe."""
+
     equipment_id: str
     equipment_name: str
     protocol_version: str = PROTOCOL_VERSION
 
 
 class HealthResponse(BaseModel):
+    """Body of `GET /health` - service liveness."""
+
     status: Literal["healthy"] = "healthy"
 
 
-# -- Aggregator-only types ---------------------------------------------------
+# -- Aggregator runtime types (not part of the device contract) --------------
 
 
 FetchErrorKind = Literal[
@@ -120,33 +140,15 @@ class FetchError(BaseModel):
     http_status: int | None = None
 
 
-class Location(BaseModel):
-    """Position of an equipment on the lab floorplan map (percentages 0-100)."""
-
-    x: float = Field(ge=0, le=100)
-    y: float = Field(ge=0, le=100)
-    label: str | None = None
-
-
-class Tile(BaseModel):
-    """Tile size for the dashboard equipment grid.
-
-    The platform card lays equipment out on a 4-column CSS grid with fixed-height
-    rows. `w` is the number of columns the tile spans (1..4) and `h` is the
-    number of rows it spans (1..4). Default 2x1 = current half-row layout.
-    """
-
-    w: int = Field(default=2, ge=1, le=4)
-    h: int = Field(default=1, ge=1, le=4)
-
-
 class EquipmentSnapshot(BaseModel):
-    """What the dashboard frontend consumes for one equipment.
+    """Per-equipment view emitted by the aggregator.
 
-    Wraps `EquipmentStatus` with aggregator-side metadata (when we last fetched
-    it, how long it took, and whether the latest fetch errored). The `status`
-    field is always present - on first failure the aggregator emits a synthetic
-    `unknown` envelope so the UI never has to deal with `null`.
+    Combines a normalised ``EquipmentStatus`` envelope (or a synthetic
+    ``unknown``-state envelope on fetch failure) with the registry identity
+    fields and aggregator timing/error metadata. This is the SDK's
+    public per-device output shape; the dashboard wraps it in
+    ``api/app/presentation.py`` to add presentation-only fields like
+    ``tile`` and ``location``.
     """
 
     id: str
@@ -160,16 +162,10 @@ class EquipmentSnapshot(BaseModel):
     latency_ms: int | None = None
     fetch_error: FetchError | None = None
     base_url: str | None = None
-    location: Location | None = None
-    tile: Tile = Field(default_factory=Tile)
 
 
 class EquipmentList(BaseModel):
+    """Batch view: one ``EquipmentSnapshot`` per registered equipment."""
+
     equipment: list[EquipmentSnapshot]
     fetched_at: datetime
-
-
-class AggregatorHealth(BaseModel):
-    status: Literal["healthy"] = "healthy"
-    version: str
-    equipment_count: int

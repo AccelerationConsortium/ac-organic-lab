@@ -1,37 +1,40 @@
-# ac-organic-dashboard
+# ac-organic-lab
 
-Read-only monitoring dashboard for the Acceleration Consortium (AC) Organic Self-driving Lab.
+Monorepo for the Acceleration Consortium (AC) Organic Self-driving Lab platform stack: the equipment-status contract, the inventory, the Python SDK that workflows and the dashboard share, and the dashboard's web server and Next.js UI.
 
-The dashboard runs on a single Tailscale-attached server and aggregates status from each lab equipment's REST API into one normalized contract. The browser only ever talks to the dashboard server; the dashboard server is the only client that calls the equipment APIs over the lab Tailnet.
+The dashboard runs on a single Tailscale-attached server and aggregates status from each lab equipment's REST API into one normalized contract. The browser only ever talks to the dashboard server; the dashboard server is the only client that calls the equipment APIs over the lab Tailnet. Workflow code uses the same SDK directly without going through the dashboard.
 
 ## Architecture
 
 ```
-Browser  ->  Next.js (web/, port 3000)  ->  FastAPI (api/, port 8001)  ->  Equipment APIs over Tailscale
+Browser  ->  Next.js (web/, port 3000)  ->  FastAPI (api/, port 8001)  ->  ac-organic-lab-skills (skills/)  ->  Equipment APIs over Tailscale
+                                                                                       ^
+                                                       Workflow scripts ----------------+
 ```
 
+- **`skills/`** - `ac-organic-lab-skills` Python SDK. Owns the registry, polling aggregator, per-device adapters, and the workflow-facing session API. Imported by `api/` and by project workflow repos.
+- **`api/`** - FastAPI dashboard server. Thin presentation layer over `skills/`.
 - **`web/`** - Next.js 14 (App Router) + TypeScript + TanStack Query.
-- **`api/`** - FastAPI aggregator with one adapter per equipment.
 - **`docs/STATUS_SPEC.md`** - the authoritative unified equipment status contract every equipment repo must implement.
+- **`docs/ARCHITECTURE.md`** - the long-form description of the monorepo's layering and design decisions.
 - **`equipment.yaml`** - the equipment registry (committed). Tailscale hostnames are not treated as secrets.
 - **`.env`** / **`.env.example`** - real secrets only (control tokens, webhooks). Currently unused in the read-only v1.
 - **`deploy/`** - example systemd units for the two services.
 
-See [`docs/STATUS_SPEC.md`](docs/STATUS_SPEC.md) for the contract that all equipment repos must conform to.
+See [`docs/STATUS_SPEC.md`](docs/STATUS_SPEC.md) for the contract that all equipment repos must conform to, and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the system layering.
 
 ## Local development
 
-### Backend (FastAPI aggregator)
+### Python (uv workspace)
+
+The two Python packages (`skills/` and `api/`) share one `.venv` at the repo root, managed by [uv](https://docs.astral.sh/uv/):
 
 ```bash
-cd api
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-uvicorn app.main:app --reload --port 8001
+uv sync                                # creates .venv/ at the root, installs both members editable
+uv run uvicorn api.app.main:app --reload --port 8001
 ```
 
-The aggregator reads `../equipment.yaml` at startup. Override the path with `LAB_REGISTRY_PATH=/abs/path/to/equipment.yaml`.
+The aggregator reads `equipment.yaml` from the repo root at startup. Override the path with `LAB_REGISTRY_PATH=/abs/path/to/equipment.yaml`.
 
 ### Frontend (Next.js)
 
@@ -132,11 +135,10 @@ The four zones are:
 
 ## Tests
 
-Backend snapshot/contract tests:
+Python tests (both packages):
 
 ```bash
-cd api
-.venv/bin/pytest -q
+uv run pytest skills/tests api/tests -q
 ```
 
 Frontend type-check and build:
