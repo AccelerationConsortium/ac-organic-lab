@@ -238,5 +238,7 @@ PlateLoc) is the gate.
 - `docs/SKILLS_CATALOG.md` — what `Skill.name` / `allowed_actions` refer to.
 - `docs/INTERLOCKS.md` — four-layer safety model; layer 4 ships in v0.3.
 - `docs/ARCHITECTURE.md` — system layering + repo boundaries.
+- `docs/DEVICE_PC_SETUP.md` — canonical install recipe for a Windows
+  device PC (uv + NSSM); each device repo links here from its README.
 - `.cursor/plans/build_ac-organic-lab-skills_5bb34ed0.plan.md` — original
   layered plan; this file is its committed counterpart.

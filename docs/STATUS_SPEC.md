@@ -168,6 +168,8 @@ When migrating a repo to this spec, the PR should include:
 - [ ] Snapshot fixtures saved under `tests/fixtures/status_*.json` covering at least the realistic states (ready, requires_init, error, dry_run if applicable).
 - [ ] `README.md` mentions: "This repo conforms to lab status spec v1.0".
 
+For *deploying* the repo to the actual lab PC (uv environment, NSSM service registration, log paths, multi-device hosting), follow `docs/DEVICE_PC_SETUP.md`. Each device repo's README should link to that document rather than re-deriving the recipe.
+
 ## Reference Examples
 
 ### Solid doser (`dose_every_well`) - `requires_init`
