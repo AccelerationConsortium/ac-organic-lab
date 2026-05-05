@@ -75,7 +75,16 @@ class ErrorInfo(BaseModel):
 
 
 class EquipmentStatus(BaseModel):
-    """Unified equipment status envelope (spec v1.0)."""
+    """Unified equipment status envelope (spec v1.0).
+
+    The :attr:`allowed_actions` field is an optional v1.1 forward-compat hook:
+    the SDK reads it when a device reports it (so the catalog's availability
+    computation can use the device's own declaration as the source of truth)
+    but does not require it. v1.0 devices that omit it see an empty list and
+    fall back to ``equipment_status in def.requires_states`` precedence. The
+    formal v1.1 spec bump (claim/lease + ``allowed_actions`` semantics)
+    arrives in a later release.
+    """
 
     protocol_version: str = PROTOCOL_VERSION
 
@@ -90,6 +99,7 @@ class EquipmentStatus(BaseModel):
     equipment_status: EquipmentState
     message: str | None = None
     required_actions: list[str] = Field(default_factory=list)
+    allowed_actions: list[str] = Field(default_factory=list)
 
     # Timing
     device_time: datetime

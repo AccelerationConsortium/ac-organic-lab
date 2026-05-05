@@ -41,6 +41,7 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel
 
+from .catalog import Skill
 from .client import EquipmentClient as _AsyncEquipmentClient
 from .lab import Lab as _AsyncLab
 from .models import EquipmentStatus, HealthResponse, ProbeResponse
@@ -141,6 +142,14 @@ class SyncLabSession:
 
     def role(self, role_name: str) -> _SyncEquipmentClient:
         return self._wrap(self._async_session.role(role_name))
+
+    def skills(self) -> list[Skill]:
+        loop = self._loop
+        if loop is None:
+            raise RuntimeError(
+                "SyncLabSession is not active; use `with Lab.connect(...) as lab:`"
+            )
+        return loop.run_until_complete(self._async_session.skills())
 
     def _wrap(self, async_client: _AsyncEquipmentClient) -> _SyncEquipmentClient:
         if self._loop is None:

@@ -15,6 +15,7 @@ layer for control and runtime equipment state.
 from __future__ import annotations
 
 from .aggregator import EquipmentAggregator
+from .catalog import SKILL_REGISTRY, Skill, SkillDef
 from .client import EquipmentClient
 from .exceptions import (
     BadRequest,
@@ -87,6 +88,9 @@ __all__ = [
     "Registry",
     "RegistryError",
     "RequiresInit",
+    "SKILL_REGISTRY",
+    "Skill",
+    "SkillDef",
     "WaitTimeout",
     "__version__",
     "load_registry",
