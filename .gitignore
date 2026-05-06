@@ -204,3 +204,13 @@ equipment.local.yaml
 
 # Saved chat transcripts (kept locally for reference, not version-controlled)
 .chats/
+
+# Runtime state from manual / dev launchers (PID files, stdout/stderr logs).
+# Once systemd (or another supervisor) is in front, these are stale; journald
+# owns logs.
+.run/
+
+# Per-developer systemd unit overrides with hardcoded /home paths.
+# Use deploy/*.service as the canonical templates; copy to deploy/local/ and
+# edit User=, WorkingDirectory=, ExecStart=, ReadWritePaths= for your dev box.
+deploy/local/

@@ -1,6 +1,6 @@
 [Unit]
 Description=AC Organic Self-driving Lab dashboard API (FastAPI aggregator)
-Documentation=https://github.com/<your-org>/ac-organic-dashboard
+Documentation=https://github.com/AccelerationConsortium/ac-organic-dashboard
 After=network-online.target tailscaled.service
 Wants=network-online.target
 
@@ -14,7 +14,11 @@ EnvironmentFile=-/opt/ac-organic-dashboard/.env
 
 # Reads ../equipment.yaml relative to WorkingDirectory unless LAB_REGISTRY_PATH
 # is set in the EnvironmentFile.
-ExecStart=/opt/ac-organic-dashboard/api/.venv/bin/uvicorn app.main:app \
+#
+# Uses the shared uv-workspace venv at the repo root (see root pyproject.toml).
+# The editable install of `ac-organic-dashboard-api` exposes top-level `app`
+# on sys.path, so `app.main:app` resolves regardless of WorkingDirectory.
+ExecStart=/opt/ac-organic-dashboard/.venv/bin/uvicorn app.main:app \
     --host 127.0.0.1 \
     --port 8001 \
     --no-server-header \
@@ -46,7 +50,9 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
 # Allow writing only to the python bytecode cache dirs under the repo.
-ReadWritePaths=/opt/ac-organic-dashboard/api
+# Both `api/` and `skills/` are needed because both are editable installs in
+# the shared workspace venv, and CPython writes __pycache__/ next to source.
+ReadWritePaths=/opt/ac-organic-dashboard/api /opt/ac-organic-dashboard/skills
 
 [Install]
 WantedBy=multi-user.target

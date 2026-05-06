@@ -1,6 +1,6 @@
 [Unit]
 Description=AC Organic Self-driving Lab dashboard web (Next.js standalone)
-Documentation=https://github.com/<your-org>/ac-organic-dashboard
+Documentation=https://github.com/AccelerationConsortium/ac-organic-dashboard
 After=network-online.target ac-dashboard-api.service
 Wants=network-online.target
 Requires=ac-dashboard-api.service
