@@ -30,10 +30,15 @@ equipment:
     name: UFactory xArm5
     platform: hte
     kind: robot_arm
-    adapter: legacy_http
+    adapter: http
+    protocol: "1.0"
     base_url: http://xarm.tail-XXXX.ts.net:8000
     status_path: /status
     poll_timeout_seconds: 2.0
+    # The repo conforms to STATUS_SPEC v1.0 (read-only). It does not yet
+    # expose `/control/*` or claim/heartbeat/release. The SDK keeps the
+    # device read-only by leaving `do_not_call_connect: true` in place;
+    # specific unit operations will graduate to /control/* in follow-up.
     do_not_call_connect: true
     tile: { w: 2, h: 2 }
 

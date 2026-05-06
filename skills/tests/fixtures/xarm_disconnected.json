@@ -1,14 +1,19 @@
 {
   "_http_status": 200,
   "_body": {
-    "connection_state": "disconnected",
-    "arm_state": "unknown",
-    "gripper_state": "unknown",
-    "track_state": "unknown",
-    "is_alive": false,
-    "current_position": null,
-    "current_joints": null,
-    "track_position": null,
-    "last_error": null
+    "protocol_version": "1.0",
+    "equipment_id": "xarm_translocation",
+    "equipment_name": "UFactory xArm5",
+    "equipment_kind": "robot_arm",
+    "equipment_status": "requires_init",
+    "message": "Controller not instantiated. POST /connect to initialize.",
+    "required_actions": ["connect"],
+    "device_time": "2026-05-06T14:00:00Z",
+    "components": {
+      "arm":          {"connected": false, "state": "disabled"},
+      "gripper":      {"connected": false, "state": "disabled"},
+      "track":        {"connected": false, "state": "disabled"},
+      "force_torque": {"connected": false, "state": "disabled"}
+    }
   }
 }

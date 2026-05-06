@@ -73,9 +73,15 @@ Each per-device repo is migrated independently. The dashboard's
    endpoints to `/control/*`, switch envelope.
 4. **`fume_hood_actuator`** — Flask → FastAPI port plus spec envelope.
    Bigger lift; do after the FastAPI repos are clean.
-5. **`xarm_translocation`** — defer. Lives on a private subnet; needs the
-   gateway-PC shim discussion resolved first. Stays
-   `do_not_call_connect: true` in `equipment.yaml`.
+5. **`xarm_translocation`** — read-only v1.0 conformance done. The repo
+   exposes the standard `/`, `/health`, `/status` surface; the dashboard
+   reads it through `adapter: http`. The xArm-specific control routes
+   (`/move/*`, `/gripper/*`, `/track/*`, `/force-torque/*`, `/connect`,
+   `/disconnect`) are unchanged. `do_not_call_connect: true` stays in
+   `equipment.yaml` because there is no `/control/*` skill surface yet.
+   Promotion of stable unit operations to `/control/*` and the v1.1
+   claim/lease bump are deferred until the gateway-PC shim discussion
+   is resolved.
 
 ### Per-device migration checklist (v1.0)
 
@@ -190,10 +196,29 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 
 #### `xarm_translocation`
 
-- Out of scope for this round. Keep `do_not_call_connect: true`. The
-  gateway-PC shim architecture (xArm sits on a private subnet behind a
-  PC running a thin REST proxy) needs to be decided before any
-  spec-conformance work makes sense.
+- v1.0 read-only conformance: ✅ landed. The FastAPI service in
+  `xarm-translocation` exposes `GET /`, `GET /health`, `GET /status`
+  via the standard `EquipmentStatus` envelope (see
+  `xarm-translocation/src/core/models.py` and `status_builder.py`).
+  The web UI moved from `/` to `/web/`. Browser status fetches and
+  WebSocket pushes both carry the spec envelope.
+- `equipment.yaml` flipped from `adapter: legacy_http` to
+  `adapter: http`, with `protocol: "1.0"`. `do_not_call_connect: true`
+  is retained because the SDK still has no skill catalog or
+  `/control/*` surface for the xArm.
+- `LegacyXArmAdapter` is marked deprecated in
+  `skills/src/lab_skills/status_adapters/legacy.py` and is no longer
+  wired in the factory; it stays importable for one release cycle as
+  a rollback path, then deletes in a follow-up PR.
+- Open work, not in this round:
+  - [ ] Resolve the gateway-PC shim architecture (xArm on a private
+    subnet behind a PC running a thin REST proxy) before exposing any
+    `/control/*`.
+  - [ ] Promote one unit operation at a time to `/control/<op>` and
+    add a matching `SkillDef` in
+    `skills/src/lab_skills/skill_catalog/robot_arm.py`.
+  - [ ] STATUS_SPEC v1.1 (claim/heartbeat/release,
+    `allowed_actions`) once at least one `/control/*` action exists.
 
 #### Mock-only entries
 

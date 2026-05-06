@@ -14,7 +14,6 @@ from .legacy import (
     LegacyDoseEveryWellAdapter,
     LegacyFilterEveryWellAdapter,
     LegacyFumeHoodActuatorAdapter,
-    LegacyXArmAdapter,
 )
 from .mock import MockAdapter
 
@@ -23,7 +22,11 @@ _LEGACY_BY_ID: dict[str, type[EquipmentAdapter]] = {
     "dose_every_well": LegacyDoseEveryWellAdapter,
     "filter_every_well": LegacyFilterEveryWellAdapter,
     "fume_hood_actuator": LegacyFumeHoodActuatorAdapter,
-    "xarm_translocation": LegacyXArmAdapter,
+    # xarm_translocation now conforms to STATUS_SPEC v1.0 (see
+    # ``xarm-translocation/src/core/models.py``); registered as
+    # ``adapter: http`` in equipment.yaml and routed through
+    # ``HttpStatusAdapter`` directly. The ``LegacyXArmAdapter`` remains
+    # importable from ``.legacy`` for one release cycle for rollback.
 }
 
 

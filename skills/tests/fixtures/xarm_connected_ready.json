@@ -1,15 +1,32 @@
 {
   "_http_status": 200,
   "_body": {
-    "connection_state": "connected",
-    "connection_details": {"profile": "demo", "host": "192.168.1.213"},
-    "arm_state": "idle",
-    "gripper_state": "open",
-    "track_state": "idle",
-    "is_alive": true,
-    "current_position": {"x": 200.0, "y": 0.0, "z": 150.0, "roll": 180.0, "pitch": 0.0, "yaw": 0.0},
-    "current_joints": [0, 0, 0, 0, 0, 0, 0],
-    "track_position": {"value": 0.0, "unit": "mm"},
-    "last_error": null
+    "protocol_version": "1.0",
+    "equipment_id": "xarm_translocation",
+    "equipment_name": "UFactory xArm5",
+    "equipment_kind": "robot_arm",
+    "equipment_status": "ready",
+    "message": "Idle",
+    "required_actions": [],
+    "device_time": "2026-05-06T14:00:00Z",
+    "uptime_seconds": 1234.5,
+    "components": {
+      "arm":          {"connected": true, "state": "enabled"},
+      "gripper":      {"connected": true, "state": "enabled", "message": "bio"},
+      "track":        {"connected": true, "state": "enabled"}
+    },
+    "metrics": {
+      "track_position": {"value": 0.0,   "unit": "mm"},
+      "tcp_speed":      {"value": 100.0, "unit": "mm/s"},
+      "angle_speed":    {"value": 20.0,  "unit": "deg/s"}
+    },
+    "details": {
+      "current_position": [200.0, 0.0, 150.0, 180.0, 0.0, 0.0],
+      "current_joints":   [0, 0, 0, 0, 0],
+      "simulation_mode":  false,
+      "model_name":       "xArm5",
+      "num_joints":       5,
+      "gripper_type":     "bio"
+    }
   }
 }

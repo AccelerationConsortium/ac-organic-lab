@@ -16,7 +16,6 @@ from lab_skills.status_adapters import (
     LegacyDoseEveryWellAdapter,
     LegacyFilterEveryWellAdapter,
     LegacyFumeHoodActuatorAdapter,
-    LegacyXArmAdapter,
     MockAdapter,
 )
 from lab_skills.registry import EquipmentEntry
@@ -173,14 +172,24 @@ async def test_fume_hood_busy(load_fixture, client) -> None:
 
 # ---------------------------------------------------------------------------
 # xarm_translocation
+#
+# The repo now conforms to STATUS_SPEC v1.0 (see ``xarm-translocation``); the
+# fixtures below capture the spec ``EquipmentStatus`` envelope exactly as the
+# device emits it. Routed through the standard ``HttpStatusAdapter`` (no
+# bespoke translator) by ``equipment.yaml``: ``adapter: http``.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_xarm_disconnected(load_fixture, client) -> None:
     http_status, body = load_fixture("xarm_disconnected")
-    entry = _entry(id="xarm_translocation", kind="robot_arm", do_not_call_connect=True)
-    adapter = LegacyXArmAdapter(entry)
+    entry = _entry(
+        id="xarm_translocation",
+        kind="robot_arm",
+        adapter="http",
+        do_not_call_connect=True,
+    )
+    adapter = HttpStatusAdapter(entry)
 
     with respx.mock(base_url=entry.base_url) as router:
         router.get("/status").mock(return_value=httpx.Response(http_status, json=body))
@@ -196,16 +205,44 @@ async def test_xarm_disconnected(load_fixture, client) -> None:
 @pytest.mark.asyncio
 async def test_xarm_connected_ready(load_fixture, client) -> None:
     http_status, body = load_fixture("xarm_connected_ready")
-    entry = _entry(id="xarm_translocation", kind="robot_arm", do_not_call_connect=True)
-    adapter = LegacyXArmAdapter(entry)
+    entry = _entry(
+        id="xarm_translocation",
+        kind="robot_arm",
+        adapter="http",
+        do_not_call_connect=True,
+    )
+    adapter = HttpStatusAdapter(entry)
 
     with respx.mock(base_url=entry.base_url) as router:
         router.get("/status").mock(return_value=httpx.Response(http_status, json=body))
         result = await adapter.fetch(client)
 
+    assert result.error is None
     assert result.status.equipment_status == "ready"
     assert result.status.components["arm"].connected
-    assert result.status.components["arm"].state == "idle"
+    assert result.status.components["arm"].state == "enabled"
+    assert result.status.metrics["track_position"].unit == "mm"
+    assert result.status.details["model_name"] == "xArm5"
+
+
+@pytest.mark.asyncio
+async def test_xarm_busy(load_fixture, client) -> None:
+    http_status, body = load_fixture("xarm_busy")
+    entry = _entry(
+        id="xarm_translocation",
+        kind="robot_arm",
+        adapter="http",
+        do_not_call_connect=True,
+    )
+    adapter = HttpStatusAdapter(entry)
+
+    with respx.mock(base_url=entry.base_url) as router:
+        router.get("/status").mock(return_value=httpx.Response(http_status, json=body))
+        result = await adapter.fetch(client)
+
+    assert result.error is None
+    assert result.status.equipment_status == "busy"
+    assert result.status.metrics["track_position"].value == 237.0
 
 
 # ---------------------------------------------------------------------------

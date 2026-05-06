@@ -366,7 +366,14 @@ class LegacyFumeHoodActuatorAdapter(EquipmentAdapter):
 
 
 class LegacyXArmAdapter(EquipmentAdapter):
-    """Adapter for `xarm-translocation` before migration.
+    """**Deprecated.** Adapter for `xarm-translocation` before its migration to STATUS_SPEC v1.0.
+
+    The `xarm-translocation` repo now conforms to STATUS_SPEC v1.0 (see
+    `xarm-translocation/src/core/models.py` and the v1.0 conformance note
+    in its README). `equipment.yaml` registers it as ``adapter: http`` and
+    the factory routes through ``HttpStatusAdapter`` directly. This class
+    is retained for one release cycle as a rollback path -- it will be
+    deleted in a follow-up PR once the dashboard verifies green for 24h.
 
     Read-only: must NEVER call POST /connect, even when the controller is
     disconnected. Maps `connection_state: "disconnected"` to `requires_init`
