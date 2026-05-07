@@ -110,7 +110,11 @@ equipment:
     name: Agilent PlateLoc
     platform: hte
     kind: plate_sealer
-    adapter: mock
+    adapter: http
+    protocol: "1.1"
+    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8010
+    status_path: /status
+    poll_timeout_seconds: 2.0
 
   # Environmental sensor stations. Add one entry per physical sensor unit.
   # The lab map is rotated 90° clockwise from the building plan, so on screen
