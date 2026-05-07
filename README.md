@@ -161,6 +161,9 @@ See [`deploy/README.md`](deploy/README.md) for:
 - Sandboxing directives included in each unit.
 - A troubleshooting table.
 
+For equipment onboarding and maintenance/offline procedures, see
+[`docs/EQUIPMENT_INTEGRATION.md`](docs/EQUIPMENT_INTEGRATION.md).
+
 The unit files themselves live at [`deploy/ac-dashboard-api.service`](deploy/ac-dashboard-api.service) and [`deploy/ac-dashboard-web.service`](deploy/ac-dashboard-web.service). Both set `Restart=on-failure`, journal logging, `LimitNOFILE=65536`, and standard systemd hardening directives (`ProtectSystem=strict`, `NoNewPrivileges`, etc.).
 
 ## Status

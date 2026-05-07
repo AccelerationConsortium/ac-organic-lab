@@ -32,7 +32,7 @@ equipment:
     kind: robot_arm
     adapter: http
     protocol: "1.0"
-    base_url: http://xarm.tail-XXXX.ts.net:8000
+    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000
     status_path: /status
     poll_timeout_seconds: 2.0
     # The repo conforms to STATUS_SPEC v1.0 (read-only). It does not yet
@@ -48,6 +48,10 @@ equipment:
     kind: liquid_handler
     adapter: mock
     tile: { w: 2, h: 2 }
+    maintenance:
+      reason: "Awaiting replacement seal foil"
+      until: "2026-05-12"
+      contact: "Yang Cao"
 
   - id: fume_hood_actuator
     name: Fume Hood Actuator

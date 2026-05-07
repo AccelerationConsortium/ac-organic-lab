@@ -37,6 +37,18 @@ def test_lookup_by_id() -> None:
     assert registry.by_id("does-not-exist") is None
 
 
+def test_committed_registry_has_no_tail_placeholder_hostnames() -> None:
+    """Guardrail: committed registry must not ship with unresolved placeholders.
+
+    This catches accidental deploys where `tail-XXXX` was never substituted with
+    a real Tailscale MagicDNS name (or an explicit tailnet IP when DNS is not
+    available on the host).
+    """
+
+    text = (REPO_ROOT / "equipment.yaml").read_text(encoding="utf-8")
+    assert "tail-XXXX" not in text
+
+
 def test_committed_registry_defaults_to_enabled_no_maintenance() -> None:
     """The repo's committed equipment.yaml has no maintenance flags today;
     every entry should default to ``enabled=True`` and ``maintenance=None``.
