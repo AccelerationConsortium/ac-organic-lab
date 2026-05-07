@@ -53,7 +53,7 @@ export function EquipmentStatusCard({ snapshot }: { snapshot: EquipmentSnapshot 
         </div>
       )}
 
-      <footer className="flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-ink-subtle dark:border-slate-800 dark:text-slate-500">
+      <footer className="mt-auto flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-ink-subtle dark:border-slate-800 dark:text-slate-500">
         <span>
           {snapshot.latency_ms != null ? `${snapshot.latency_ms} ms` : "—"}
         </span>

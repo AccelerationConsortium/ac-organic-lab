@@ -32,6 +32,7 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
         return (
           <div
             key={snapshot.id}
+            className="h-full"
             // Browsers cap span values at the available column count, so
             // span:4 on a 2-col grid just becomes full-width.
             style={{ gridColumn: `span ${w}`, gridRow: `span ${h}` }}
