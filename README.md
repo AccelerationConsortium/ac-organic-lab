@@ -4,6 +4,10 @@ Monorepo for the Acceleration Consortium (AC) Organic Self-driving Lab platform 
 
 The dashboard runs on a single Tailscale-attached server and aggregates status from each lab equipment's REST API into one normalized contract. The browser only ever talks to the dashboard server; the dashboard server is the only client that calls the equipment APIs over the lab Tailnet. Workflow code uses the same SDK directly without going through the dashboard.
 
+## Dashboard Preview
+
+![Organic Self-driving Lab dashboard preview](docs/images/dashboard-preview.png)
+
 ## Architecture
 
 ```
