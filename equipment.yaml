@@ -67,7 +67,12 @@ equipment:
     name: Agilent UPLC-MS
     platform: hte
     kind: hplc
-    adapter: mock
+    adapter: http
+    protocol: "1.0"
+    base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8010
+    status_path: /status
+    poll_timeout_seconds: 2.0
+    do_not_call_connect: true
 
   - id: dose_every_well
     name: Dose Every Well
