@@ -43,6 +43,9 @@ EquipmentKind = Literal[
     "plate_reader",
     "plate_sealer",
     "plate_stacker",
+    "camera",        # PTZ + lenses, fronted by kasa-tapo-services
+    "smart_plug",    # single-outlet (e.g. Kasa HS103)
+    "power_strip",   # multi-outlet (e.g. Kasa HS300)
     "other",
 ]
 
@@ -258,5 +261,63 @@ For *deploying* the repo to the actual lab PC (uv environment, NSSM service regi
     "humidity":    {"value": 45.1, "unit": "%RH"},
     "voc":         {"value": 120,  "unit": "ppb"}
   }
+}
+```
+
+### Tapo PTZ camera (`camera`) - `ready`
+
+Cameras are hosted by the `kasa-tapo-services` gateway (one FastAPI process for many devices). Per-camera, `details` carries the lens list, the preset list, and the current privacy/streaming flags so the frontend tile can render itself without a second round-trip. One `ComponentStatus` is published per physical lens under `lens_<id>`.
+
+```json
+{
+  "protocol_version": "1.0",
+  "equipment_id": "cam_lab499_west",
+  "equipment_name": "Lab 499 (West) Camera",
+  "equipment_kind": "camera",
+  "host": "192.168.1.42",
+  "equipment_status": "ready",
+  "device_time": "2026-04-29T22:50:01Z",
+  "components": {
+    "lens_wide": {"connected": true, "state": "connected", "message": "Wide"},
+    "lens_tele": {"connected": true, "state": "connected", "message": "Tele"}
+  },
+  "allowed_actions": ["ptz", "preset/save", "preset/goto", "preset/{id}", "privacy", "streaming"],
+  "details": {
+    "lenses": [
+      {"id": "wide", "label": "Wide", "rtsp_path": "stream1", "mse_url": "/streams/api/ws?src=cam_lab499_west_wide", "stream_connected": true},
+      {"id": "tele", "label": "Tele", "rtsp_path": "stream2", "mse_url": "/streams/api/ws?src=cam_lab499_west_tele", "stream_connected": true}
+    ],
+    "presets": [
+      {"id": "1", "name": "home"},
+      {"id": "2", "name": "bench"}
+    ],
+    "privacy_mode": false,
+    "streaming_enabled": true,
+    "onvif_reachable": true,
+    "tapo_reachable": true,
+    "go2rtc_reachable": true
+  }
+}
+```
+
+### Kasa HS300 power strip (`power_strip`) - `ready`
+
+Power strips report one `ComponentStatus` per outlet; the dashboard renders the strip as a 6-row grid keyed by `outlet_<index>`. Per-outlet labels live in the gateway's `devices.yaml` and flow through to `components[outlet_*].message`.
+
+```json
+{
+  "protocol_version": "1.0",
+  "equipment_id": "plug_hotplate_strip",
+  "equipment_name": "HTE Bench Hotplate Strip",
+  "equipment_kind": "power_strip",
+  "host": "192.168.1.51",
+  "equipment_status": "ready",
+  "device_time": "2026-04-29T22:50:01Z",
+  "components": {
+    "outlet_0": {"connected": true, "state": "on",  "message": "Hotplate A"},
+    "outlet_1": {"connected": true, "state": "off", "message": "Hotplate B"},
+    "outlet_2": {"connected": true, "state": "on",  "message": "Stirrer"}
+  },
+  "allowed_actions": ["on", "off", "toggle"]
 }
 ```

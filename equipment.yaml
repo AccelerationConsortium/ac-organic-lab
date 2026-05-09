@@ -26,6 +26,35 @@ equipment:
   #   - Set `w: 4` for a full-row banner; `w: 2, h: 2` for a square hero.
   # ---------------------------------------------------------------------
 
+  # The HTE camera is the platform's hero tile: full-row width
+  # (`w: 4`) and 4 rows tall (~880 px), enough for the 16:9 live feed
+  # plus the PTZ pad / preset controls below it. Hosted by
+  # `kasa-tapo-services` (see the trailing "Cameras and smart plugs"
+  # comment block below).
+  - id: cam_hte_tapo_c245
+    name: HTE Camera
+    platform: hte
+    kind: camera
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8002
+    status_path: /cameras/cam_hte_tapo_c245/status
+    # Cameras need a longer poll budget than the 2s default - the gateway
+    # talks to the camera over ONVIF (SOAP) on every status poll, which
+    # can take 1-2 s on its own.
+    poll_timeout_seconds: 5.0
+    tile: { w: 2, h: 3 }
+    camera:
+      host: 192.168.8.200
+      onvif_port: 2020
+      rtsp_port: 554
+      lenses:
+        # Per TP-Link's RTSP/ONVIF FAQ: dual-lens C245D exposes wide on
+        # /stream1 and tele on /stream6 (non-adjacent paths). /stream2 is
+        # the SD copy of the wide lens, NOT the tele lens.
+        - { id: wide, label: Wide, rtsp_path: stream1 }
+        - { id: tele, label: Tele, rtsp_path: stream6 }
+
   - id: xarm_translocation
     name: UFactory xArm5
     platform: hte
@@ -167,3 +196,19 @@ equipment:
     kind: environmental_sensor
     adapter: mock
     location: { x: 80, y: 75, label: "Lab 499 · East" }
+
+  # ---------------------------------------------------------------------
+  # Cameras and smart plugs hosted by `kasa-tapo-services`.
+  #
+  # The gateway lives at http://127.0.0.1:8002 on the dashboard host. It
+  # publishes a STATUS_SPEC v1.0 surface per device:
+  #   /cameras/{id}/{,/health,/status,/control/*}
+  #   /plugs/{id}/{,/health,/status,/control/*}
+  # The dashboard's aggregator polls the per-device /status path; the
+  # ``/control/*`` POST bodies are forwarded by the API server's
+  # control-passthrough route (see `api/app/control.py`).
+  #
+  # The HTE Tapo C245D camera is registered above under the HTE block so
+  # it shows up both in the HTE PlatformCard (live preview) and on the
+  # dedicated `/cameras` page. Add new cameras / plugs here.
+  # ---------------------------------------------------------------------

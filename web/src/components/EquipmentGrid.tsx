@@ -1,4 +1,5 @@
 import type { EquipmentSnapshot } from "@/types/api";
+import { CameraTile } from "./CameraTile";
 import { EquipmentStatusCard } from "./EquipmentStatusCard";
 
 /**
@@ -8,8 +9,17 @@ import { EquipmentStatusCard } from "./EquipmentStatusCard";
  *   - lg+  : 4 columns, each row is a fixed 220px so `tile.h` translates to
  *            visible height (a 2×2 is exactly twice as tall as a 2×1 plus the
  *            gap between rows). Cards `overflow-hidden` to keep the tile look.
+ *            Camera tiles want more vertical room than the standard 220 px
+ *            row gives them - express that in the YAML by bumping `tile.h`
+ *            (`{ w: 4, h: 4 }` is what the HTE camera uses to land as a
+ *            full-width 880 px hero at the top of the grid).
  *   - sm   : 2 columns, content-driven heights, col-span capped at 2.
  *   - <sm  : 1 column, all tiles full-width and content-tall.
+ *
+ * The renderer dispatches on `kind`: cameras get the full `CameraTile`
+ * (live video, PTZ pad, presets, privacy/streaming toggles); everything
+ * else uses the generic `EquipmentStatusCard`. Adding a new specialised
+ * tile type in the future is a matter of growing this dispatch.
  */
 const ROW_HEIGHT_PX = 220;
 
@@ -37,7 +47,11 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
             // span:4 on a 2-col grid just becomes full-width.
             style={{ gridColumn: `span ${w}`, gridRow: `span ${h}` }}
           >
-            <EquipmentStatusCard snapshot={snapshot} />
+            {snapshot.kind === "camera" ? (
+              <CameraTile snapshot={snapshot} />
+            ) : (
+              <EquipmentStatusCard snapshot={snapshot} />
+            )}
           </div>
         );
       })}

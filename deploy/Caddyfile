@@ -9,6 +9,24 @@
 lab-dashboard.tail-XXXX.ts.net {
     encode gzip
 
+    # go2rtc - WebSocket-upgrade-aware reverse proxy for the camera live
+    # video stream. The browser hits `wss://<host>/streams/api/ws?src=...`;
+    # Caddy forwards to go2rtc on :1984 with the WS upgrade preserved.
+    handle_path /streams/* {
+        reverse_proxy 127.0.0.1:1984
+    }
+
+    # Direct gateway access for development. Production traffic goes
+    # through the aggregator at /api/equipment/{id}/control/*; this block
+    # is the dev-only escape hatch and can be removed for a hardened
+    # deploy.
+    handle /api/cameras/* {
+        reverse_proxy 127.0.0.1:8002
+    }
+    handle /api/plugs/* {
+        reverse_proxy 127.0.0.1:8002
+    }
+
     # Next.js handles both / and /api/* (the latter via its rewrite to FastAPI).
     reverse_proxy 127.0.0.1:3000
 }

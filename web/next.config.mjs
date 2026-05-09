@@ -6,6 +6,12 @@
 // production deploys end up using unless DASHBOARD_API_BASE is set.
 const apiBase = process.env.DASHBOARD_API_BASE ?? "http://127.0.0.1:8001";
 
+// go2rtc base URL — drives the `/streams/*` rewrite that the camera tile's
+// MsePlayer relies on for live video. In production Caddy fronts this; the
+// dev rewrite below is what makes `npm run dev` work end-to-end without a
+// reverse proxy.
+const go2rtcBase = process.env.GO2RTC_BASE ?? "http://127.0.0.1:1984";
+
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
@@ -14,6 +20,10 @@ const nextConfig = {
       {
         source: "/api/:path*",
         destination: `${apiBase}/api/:path*`,
+      },
+      {
+        source: "/streams/:path*",
+        destination: `${go2rtcBase}/:path*`,
       },
     ];
   },

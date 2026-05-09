@@ -37,6 +37,13 @@ EquipmentKind = Literal[
     "plate_reader",
     "plate_sealer",
     "plate_stacker",
+    # Lab-LAN devices fronted by ``kasa-tapo-services``. Cameras carry a
+    # ``details.lenses[]`` + ``details.presets[]`` block; plugs carry one
+    # ``ComponentStatus`` per outlet (``outlet_0`` … ``outlet_5`` for the
+    # HS300, ``plug`` for HS103/HS105/HS110 single-outlet devices).
+    "camera",
+    "smart_plug",
+    "power_strip",
     "other",
 ]
 

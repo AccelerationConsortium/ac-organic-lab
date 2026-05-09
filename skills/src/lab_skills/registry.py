@@ -47,6 +47,42 @@ class Maintenance(BaseModel):
     contact: str | None = None
 
 
+class CameraLens(BaseModel):
+    """One physical lens on a multi-lens camera (``kind: camera``)."""
+
+    id: str
+    label: str
+    rtsp_path: str = "stream1"
+
+
+class CameraConfig(BaseModel):
+    """Optional ``camera:`` block on entries with ``kind: camera``.
+
+    Mirrors the gateway's ``devices.yaml``. The dashboard reads it for the
+    lens-tab labels in the camera tile and the go2rtc stream-name
+    convention (``<equipment_id>_<lens_id>``).
+    """
+
+    host: str
+    onvif_port: int = 2020
+    rtsp_port: int = 554
+    lenses: list[CameraLens] = Field(default_factory=list)
+
+
+class PlugOutlet(BaseModel):
+    """One labelled outlet on a multi-outlet plug (``kind: power_strip``)."""
+
+    index: int = Field(ge=0, le=31)
+    label: str | None = None
+
+
+class PlugConfig(BaseModel):
+    """Optional ``plug:`` block on ``smart_plug`` and ``power_strip`` entries."""
+
+    host: str
+    outlets: list[PlugOutlet] = Field(default_factory=list)
+
+
 class EquipmentEntry(BaseModel):
     """One device's entry in ``equipment.yaml`` (SDK view).
 
@@ -78,6 +114,13 @@ class EquipmentEntry(BaseModel):
     # the dashboard can show its tile in maintenance state.
     enabled: bool = True
     maintenance: Maintenance | None = None
+
+    # Optional kind-specific blocks. Cameras emit lens info; multi-outlet
+    # plugs emit per-outlet labels. Both blocks are dashboard-only -
+    # neither the SDK's session API nor the aggregator looks at them; the
+    # camera tile in ``web/`` reads them through ``EquipmentSnapshot``.
+    camera: CameraConfig | None = None
+    plug: PlugConfig | None = None
 
     extras: dict = Field(default_factory=dict)
 

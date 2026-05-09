@@ -152,6 +152,46 @@ directory inside `/opt/ac-organic-dashboard/`.
   API stops, the web service stops too. Both are set to
   `Restart=on-failure` with a 3s backoff.
 
+## Optional: cameras + smart plugs (`kasa-tapo-services`)
+
+Cameras (Tapo C200/C210/C220/C245D) and Kasa smart plugs (HS103,
+HS300) live on the lab LAN and don't speak HTTP natively, so a
+companion gateway translates them. Deploy the
+[`kasa-tapo-services`](https://github.com/cyrilcaoyang/kasa_tapo_services)
+package onto the **same** dashboard host:
+
+* `kasa-tapo-services.service` (gateway, port `8002`) - exposes a
+  STATUS_SPEC v1.0 surface plus `/control/{ptz,preset/*,privacy,
+  streaming,snapshot,recording/*}` for cameras.
+* `ac-go2rtc.service` (port `1984`) - converts each camera's RTSP feed
+  to MSE / WebSockets so the browser can play it without a plugin.
+
+Once both services are running, register each device in this repo's
+`equipment.yaml` with `adapter: http`, `base_url: http://127.0.0.1:8002`
+and `status_path: /cameras/<id>/status` (or `/plugs/<id>/status`). The
+camera tile, PTZ pad, preset selector, and snapshot/record buttons
+appear automatically inside whichever platform's panel the camera is
+listed under (and on `/platforms/<platform>`).
+
+The dashboard's `api/app/control.py` proxies the browser's calls
+through to the gateway:
+
+```
+POST /api/equipment/<id>/control/snapshot           ->  POST :8002/cameras/<id>/control/snapshot
+POST /api/equipment/<id>/control/recording/start    ->  POST :8002/cameras/<id>/control/recording/start
+GET  /api/equipment/<id>/media                      ->  GET  :8002/cameras/<id>/media
+GET  /api/equipment/<id>/media/{rest}               ->  streamed GET  :8002/cameras/<id>/media/{rest}
+```
+
+Caddy already covers this via the existing `reverse_proxy 127.0.0.1:3000`
+block (everything `/api/*` flows through the API). The optional
+`/streams/*` block in [`Caddyfile`](Caddyfile) is what gives the browser
+WebSocket access to go2rtc.
+
+For storage paths (snapshots and recordings on disk), `ffmpeg` install,
+and the systemd unit details, see
+[`kasa_tapo_services/deploy/README.md`](https://github.com/cyrilcaoyang/kasa_tapo_services/blob/main/deploy/README.md).
+
 ## Healthchecks / monitoring
 
 The aggregator exposes:

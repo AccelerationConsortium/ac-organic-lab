@@ -1,6 +1,11 @@
 import Link from "next/link";
-import type { EquipmentSnapshot } from "@/types/api";
+import type {
+  CameraDetails,
+  EquipmentSnapshot,
+  LensStatusEntry,
+} from "@/types/api";
 import { kindLabel } from "@/lib/format";
+import { MsePlayer } from "./MsePlayer";
 import { StatusPill } from "./StatusPill";
 
 function VideoFeedPlaceholder({ label }: { label: string }) {
@@ -24,6 +29,47 @@ function VideoFeedPlaceholder({ label }: { label: string }) {
           Video feed placeholder
         </span>
         <span className="text-[10px] text-slate-600">{label}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Live preview for the platform's camera (if any). Picks the first lens,
+ * disables the player when the camera is in privacy mode or has streaming
+ * turned off, and overlays the camera name + a deep link to `/cameras` for
+ * full PTZ/preset controls. Falls back to the placeholder if the camera is
+ * not yet ready (no lens, no MSE URL).
+ */
+function PlatformCameraPreview({ camera }: { camera: EquipmentSnapshot }) {
+  const details = (camera.status.details ?? {}) as Partial<CameraDetails>;
+  const lenses: LensStatusEntry[] = Array.isArray(details.lenses)
+    ? details.lenses
+    : [];
+  const lens = lenses[0] ?? null;
+  const streamingEnabled = details.streaming_enabled !== false;
+  const privacyMode = Boolean(details.privacy_mode);
+
+  if (!lens?.mse_url) {
+    return <VideoFeedPlaceholder label={camera.id} />;
+  }
+
+  return (
+    <div className="relative">
+      <MsePlayer
+        src={lens.mse_url}
+        disabled={!streamingEnabled || privacyMode}
+      />
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2">
+        <span className="pointer-events-auto rounded-md bg-slate-900/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-100 backdrop-blur-sm">
+          {camera.name} · {lens.label}
+        </span>
+        <Link
+          href={`/platforms/${camera.platform}`}
+          className="pointer-events-auto rounded-md bg-slate-900/70 px-2 py-0.5 text-[10px] font-medium text-sky-200 backdrop-blur-sm hover:text-sky-100"
+        >
+          PTZ →
+        </Link>
       </div>
     </div>
   );
@@ -56,6 +102,14 @@ export function PlatformCard({
   href?: string;
   snapshots: EquipmentSnapshot[];
 }) {
+  // The platform's camera (if any) drives the preview region; the rest
+  // populates the equipment list. We keep the camera out of the row list
+  // so it isn't shown twice.
+  const camera = snapshots.find((s) => s.kind === "camera") ?? null;
+  const nonCameraSnapshots = camera
+    ? snapshots.filter((s) => s.id !== camera.id)
+    : snapshots;
+
   return (
     <article className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-surface-raised p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <header className="flex items-start justify-between gap-3">
@@ -79,19 +133,23 @@ export function PlatformCard({
         )}
       </header>
 
-      <VideoFeedPlaceholder label={id} />
+      {camera ? (
+        <PlatformCameraPreview camera={camera} />
+      ) : (
+        <VideoFeedPlaceholder label={id} />
+      )}
 
       <div>
         <h4 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-500">
-          Equipment ({snapshots.length})
+          Equipment ({nonCameraSnapshots.length})
         </h4>
-        {snapshots.length === 0 ? (
+        {nonCameraSnapshots.length === 0 ? (
           <p className="text-sm text-ink-subtle dark:text-slate-500">
             No equipment registered for this platform.
           </p>
         ) : (
           <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {snapshots.map((s) => (
+            {nonCameraSnapshots.map((s) => (
               <EquipmentRow key={s.id} snapshot={s} />
             ))}
           </ul>

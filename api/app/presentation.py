@@ -24,9 +24,11 @@ import yaml
 from pydantic import BaseModel, Field
 
 from lab_skills import (
+    CameraConfig,
     EquipmentList as SkillEquipmentList,
     EquipmentSnapshot as SkillEquipmentSnapshot,
     Maintenance,
+    PlugConfig,
     Registry,
     load_registry,
 )
@@ -72,15 +74,21 @@ class DashboardEquipmentOverride(BaseModel):
 class EquipmentSnapshot(SkillEquipmentSnapshot):
     """Dashboard-side snapshot: the SDK's snapshot decorated with presentation
     fields (``tile``, ``location``) and a mirror of the registry entry's
-    ``enabled`` / ``maintenance`` fields so the dashboard response shape stays
-    informative. Tile UI rendering of the maintenance state is a tracked
-    follow-up.
+    ``enabled`` / ``maintenance`` / ``camera`` / ``plug`` fields so the
+    dashboard response shape stays informative. Tile UI rendering of the
+    maintenance state is a tracked follow-up.
     """
 
     location: Location | None = None
     tile: Tile = Field(default_factory=Tile)
     enabled: bool = True
     maintenance: Maintenance | None = None
+    # Kind-specific registry blocks. Cameras carry lens labels; plugs
+    # carry per-outlet labels. Both are surfaced verbatim from
+    # equipment.yaml; the live state lives in ``status.details`` /
+    # ``status.components``.
+    camera: CameraConfig | None = None
+    plug: PlugConfig | None = None
 
 
 class EquipmentList(BaseModel):
@@ -157,6 +165,8 @@ def _snapshot(
     entry = registry.by_id(sdk_snapshot.id)
     enabled = entry.enabled if entry is not None else True
     maintenance = entry.maintenance if entry is not None else None
+    camera = entry.camera if entry is not None else None
+    plug = entry.plug if entry is not None else None
     location = override.location if override is not None else None
     tile = override.tile if override is not None else Tile()
 
@@ -177,6 +187,8 @@ def _snapshot(
         tile=tile,
         enabled=enabled,
         maintenance=maintenance,
+        camera=camera,
+        plug=plug,
     )
 
 

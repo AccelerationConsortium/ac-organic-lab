@@ -35,10 +35,14 @@ The two Python packages (`skills/` and `api/`) share one `.venv` at the repo roo
 
 ```bash
 uv sync                                # creates .venv/ at the root, installs both members editable
-uv run uvicorn api.app.main:app --reload --port 8001
+uv run uvicorn api.app.main:app --reload \
+    --reload-include "*.py" --reload-include "*.yaml" --reload-include "*.yml" \
+    --port 8001
 ```
 
 The aggregator reads `equipment.yaml` from the repo root at startup. Override the path with `LAB_REGISTRY_PATH=/abs/path/to/equipment.yaml`.
+
+The extra `--reload-include` flags are required: `uvicorn --reload` only watches `*.py` by default, so YAML edits would otherwise need a manual restart. With them set, saving `equipment.yaml` triggers an automatic API restart and the browser picks up the change on its next poll (no manual refresh needed).
 
 ### Frontend (Next.js)
 
@@ -170,8 +174,42 @@ For equipment onboarding and maintenance/offline procedures, see
 
 The unit files themselves live at [`deploy/ac-dashboard-api.service`](deploy/ac-dashboard-api.service) and [`deploy/ac-dashboard-web.service`](deploy/ac-dashboard-web.service). Both set `Restart=on-failure`, journal logging, `LimitNOFILE=65536`, and standard systemd hardening directives (`ProtectSystem=strict`, `NoNewPrivileges`, etc.).
 
+## Cameras and smart plugs
+
+Tapo cameras and Kasa smart plugs are integrated through a companion
+gateway service ([`kasa-tapo-services`](https://github.com/cyrilcaoyang/kasa_tapo_services))
+that translates the proprietary device protocols into the same
+STATUS_SPEC v1.0 HTTP envelope as every other piece of equipment.
+
+When a camera is registered in `equipment.yaml` with `kind: camera`,
+the dashboard renders a richer tile on its platform panel:
+
+- live MSE video feed (active lens), with a Wide/Tele tab strip on
+  dual-lens models;
+- 8-direction PTZ pad on the left;
+- preset selector + "Save current view as…" in the middle;
+- snapshot, record (start/stop/cancel), and "Recent captures →" link
+  on the right;
+- Streaming / Privacy toggles and a staleness indicator at the bottom.
+
+Snapshots and recordings are written by the gateway on the dashboard
+host (default: `/var/lib/kasa-tapo-media/{snapshots,recordings}/<camera_id>/<lens>/`)
+and exposed back through `GET /api/equipment/<id>/media` (listing) and
+`GET /api/equipment/<id>/media/<kind>/<lens>/<file>` (binary download).
+The minimal "Recent captures" page at
+`/platforms/<platform>/media/<camera_id>` lists everything currently on
+disk.
+
+See [`deploy/README.md` § _Optional: cameras + smart plugs_](deploy/README.md#optional-cameras--smart-plugs-kasa-tapo-services)
+for the production wiring.
+
 ## Status
 
-**v1 (current scope):** read-only monitoring. Two pages: lab overview (`/`) and HTE Platform (`/platforms/hte`). Polling every 2-3 seconds.
+**v1 (current scope):** read-only monitoring of plate readers, sealers,
+sensors, etc., plus full control of cameras (PTZ, presets, snapshot,
+recording) and Kasa plugs through `kasa-tapo-services`. Two main pages:
+lab overview (`/`) and per-platform detail (e.g. `/platforms/hte`).
+Polling every 2-3 seconds.
 
-**Future:** WebSocket-based real-time pages, control endpoints with explicit confirmations, persistent history.
+**Future:** WebSocket-based real-time pages, control endpoints with
+explicit confirmations on the slow lab equipment, persistent history.

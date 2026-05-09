@@ -63,8 +63,12 @@ from .models import (
 )
 from .registry import (
     AdapterKind,
+    CameraConfig,
+    CameraLens,
     EquipmentEntry,
     Maintenance,
+    PlugConfig,
+    PlugOutlet,
     Registry,
     load_registry,
 )
@@ -77,6 +81,8 @@ __version__ = "0.1.0"
 __all__ = [
     "AdapterKind",
     "BadRequest",
+    "CameraConfig",
+    "CameraLens",
     "ClaimManager",
     "ClaimRejected",
     "ComponentStatus",
@@ -108,6 +114,8 @@ __all__ = [
     "Plan",
     "PlanReport",
     "PlateSealerClient",
+    "PlugConfig",
+    "PlugOutlet",
     "PressClient",
     "ProbeResponse",
     "Registry",

@@ -92,6 +92,41 @@ def test_maintenance_fields_parsed() -> None:
     assert entry.maintenance.contact == "alice@lab"
 
 
+def test_camera_block_parses_from_committed_yaml() -> None:
+    """The committed registry's HTE camera entry round-trips into the new
+    ``CameraConfig`` registry block.
+    """
+
+    registry = load_registry(REPO_ROOT / "equipment.yaml")
+    entry = registry.by_id("cam_hte_tapo_c245")
+    assert entry is not None
+    assert entry.kind == "camera"
+    assert entry.platform == "hte"
+    assert entry.adapter == "http"
+    assert entry.camera is not None
+    assert entry.camera.host.startswith("192.168.")
+    assert entry.camera.onvif_port == 2020
+    assert {lens.id for lens in entry.camera.lenses} == {"wide", "tele"}
+    assert entry.plug is None
+
+
+def test_camera_kind_extension_accepted() -> None:
+    """Pydantic's EquipmentKind literal must accept the 3 new kinds."""
+
+    from lab_skills.registry import EquipmentEntry
+
+    for kind in ("camera", "smart_plug", "power_strip"):
+        entry = EquipmentEntry(
+            id=f"x_{kind}",
+            name=kind,
+            platform="lab",
+            kind=kind,  # type: ignore[arg-type]
+            adapter="http",
+            base_url="http://127.0.0.1:8002",
+        )
+        assert entry.kind == kind
+
+
 def test_lab_registry_path_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
         "LAB_REGISTRY_PATH",

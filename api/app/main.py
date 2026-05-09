@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
+from .control import build_control_router
 from .presentation import (
     AggregatorHealth,
     EquipmentList,
@@ -66,9 +67,14 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+
+# Mutating control surface (PTZ, presets, plug on/off, ...). Forwards to the
+# device gateway named by ``equipment.yaml::base_url``. See
+# ``api/app/control.py`` for the routing rules.
+app.include_router(build_control_router())
 
 
 def _aggregator() -> EquipmentAggregator:
