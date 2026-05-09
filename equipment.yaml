@@ -87,12 +87,13 @@ equipment:
     name: Opentrons OT-2
     platform: hte
     kind: liquid_handler
-    adapter: mock
-    tile: { w: 2, h: 2}
-    maintenance:
-      reason: "Awaiting replacement seal foil"
-      until: "2026-05-12"
-      contact: "Yang Cao"
+    adapter: http
+    protocol: "1.1"
+    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020
+    status_path: /status
+    poll_timeout_seconds: 2.0
+    do_not_call_connect: true
+    tile: { w: 2, h: 2 }
 
   - id: cytation_5
     name: BioTek Cytation 5
