@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const tabs = [
   { href: "/", label: "Lab Overview" },
   { href: "/platforms/hte", label: "HTE Platform" },
+  { href: "/history", label: "History" },
 ];
 
 export function Nav() {

@@ -130,6 +130,49 @@ def build_history_router() -> APIRouter:
         events = await loop.run_in_executor(None, lambda: db.get_uptime_events(device_id))
         return UptimeResponse(device_id=device_id, days=days, uptime_pct=pct, events=events)
 
+    @router.get("/history/uptime")
+    async def uptime_all(days: int = 7, request: Request = ...):
+        """Uptime summary for every device in one request.
+
+        Returns ``{device_id: {uptime_pct, last_event, days}}`` — suitable
+        for the dashboard uptime overview table.  Devices with no uptime
+        data yet return ``uptime_pct: null``.
+        """
+        import asyncio
+        loop = asyncio.get_event_loop()
+        db = _db(request)
+
+        # Discover which device IDs have at least one uptime row.
+        rows = await loop.run_in_executor(
+            None,
+            lambda: db._fetchall(
+                "SELECT DISTINCT device_id FROM service_uptime"
+            ),
+        )
+        device_ids = [r["device_id"] for r in rows]
+
+        results = {}
+        for did in device_ids:
+            pct = await loop.run_in_executor(
+                None, lambda d=did: db.get_uptime_pct(d, days=days)
+            )
+            last = await loop.run_in_executor(
+                None,
+                lambda d=did: db._fetchall(
+                    "SELECT ts, event FROM service_uptime"
+                    " WHERE device_id = ? ORDER BY ts DESC LIMIT 1",
+                    (d,),
+                ),
+            )
+            results[did] = {
+                "device_id": did,
+                "days": days,
+                "uptime_pct": pct,
+                "last_event": dict(last[0]) if last else None,
+            }
+
+        return {"devices": results, "days": days}
+
     # ------------------------------------------------------------------ equipment events
 
     @router.get("/history/events/{device_id}")
