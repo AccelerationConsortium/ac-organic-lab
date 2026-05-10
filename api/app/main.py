@@ -10,8 +10,11 @@ presentation fields (``tile``, ``location``) plus the registry's
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import math
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -44,20 +47,29 @@ def _cors_origins() -> list[str]:
 # Background uptime poll task
 # ---------------------------------------------------------------------------
 
-# Tracks last known reachability per device_id across poll iterations.
+# Tracks last known reachability + equipment state per device_id across polls.
 _last_reachable: dict[str, bool] = {}
 _consecutive_failures: dict[str, int] = {}
+_last_state: dict[str, str] = {}
 
 
-async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase) -> None:
+async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase, registry) -> None:
     """Poll all devices every 60 s and write uptime transition events to SQLite.
 
-    Only writes a row when reachability *changes* — not every poll — so the
-    table stays small and the uptime query stays fast.
+    Only writes a new transition row when reachability *changes* (plus one row
+    on the very first observation so the uptime table is populated immediately).
 
     Also writes sensor readings for any device whose status carries sensor
-    metrics in ``status.details`` (once the env_sensors service is live).
+    metrics in ``status.details``.  For mock environmental sensors, generates
+    synthetic readings so the History → Sensors tab is useful before real
+    hardware is deployed.
     """
+    # Build a lookup map from the registry for adapter/kind checks.
+    _registry_map = {
+        entry.id: entry
+        for entry in dict(registry).get("equipment", [])
+    }
+
     # Give the aggregator a moment to complete its first poll cycle.
     await asyncio.sleep(5)
 
@@ -69,14 +81,31 @@ async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase) ->
                 reachable = snap.fetch_error is None
 
                 prev = _last_reachable.get(device_id)
+                current_state = _state_str(snap)
 
                 if prev is None:
-                    # First observation — record initial state, no transition row.
+                    # First observation — write an initial row so the uptime
+                    # table is populated right away, then carry on to also
+                    # capture sensor readings below.
                     _last_reachable[device_id] = reachable
                     _consecutive_failures[device_id] = 0
-                    continue
+                    initial_event = "up" if reachable else "down"
+                    db.record_uptime_event(device_id, initial_event)
+                    db.record_equipment_event(
+                        device_id,
+                        "state_transition",
+                        from_state=None,
+                        to_state=current_state,
+                        message="Initial observation",
+                    )
+                    _last_state[device_id] = current_state
+                    logger.info(
+                        "Uptime: %s initial → %s (%s)",
+                        device_id, initial_event, current_state,
+                    )
+                    # Fall through to sensor reads below (no continue).
 
-                if reachable and not prev:
+                elif reachable and not prev:
                     # Came back up.
                     _consecutive_failures[device_id] = 0
                     db.record_uptime_event(device_id, "recovered")
@@ -84,10 +113,11 @@ async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase) ->
                         device_id,
                         "state_transition",
                         from_state="unreachable",
-                        to_state=_state_str(snap),
+                        to_state=current_state,
                         message="Device recovered",
                     )
-                    logger.info("Uptime: %s recovered", device_id)
+                    _last_state[device_id] = current_state
+                    logger.info("Uptime: %s recovered → %s", device_id, current_state)
                     _last_reachable[device_id] = True
 
                 elif not reachable and prev:
@@ -97,20 +127,48 @@ async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase) ->
                     db.record_equipment_event(
                         device_id,
                         "state_transition",
-                        from_state=_state_str(snap),
+                        from_state=_last_state.get(device_id, "unknown"),
                         to_state="unreachable",
                         message=str(snap.fetch_error),
                     )
+                    _last_state[device_id] = "unreachable"
                     logger.warning("Uptime: %s went DOWN — %s", device_id, snap.fetch_error)
                     _last_reachable[device_id] = False
 
                 elif not reachable:
-                    # Still down — increment failure counter, update last row.
+                    # Still down — increment failure counter.
                     _consecutive_failures[device_id] = _consecutive_failures.get(device_id, 0) + 1
 
-                # Sensor readings — only written when the device exposes them.
-                # Remove the ``continue`` guard below once env_sensors is live.
-                _write_sensor_readings(db, snap)
+                else:
+                    # Reachable and previously reachable — check for state change
+                    # within the equipment's own state machine (e.g. ready → busy).
+                    prev_state = _last_state.get(device_id)
+                    if prev_state is not None and prev_state != current_state:
+                        db.record_equipment_event(
+                            device_id,
+                            "state_transition",
+                            from_state=prev_state,
+                            to_state=current_state,
+                            message="Equipment state changed",
+                        )
+                        logger.info(
+                            "State: %s %s → %s", device_id, prev_state, current_state,
+                        )
+                        _last_state[device_id] = current_state
+                    elif prev_state is None:
+                        _last_state[device_id] = current_state
+
+                # Sensor readings — real devices expose them in status.details;
+                # mock environmental sensors get synthetic readings generated here.
+                reg_entry = _registry_map.get(device_id)
+                if (
+                    reg_entry is not None
+                    and reg_entry.kind == "environmental_sensor"
+                    and reg_entry.adapter == "mock"
+                ):
+                    _write_mock_sensor_readings(db, device_id)
+                else:
+                    _write_sensor_readings(db, snap)
 
         except asyncio.CancelledError:
             break
@@ -121,9 +179,16 @@ async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase) ->
 
 
 def _state_str(snap) -> str:
-    """Extract a state string from an SDK snapshot (best-effort)."""
+    """Extract a state string from an SDK snapshot (best-effort).
+
+    The SDK exposes the runtime state on ``snap.status.equipment_status``
+    (matches docs/STATUS_SPEC.md).  ``snap.fetch_error`` overrides everything
+    when the aggregator cannot reach the device.
+    """
     try:
-        return snap.status.state or "unknown"
+        if snap.fetch_error is not None:
+            return "unreachable"
+        return snap.status.equipment_status or "unknown"
     except Exception:
         return "unknown"
 
@@ -151,6 +216,36 @@ def _write_sensor_readings(db: LabDatabase, snap) -> None:
                 db.record_sensor_reading(snap.id, metric, float(value), unit)
     except Exception:
         pass  # sensor data is best-effort; never crash the poll loop
+
+
+def _mock_sensor_phase(sensor_id: str) -> float:
+    """Deterministic phase offset (0..2π) derived from a sensor's ID."""
+    h = int(hashlib.md5(sensor_id.encode()).hexdigest()[:8], 16)
+    return (h % 10000) / 10000.0 * 2 * math.pi
+
+
+def _write_mock_sensor_readings(db: LabDatabase, sensor_id: str) -> None:
+    """Generate plausible synthetic readings for a mock environmental sensor.
+
+    Values drift slowly on independent sine waves so different sensors show
+    distinct but realistic trends.  Baselines match a typical indoor lab:
+      temperature  21.5 ± 1.5 °C
+      humidity     48 ± 6 %
+      co2          480 ± 90 ppm
+    """
+    try:
+        t = time.time()
+        φ = _mock_sensor_phase(sensor_id)
+
+        temp = 21.5 + 1.5 * math.sin(t / 3600 + φ) + 0.3 * math.sin(t / 600 + φ * 2)
+        hum  = 48.0 + 6.0 * math.sin(t / 7200 + φ + 1.0) + 1.2 * math.sin(t / 900)
+        co2  = 480.0 + 90.0 * math.sin(t / 14400 + φ + 2.0) + 25.0 * math.sin(t / 1800)
+
+        db.record_sensor_reading(sensor_id, "temperature_c", round(temp, 1), "°C")
+        db.record_sensor_reading(sensor_id, "humidity_pct",  round(hum,  1), "%")
+        db.record_sensor_reading(sensor_id, "co2_ppm",       round(co2,  0), "ppm")
+    except Exception:
+        pass  # never crash the poll loop
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +277,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Background uptime poll
     poll_task = None
     if db is not None:
-        poll_task = asyncio.create_task(_uptime_poll_loop(aggregator, db))
+        poll_task = asyncio.create_task(_uptime_poll_loop(aggregator, db, registry))
 
     try:
         yield

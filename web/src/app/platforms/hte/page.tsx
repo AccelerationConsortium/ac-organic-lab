@@ -22,15 +22,6 @@ export default function HtePlatformPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <header>
-        <h2 className="text-lg font-semibold text-ink dark:text-slate-100">
-          HTE Platform
-        </h2>
-        <p className="text-sm text-ink-muted dark:text-slate-400">
-          Solid dosing, liquid handling, filtration, plate transport, and
-          fume-hood automation.
-        </p>
-      </header>
       <EquipmentGrid snapshots={snapshots} />
     </div>
   );

@@ -4,14 +4,11 @@ import { useState } from "react";
 import { useEquipmentList } from "@/lib/use-equipment";
 import {
   useAllUptime,
-  useDeviceUptime,
   useEquipmentEvents,
   useSensorHistory,
-  useRuns,
-  useWellResults,
 } from "@/lib/use-history";
 import type { EquipmentSnapshot } from "@/types/api";
-import type { RunRecord, SensorPoint, WellResult } from "@/lib/history-api";
+import type { SensorPoint } from "@/lib/history-api";
 
 // ---------------------------------------------------------------------------
 // Shared primitives
@@ -56,38 +53,136 @@ function LoadingRow() {
 }
 
 // ---------------------------------------------------------------------------
-// Uptime bar (CSS width, colour by %)
+// State metadata — colour + label + description for every API state
 // ---------------------------------------------------------------------------
 
-function UptimeBar({ pct }: { pct: number | null }) {
-  if (pct === null) {
-    return (
-      <div className="flex h-2 w-full rounded-full bg-slate-200 dark:bg-slate-700">
-        <div className="h-2 w-full rounded-full bg-slate-300 dark:bg-slate-600" />
-      </div>
-    );
-  }
-  const colour =
-    pct >= 95
-      ? "bg-emerald-500"
-      : pct >= 80
-        ? "bg-amber-400"
-        : "bg-rose-500";
+type StateName =
+  | "ready" | "busy" | "requires_init" | "degraded"
+  | "dry_run" | "error" | "e_stop" | "unknown" | "unreachable";
+
+// Hex colours used for bar segments and legend dots (inline styles — safe from Tailwind purge)
+const STATE_COLORS: Record<StateName, string> = {
+  ready:         "#10b981", // emerald-500
+  busy:          "#0ea5e9", // sky-500
+  requires_init: "#fbbf24", // amber-400
+  degraded:      "#f97316", // orange-500
+  dry_run:       "#8b5cf6", // violet-500
+  error:         "#f43f5e", // rose-500
+  e_stop:        "#b91c1c", // red-700
+  unknown:       "#94a3b8", // slate-400
+  unreachable:   "#fb7185", // rose-400
+};
+
+const STATE_META: Record<StateName, {
+  label: string;
+  dot: string;
+  badge: string;
+  desc: string;
+}> = {
+  ready:         { label: "Ready",        dot: "bg-emerald-500",  badge: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300", desc: "Idle and ready to accept commands." },
+  busy:          { label: "Busy",         dot: "bg-sky-500",      badge: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300",                 desc: "Executing a protocol or operation." },
+  requires_init: { label: "Needs Init",   dot: "bg-amber-400",    badge: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",         desc: "Requires initialization before use." },
+  degraded:      { label: "Degraded",     dot: "bg-orange-500",   badge: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",     desc: "Reachable but operating in reduced capacity." },
+  dry_run:       { label: "Dry Run",      dot: "bg-violet-500",   badge: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300",     desc: "Simulating operations without physical actuation." },
+  error:         { label: "Error",        dot: "bg-rose-500",     badge: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",             desc: "Device reported an internal error — check device logs." },
+  e_stop:        { label: "E-Stop",       dot: "bg-red-700",      badge: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",                 desc: "Emergency stop active — physical inspection required." },
+  unknown:       { label: "Unknown",      dot: "bg-slate-400",    badge: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",            desc: "Reachable but no clear state reported (mock adapter, startup) — or unobserved time before the aggregator started polling. Counted as up for uptime %." },
+  unreachable:   { label: "Unreachable",  dot: "bg-rose-400",     badge: "bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-400",             desc: "Aggregator cannot reach the device — counted as down. This is what 'offline' means here, not Unknown." },
+};
+
+function effectiveState(snap: EquipmentSnapshot): StateName {
+  if (snap.fetch_error) return "unreachable";
+  return (snap.status?.equipment_status as StateName) ?? "unknown";
+}
+
+function StateBadge({ snap }: { snap: EquipmentSnapshot }) {
+  const state = effectiveState(snap);
+  const meta = STATE_META[state] ?? STATE_META.unknown;
   return (
-    <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-      <div
-        className={`h-2 rounded-full transition-all ${colour}`}
-        style={{ width: `${pct}%` }}
+    <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${meta.badge}`}>
+      <span
+        className="inline-block h-1.5 w-1.5 rounded-full"
+        style={{ backgroundColor: STATE_COLORS[state] ?? STATE_COLORS.unknown }}
       />
-    </div>
+      {meta.label}
+    </span>
   );
 }
 
-function uptimeColour(pct: number | null) {
-  if (pct === null) return "text-ink-subtle dark:text-slate-500";
-  if (pct >= 95) return "text-emerald-600 dark:text-emerald-400";
-  if (pct >= 80) return "text-amber-600 dark:text-amber-400";
-  return "text-rose-600 dark:text-rose-400";
+// ---------------------------------------------------------------------------
+// Platform label map
+// ---------------------------------------------------------------------------
+
+const PLATFORM_LABELS: Record<string, string> = {
+  hte: "HTE Platform",
+  lab: "Lab",
+};
+
+function platformLabel(p: string) {
+  return PLATFORM_LABELS[p] ?? (p.charAt(0).toUpperCase() + p.slice(1));
+}
+
+// ---------------------------------------------------------------------------
+// Segmented state timeline bar
+// Bar fills 100% of its width, segments sized proportional to OBSERVED time
+// (not the full window) so colors are visible even on a fresh install.
+// ---------------------------------------------------------------------------
+
+const STATE_ORDER: StateName[] = [
+  "ready", "busy", "requires_init", "degraded", "dry_run",
+  "error", "e_stop", "unknown", "unreachable",
+];
+
+function StateTimelineBar({
+  statePcts,
+  isPending,
+}: {
+  statePcts: Record<string, number> | undefined;
+  isPending: boolean;
+}) {
+  if (isPending) {
+    return <div className="h-2 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />;
+  }
+
+  const entries: { state: StateName; pct: number }[] = [];
+  for (const s of STATE_ORDER) {
+    const v = statePcts?.[s] ?? 0;
+    if (v > 0) entries.push({ state: s, pct: v });
+  }
+  // Append any states not in STATE_ORDER
+  for (const [s, v] of Object.entries(statePcts ?? {})) {
+    if (!(STATE_ORDER as string[]).includes(s) && v > 0)
+      entries.push({ state: s as StateName, pct: v });
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-700" />
+    );
+  }
+
+  // Normalize to 100% so segments are always visible regardless of window coverage
+  const total = entries.reduce((acc, e) => acc + e.pct, 0);
+
+  return (
+    <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+      {entries.map(({ state, pct }) => {
+        const meta = STATE_META[state] ?? STATE_META.unknown;
+        const widthPct = (pct / total) * 100;
+        return (
+          <div
+            key={state}
+            title={`${meta.label}: ${pct.toFixed(1)}% of window`}
+            className="h-2"
+            style={{
+              width: `${widthPct}%`,
+              backgroundColor: STATE_COLORS[state] ?? STATE_COLORS.unknown,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -142,13 +237,138 @@ const UPTIME_WINDOWS = [
   { label: "30 d", days: 30 },
 ];
 
+// Single device row inside a platform group
+function DeviceUptimeRow({
+  snap,
+  uptimeData,
+  isPending,
+  expanded,
+  onToggle,
+}: {
+  snap: EquipmentSnapshot;
+  uptimeData: Record<string, { uptime_pct: number | null; state_pcts: Record<string, number> }> | undefined;
+  isPending: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const summary = uptimeData?.[snap.id];
+  const pct = summary?.uptime_pct ?? null;
+  const pctColour =
+    pct === null ? "text-ink-subtle dark:text-slate-500"
+    : pct >= 95  ? "text-emerald-600 dark:text-emerald-400"
+    : pct >= 80  ? "text-amber-600 dark:text-amber-400"
+    :              "text-rose-600 dark:text-rose-400";
+
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50"
+      >
+        {/* Name + id */}
+        <div className="w-44 min-w-0 shrink-0">
+          <p className="truncate text-sm font-medium text-ink dark:text-slate-100">
+            {snap.name}
+          </p>
+          <p className="truncate font-mono text-xs text-ink-subtle dark:text-slate-500">
+            {snap.id}
+          </p>
+        </div>
+
+        {/* State badge */}
+        <div className="w-28 shrink-0">
+          <StateBadge snap={snap} />
+        </div>
+
+        {/* Segmented bar */}
+        <div className="flex-1">
+          <StateTimelineBar statePcts={summary?.state_pcts} isPending={isPending} />
+        </div>
+
+        {/* Percentage */}
+        <div className={`w-14 text-right text-sm font-semibold tabular-nums ${pctColour}`}>
+          {isPending ? "…" : pct !== null ? `${pct}%` : "—"}
+        </div>
+
+        {/* Chevron */}
+        <span className="ml-1 text-xs text-ink-subtle dark:text-slate-500">
+          {expanded ? "▲" : "▼"}
+        </span>
+      </button>
+
+      {expanded && <DeviceEventsList deviceId={snap.id} />}
+    </div>
+  );
+}
+
+// A titled card grouping all devices from one platform
+function PlatformGroup({
+  platform,
+  snaps,
+  uptimeData,
+  isPending,
+}: {
+  platform: string;
+  snaps: EquipmentSnapshot[];
+  uptimeData: Record<string, { uptime_pct: number | null; state_pcts: Record<string, number> }> | undefined;
+  isPending: boolean;
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const toggle = (id: string) => setExpanded((prev) => (prev === id ? null : id));
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+      {/* Platform header */}
+      <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/60">
+        <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+          {platformLabel(platform)}
+        </h4>
+        <span className="text-xs text-ink-subtle dark:text-slate-500">
+          {snaps.length} module{snaps.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      {/* Column header */}
+      <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-1.5 dark:border-slate-800">
+        <span className="w-44 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Module</span>
+        <span className="w-28 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">State</span>
+        <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Uptime</span>
+        <span className="w-14 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">%</span>
+        <span className="ml-1 w-3" />
+      </div>
+
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        {snaps.map((snap) => (
+          <DeviceUptimeRow
+            key={snap.id}
+            snap={snap}
+            uptimeData={uptimeData}
+            isPending={isPending}
+            expanded={expanded === snap.id}
+            onToggle={() => toggle(snap.id)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function UptimeSection({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
   const [days, setDays] = useState(7);
-  const [expanded, setExpanded] = useState<string | null>(null);
 
   const { data: uptimeData, isPending } = useAllUptime(days);
 
-  const toggle = (id: string) => setExpanded((prev) => (prev === id ? null : id));
+  // Group by platform, preserving original order within each group
+  const platforms: string[] = [];
+  const byPlatform: Record<string, EquipmentSnapshot[]> = {};
+  for (const snap of snapshots) {
+    const p = snap.platform ?? "other";
+    if (!byPlatform[p]) {
+      byPlatform[p] = [];
+      platforms.push(p);
+    }
+    byPlatform[p].push(snap);
+  }
 
   return (
     <section className="flex flex-col gap-4">
@@ -173,66 +393,20 @@ function UptimeSection({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
         </div>
       </div>
 
-      <div className="flex flex-col divide-y divide-slate-100 rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
-        {snapshots.map((snap) => {
-          const summary = uptimeData?.devices[snap.id];
-          const pct = summary?.uptime_pct ?? null;
-
-          return (
-            <div key={snap.id}>
-              <button
-                onClick={() => toggle(snap.id)}
-                className="flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50"
-              >
-                {/* Name + id */}
-                <div className="w-48 min-w-0 shrink-0">
-                  <p className="truncate text-sm font-medium text-ink dark:text-slate-100">
-                    {snap.name}
-                  </p>
-                  <p className="truncate font-mono text-xs text-ink-subtle dark:text-slate-500">
-                    {snap.id}
-                  </p>
-                </div>
-
-                {/* Bar */}
-                <div className="flex-1">
-                  {isPending ? (
-                    <div className="h-2 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
-                  ) : (
-                    <UptimeBar pct={pct} />
-                  )}
-                </div>
-
-                {/* Percentage */}
-                <div className={`w-14 text-right text-sm font-semibold tabular-nums ${uptimeColour(pct)}`}>
-                  {isPending ? "…" : pct !== null ? `${pct}%` : "—"}
-                </div>
-
-                {/* Chevron */}
-                <span className="ml-1 text-xs text-ink-subtle dark:text-slate-500">
-                  {expanded === snap.id ? "▲" : "▼"}
-                </span>
-              </button>
-
-              {expanded === snap.id && (
-                <DeviceEventsList deviceId={snap.id} />
-              )}
-            </div>
-          );
-        })}
-
-        {snapshots.length === 0 && (
-          <div className="p-6">
-            <EmptyState message="No devices found in registry." />
-          </div>
-        )}
-      </div>
-
-      {uptimeData && Object.keys(uptimeData.devices).length === 0 && (
-        <p className="text-xs text-ink-subtle dark:text-slate-500">
-          Uptime data accumulates as the aggregator observes reachability changes.
-          Check back after the first poll cycle (~60 s).
-        </p>
+      {snapshots.length === 0 ? (
+        <EmptyState message="No devices found in registry." />
+      ) : (
+        <div className="flex flex-col gap-4">
+          {platforms.map((p) => (
+            <PlatformGroup
+              key={p}
+              platform={p}
+              snaps={byPlatform[p]}
+              uptimeData={uptimeData?.devices}
+              isPending={isPending}
+            />
+          ))}
+        </div>
       )}
     </section>
   );
@@ -283,6 +457,50 @@ function DeviceEventsList({ deviceId }: { deviceId: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// State legend — compact sidebar, CSS tooltip on hover (no title attr)
+// ---------------------------------------------------------------------------
+
+function StateLegend() {
+  return (
+    <aside className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+      <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-ink-subtle dark:text-slate-500">
+        State Reference
+      </p>
+      <ul className="flex flex-col gap-2">
+        {(Object.entries(STATE_META) as [StateName, typeof STATE_META[StateName]][]).map(
+          ([key, meta]) => (
+            <li key={key} className="group relative flex cursor-default items-center gap-2">
+              {/* Dot — inline style so it's never purged */}
+              <span
+                className="inline-block h-2 w-2 shrink-0 rounded-full"
+                style={{ backgroundColor: STATE_COLORS[key] }}
+              />
+              <span className="text-xs font-medium text-ink dark:text-slate-200">
+                {meta.label}
+              </span>
+
+              {/* CSS tooltip — appears to the left of the sidebar */}
+              <div className="pointer-events-none invisible absolute right-full top-1/2 z-50 mr-3 w-48 -translate-y-1/2 rounded-lg bg-slate-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 dark:bg-slate-700">
+                {meta.desc}
+                {/* arrow */}
+                <span className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-full border-4 border-transparent border-l-slate-900 dark:border-l-slate-700" />
+              </div>
+            </li>
+          ),
+        )}
+      </ul>
+      <p className="mt-4 text-[10px] leading-relaxed text-ink-subtle dark:text-slate-500">
+        Hover a label for details.
+        <br />
+        Bar and uptime % reflect observed time only. Periods before tracking
+        started aren't counted. Uptime % covers everything except{" "}
+        <span className="font-medium">Unreachable</span>.
+      </p>
+    </aside>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sensors section
 // ---------------------------------------------------------------------------
 
@@ -308,34 +526,19 @@ function SensorCard({
 }) {
   const isMock = sensor.adapter === "mock";
 
-  if (isMock) {
-    return (
-      <div className="flex flex-col gap-3 rounded-xl border border-dashed border-slate-300 p-5 dark:border-slate-700">
-        <header className="flex items-center justify-between">
-          <div>
-            <h4 className="text-sm font-semibold text-ink dark:text-slate-100">{sensor.name}</h4>
-            <p className="font-mono text-xs text-ink-subtle dark:text-slate-500">{sensor.id}</p>
-          </div>
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 p-5 dark:border-slate-800">
+      <header className="flex items-center justify-between">
+        <div>
+          <h4 className="text-sm font-semibold text-ink dark:text-slate-100">{sensor.name}</h4>
+          <p className="font-mono text-xs text-ink-subtle dark:text-slate-500">{sensor.id}</p>
+        </div>
+        {isMock && (
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-ink-muted dark:bg-slate-800 dark:text-slate-400">
             mock
           </span>
-        </header>
-        <p className="text-xs text-ink-muted dark:text-slate-400">
-          No real readings yet. In{" "}
-          <span className="font-mono">equipment.yaml</span> change{" "}
-          <span className="font-mono">adapter: mock</span> →{" "}
-          <span className="font-mono">adapter: http</span> with a{" "}
-          <span className="font-mono">base_url</span> once the{" "}
-          <span className="font-mono">sense-every-zone</span> service is deployed.
-          Readings will appear here automatically.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 p-5 dark:border-slate-800">
-      <h4 className="text-sm font-semibold text-ink dark:text-slate-100">{sensor.name}</h4>
+        )}
+      </header>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {METRICS.map((m) => (
           <SensorMetricChart
@@ -435,210 +638,10 @@ function SensorsSection({ sensors }: { sensors: EquipmentSnapshot[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Runs section
-// ---------------------------------------------------------------------------
-
-const RUN_STATUS_STYLES: Record<string, string> = {
-  complete: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
-  failed: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
-  aborted: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
-  in_progress: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300",
-};
-
-function RunRow({ run }: { run: RunRecord }) {
-  const [showWells, setShowWells] = useState(false);
-  const { data: wellData, isPending } = useWellResults(run.id, showWells);
-
-  const convergePct =
-    run.n_wells > 0 ? Math.round((run.n_converged / run.n_wells) * 100) : null;
-
-  return (
-    <>
-      <tr
-        className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50"
-        onClick={() => setShowWells((v) => !v)}
-      >
-        <td className="py-2.5 pl-4 pr-3 font-mono text-xs text-ink-subtle dark:text-slate-500">
-          {new Date(run.started_at).toLocaleString()}
-        </td>
-        <td className="px-3 py-2.5 text-xs text-ink-muted dark:text-slate-400">
-          {run.plate_id ?? "—"}
-        </td>
-        <td className="px-3 py-2.5 text-xs text-ink-muted dark:text-slate-400">
-          {run.device_id}
-        </td>
-        <td className="px-3 py-2.5 text-xs tabular-nums text-ink dark:text-slate-200">
-          {run.n_converged}/{run.n_wells}
-          {convergePct !== null && (
-            <span className="ml-1 text-ink-subtle dark:text-slate-500">
-              ({convergePct}%)
-            </span>
-          )}
-        </td>
-        <td className="px-3 py-2.5 pr-4 text-right">
-          <span
-            className={`rounded-full px-2 py-0.5 text-xs font-medium ${RUN_STATUS_STYLES[run.status] ?? ""}`}
-          >
-            {run.status}
-          </span>
-        </td>
-      </tr>
-
-      {showWells && (
-        <tr>
-          <td colSpan={5} className="bg-slate-50 p-0 dark:bg-slate-900/50">
-        <WellHeatmap run={run} wells={(wellData?.wells ?? []) as WellResult[]} isPending={isPending} />
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-function WellHeatmap({
-  run,
-  wells,
-  isPending,
-}: {
-  run: RunRecord;
-  wells: WellResult[];
-  isPending: boolean;
-}) {
-  const ROWS = ["A", "B", "C", "D", "E", "F", "G", "H"];
-  const COLS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-
-  const byWell = new Map(wells.map((w) => [w.well, w]));
-
-  const cellColour = (wellId: string) => {
-    const w = byWell.get(wellId);
-    if (!w) return "bg-slate-100 dark:bg-slate-800";
-    if (!w.converged) return "bg-rose-200 dark:bg-rose-900/50";
-    if (w.actual_mg === null || run.target_mg === null) return "bg-slate-200 dark:bg-slate-700";
-    const ratio = w.actual_mg / run.target_mg;
-    if (ratio >= 0.95 && ratio <= 1.05) return "bg-emerald-400 dark:bg-emerald-600";
-    if (ratio >= 0.85 && ratio <= 1.15) return "bg-amber-300 dark:bg-amber-600";
-    return "bg-rose-300 dark:bg-rose-700";
-  };
-
-  return (
-    <div className="px-4 py-3">
-      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">
-        Well results — hover for details
-      </p>
-      {isPending ? (
-        <div className="h-24 animate-pulse rounded bg-slate-200 dark:bg-slate-700" />
-      ) : (
-        <>
-          <div className="inline-grid gap-0.5" style={{ gridTemplateColumns: `auto repeat(12, 1.5rem)` }}>
-            {/* column headers */}
-            <div />
-            {COLS.map((c) => (
-              <div key={c} className="text-center font-mono text-[9px] text-ink-subtle dark:text-slate-500">
-                {c}
-              </div>
-            ))}
-            {/* rows */}
-            {ROWS.map((row) => (
-              <>
-                <div
-                  key={row}
-                  className="flex items-center justify-end pr-1 font-mono text-[9px] text-ink-subtle dark:text-slate-500"
-                >
-                  {row}
-                </div>
-                {COLS.map((col) => {
-                  const wellId = `${row}${col}`;
-                  const w = byWell.get(wellId);
-                  return (
-                    <div
-                      key={wellId}
-                      title={
-                        w
-                          ? `${wellId}: ${w.actual_mg?.toFixed(2) ?? "?"} mg (target ${run.target_mg} mg, ${w.converged ? "✓" : "✗"})`
-                          : wellId
-                      }
-                      className={`h-5 w-6 rounded-sm ${cellColour(wellId)}`}
-                    />
-                  );
-                })}
-              </>
-            ))}
-          </div>
-          <div className="mt-2 flex gap-3 text-[10px] text-ink-subtle dark:text-slate-500">
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400 dark:bg-emerald-600" />
-              Within ±5%
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-300 dark:bg-amber-600" />
-              ±5–15%
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-300 dark:bg-rose-700" />
-              &gt;±15% or unconverged
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-slate-100 dark:bg-slate-800" />
-              Not dosed
-            </span>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function RunsSection() {
-  const { data, isPending } = useRuns(20);
-
-  return (
-    <section className="flex flex-col gap-4">
-      <h3 className="text-base font-semibold text-ink dark:text-slate-100">
-        Dosing Runs
-      </h3>
-
-      {isPending && (
-        <div className="flex flex-col gap-2">
-          {[...Array(3)].map((_, i) => <LoadingRow key={i} />)}
-        </div>
-      )}
-
-      {!isPending && data?.runs.length === 0 && (
-        <EmptyState
-          message="No dosing runs recorded yet."
-          sub="Runs appear here when workflow scripts call POST /api/ingest/runs after a plate is dosed."
-        />
-      )}
-
-      {!isPending && data && data.runs.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
-          <table className="min-w-full divide-y divide-slate-100 dark:divide-slate-800">
-            <thead>
-              <tr className="text-left text-xs font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">
-                <th className="py-2 pl-4 pr-3">Started</th>
-                <th className="px-3 py-2">Plate</th>
-                <th className="px-3 py-2">Device</th>
-                <th className="px-3 py-2">Wells</th>
-                <th className="px-3 py-2 pr-4 text-right">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {data.runs.map((run) => (
-                <RunRow key={run.id} run={run} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // History page
 // ---------------------------------------------------------------------------
 
-type Section = "uptime" | "sensors" | "runs";
+type Section = "uptime" | "sensors";
 
 export default function HistoryPage() {
   const [section, setSection] = useState<Section>("uptime");
@@ -658,7 +661,7 @@ export default function HistoryPage() {
       <header>
         <h2 className="text-lg font-semibold text-ink dark:text-slate-100">History</h2>
         <p className="mt-0.5 text-sm text-ink-muted dark:text-slate-400">
-          Module uptime, environmental trends, and dosing run records. Refreshes every 30 s.
+          Module uptime and environmental sensor trends. Refreshes every 30 s.
         </p>
       </header>
 
@@ -668,7 +671,6 @@ export default function HistoryPage() {
           [
             { id: "uptime", label: `Uptime (${modules.length})` },
             { id: "sensors", label: `Sensors (${sensors.length})` },
-            { id: "runs", label: "Dosing Runs" },
           ] as { id: Section; label: string }[]
         ).map((tab) => (
           <SectionPill
@@ -680,9 +682,16 @@ export default function HistoryPage() {
         ))}
       </div>
 
-      {section === "uptime" && <UptimeSection snapshots={modules} />}
-      {section === "sensors" && <SensorsSection sensors={sensors} />}
-      {section === "runs" && <RunsSection />}
+      {/* Main content + right legend sidebar */}
+      <div className="flex items-start gap-6">
+        <div className="min-w-0 flex-1">
+          {section === "uptime" && <UptimeSection snapshots={modules} />}
+          {section === "sensors" && <SensorsSection sensors={sensors} />}
+        </div>
+        <div className="w-44 shrink-0">
+          <StateLegend />
+        </div>
+      </div>
     </div>
   );
 }

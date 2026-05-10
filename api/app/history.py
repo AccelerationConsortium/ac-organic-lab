@@ -169,11 +169,15 @@ def build_history_router() -> APIRouter:
                     (d,),
                 ),
             )
+            state_pcts = await loop.run_in_executor(
+                None, lambda d=did: db.get_state_time_pcts(d, days=days)
+            )
             results[did] = {
                 "device_id": did,
                 "days": days,
                 "uptime_pct": pct,
                 "last_event": dict(last[0]) if last else None,
+                "state_pcts": state_pcts,
             }
 
         return {"devices": results, "days": days}

@@ -38,6 +38,8 @@ export interface DeviceUptimeSummary {
   days: number;
   uptime_pct: number | null;
   last_event: Pick<UptimeEvent, "ts" | "event"> | null;
+  /** % of window spent in each equipment state, e.g. {ready: 45.2, unreachable: 54.8} */
+  state_pcts: Record<string, number>;
 }
 
 export interface AllUptimeResponse {

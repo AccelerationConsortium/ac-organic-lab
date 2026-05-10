@@ -250,15 +250,91 @@ class LabDatabase:
             result,
         )
 
-    # ------------------------------------------------------------------ queries
+    def get_state_time_pcts(self, device_id: str, *, days: int = 7) -> dict[str, float]:
+        """Return % of OBSERVED time spent in each equipment state.
+
+        Observed time is the span from the earliest in-window
+        ``state_transition`` event (or the most recent transition before the
+        window, whichever is later — so a state in effect at window-start
+        counts from window-start onwards) until *now*.  Each state is charged
+        leading-edge: ts → next ts (or now for the latest row).
+
+        Returned percentages sum to ~100% of observed time.  Periods before
+        tracking started are NOT counted — the bar shows ratios of what we've
+        actually seen, scaled to fill its full width.
+        """
+        now = datetime.now(timezone.utc)
+        window_start = now - timedelta(days=days)
+
+        # In-window state transitions.
+        rows = self._fetchall(
+            """
+            SELECT ts,
+                   COALESCE(to_state, 'unknown') AS state,
+                   LEAD(ts) OVER (ORDER BY ts)   AS next_ts
+            FROM   equipment_events
+            WHERE  device_id   = ?
+              AND  event_type  = 'state_transition'
+              AND  ts         >= datetime('now', ? || ' days')
+            ORDER  BY ts
+            """,
+            (device_id, f"-{days}"),
+        )
+
+        # Most recent pre-window transition (state in effect AT window_start).
+        carry_rows = self._fetchall(
+            """
+            SELECT COALESCE(to_state, 'unknown') AS state, ts
+            FROM   equipment_events
+            WHERE  device_id   = ?
+              AND  event_type  = 'state_transition'
+              AND  ts         <  datetime('now', ? || ' days')
+            ORDER  BY ts DESC
+            LIMIT  1
+            """,
+            (device_id, f"-{days}"),
+        )
+
+        state_seconds: dict[str, float] = {}
+
+        if carry_rows:
+            # A state was already in effect when the window opened — charge
+            # window_start → first in-window event (or now) to it.
+            carry_state = carry_rows[0]["state"]
+            first_in_window_ts = _parse_ts(rows[0]["ts"]) if rows else now
+            seg_s = max(0.0, (first_in_window_ts - window_start).total_seconds())
+            state_seconds[carry_state] = seg_s
+
+        for row in rows:
+            state = row["state"] or "unknown"
+            t0 = _parse_ts(row["ts"])
+            t1 = _parse_ts(row["next_ts"]) if row["next_ts"] else now
+            state_seconds[state] = state_seconds.get(state, 0.0) + max(0.0, (t1 - t0).total_seconds())
+
+        total = sum(state_seconds.values())
+        if total <= 0:
+            return {}
+
+        return {
+            state: round(s / total * 100, 1)
+            for state, s in state_seconds.items()
+        }
 
     def get_uptime_pct(self, device_id: str, *, days: int = 7) -> float:
-        """Return uptime percentage (0–100) over the last *days* days.
+        """Return uptime percentage (0–100) — % of OBSERVED time the device
+        was reachable.
 
-        Uses leading-edge timing: each 'up' or 'down' event is charged until
-        the next event (or now, for the most recent event).
+        "Up" = reachable. The aggregator can fetch ``/status`` from the device.
+        "Down" = unreachable. ``unknown`` equipment state is still up.
+
+        Observed time runs from the earliest in-window reachability event
+        (or the most recent pre-window event, whichever happens later) until
+        *now*.  Pre-tracking periods are not counted, so a device that's been
+        up since tracking started reads 100% — not 0.9% of the full window.
         """
-        window_s = days * 86400
+        now = datetime.now(timezone.utc)
+        window_start = now - timedelta(days=days)
+
         rows = self._fetchall(
             """
             SELECT ts, event,
@@ -270,18 +346,37 @@ class LabDatabase:
             """,
             (device_id, f"-{days}"),
         )
-        if not rows:
-            return 0.0
+
+        carry_rows = self._fetchall(
+            "SELECT event FROM service_uptime"
+            " WHERE device_id = ? AND ts < datetime('now', ? || ' days')"
+            " ORDER BY ts DESC LIMIT 1",
+            (device_id, f"-{days}"),
+        )
+        prev_event = carry_rows[0]["event"] if carry_rows else None
 
         up_seconds = 0.0
-        for row in rows:
-            if row["event"] not in ("up", "recovered"):
-                continue
-            t0 = _parse_ts(row["ts"])
-            t1 = _parse_ts(row["next_ts"]) if row["next_ts"] else datetime.now(timezone.utc)
-            up_seconds += (t1 - t0).total_seconds()
+        observed_seconds = 0.0
 
-        return round(min(100.0, up_seconds / window_s * 100), 1)
+        if prev_event is not None:
+            # A reachability state was already in effect at window_start.
+            first_in_window_ts = _parse_ts(rows[0]["ts"]) if rows else now
+            seg_s = max(0.0, (first_in_window_ts - window_start).total_seconds())
+            observed_seconds += seg_s
+            if prev_event in ("up", "recovered"):
+                up_seconds += seg_s
+
+        for row in rows:
+            t0 = _parse_ts(row["ts"])
+            t1 = _parse_ts(row["next_ts"]) if row["next_ts"] else now
+            seg_s = max(0.0, (t1 - t0).total_seconds())
+            observed_seconds += seg_s
+            if row["event"] in ("up", "recovered"):
+                up_seconds += seg_s
+
+        if observed_seconds <= 0:
+            return 0.0
+        return round(min(100.0, up_seconds / observed_seconds * 100), 1)
 
     def get_uptime_events(
         self, device_id: str, *, limit: int = 200
