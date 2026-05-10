@@ -128,17 +128,11 @@ equipment:
     name: Dose Every Well
     platform: hte
     kind: solid_doser
-    adapter: legacy_http
+    adapter: http
+    protocol: "1.1"
     base_url: http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000
     status_path: /status
     poll_timeout_seconds: 2.0
-    # Pi 5 host at 100.64.254.85. Prototype service not finished yet, so
-    # the entry is disabled to keep the aggregator from polling a service
-    # that does not exist. Flip `enabled: true` and remove `maintenance`
-    # once the FastAPI/legacy gateway is up on the Pi.
-    enabled: false
-    maintenance:
-      reason: "Pi 5 doser gateway prototype in progress; service not yet running"
 
   - id: filter_every_well
     name: Waters Filtration
