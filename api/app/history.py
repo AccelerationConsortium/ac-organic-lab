@@ -3,18 +3,23 @@ History and ingest API endpoints.
 
 History endpoints (read-only, for the dashboard)
 -------------------------------------------------
-GET  /api/history/uptime/{device_id}            Uptime % + event list
+GET  /api/history/uptime                        Uptime % for all devices (bulk)
+GET  /api/history/uptime/{device_id}            Uptime % + event list for one device
 GET  /api/history/events/{device_id}            Equipment events (startup, errors, …)
-GET  /api/history/sensors/{sensor_id}/{metric}  Downsampled readings for a metric
 GET  /api/history/sensors/latest                Latest value per sensor/metric (live tile)
+GET  /api/history/sensors/{sensor_id}/{metric}  Downsampled readings for one metric
 GET  /api/history/runs                          Recent dosing runs
 GET  /api/history/runs/{run_id}/wells           Per-well results for one run
 
 Ingest endpoints (written to by device services or workflow scripts)
 --------------------------------------------------------------------
-POST /api/ingest/events       Accept events.jsonl records from a device
+POST /api/ingest/events       Batch-accept events.jsonl records from a device
 POST /api/ingest/runs         Create or update a run record
 POST /api/ingest/wells        Append per-well results to a run
+
+All SQLite calls are dispatched via ``run_in_executor`` so the async event loop
+is never blocked.  See ``db.py`` for schema and ``OBSERVABILITY.md`` for design
+rationale, direct-query examples, and retention guidelines.
 """
 
 from __future__ import annotations

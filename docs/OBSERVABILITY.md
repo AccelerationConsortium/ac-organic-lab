@@ -300,3 +300,111 @@ if (now - last_sensor_write[sensor_id]) > timedelta(minutes=1):
 | Device uptime | `service_uptime` SQLite | Aggregator poll loop (on state change) |
 | State transition / error | `equipment_events` SQLite | Aggregator (via ingest endpoint) |
 | Camera snapshots | `/var/lib/kasa-tapo-media/` on dashboard host | kasa-tapo-services |
+
+---
+
+## 9. History API endpoint reference
+
+All endpoints are on the dashboard host at `:8001`. The Next.js UI calls them
+via Next's built-in proxy (`/api/...` → `http://127.0.0.1:8001/api/...`).
+
+### Read endpoints (dashboard → browser)
+
+| Method + Path | Query params | Returns | Used by |
+|---|---|---|---|
+| `GET /api/history/uptime` | `days=7` | `{devices: {id: {uptime_pct, last_event, days}}}` | History / Uptime section |
+| `GET /api/history/uptime/{device_id}` | `days=7` | `{uptime_pct, events: [{ts, event, ...}]}` | Per-device drill-down |
+| `GET /api/history/events/{device_id}` | `limit=50` | `{events: [{ts, event_type, from_state, to_state, message}]}` | Event timeline |
+| `GET /api/history/sensors/latest` | — | `{readings: [{sensor_id, metric, value, unit, ts}]}` | Live sensor tile |
+| `GET /api/history/sensors/{sensor_id}/{metric}` | `since_hours=1`, `limit=500` | `{readings: [{ts, value, unit}]}` | Sensor line chart |
+| `GET /api/history/runs` | `limit=20`, `device_id=` | `{runs: [RunRecord]}` | Run history table |
+| `GET /api/history/runs/{run_id}/wells` | — | `{wells: [WellResult]}` | 96-well heatmap |
+
+### Write endpoints (device services → aggregator)
+
+| Method + Path | Body | Description |
+|---|---|---|
+| `POST /api/ingest/events` | `{device_id, records: [{timestamp, event, ...}]}` | Batch-upload `events.jsonl` records from a Pi service |
+| `POST /api/ingest/runs` | `RunRecord` | Create / update a dosing run |
+| `POST /api/ingest/wells` | `[WellResultRecord]` | Append per-well results to a run |
+
+---
+
+## 10. Direct database access
+
+The database lives at `/opt/ac-organic-dashboard/data/lab.db` on the dashboard host.
+Override the path with `LAB_DB_PATH` in `.env`.
+
+### SQLite CLI inspection
+
+```bash
+# Open the database (read-only is safer while the server is running)
+sqlite3 /opt/ac-organic-dashboard/data/lab.db
+
+-- Check table sizes
+SELECT name, COUNT(*) FROM sqlite_master
+JOIN (
+    SELECT 'service_uptime' tbl, COUNT(*) n FROM service_uptime
+    UNION ALL SELECT 'equipment_events', COUNT(*) FROM equipment_events
+    UNION ALL SELECT 'sensor_readings',  COUNT(*) FROM sensor_readings
+    UNION ALL SELECT 'runs',             COUNT(*) FROM runs
+    UNION ALL SELECT 'well_results',     COUNT(*) FROM well_results
+) ON name = tbl;
+
+-- Uptime last 24 h
+SELECT device_id, event, ts FROM service_uptime
+WHERE ts >= datetime('now', '-1 day') ORDER BY ts DESC;
+
+-- All failed dispenses across all runs
+SELECT r.plate_id, w.well, w.target_mg, w.actual_mg, w.ts
+FROM well_results w
+JOIN runs r ON w.run_id = r.id
+WHERE w.converged = 0
+ORDER BY w.ts DESC LIMIT 50;
+
+-- Latest sensor reading per zone
+SELECT sensor_id, metric, value, unit, ts FROM sensor_readings
+WHERE id IN (SELECT MAX(id) FROM sensor_readings GROUP BY sensor_id, metric)
+ORDER BY sensor_id, metric;
+```
+
+### Python one-liner (from the dashboard host)
+
+```python
+import sqlite3, json
+db = sqlite3.connect("/opt/ac-organic-dashboard/data/lab.db")
+db.row_factory = sqlite3.Row
+runs = [dict(r) for r in db.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT 10")]
+print(json.dumps(runs, indent=2))
+```
+
+---
+
+## 11. Backup and retention
+
+```bash
+# Safe hot backup while server is running (WAL mode makes this safe)
+sqlite3 /opt/ac-organic-dashboard/data/lab.db \
+    ".backup /opt/ac-organic-dashboard/data/lab.db.bak"
+
+# Cron example: daily backup to a dated file, keep 30 days
+# Add to /etc/cron.d/lab-db-backup:
+# 0 3 * * * ac sqlite3 /opt/ac-organic-dashboard/data/lab.db \
+#     ".backup /opt/ac-organic-dashboard/data/backups/lab_$(date +\%F).db" && \
+#     find /opt/ac-organic-dashboard/data/backups/ -name "lab_*.db" -mtime +30 -delete
+```
+
+Retention guidelines:
+
+| Table | Rows/day (typical) | 1-year size estimate | Trim when |
+|---|---|---|---|
+| `service_uptime` | ~5 per device × 10 devices = 50 | ~18 K rows | Never (tiny) |
+| `equipment_events` | ~20 total | ~7 K rows | Never (tiny) |
+| `sensor_readings` | 1/min × 4 zones × 3 metrics = 17 280 | ~6 M rows | After 2 years (still fast) |
+| `well_results` | ~96 per run × ~2 runs/day = 192 | ~70 K rows | Never for a single-lab run |
+| `runs` | ~2 | ~730 rows | Never |
+
+SQLite handles tens of millions of rows without tuning. At the current
+lab throughput `lab.db` will stay under 500 MB for several years.
+Revisit when `sensor_readings` exceeds 50 M rows (~8 years at current rate).
+

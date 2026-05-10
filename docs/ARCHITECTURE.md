@@ -31,8 +31,9 @@ graph TB
 
     subgraph platform [Platform monorepo]
       skills["skills SDK<br/>registry, aggregator, adapters,<br/>session, claims, plan validation, MCP"]
-      api["api dashboard server<br/>thin presentation over skills"]
-      web["web Next.js UI"]
+      api["api dashboard server<br/>presentation + history DB<br/>(db.py, history.py)"]
+      db[("data/lab.db<br/>SQLite<br/>uptime · events<br/>sensors · runs")]
+      web["web Next.js UI<br/>(History tab, Equipment grid)"]
       yaml["equipment.yaml<br/>inventory"]
       spec["docs/STATUS_SPEC.md<br/>contract"]
     end
@@ -48,6 +49,7 @@ graph TB
     skills --> yaml
     skills --> dev
     api --> dev
+    api --> db
     spec -.governs.-> dev
     spec -.governs.-> skills
 ```
@@ -79,22 +81,38 @@ The pieces *outside* are deliberately separate repos because they have different
 ac-organic-lab/
 ├── pyproject.toml                  # uv workspace declaration
 ├── equipment.yaml                  # inventory (root)
+├── data/
+│   └── lab.db                      # SQLite history database (gitignored)
 ├── docs/
 │   ├── STATUS_SPEC.md              # v1.0 contract
-│   ├── STATUS_SPEC_v1_1.md         # (future) claims + allowed_actions
+│   ├── STATUS_SPEC_v1_1.md         # v1.1 claims + allowed_actions
 │   ├── ARCHITECTURE.md             # this document
-│   └── design.md                   # design rationale archive
+│   ├── OBSERVABILITY.md            # logging, events, history DB schema
+│   └── ROADMAP.md                  # milestone tracking
 ├── deploy/
-├── skills/                         # PYTHON: lab-skills
+│   ├── ac-dashboard-api.service    # systemd unit (FastAPI)
+│   └── ac-dashboard-web.service    # systemd unit (Next.js)
+├── skills/                         # PYTHON: lab-skills SDK
 │   ├── pyproject.toml
 │   └── src/lab_skills/
 ├── api/                            # PYTHON: dashboard web server
 │   ├── pyproject.toml              # depends on ../skills
 │   └── app/
-└── web/                            # Next.js
+│       ├── main.py                 # FastAPI app + lifespan + uptime poll task
+│       ├── db.py                   # LabDatabase (SQLite, stdlib only)
+│       ├── history.py              # /api/history/* + /api/ingest/* routes
+│       ├── control.py              # control passthrough (cameras, plugs)
+│       └── presentation.py        # dashboard snapshot types + tile/location
+└── web/                            # Next.js UI
+    └── src/
+        ├── app/
+        │   ├── page.tsx            # Lab Overview
+        │   ├── history/page.tsx    # History tab (uptime, sensors, runs)
+        │   └── platforms/hte/      # HTE platform detail
+        └── lib/
+            ├── history-api.ts      # typed fetch fns for history endpoints
+            └── use-history.ts      # React Query hooks (30 s refetch)
 ```
-
-Two Python packages, one Next.js app, one inventory YAML, one set of docs.
 
 ## Component responsibilities
 
@@ -123,18 +141,28 @@ Does **not** own:
 
 ### `api/` — dashboard web server
 
-A FastAPI app that serves the dashboard. **Thin** — almost everything operational comes from `skills`.
+A FastAPI app that serves the dashboard. **Thin presentation + observability.**
 
 Owns:
 
-- HTTP routes consumed by the Next.js UI
+- HTTP routes consumed by the Next.js UI (`/api/equipment`, `/api/health`)
 - Presentation-only types (`EquipmentSnapshot`, tile layout, location coords)
 - The `_snapshot()` wrapper that decorates an `EquipmentEntry` with dashboard-specific fields like `tile` and `location`
 - CORS / auth at the dashboard edge
+- **Lab history database** (`db.py`, `history.py`): SQLite at `data/lab.db`
+  - `equipment_events` — state transitions, errors, startup/shutdown
+  - `service_uptime` — reachability transitions (up / down / recovered)
+  - `sensor_readings` — environmental metrics, 1/min downsampled
+  - `runs` + `well_results` — dosing run records and per-well outcomes
+- **Background uptime poll task** (`main.py`): runs every 60 s, writes to
+  `service_uptime` only on reachability *transitions* (not every poll)
+- **History API** (`history.py`): `GET /api/history/*` read endpoints for
+  the dashboard; `POST /api/ingest/*` write endpoints for device services
 
 Does **not** own:
 
 - Polling, adapters, or the registry model — all imported from `skills`
+- Any control logic — control calls are forwarded to device gateways verbatim
 
 ### `web/` — Next.js UI
 
@@ -191,6 +219,10 @@ Future agent repos do not import the SDK directly. They speak [Model Context Pro
 ### 8. STATUS_SPEC ships before code
 
 Every contract change is a doc PR first (`docs/STATUS_SPEC_v*.md`), then a reference implementation in one device repo, then SDK support, then rollout to remaining devices. Spec is the negotiated artifact; code follows.
+
+### 9. History database is append-only and owned by the aggregator
+
+`data/lab.db` (SQLite) is written exclusively by the `api/` dashboard server — never by device services directly. The aggregator observes reachability from its existing poll loop and records transitions. Device services push domain events via `POST /api/ingest/events` rather than opening a DB connection. This keeps the database on one host with one writer, eliminates connection pooling concerns, and lets the file be backed up with a single `cp` while the server is running (WAL mode).
 
 ## Long-term goals
 
