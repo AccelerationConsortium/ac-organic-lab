@@ -52,7 +52,7 @@ LockPersonality=true
 # Allow writing only to the python bytecode cache dirs under the repo.
 # Both `api/` and `skills/` are needed because both are editable installs in
 # the shared workspace venv, and CPython writes __pycache__/ next to source.
-ReadWritePaths=/opt/ac-organic-dashboard/api /opt/ac-organic-dashboard/skills
+ReadWritePaths=/opt/ac-organic-dashboard/api /opt/ac-organic-dashboard/skills /opt/ac-organic-dashboard/data
 
 [Install]
 WantedBy=multi-user.target

@@ -9,6 +9,7 @@ presentation fields (``tile``, ``location``) plus the registry's
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -20,6 +21,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
 from .control import build_control_router
+from .db import LabDatabase, resolve_db_path
+from .history import build_history_router
 from .presentation import (
     AggregatorHealth,
     EquipmentList,
@@ -37,21 +40,162 @@ def _cors_origins() -> list[str]:
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
+# ---------------------------------------------------------------------------
+# Background uptime poll task
+# ---------------------------------------------------------------------------
+
+# Tracks last known reachability per device_id across poll iterations.
+_last_reachable: dict[str, bool] = {}
+_consecutive_failures: dict[str, int] = {}
+
+
+async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase) -> None:
+    """Poll all devices every 60 s and write uptime transition events to SQLite.
+
+    Only writes a row when reachability *changes* — not every poll — so the
+    table stays small and the uptime query stays fast.
+
+    Also writes sensor readings for any device whose status carries sensor
+    metrics in ``status.details`` (once the env_sensors service is live).
+    """
+    # Give the aggregator a moment to complete its first poll cycle.
+    await asyncio.sleep(5)
+
+    while True:
+        try:
+            skill_list = await aggregator.fetch_all()
+            for snap in skill_list.equipment:
+                device_id = snap.id
+                reachable = snap.fetch_error is None
+
+                prev = _last_reachable.get(device_id)
+
+                if prev is None:
+                    # First observation — record initial state, no transition row.
+                    _last_reachable[device_id] = reachable
+                    _consecutive_failures[device_id] = 0
+                    continue
+
+                if reachable and not prev:
+                    # Came back up.
+                    _consecutive_failures[device_id] = 0
+                    db.record_uptime_event(device_id, "recovered")
+                    db.record_equipment_event(
+                        device_id,
+                        "state_transition",
+                        from_state="unreachable",
+                        to_state=_state_str(snap),
+                        message="Device recovered",
+                    )
+                    logger.info("Uptime: %s recovered", device_id)
+                    _last_reachable[device_id] = True
+
+                elif not reachable and prev:
+                    # Just went down.
+                    _consecutive_failures[device_id] = 1
+                    db.record_uptime_event(device_id, "down", consecutive_failures=1)
+                    db.record_equipment_event(
+                        device_id,
+                        "state_transition",
+                        from_state=_state_str(snap),
+                        to_state="unreachable",
+                        message=str(snap.fetch_error),
+                    )
+                    logger.warning("Uptime: %s went DOWN — %s", device_id, snap.fetch_error)
+                    _last_reachable[device_id] = False
+
+                elif not reachable:
+                    # Still down — increment failure counter, update last row.
+                    _consecutive_failures[device_id] = _consecutive_failures.get(device_id, 0) + 1
+
+                # Sensor readings — only written when the device exposes them.
+                # Remove the ``continue`` guard below once env_sensors is live.
+                _write_sensor_readings(db, snap)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning("Uptime poll error: %s", exc)
+
+        await asyncio.sleep(60)
+
+
+def _state_str(snap) -> str:
+    """Extract a state string from an SDK snapshot (best-effort)."""
+    try:
+        return snap.status.state or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _write_sensor_readings(db: LabDatabase, snap) -> None:
+    """Write sensor metrics from a device snapshot (no-op if none present)."""
+    try:
+        details = snap.status.details
+        if details is None:
+            return
+        # When env_sensors exposes readings, they will appear as top-level
+        # fields on the details dict under keys like 'temperature_c',
+        # 'humidity_pct', 'co2_ppm'.  Adjust the key list when the device
+        # contract is finalised.
+        metric_map = {
+            "temperature_c": "°C",
+            "humidity_pct": "%",
+            "co2_ppm": "ppm",
+            "pressure_hpa": "hPa",
+        }
+        details_dict = details.model_dump() if hasattr(details, "model_dump") else {}
+        for metric, unit in metric_map.items():
+            value = details_dict.get(metric)
+            if value is not None:
+                db.record_sensor_reading(snap.id, metric, float(value), unit)
+    except Exception:
+        pass  # sensor data is best-effort; never crash the poll loop
+
+
+# ---------------------------------------------------------------------------
+# App lifespan
+# ---------------------------------------------------------------------------
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Equipment registry + aggregator
     registry = load_registry()
     aggregator = EquipmentAggregator(registry)
     await aggregator.startup()
     app.state.aggregator = aggregator
     app.state.registry = registry
     app.state.overrides = load_dashboard_overrides()
-    logger.info(
-        "Loaded equipment registry: %d entries", aggregator.equipment_count
-    )
+    logger.info("Loaded equipment registry: %d entries", aggregator.equipment_count)
+
+    # Lab history database
+    db_path = resolve_db_path()
+    db = LabDatabase(db_path)
+    try:
+        db.open()
+    except Exception as exc:
+        logger.error("Could not open lab database at %s: %s — history endpoints disabled", db_path, exc)
+        db = None  # type: ignore[assignment]
+    app.state.db = db
+
+    # Background uptime poll
+    poll_task = None
+    if db is not None:
+        poll_task = asyncio.create_task(_uptime_poll_loop(aggregator, db))
+
     try:
         yield
     finally:
+        if poll_task is not None:
+            poll_task.cancel()
+            try:
+                await poll_task
+            except asyncio.CancelledError:
+                pass
         await aggregator.shutdown()
+        if db is not None:
+            db.close()
 
 
 app = FastAPI(
@@ -75,6 +219,8 @@ app.add_middleware(
 # device gateway named by ``equipment.yaml::base_url``. See
 # ``api/app/control.py`` for the routing rules.
 app.include_router(build_control_router())
+# History + ingest endpoints (SQLite-backed).
+app.include_router(build_history_router())
 
 
 def _aggregator() -> EquipmentAggregator:
