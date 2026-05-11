@@ -1,28 +1,24 @@
 """Skill catalog entries for ``kind=press``.
 
 Reference device: :mod:`filter_every_well` (Waters PP96 filtration press).
-This device has not yet migrated to STATUS_SPEC v1.x; the catalog records its
-*current* legacy endpoints exactly as they ship today
-(``filter-every-well/src/filter_every_well/api.py``):
+Conforms to STATUS_SPEC v1.1; all control calls go through ``/control/*``
+and require an ``X-Claim-Token`` header obtained via ``POST /control/claim``.
 
-* ``POST /init``                 - bring system to ACTIVE (press up, plate out)
-* ``POST /stop``                 - emergency stop, requires re-init
-* ``POST /press/up?hold_time=``  - move pneumatic press up
-* ``POST /press/down?hold_time=``- move pneumatic press down
-* ``POST /plate/in?smooth=``     - retract plate carriage in
-* ``POST /plate/out?smooth=``    - extend plate carriage out
+Device endpoints
+----------------
+* ``POST /control/startup``          Bring system to ACTIVE (press up, plate out)
+* ``POST /control/stop``             Emergency stop; re-init required
+* ``POST /control/press/up``         Move pneumatic press UP
+* ``POST /control/press/down``       Move pneumatic press DOWN
+* ``POST /control/plate/in``         Retract plate carriage under press
+* ``POST /control/plate/out``        Extend plate carriage away from press
 
-When the device migrates to STATUS_SPEC v1.x and gains spec-conformant
-``/control/*`` endpoints, only this catalog file changes; the typed client
-in v0.3 keeps the same Python signatures.
-
-Note on ``requires_states``: the legacy device emits ``equipment_status``
-values like ``"ok"`` / ``"ready"`` / ``"stopped"`` / ``"dry-run"`` rather than
-the spec's enum. We use ``["ready", "dry_run"]`` here as the SDK's intent
-("device idle and accepting commands") and rely on graceful degradation:
-when the live status fails the precondition check, the workflow gets a
-typed ``Skill.available=False`` with ``reason="device requires init"`` rather
-than a hung command.
+``allowed_actions`` mapping
+----------------------------
+* ``requires_init``  →  ``["init"]``
+* ``ready``          →  ``["stop", "press.up", "press.down", "plate.in", "plate.out"]``
+* ``busy``           →  ``["stop"]``
+* ``dry_run``        →  all actions (simulated)
 """
 
 from __future__ import annotations
@@ -34,27 +30,23 @@ from .registry import register
 
 
 class InitArgs(BaseModel):
-    """Body for ``POST /init`` (no parameters)."""
+    """Body for ``POST /control/startup`` (no parameters)."""
 
 
 class StopArgs(BaseModel):
-    """Body for ``POST /stop`` (no parameters)."""
+    """Body for ``POST /control/stop`` (no parameters)."""
 
 
 class PressMoveArgs(BaseModel):
-    """Body for ``POST /press/up`` and ``POST /press/down``.
-
-    The legacy device accepts ``hold_time`` as a query parameter; the typed
-    wrapper in v0.3 will pass it that way. Range matches the device's default.
-    """
+    """Body for ``POST /control/press/up`` and ``POST /control/press/down``."""
 
     hold_time: float = Field(default=0.5, ge=0.0, le=10.0)
 
 
 class PlateMoveArgs(BaseModel):
-    """Body for ``POST /plate/in`` and ``POST /plate/out``.
+    """Body for ``POST /control/plate/in`` and ``POST /control/plate/out``.
 
-    ``smooth=True`` (the device's default) ramps the actuator; ``False`` is
+    ``smooth=True`` (the device default) ramps the actuator; ``False`` is
     a step move.
     """
 
@@ -69,10 +61,10 @@ register(
             kind="press",
             description=(
                 "Initialize the press to a known state: press up, plate out, "
-                "system ACTIVE. Required after a /stop or before any movement "
-                "command on a freshly booted device."
+                "system ACTIVE. Required after a /control/stop or before any "
+                "movement command on a freshly booted device."
             ),
-            endpoint="/init",
+            endpoint="/control/startup",
             args_schema=InitArgs,
             requires_states=["requires_init", "ready", "dry_run"],
             estimated_duration_s=4.0,
@@ -82,9 +74,9 @@ register(
             kind="press",
             description=(
                 "Emergency-stop the press. Disables all movement until the "
-                "next /init."
+                "next /control/startup."
             ),
-            endpoint="/stop",
+            endpoint="/control/stop",
             args_schema=StopArgs,
             requires_states=["ready", "busy", "degraded", "dry_run"],
             estimated_duration_s=0.5,
@@ -93,7 +85,7 @@ register(
             name="press.up",
             kind="press",
             description="Move the pneumatic press to the UP position.",
-            endpoint="/press/up",
+            endpoint="/control/press/up",
             args_schema=PressMoveArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=2.0,
@@ -102,7 +94,7 @@ register(
             name="press.down",
             kind="press",
             description="Move the pneumatic press to the DOWN position.",
-            endpoint="/press/down",
+            endpoint="/control/press/down",
             args_schema=PressMoveArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=2.0,
@@ -111,7 +103,7 @@ register(
             name="plate.in",
             kind="press",
             description="Retract the plate carriage under the press (IN position).",
-            endpoint="/plate/in",
+            endpoint="/control/plate/in",
             args_schema=PlateMoveArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=2.0,
@@ -120,7 +112,7 @@ register(
             name="plate.out",
             kind="press",
             description="Extend the plate carriage away from the press (OUT position).",
-            endpoint="/plate/out",
+            endpoint="/control/plate/out",
             args_schema=PlateMoveArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=2.0,

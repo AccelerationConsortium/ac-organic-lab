@@ -92,7 +92,7 @@ response shape.
 | `cytation_5` | `http` | 1.0 | ✅ `dry_run` | `agilent-cytation-server` shipped (PyLabRobot-backed). That repo's own roadmap: Phase 0+1 done; Phase 2 (per-well sample tracking), Phase 3 (v1.1 + `/control/*`), Phase 4 (skill catalog) still ahead. |
 | `plateloc` | `http` | 1.1 | ✅ `requires_init`, `allowed_actions: ["startup"]`, `last_error: COM driver` | Server v1.1 deployed and answering. Physical PlateLoc not responding to the COM control — distinct issue from spec conformance, tracked under *Operational regressions*. |
 | `cam_hte_tapo_c245` | `http` | 1.0 | ❌ `connection_refused` | Aggregator can't reach `127.0.0.1:8002`. `kasa-tapo-services` is not running on the dashboard host. *Operational regression.* |
-| `filter_every_well` | `legacy_http` | — | ✅ `busy` | Verified still legacy: `/status` returns `StatusResponse(equipment_name, system_state, press_state, plate_state)`. Endpoints: `/init`, `/press/up`, `/press/down`, `/plate/in`, `/plate/out`, `/stop`. |
+| `filter_every_well` | `http` | 1.1 | ✅ `ready` / `requires_init` | Migrated to STATUS_SPEC v1.1. `/status` returns `EquipmentStatus` with `allowed_actions`. Control endpoints under `/control/*`. Claim/heartbeat/release enforced (`ENFORCE_CLAIMS=True`). |
 | `fume_hood_actuator` | `legacy_http` | — | ✅ `ready` | Verified still legacy: Flask, `/equipment/status` (not `/status`), no `GET /` probe (404). Hand-rolled JSON shape with `equipment_name` / `equipment_status` / `system_state` / `sash_state`. |
 | `dose_every_well` | `legacy_http` | — | 🔴 DNS-fail | Placeholder hostname `doser.tail-XXXX.ts.net` still in `equipment.yaml`. Aggregator hits `Name or service not known` every poll cycle. *Operational regression.* |
 | `agilent_biostack` | `mock` | — | — | No driver. `required_actions: ["integrate_repo"]`. |
@@ -100,10 +100,7 @@ response shape.
 
 ### Remaining migration work (priority order)
 
-1. **`filter_every_well` (press)** — confirmed shape is `StatusResponse`,
-   not `EquipmentStatus`; control endpoints are still `/init` / `/press/*`
-   / `/plate/*`. The v1.0 checklist below applies as written.
-2. **`dose_every_well` (solid_doser)** — same shape as press once
+1. **`dose_every_well` (solid_doser)** — same shape as press once
    reachable. **First action is the registry fix** (replace `tail-XXXX`
    with the real Tailscale name, or set `enabled: false` until the
    service is deployed).
@@ -197,25 +194,21 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 
 #### `filter_every_well`
 
-- Current (2026-05-09 verified): FastAPI on `100.64.254.104:8000`,
-  `/status` returns `StatusResponse(equipment_name,
-  equipment_status, message, system_state, press_state, plate_state)`
-  — confirmed via direct probe and via `/openapi.json`. Control
-  endpoints are `/init`, `/press/up`, `/press/down`, `/plate/in`,
-  `/plate/out`, `/stop`. No `/health` (404). `GET /` returns the
-  `StatusResponse` shape (also non-spec).
-- v1.0 work:
-  - [ ] Add `models.py` with STATUS_SPEC types.
-  - [ ] Replace `StatusResponse` on `/status` with `EquipmentStatus`.
-  - [ ] Add `GET /` (`ProbeResponse`) and `GET /health`
-    (`HealthResponse`).
-  - [ ] Rename control endpoints under `/control/*`. Keep the legacy
-    paths around for one transition window (return 200 + log a
-    deprecation warning).
-  - [ ] Update `equipment.yaml`: `adapter: legacy_http` → `http`,
-    `status_path: /status` (already correct).
-  - [ ] Drop the `legacy_http` adapter for this entry once the
-    dashboard verifies green for 24h.
+- v1.1 migration: ✅ complete.
+  - `models.py` + `claims.py` added; `api.py` rewritten.
+  - `GET /` (`ProbeResponse`), `GET /health`, `GET /status`
+    (`EquipmentStatus`, `protocol_version: "1.1"`) all live.
+  - Claim/heartbeat/release fully implemented (`ENFORCE_CLAIMS=True`).
+  - `allowed_actions` is state-driven: `requires_init` → `["init"]`;
+    `ready` → movement skills; `busy` → `["stop"]`.
+  - Control endpoints under `/control/*`; `_move_lock` prevents
+    concurrent movement commands and surfaces `busy` on `/status`
+    while a motion is in progress.
+  - `equipment.yaml` flipped to `adapter: http`, `protocol: "1.1"`.
+  - Skill catalog `press.py` updated: all endpoints are `/control/*`.
+- Remaining: deploy to Pi at `100.64.254.104`, redeploy the service,
+  confirm `/status` returns `requires_init` on boot then `ready` after
+  `/control/startup`.
 
 #### `dose_every_well`
 
