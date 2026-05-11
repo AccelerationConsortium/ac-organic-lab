@@ -184,14 +184,21 @@ The lab account also needs the "Log on as a service" right. NSSM grants this aut
 
 ## 7. Conventions
 
-| Repo                      | Service name   | Port | Tailnet host        |
-|---------------------------|----------------|------|---------------------|
-| `agilent_plateloc`        | `plateloc`     | 8000 | `plateloc-pc.<tailnet>` |
-| `bmg_platereader` (TBD)   | `platereader`  | 8001 | `platereader-pc.<tailnet>` |
-| `agilent_platestacker` (TBD) | `platestacker` | 8002 | `platestacker-pc.<tailnet>` |
-| `fume_hood_actuator`      | `fume-hood`    | 5000 | `fume-hood-pc.<tailnet>` |
-| `filter_every_well`       | `press`        | 8000 | `press-pc.<tailnet>` |
-| `dose_every_well`         | `solid-doser`  | 8000 | `solid-doser-pc.<tailnet>` |
+| Repo                      | Service name   | Port | Entry point / NSSM AppParameters          | Tailnet host        |
+|---------------------------|----------------|------|-------------------------------------------|---------------------|
+| `xarm-translocation`      | `xarm`         | 8000 | `run pyxarm api` (NOT `pyxarm web`)       | `sdl2-pc-03-cytation.<tailnet>` |
+| `agilent_plateloc`        | `plateloc`     | 8010 | `run --extra api agilent-plateloc-serve`  | `sdl2-pc-03-cytation.<tailnet>` |
+| `agilent-cytation-server` | `cytation`     | 9333 | `run agilent-cytation-serve`              | `sdl2-pc-03-cytation.<tailnet>` |
+| `opentrons_workflows`     | `ot2-gateway`  | 8020 | `run uvicorn opentrons_workflows.gateway.api:app --host 0.0.0.0 --port 8020` | `sdl2-pc-03-cytation.<tailnet>` |
+| `ac-organic-lab`          | `ac-dashboard-api` | 8001 | `run uvicorn app.main:app --host 0.0.0.0 --port 8001` (AppDirectory=`api/`) | `sdl2-pc-03-cytation.<tailnet>` |
+| `bmg_platereader` (TBD)   | `platereader`  | 8001 | `run platereader-serve`                   | `platereader-pc.<tailnet>` |
+| `agilent_platestacker` (TBD) | `platestacker` | 8002 | `run platestacker-serve`               | `platestacker-pc.<tailnet>` |
+| `fume_hood_actuator`      | `fume-hood`    | 5000 | —                                         | `fume-hood-pc.<tailnet>` |
+| `filter_every_well`       | `press`        | 8000 | —                                         | `press-pc.<tailnet>` |
+| `dose_every_well`         | `solid-doser`  | 8000 | —                                         | `solid-doser-pc.<tailnet>` |
+
+> **Windows quirk:** after every `nssm start <svc>`, run `sc resume <svc>` to clear
+> the unexpected `SERVICE_PAUSED` state. This is an NSSM quirk; the service otherwise works correctly.
 
 When multiple services share one PC, every service gets a distinct port; when each service has its own PC, the same port is fine across PCs (Tailscale's hostname is what disambiguates).
 
