@@ -45,7 +45,7 @@ equipment:
     poll_timeout_seconds: 5.0
     tile: { w: 2, h: 3 }
     camera:
-      host: 192.168.8.200
+      host: 172.31.32.231
       onvif_port: 2020
       rtsp_port: 554
       lenses:
@@ -91,7 +91,7 @@ equipment:
     protocol: "1.1"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020
     status_path: /status
-    poll_timeout_seconds: 2.0
+    poll_timeout_seconds: 30.0
     do_not_call_connect: true
     tile: { w: 2, h: 2 }
 
@@ -159,6 +159,7 @@ equipment:
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8010
     status_path: /status
     poll_timeout_seconds: 2.0
+    tile: { w: 2, h: 2 }
 
   # Environmental sensor stations. Add one entry per physical sensor unit.
   # The lab map is rotated 90° clockwise from the building plan, so on screen

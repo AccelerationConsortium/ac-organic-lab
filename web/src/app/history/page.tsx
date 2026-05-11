@@ -95,16 +95,21 @@ function effectiveState(snap: EquipmentSnapshot): StateName {
   return (snap.status?.equipment_status as StateName) ?? "unknown";
 }
 
-function StateBadge({ snap }: { snap: EquipmentSnapshot }) {
+function StateDot({ snap }: { snap: EquipmentSnapshot }) {
   const state = effectiveState(snap);
   const meta = STATE_META[state] ?? STATE_META.unknown;
   return (
-    <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${meta.badge}`}>
+    <span
+      aria-label={meta.label}
+      className="group/state-dot relative inline-flex h-5 w-5 items-center justify-center"
+    >
       <span
-        className="inline-block h-1.5 w-1.5 rounded-full"
+        className="inline-block h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-slate-950"
         style={{ backgroundColor: STATE_COLORS[state] ?? STATE_COLORS.unknown }}
       />
-      {meta.label}
+      <span className="pointer-events-none invisible absolute left-1/2 top-full z-50 mt-1 -translate-x-1/2 rounded-lg bg-slate-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover/state-dot:visible group-hover/state-dot:opacity-100 dark:bg-slate-700">
+        {meta.label}
+      </span>
     </span>
   );
 }
@@ -237,6 +242,32 @@ const UPTIME_WINDOWS = [
   { label: "30 d", days: 30 },
 ];
 
+function UptimeWindowPicker({
+  days,
+  onChange,
+}: {
+  days: number;
+  onChange: (days: number) => void;
+}) {
+  return (
+    <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-950/40">
+      {UPTIME_WINDOWS.map((w) => (
+        <button
+          key={w.days}
+          onClick={() => onChange(w.days)}
+          className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
+            days === w.days
+              ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
+              : "text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
+          }`}
+        >
+          {w.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // Single device row inside a platform group
 function DeviceUptimeRow({
   snap,
@@ -265,19 +296,16 @@ function DeviceUptimeRow({
         onClick={onToggle}
         className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50"
       >
-        {/* Name + id */}
+        {/* Name */}
         <div className="w-44 min-w-0 shrink-0">
           <p className="truncate text-sm font-medium text-ink dark:text-slate-100">
             {snap.name}
           </p>
-          <p className="truncate font-mono text-xs text-ink-subtle dark:text-slate-500">
-            {snap.id}
-          </p>
         </div>
 
-        {/* State badge */}
-        <div className="w-28 shrink-0">
-          <StateBadge snap={snap} />
+        {/* State dot; legend already carries the text labels. */}
+        <div className="w-10 shrink-0 text-center">
+          <StateDot snap={snap} />
         </div>
 
         {/* Segmented bar */}
@@ -307,11 +335,15 @@ function PlatformGroup({
   snaps,
   uptimeData,
   isPending,
+  days,
+  onDaysChange,
 }: {
   platform: string;
   snaps: EquipmentSnapshot[];
   uptimeData: Record<string, { uptime_pct: number | null; state_pcts: Record<string, number> }> | undefined;
   isPending: boolean;
+  days: number;
+  onDaysChange: (days: number) => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const toggle = (id: string) => setExpanded((prev) => (prev === id ? null : id));
@@ -323,15 +355,18 @@ function PlatformGroup({
         <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
           {platformLabel(platform)}
         </h4>
-        <span className="text-xs text-ink-subtle dark:text-slate-500">
-          {snaps.length} module{snaps.length !== 1 ? "s" : ""}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-ink-subtle dark:text-slate-500">
+            {snaps.length} module{snaps.length !== 1 ? "s" : ""}
+          </span>
+          <UptimeWindowPicker days={days} onChange={onDaysChange} />
+        </div>
       </div>
 
       {/* Column header */}
       <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-1.5 dark:border-slate-800">
         <span className="w-44 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Module</span>
-        <span className="w-28 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">State</span>
+        <span className="w-10 shrink-0 text-center text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">State</span>
         <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Uptime</span>
         <span className="w-14 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">%</span>
         <span className="ml-1 w-3" />
@@ -372,31 +407,10 @@ function UptimeSection({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
 
   return (
     <section className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-base font-semibold text-ink dark:text-slate-100">
-          Module Uptime
-        </h3>
-        <div className="flex gap-1 rounded-lg border border-slate-200 p-1 dark:border-slate-700">
-          {UPTIME_WINDOWS.map((w) => (
-            <button
-              key={w.days}
-              onClick={() => setDays(w.days)}
-              className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
-                days === w.days
-                  ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
-                  : "text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
-              }`}
-            >
-              {w.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {snapshots.length === 0 ? (
         <EmptyState message="No devices found in registry." />
       ) : (
-        <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {platforms.map((p) => (
             <PlatformGroup
               key={p}
@@ -404,6 +418,8 @@ function UptimeSection({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
               snaps={byPlatform[p]}
               uptimeData={uptimeData?.devices}
               isPending={isPending}
+              days={days}
+              onDaysChange={setDays}
             />
           ))}
         </div>
@@ -659,8 +675,7 @@ export default function HistoryPage() {
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h2 className="text-lg font-semibold text-ink dark:text-slate-100">History</h2>
-        <p className="mt-0.5 text-sm text-ink-muted dark:text-slate-400">
+        <p className="text-sm text-ink-muted dark:text-slate-400">
           Module uptime and environmental sensor trends. Refreshes every 30 s.
         </p>
       </header>

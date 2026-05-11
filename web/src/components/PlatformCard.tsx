@@ -50,20 +50,25 @@ function PlatformCameraPreview({ camera }: { camera: EquipmentSnapshot }) {
   const streamingEnabled = details.streaming_enabled !== false;
   const privacyMode = Boolean(details.privacy_mode);
 
-  if (!lens?.mse_url) {
-    return <VideoFeedPlaceholder label={camera.id} />;
-  }
+  const lensLabel = lens?.label ?? "Camera";
 
   return (
     <div className="relative">
-      <MsePlayer
-        src={lens.mse_url}
-        disabled={!streamingEnabled || privacyMode}
-      />
+      {lens?.mse_url ? (
+        <MsePlayer
+          src={lens.mse_url}
+          disabled={!streamingEnabled || privacyMode}
+        />
+      ) : (
+        <VideoFeedPlaceholder label={camera.id} />
+      )}
       <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2">
-        <span className="pointer-events-auto rounded-md bg-slate-900/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-100 backdrop-blur-sm">
-          {camera.name} · {lens.label}
-        </span>
+        <div className="pointer-events-auto flex items-center gap-1.5 rounded-md bg-slate-900/70 px-2 py-0.5 backdrop-blur-sm">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-slate-100">
+            {camera.name} · {lensLabel}
+          </span>
+          <StatusPill state={camera.status.equipment_status} />
+        </div>
         <Link
           href={`/platforms/${camera.platform}`}
           className="pointer-events-auto rounded-md bg-slate-900/70 px-2 py-0.5 text-[10px] font-medium text-sky-200 backdrop-blur-sm hover:text-sky-100"
@@ -102,13 +107,9 @@ export function PlatformCard({
   href?: string;
   snapshots: EquipmentSnapshot[];
 }) {
-  // The platform's camera (if any) drives the preview region; the rest
-  // populates the equipment list. We keep the camera out of the row list
-  // so it isn't shown twice.
+  // The platform's camera (if any) drives the preview region and also remains
+  // in the equipment list so its status is visible alongside the other modules.
   const camera = snapshots.find((s) => s.kind === "camera") ?? null;
-  const nonCameraSnapshots = camera
-    ? snapshots.filter((s) => s.id !== camera.id)
-    : snapshots;
 
   return (
     <article className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-surface-raised p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -141,15 +142,15 @@ export function PlatformCard({
 
       <div>
         <h4 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-500">
-          Equipment ({nonCameraSnapshots.length})
+          Equipment ({snapshots.length})
         </h4>
-        {nonCameraSnapshots.length === 0 ? (
+        {snapshots.length === 0 ? (
           <p className="text-sm text-ink-subtle dark:text-slate-500">
             No equipment registered for this platform.
           </p>
         ) : (
           <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {nonCameraSnapshots.map((s) => (
+            {snapshots.map((s) => (
               <EquipmentRow key={s.id} snapshot={s} />
             ))}
           </ul>
