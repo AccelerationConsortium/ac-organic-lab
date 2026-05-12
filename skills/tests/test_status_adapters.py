@@ -43,13 +43,57 @@ async def client():
 
 
 # ---------------------------------------------------------------------------
-# dose_every_well
+# dose_every_well — spec-compliant (production: adapter: http)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_doser_requires_init(load_fixture, client) -> None:
+    """dose_every_well now emits spec v1.0 EquipmentStatus; routed via HttpStatusAdapter."""
     http_status, body = load_fixture("dose_every_well_requires_init")
+    entry = _entry(id="dose_every_well", kind="solid_doser", adapter="http")
+    adapter = HttpStatusAdapter(entry)
+
+    with respx.mock(base_url=entry.base_url) as router:
+        router.get("/status").mock(return_value=httpx.Response(http_status, json=body))
+        result = await adapter.fetch(client)
+
+    assert result.error is None
+    assert result.status.equipment_status == "requires_init"
+    assert result.status.required_actions == ["startup"]
+    assert result.status.components["gantry"].connected is False
+    assert result.status.components["solid_doser"].connected is False
+
+
+@pytest.mark.asyncio
+async def test_doser_ready(load_fixture, client) -> None:
+    """dose_every_well now emits spec v1.0 EquipmentStatus; routed via HttpStatusAdapter."""
+    http_status, body = load_fixture("dose_every_well_ready")
+    entry = _entry(id="dose_every_well", kind="solid_doser", adapter="http")
+    adapter = HttpStatusAdapter(entry)
+
+    with respx.mock(base_url=entry.base_url) as router:
+        router.get("/status").mock(return_value=httpx.Response(http_status, json=body))
+        result = await adapter.fetch(client)
+
+    assert result.error is None
+    assert result.status.equipment_status == "ready"
+    assert result.status.components["gantry"].connected
+    assert result.status.components["solid_doser"].connected
+    assert result.status.metrics["flow_rate"].value == 12.5
+    assert result.status.metrics["flow_rate"].unit == "mg/s"
+    assert result.status.details.get("config") == "with_cnc_solid_doser"
+
+
+# ---------------------------------------------------------------------------
+# dose_every_well — legacy adapter (pre-migration behaviour, kept for rollback)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_legacy_doser_requires_init(load_fixture, client) -> None:
+    """LegacyDoseEveryWellAdapter maps HTTP 400 not-initialized to requires_init."""
+    http_status, body = load_fixture("dose_every_well_legacy_requires_init")
     entry = _entry(id="dose_every_well", kind="solid_doser")
     adapter = LegacyDoseEveryWellAdapter(entry)
 
@@ -65,8 +109,9 @@ async def test_doser_requires_init(load_fixture, client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_doser_ready(load_fixture, client) -> None:
-    http_status, body = load_fixture("dose_every_well_ready")
+async def test_legacy_doser_ready(load_fixture, client) -> None:
+    """LegacyDoseEveryWellAdapter translates the pre-migration flat JSON body."""
+    http_status, body = load_fixture("dose_every_well_legacy_ready")
     entry = _entry(id="dose_every_well", kind="solid_doser")
     adapter = LegacyDoseEveryWellAdapter(entry)
 

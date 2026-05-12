@@ -1,24 +1,34 @@
 {
   "_http_status": 200,
   "_body": {
-    "plate_loaded": true,
-    "plate_weigher": {
-      "plate_loaded": true,
-      "balance_port": "/dev/ttyUSB0",
-      "balance_connected": true,
-      "plate_type": "96-well-2ml"
+    "protocol_version": "1.0",
+    "equipment_id": "dose_every_well",
+    "equipment_name": "Dose Every Well",
+    "equipment_kind": "solid_doser",
+    "equipment_status": "ready",
+    "message": "Idle",
+    "required_actions": [],
+    "allowed_actions": [],
+    "device_time": "2026-05-11T20:00:00+00:00",
+    "components": {
+      "gantry": {"connected": true, "state": "ready"},
+      "solid_doser": {"connected": true, "state": "ready"},
+      "balance": {"connected": true, "state": "ready"},
+      "plate": {"connected": true, "state": "loaded"}
     },
-    "gantry_connected": true,
-    "solid_doser_connected": true,
-    "flow_rate_mg_per_s": 12.5,
-    "plate": {
-      "name": "demo_plate",
-      "total_wells": 96,
-      "dosed_wells": 12,
-      "undosed_wells": 84
+    "metrics": {
+      "flow_rate": {"value": 12.5, "unit": "mg/s"}
     },
-    "gantry_position": {"x": 12.0, "y": 5.5, "z": 0.0},
-    "solid_doser": {"gate_position": "closed", "motor_running": false, "is_dispensing": false},
-    "config": "with_cnc_solid_doser"
+    "details": {
+      "plate_weigher": {
+        "plate_loaded": true,
+        "balance_port": "/dev/ttyUSB0",
+        "balance_connected": true,
+        "plate_type": "96-well-2ml"
+      },
+      "gantry_position": {"x": 12.0, "y": 5.5, "z": 0.0},
+      "solid_doser": {"gate_position": "closed", "motor_running": false, "is_dispensing": false},
+      "config": "with_cnc_solid_doser"
+    }
   }
 }

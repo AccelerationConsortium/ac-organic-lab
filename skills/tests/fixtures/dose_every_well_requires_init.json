@@ -1,6 +1,21 @@
 {
-  "_http_status": 400,
+  "_http_status": 200,
   "_body": {
-    "error": "PlateDoser system not initialized. POST /startup first."
+    "protocol_version": "1.0",
+    "equipment_id": "dose_every_well",
+    "equipment_name": "Dose Every Well",
+    "equipment_kind": "solid_doser",
+    "equipment_status": "requires_init",
+    "message": "Awaiting POST /startup",
+    "required_actions": ["startup"],
+    "allowed_actions": [],
+    "device_time": "2026-05-11T20:00:00+00:00",
+    "components": {
+      "gantry": {"connected": false, "state": "disconnected"},
+      "solid_doser": {"connected": false, "state": "disconnected"},
+      "balance": {"connected": false, "state": "disconnected"}
+    },
+    "metrics": {},
+    "details": {}
   }
 }
