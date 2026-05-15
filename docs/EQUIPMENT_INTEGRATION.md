@@ -225,7 +225,7 @@ Steps:
    curl -fsS http://localhost:8001/api/equipment | python3 -c \
      'import sys,json; cam=[e for e in json.load(sys.stdin)["equipment"] if e["id"]=="cam_lab499_west"][0]; print(json.dumps({"status":cam["status"]["equipment_status"],"presets":cam["status"]["details"].get("presets"),"lenses":[l["stream_connected"] for l in cam["status"]["details"]["lenses"]]}, indent=2))'
    ```
-9. Open the dashboard's `/cameras` page in the browser - the tile should appear with a live MSE feed.
+9. Open the dashboard's Lab Overview page (`/`) in the browser — the HTE platform card shows a **"Show stream"** button in the header. Click it to expand the live MSE feed inline; click **"Hide stream"** to collapse it. The stream is hidden by default so the overview page doesn't load live video for every visitor. The full camera tile with PTZ controls, presets, privacy/streaming toggles, snapshot, recording, and rolling-recording is always available on the platform detail page (`/platforms/<platform>`).
 
 ### Onboarding a Kasa plug
 

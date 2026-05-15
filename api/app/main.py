@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from lab_skills import EquipmentAggregator, load_registry
+from lab_skills.skill_catalog import SKILL_REGISTRY
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -345,6 +346,62 @@ async def list_equipment() -> EquipmentList:
         app.state.overrides,
         app.state.registry,
     )
+
+
+@app.get("/api/catalog", tags=["meta"])
+async def skill_catalog() -> dict:
+    """Return the static skill catalog grouped by platform.
+
+    Each platform contains its instruments; each instrument lists its
+    available actions with JSON Schema descriptions of the request body.
+    This endpoint is read-only and does not contact any device.
+    """
+    registry: "Registry" = app.state.registry  # type: ignore[name-defined]
+
+    PLATFORM_LABELS = {"hte": "HTE Platform"}
+
+    # Build a map of kind → [action defs] from the catalog
+    def _serialize_actions(kind: str) -> list[dict]:
+        defs = SKILL_REGISTRY.get(kind, [])
+        result = []
+        for d in defs:
+            try:
+                schema = d.args_schema.model_json_schema()
+            except Exception:
+                schema = {}
+            result.append({
+                "name": d.name,
+                "description": d.description,
+                "method": d.method,
+                "endpoint": d.endpoint,
+                "args_schema": schema,
+                "requires_states": d.requires_states,
+                "estimated_duration_s": d.estimated_duration_s,
+            })
+        return result
+
+    # Group registry entries by platform (exclude env sensors / cameras)
+    platforms: dict[str, dict] = {}
+    for entry in registry.equipment:
+        if entry.kind in ("environmental_sensor", "camera"):
+            continue
+        p = entry.platform
+        if p not in platforms:
+            platforms[p] = {
+                "label": PLATFORM_LABELS.get(p, p.upper()),
+                "instruments": [],
+            }
+        platforms[p]["instruments"].append({
+            "id": entry.id,
+            "name": entry.name,
+            "kind": entry.kind,
+            "adapter": entry.adapter,
+            "base_url": entry.base_url or "",
+            "protocol": entry.protocol,
+            "actions": _serialize_actions(entry.kind),
+        })
+
+    return {"platforms": platforms}
 
 
 @app.get(

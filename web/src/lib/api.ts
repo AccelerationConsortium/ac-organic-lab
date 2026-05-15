@@ -15,6 +15,8 @@ import type {
   RecordingStartResponse,
   RecordingStopRequest,
   RecordingStopResponse,
+  RollingStartRequest,
+  RollingStopResponse,
   SnapshotRequest,
   SnapshotResponse,
   StreamingRequest,
@@ -163,6 +165,19 @@ export async function cancelRecording(
   return controlPost<RecordingCancelRequest, RecordingCancelResponse>(
     equipmentId, "recording/cancel", body,
   );
+}
+
+export async function startRolling(
+  equipmentId: string,
+  body: RollingStartRequest = {},
+): Promise<ControlAck> {
+  return controlPost<RollingStartRequest, ControlAck>(equipmentId, "rolling/start", body);
+}
+
+export async function stopRolling(
+  equipmentId: string,
+): Promise<RollingStopResponse> {
+  return controlPost<Record<string, never>, RollingStopResponse>(equipmentId, "rolling/stop", {});
 }
 
 // `/media` and `/media/<kind>/<lens>/<file>` aren't `/control/...`

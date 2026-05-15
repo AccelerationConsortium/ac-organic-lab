@@ -45,14 +45,14 @@ equipment:
     poll_timeout_seconds: 5.0
     tile: { w: 2, h: 3 }
     camera:
-      host: 172.31.32.231
+      host: 172.31.60.16
       onvif_port: 2020
       rtsp_port: 554
       lenses:
         # Per TP-Link's RTSP/ONVIF FAQ: dual-lens C245D exposes wide on
         # /stream1 and tele on /stream6 (non-adjacent paths). /stream2 is
         # the SD copy of the wide lens, NOT the tele lens.
-        - { id: wide, label: Wide, rtsp_path: stream1 }
+        - { id: wide, label: Wide, rtsp_path: stream1, ptz_capable: false }
         - { id: tele, label: Tele, rtsp_path: stream6 }
 
   - id: xarm_translocation
@@ -101,7 +101,7 @@ equipment:
     kind: plate_reader
     adapter: http
     protocol: "1.0"
-    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:9333
+    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8040
     status_path: /status
     poll_timeout_seconds: 3.0
     # The agilent-cytation-server repo conforms to STATUS_SPEC v1.0
@@ -144,12 +144,6 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 2.0
 
-  - id: agilent_biostack
-    name: Agilent BioStack
-    platform: hte
-    kind: plate_stacker
-    adapter: mock
-
   - id: plateloc
     name: Agilent PlateLoc
     platform: hte
@@ -160,6 +154,29 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 2.0
     tile: { w: 2, h: 2 }
+
+  - id: agilent_biostack
+    name: Agilent BioStack
+    platform: hte
+    kind: plate_stacker
+    adapter: http
+    protocol: "1.1"
+    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8030
+    status_path: /status
+    poll_timeout_seconds: 2.0
+    do_not_call_connect: true
+    tile: { w: 2, h: 1 }
+
+  - id: pypoe_web
+    name: PyPoe Web UI
+    platform: Web Services
+    kind: other
+    adapter: http
+    protocol: "1.1"
+    base_url: http://100.64.254.6:8000
+    status_path: /status
+    poll_timeout_seconds: 3.0
+    tile: { w: 2, h: 1 }
 
   # Environmental sensor stations. Add one entry per physical sensor unit.
   # The lab map is rotated 90° clockwise from the building plan, so on screen

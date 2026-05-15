@@ -7,6 +7,7 @@ const tabs = [
   { href: "/", label: "Lab Overview" },
   { href: "/platforms/hte", label: "HTE Platform" },
   { href: "/history", label: "History" },
+  { href: "/api-reference", label: "API Reference" },
 ];
 
 export function Nav() {

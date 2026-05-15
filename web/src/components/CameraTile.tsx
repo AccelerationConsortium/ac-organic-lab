@@ -14,7 +14,9 @@ import {
   setPrivacy,
   setStreaming,
   startRecording,
+  startRolling,
   stopRecording,
+  stopRolling,
   takeSnapshot,
 } from "@/lib/api";
 import type {
@@ -64,6 +66,18 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
     if (lenses.length === 0) return null;
     return lenses.find((lens) => lens.id === activeLensId) ?? lenses[0];
   }, [activeLensId, lenses]);
+
+  // Rolling state comes from the active lens entry (declared after activeLens).
+  const rollingActive = Boolean(activeLens?.rolling_active);
+  const rollingSegmentCount = activeLens?.rolling_segment_count ?? 0;
+
+  // PTZ is only available when ONVIF is reachable AND the active lens has
+  // a PTZ motor. Fixed lenses (e.g. wide on C245D) carry ptz_capable: false
+  // in equipment.yaml; we cross-reference via snapshot.camera?.lenses.
+  const activeLensConfig = snapshot.camera?.lenses?.find(
+    (l) => l.id === activeLens?.id,
+  );
+  const ptzCapable = onvifReachable && (activeLensConfig?.ptz_capable !== false);
 
   const [presetSelection, setPresetSelection] = useState<string>("");
   const [presetModalOpen, setPresetModalOpen] = useState(false);
@@ -123,6 +137,15 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   });
   const streamingMutation = useMutation({
     mutationFn: (enabled: boolean) => setStreaming(snapshot.id, { enabled }),
+    onSuccess: invalidate,
+    onError,
+  });
+
+  const rollingMutation = useMutation({
+    mutationFn: (enable: boolean) =>
+      enable
+        ? startRolling(snapshot.id, { lens: activeLens?.id, segment_duration_s: 1800, max_segments: 96 })
+        : stopRolling(snapshot.id),
     onSuccess: invalidate,
     onError,
   });
@@ -224,7 +247,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       */}
       <div className="flex items-start gap-3">
         <PtzPad
-          disabled={!onvifReachable}
+          disabled={!ptzCapable}
           onMove={(direction) => ptzMutation.mutate(direction)}
           onStop={() => stopMutation.mutate()}
         />
@@ -234,7 +257,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             <select
               value={presetSelection}
               onChange={(event) => setPresetSelection(event.target.value)}
-              disabled={!onvifReachable || presets.length === 0}
+              disabled={!ptzCapable || presets.length === 0}
               className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-ink disabled:bg-slate-50 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900 dark:disabled:text-slate-600"
             >
               <option value="">
@@ -248,7 +271,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             </select>
             <button
               type="button"
-              disabled={!onvifReachable || !presetSelection}
+              disabled={!ptzCapable || !presetSelection}
               onClick={() => presetSelection && gotoMutation.mutate(presetSelection)}
               className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-ink hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-700"
             >
@@ -256,7 +279,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             </button>
             <button
               type="button"
-              disabled={!onvifReachable || !presetSelection}
+              disabled={!ptzCapable || !presetSelection}
               onClick={() => presetSelection && deleteMutation.mutate(presetSelection)}
               className="rounded-md border border-rose-200 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40 dark:border-rose-900/60 dark:text-rose-300 dark:hover:bg-rose-900/20"
             >
@@ -265,7 +288,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           </div>
           <button
             type="button"
-            disabled={!onvifReachable}
+            disabled={!ptzCapable}
             onClick={() => setPresetModalOpen(true)}
             className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-ink hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-700"
           >
@@ -337,7 +360,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-2 dark:border-slate-800">
+      <div className="flex items-center gap-4 border-t border-slate-100 pt-2 dark:border-slate-800">
         <Toggle
           label="Streaming"
           checked={streamingEnabled}
@@ -349,6 +372,13 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           checked={privacyMode}
           disabled={!tapoReachable || privacyMutation.isPending}
           onChange={(value) => privacyMutation.mutate(value)}
+        />
+        <Toggle
+          label="Rolling"
+          checked={rollingActive}
+          disabled={rollingMutation.isPending}
+          title={rollingActive ? `${rollingSegmentCount} segment(s) on disk · click to stop` : "Start rolling recorder (30 min segments, keep 96)"}
+          onChange={(value) => rollingMutation.mutate(value)}
         />
         <span className="ml-auto text-[11px] text-ink-subtle dark:text-slate-500">
           <StalenessIndicator fetchedAt={snapshot.fetched_at} />
@@ -396,15 +426,18 @@ function Toggle({
   label,
   checked,
   disabled,
+  title,
   onChange,
 }: {
   label: string;
   checked: boolean;
   disabled?: boolean;
+  title?: string;
   onChange: (value: boolean) => void;
 }) {
   return (
     <label
+      title={title}
       className={`inline-flex cursor-pointer items-center gap-2 text-xs ${
         disabled ? "cursor-not-allowed opacity-50" : ""
       }`}

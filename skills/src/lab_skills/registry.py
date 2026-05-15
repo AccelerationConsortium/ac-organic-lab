@@ -53,6 +53,10 @@ class CameraLens(BaseModel):
     id: str
     label: str
     rtsp_path: str = "stream1"
+    ptz_capable: bool = True
+    """False for fixed lenses with no PTZ motor (e.g. wide on Tapo C245D).
+    The dashboard uses this to grey out the PTZ pad when the user selects
+    a non-moveable lens."""
 
 
 class CameraConfig(BaseModel):

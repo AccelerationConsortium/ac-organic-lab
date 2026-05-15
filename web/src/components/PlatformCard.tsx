@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
 import type {
   CameraDetails,
@@ -25,9 +28,7 @@ function VideoFeedPlaceholder({ label }: { label: string }) {
           <rect x="2" y="6" width="14" height="12" rx="2" />
           <path d="M16 10l5-3v10l-5-3z" />
         </svg>
-        <span className="text-xs uppercase tracking-wider">
-          Video feed placeholder
-        </span>
+        <span className="text-xs uppercase tracking-wider">Stream hidden</span>
         <span className="text-[10px] text-slate-600">{label}</span>
       </div>
     </div>
@@ -110,6 +111,7 @@ export function PlatformCard({
   // The platform's camera (if any) drives the preview region and also remains
   // in the equipment list so its status is visible alongside the other modules.
   const camera = snapshots.find((s) => s.kind === "camera") ?? null;
+  const [streamVisible, setStreamVisible] = useState(false);
 
   return (
     <article className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-surface-raised p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -124,21 +126,33 @@ export function PlatformCard({
             </p>
           )}
         </div>
-        {href && (
-          <Link
-            href={href}
-            className="shrink-0 text-xs font-medium text-sky-700 hover:underline dark:text-sky-400"
-          >
-            Open →
-          </Link>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {camera && (
+            <button
+              onClick={() => setStreamVisible((v) => !v)}
+              title={streamVisible ? "Hide camera stream" : "Show camera stream"}
+              className="rounded-md border border-slate-200 bg-white/60 px-2 py-0.5 text-[10px] font-medium text-ink-subtle hover:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+            >
+              {streamVisible ? "Hide stream" : "Show stream"}
+            </button>
+          )}
+          {href && (
+            <Link
+              href={href}
+              className="text-xs font-medium text-sky-700 hover:underline dark:text-sky-400"
+            >
+              Open →
+            </Link>
+          )}
+        </div>
       </header>
 
-      {camera ? (
-        <PlatformCameraPreview camera={camera} />
-      ) : (
-        <VideoFeedPlaceholder label={id} />
-      )}
+      {camera &&
+        (streamVisible ? (
+          <PlatformCameraPreview camera={camera} />
+        ) : (
+          <VideoFeedPlaceholder label={camera.name} />
+        ))}
 
       <div>
         <h4 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-500">

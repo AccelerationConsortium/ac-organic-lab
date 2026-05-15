@@ -169,7 +169,6 @@ def _snapshot(
     plug = entry.plug if entry is not None else None
     location = override.location if override is not None else None
     tile = override.tile if override is not None else Tile()
-
     return EquipmentSnapshot(
         # SDK fields (forwarded verbatim)
         id=sdk_snapshot.id,

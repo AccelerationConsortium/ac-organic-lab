@@ -45,6 +45,8 @@ export interface CameraLens {
   id: string;
   label: string;
   rtsp_path: string;
+  /** False for fixed lenses that have no PTZ motor (e.g. wide on C245D). Defaults to true. */
+  ptz_capable?: boolean;
 }
 
 export interface CameraConfig {
@@ -77,6 +79,9 @@ export interface LensStatusEntry {
   stream_connected?: boolean | null;
   recording_active?: boolean;
   recording_started_at?: string | null;
+  rolling_active?: boolean;
+  rolling_started_at?: string | null;
+  rolling_segment_count?: number;
 }
 
 /** Shape of `EquipmentStatus.details` for `kind: camera`. */
@@ -228,6 +233,19 @@ export interface RecordingCancelResponse {
   recording_id: string;
   canceled: boolean;
   deleted_path?: string | null;
+}
+
+export interface RollingStartRequest {
+  lens?: string | null;
+  segment_duration_s?: number;
+  max_segments?: number;
+  include_audio?: boolean;
+}
+
+export interface RollingStopResponse {
+  ok: boolean;
+  message?: string | null;
+  segments_recorded: number;
 }
 
 export interface MediaFile {

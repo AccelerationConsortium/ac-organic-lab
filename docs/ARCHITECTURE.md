@@ -179,6 +179,8 @@ Each entry includes:
 - `enabled: bool`, `maintenance: { reason, until, contact }` for soft maintenance toggling without commenting out
 - `location` and `tile` for dashboard rendering (parsed only by `api/`, not `skills`)
 
+> **Stream visibility** is not a YAML field. When a platform has a camera the Lab Overview card shows a "Show stream / Hide stream" toggle button — the live feed is collapsed by default so the overview page doesn't open live WebSocket connections for every visitor. There is no `hide_stream` flag in `equipment.yaml`; the toggle is purely a runtime UI control.
+
 ### `docs/STATUS_SPEC.md`
 
 The contract every per-device REST service implements. Combines the v1.0 baseline with the v1.1 additions (claims, `allowed_actions`, `details.claimed_by`); v1.0 devices remain conformant without changes.
