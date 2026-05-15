@@ -151,8 +151,8 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 
 - [ ] `protocol_version` reported on `/` and `/status` is `"1.1"`.
 - [ ] `POST /control/claim`, `POST /control/heartbeat`,
-  `POST /control/release` implemented per
-  `docs/STATUS_SPEC_v1_1.md`.
+  `POST /control/release` implemented per the v1.1 section of
+  [`docs/STATUS_SPEC.md`](STATUS_SPEC.md).
 - [ ] `EquipmentStatus.allowed_actions` is populated with the skill
   names (matching `Skill.name` from the catalog) the device will
   currently honor.
@@ -433,12 +433,13 @@ PlateLoc) is the gate.
 
 ## See also
 
-- `docs/STATUS_SPEC.md` — v1.0 device contract (authoritative).
-- `docs/STATUS_SPEC_v1_1.md` — v1.1 additions (claims, `allowed_actions`).
-- `docs/SKILLS_CATALOG.md` — what `Skill.name` / `allowed_actions` refer to.
-- `docs/INTERLOCKS.md` — four-layer safety model; layer 4 ships in v0.3.
-- `docs/ARCHITECTURE.md` — system layering + repo boundaries.
-- `docs/DEVICE_PC_SETUP.md` — canonical install recipe for a Windows
+- [`docs/STATUS_SPEC.md`](STATUS_SPEC.md) — combined v1.0 + v1.1 device contract (authoritative); includes claims, `allowed_actions`, and the SiLA-comparison appendix.
+- [`docs/SKILLS_CATALOG.md`](SKILLS_CATALOG.md) — what `Skill.name` / `allowed_actions` refer to.
+- [`docs/INTERLOCKS.md`](INTERLOCKS.md) — four-layer safety model; layer 4 ships in v0.3.
+- [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — system layering + repo boundaries.
+- [`docs/DEVICE_PC_SETUP.md`](DEVICE_PC_SETUP.md) — canonical install recipe for a Windows
   device PC (uv + NSSM); each device repo links here from its README.
+- [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) — logging tiers, central history DB schema.
+- [`docs/EQUIPMENT_INTEGRATION.md`](EQUIPMENT_INTEGRATION.md) — onboarding / maintenance runbook.
 - `.cursor/plans/build_ac-organic-lab-skills_5bb34ed0.plan.md` — original
   layered plan; this file is its committed counterpart.

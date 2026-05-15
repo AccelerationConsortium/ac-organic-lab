@@ -2,7 +2,8 @@
 
 A :class:`ClaimManager` is an async context manager that holds a cooperative
 lock on one device for the duration of a critical section. It implements the
-client side of the protocol defined in ``docs/STATUS_SPEC_v1_1.md``:
+client side of the protocol defined in the v1.1 section of
+``docs/STATUS_SPEC.md``:
 
 * ``__aenter__`` -> ``POST /control/claim`` -> spin up a heartbeat task.
 * While inside the ``async with``: heartbeat keeps the claim alive.

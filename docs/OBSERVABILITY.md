@@ -1,7 +1,7 @@
 # Lab Observability — Logging, Events, and History
 
 Platform-specific guidelines, storage schema, and dashboard integration notes for the
-AC Organic Self-driving Lab. Read alongside `STATUS_SPEC_v1_1.md` and `ARCHITECTURE.md`.
+AC Organic Self-driving Lab. Read alongside [`STATUS_SPEC.md`](STATUS_SPEC.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ---
 

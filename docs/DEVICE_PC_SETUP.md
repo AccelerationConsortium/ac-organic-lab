@@ -3,7 +3,7 @@
 **Audience:** anyone bringing up a Windows PC that hosts one or more lab equipment REST services (plateloc, platereader, platestacker, fume hood actuator, etc.).
 **Goal:** get every device service running as an auto-starting Windows Service, isolated from every other service on the same PC, with a uniform install / update / log story across the lab.
 
-This document is the **canonical install recipe** for any device repo that conforms to `docs/STATUS_SPEC.md` (v1.0) or `docs/STATUS_SPEC_v1_1.md` (v1.1). Each device repo's README links here rather than duplicating the recipe.
+This document is the **canonical install recipe** for any device repo that conforms to [`docs/STATUS_SPEC.md`](STATUS_SPEC.md) (v1.0 baseline or v1.1 with claims). Each device repo's README links here rather than duplicating the recipe.
 
 ## TL;DR
 
@@ -202,7 +202,7 @@ The lab account also needs the "Log on as a service" right. NSSM grants this aut
 
 When multiple services share one PC, every service gets a distinct port; when each service has its own PC, the same port is fine across PCs (Tailscale's hostname is what disambiguates).
 
-After install + smoke, register the service in the monorepo's `equipment.yaml` with the matching `id`, `base_url`, and `protocol` fields. See `docs/STATUS_SPEC.md` and `docs/STATUS_SPEC_v1_1.md` for the registry shape.
+After install + smoke, register the service in the monorepo's `equipment.yaml` with the matching `id`, `base_url`, and `protocol` fields. See [`docs/STATUS_SPEC.md`](STATUS_SPEC.md) for the registry shape (v1.0 and v1.1).
 
 ## 8. Troubleshooting
 
@@ -227,7 +227,7 @@ The lab user account, uv binary, and NSSM stay; uninstalling one device does not
 
 ## See also
 
-- `docs/STATUS_SPEC.md` — v1.0 contract that every device REST API implements.
-- `docs/STATUS_SPEC_v1_1.md` — v1.1 additions (claim protocol, `allowed_actions`).
-- `docs/ROADMAP.md` — per-device migration status.
+- [`docs/STATUS_SPEC.md`](STATUS_SPEC.md) — combined v1.0 + v1.1 contract every device REST API implements (claim protocol, `allowed_actions`, SiLA comparison appendix).
+- [`docs/ROADMAP.md`](ROADMAP.md) — per-device migration status.
+- [`docs/EQUIPMENT_INTEGRATION.md`](EQUIPMENT_INTEGRATION.md) — registry / maintenance runbook on the dashboard side.
 - `equipment.yaml` — the monorepo's source of truth for "which devices exist and where to reach them".

@@ -19,13 +19,26 @@ Browser  ->  Next.js (web/, port 3000)  ->  FastAPI (api/, port 8001)  ->  lab-s
 - **`skills/`** - `lab-skills` Python SDK. Owns the registry, polling aggregator, per-device adapters, and the workflow-facing session API. Imported by `api/` and by project workflow repos.
 - **`api/`** - FastAPI dashboard server. Thin presentation layer over `skills/`.
 - **`web/`** - Next.js 14 (App Router) + TypeScript + TanStack Query.
-- **`docs/STATUS_SPEC.md`** - the authoritative unified equipment status contract every equipment repo must implement.
-- **`docs/ARCHITECTURE.md`** - the long-form description of the monorepo's layering and design decisions.
+- **`docs/`** - architectural documents, device contract, runbooks, roadmap. See [Documentation](#documentation) below.
 - **`equipment.yaml`** - the equipment registry (committed). Tailscale hostnames are not treated as secrets.
 - **`.env`** / **`.env.example`** - real secrets only (control tokens, webhooks). Currently unused in the read-only v1.
 - **`deploy/`** - example systemd units for the two services.
 
-See [`docs/STATUS_SPEC.md`](docs/STATUS_SPEC.md) for the contract that all equipment repos must conform to, and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the system layering.
+## Documentation
+
+All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](docs/STATUS_SPEC.md) if you are bringing a new piece of equipment online, and [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) if you want to understand how the platform fits together.
+
+| Document | What it covers |
+|---|---|
+| [`docs/STATUS_SPEC.md`](docs/STATUS_SPEC.md) | **Authoritative device contract.** Combined v1.0 baseline + v1.1 additions (cooperative claims, `allowed_actions`, `details.claimed_by`). Includes the conformance checklists every device repo follows and an appendix comparing this contract to the **SiLA 2** standard. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Long-form description of the monorepo's layering, why we picked it, and the responsibilities of `skills/`, `api/`, `web/`, and the per-device repos. |
+| [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) | How the SDK describes "what the lab can do right now": `SkillDef` (static) vs `Skill` (runtime), how `allowed_actions` is computed, evolution from hard-coded → device-declared. |
+| [`docs/INTERLOCKS.md`](docs/INTERLOCKS.md) | Four-layer safety model (hardware limits → device state machine → skill preconditions → project plan interlocks); `validate_plan` / `execute_plan` API. |
+| [`docs/EQUIPMENT_INTEGRATION.md`](docs/EQUIPMENT_INTEGRATION.md) | Operational runbook: registering a new device in `equipment.yaml`, preventing placeholder-hostname regressions, maintenance windows, camera + smart-plug onboarding. |
+| [`docs/DEVICE_PC_SETUP.md`](docs/DEVICE_PC_SETUP.md) | Canonical install recipe for a Windows device PC (uv + NSSM + Tailscale). Linked from every device repo's README rather than duplicated per-repo. |
+| [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Logging tiers (journald → events.jsonl → central SQLite), the history DB schema, dashboard history endpoints, retention guidance. |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Per-device migration status (`legacy_http` → v1.0 → v1.1), SDK milestones (v0.1 → v0.5), and live operational regressions. |
+| [`deploy/README.md`](deploy/README.md) | Linux server deployment, systemd units, Caddy + Tailscale TLS, day-to-day operations. |
 
 ## Local development
 
@@ -170,7 +183,9 @@ See [`deploy/README.md`](deploy/README.md) for:
 - A troubleshooting table.
 
 For equipment onboarding and maintenance/offline procedures, see
-[`docs/EQUIPMENT_INTEGRATION.md`](docs/EQUIPMENT_INTEGRATION.md).
+[`docs/EQUIPMENT_INTEGRATION.md`](docs/EQUIPMENT_INTEGRATION.md). For
+the canonical install recipe on a Windows device PC see
+[`docs/DEVICE_PC_SETUP.md`](docs/DEVICE_PC_SETUP.md).
 
 The unit files themselves live at [`deploy/ac-dashboard-api.service`](deploy/ac-dashboard-api.service) and [`deploy/ac-dashboard-web.service`](deploy/ac-dashboard-web.service). Both set `Restart=on-failure`, journal logging, `LimitNOFILE=65536`, and standard systemd hardening directives (`ProtectSystem=strict`, `NoNewPrivileges`, etc.).
 
@@ -179,7 +194,7 @@ The unit files themselves live at [`deploy/ac-dashboard-api.service`](deploy/ac-
 Tapo cameras and Kasa smart plugs are integrated through a companion
 gateway service ([`kasa-tapo-services`](https://github.com/cyrilcaoyang/kasa_tapo_services))
 that translates the proprietary device protocols into the same
-STATUS_SPEC v1.0 HTTP envelope as every other piece of equipment.
+[STATUS_SPEC](docs/STATUS_SPEC.md) HTTP envelope as every other piece of equipment.
 
 When a camera is registered in `equipment.yaml` with `kind: camera`,
 the dashboard renders a richer tile on its platform panel:

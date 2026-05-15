@@ -1,7 +1,7 @@
 """ClaimManager tests against respx-mocked v1.1 / v1.0 devices.
 
 Validates the client side of the claim/heartbeat/release protocol described
-in ``docs/STATUS_SPEC_v1_1.md``:
+in the v1.1 section of ``docs/STATUS_SPEC.md``:
 
 * happy path acquires a token, runs heartbeats, releases on exit
 * registry-declared v1.0 device skips the network entirely (no-op manager)

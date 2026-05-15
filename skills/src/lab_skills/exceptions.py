@@ -154,8 +154,8 @@ class ClaimRejected(LabError):
 
     Note: HTTP 404 / 405 from ``/control/claim`` is *not* a rejection. The
     SDK treats it as "this device is v1.0 and has no claim semantics" and
-    silently degrades :class:`ClaimManager` to a no-op. See
-    ``docs/STATUS_SPEC_v1_1.md``.
+    silently degrades :class:`ClaimManager` to a no-op. See the v1.1
+    section of ``docs/STATUS_SPEC.md``.
     """
 
     def __init__(

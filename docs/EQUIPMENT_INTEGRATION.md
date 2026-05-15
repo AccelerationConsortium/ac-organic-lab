@@ -8,7 +8,7 @@ This runbook is the operational checklist for:
 
 This document complements:
 
-- `docs/STATUS_SPEC.md` and `docs/STATUS_SPEC_v1_1.md` (device contract)
+- [`docs/STATUS_SPEC.md`](STATUS_SPEC.md) (device contract — combined v1.0 + v1.1)
 - `deploy/README.md` (service operations)
 - `equipment.yaml` (committed registry source of truth)
 

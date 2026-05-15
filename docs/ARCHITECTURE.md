@@ -84,8 +84,7 @@ ac-organic-lab/
 ├── data/
 │   └── lab.db                      # SQLite history database (gitignored)
 ├── docs/
-│   ├── STATUS_SPEC.md              # v1.0 contract
-│   ├── STATUS_SPEC_v1_1.md         # v1.1 claims + allowed_actions
+│   ├── STATUS_SPEC.md              # combined v1.0 baseline + v1.1 (claims, allowed_actions)
 │   ├── ARCHITECTURE.md             # this document
 │   ├── OBSERVABILITY.md            # logging, events, history DB schema
 │   └── ROADMAP.md                  # milestone tracking
@@ -182,7 +181,7 @@ Each entry includes:
 
 ### `docs/STATUS_SPEC.md`
 
-The contract every per-device REST service implements. Stable for v1.0; v1.1 (claims + `allowed_actions`) is the next planned bump.
+The contract every per-device REST service implements. Combines the v1.0 baseline with the v1.1 additions (claims, `allowed_actions`, `details.claimed_by`); v1.0 devices remain conformant without changes.
 
 ## Key design decisions
 
@@ -269,9 +268,13 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 
 ## See also
 
-- `docs/STATUS_SPEC.md` — current device contract (v1.0)
+- `docs/STATUS_SPEC.md` — combined device contract (v1.0 baseline + v1.1 additions + SiLA comparison appendix)
 - `docs/SKILLS_CATALOG.md` — skill catalog design (`SkillDef` / `Skill`, runtime availability, evolution from hard-coded → device-declared)
 - `docs/INTERLOCKS.md` — four-layer safety model and the project interlock API (`add_interlock`, `validate_plan`, `PlanReport`)
+- `docs/OBSERVABILITY.md` — logging, events, and the central history DB
+- `docs/EQUIPMENT_INTEGRATION.md` — onboarding and maintenance runbook
+- `docs/DEVICE_PC_SETUP.md` — canonical install recipe for a Windows device PC
+- `docs/ROADMAP.md` — per-device migration status
 - `equipment.yaml` — the lab's inventory
 - `skills/README.md` — SDK usage (created when v0.1 ships)
 - `api/README.md` — dashboard server (created when api/ is reorganized in v0.1)
