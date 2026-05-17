@@ -533,29 +533,47 @@ const METRICS = [
   { key: "co2_ppm", label: "CO₂", unit: "ppm" },
 ];
 
-function SensorCard({
-  sensor,
-  sinceHours,
-}: {
-  sensor: EquipmentSnapshot;
-  sinceHours: number;
-}) {
+function SensorCard({ sensor }: { sensor: EquipmentSnapshot }) {
+  const [hours, setHours] = useState(1);
   const isMock = sensor.adapter === "mock";
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 p-5 dark:border-slate-800">
-      <header className="flex items-center justify-between">
-        <div>
-          <h4 className="text-sm font-semibold text-ink dark:text-slate-100">{sensor.name}</h4>
-          <p className="font-mono text-xs text-ink-subtle dark:text-slate-500">{sensor.id}</p>
+    <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+      {/* Tile header — mirrors PlatformGroup */}
+      <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/60">
+        <div className="min-w-0">
+          <h4 className="truncate text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+            {sensor.name}
+          </h4>
+          <p className="font-mono text-[10px] text-ink-subtle dark:text-slate-500">{sensor.id}</p>
         </div>
-        {isMock && (
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-ink-muted dark:bg-slate-800 dark:text-slate-400">
-            mock
-          </span>
-        )}
-      </header>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="flex shrink-0 items-center gap-2">
+          {isMock && (
+            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-ink-muted dark:bg-slate-700 dark:text-slate-400">
+              mock
+            </span>
+          )}
+          {/* Per-tile time picker */}
+          <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-950/40">
+            {SENSOR_WINDOWS.map((w) => (
+              <button
+                key={w.hours}
+                onClick={() => setHours(w.hours)}
+                className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
+                  hours === w.hours
+                    ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
+                    : "text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Metric charts */}
+      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
         {METRICS.map((m) => (
           <SensorMetricChart
             key={m.key}
@@ -563,7 +581,7 @@ function SensorCard({
             metric={m.key}
             label={m.label}
             unit={m.unit}
-            sinceHours={sinceHours}
+            sinceHours={hours}
           />
         ))}
       </div>
@@ -612,40 +630,191 @@ function SensorMetricChart({
 }
 
 function SensorsSection({ sensors }: { sensors: EquipmentSnapshot[] }) {
-  const [hours, setHours] = useState(1);
-
   return (
     <section className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-base font-semibold text-ink dark:text-slate-100">
-          Environmental Sensors
-        </h3>
-        <div className="flex gap-1 rounded-lg border border-slate-200 p-1 dark:border-slate-700">
-          {SENSOR_WINDOWS.map((w) => (
-            <button
-              key={w.hours}
-              onClick={() => setHours(w.hours)}
-              className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
-                hours === w.hours
-                  ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
-                  : "text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
-              }`}
-            >
-              {w.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {sensors.length === 0 ? (
         <EmptyState
           message="No environmental sensors in registry."
           sub="Add entries with kind: environmental_sensor in equipment.yaml."
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {sensors.map((s) => (
-            <SensorCard key={s.id} sensor={s} sinceHours={hours} />
+            <SensorCard key={s.id} sensor={s} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Switches (power bars) section
+// ---------------------------------------------------------------------------
+
+const SWITCH_WINDOWS = [
+  { label: "1 h",  hours: 1   },
+  { label: "6 h",  hours: 6   },
+  { label: "24 h", hours: 24  },
+  { label: "7 d",  hours: 168 },
+];
+
+/** One outlet row: label + sparkline + latest W + today kWh + cumulative kWh. */
+function OutletPowerRow({
+  deviceId,
+  outletIndex,
+  label,
+  sinceHours,
+}: {
+  deviceId: string;
+  outletIndex: number;
+  label: string;
+  sinceHours: number;
+}) {
+  const powerKey  = `power_outlet_${outletIndex}`;
+  const todayKey  = `energy_kwh_today_outlet_${outletIndex}`;
+  const cumulKey  = `energy_kwh_cumul_outlet_${outletIndex}`;
+
+  const { data: powerData,  isPending: pPending } = useSensorHistory(deviceId, powerKey,  sinceHours);
+  const { data: todayData,  isPending: tPending } = useSensorHistory(deviceId, todayKey,  sinceHours);
+  const { data: cumulData,  isPending: cPending } = useSensorHistory(deviceId, cumulKey,  sinceHours);
+
+  const latestW     = powerData?.readings.at(-1)?.value ?? null;
+  const latestToday = todayData?.readings.at(-1)?.value ?? null;
+  const latestCumul = cumulData?.readings.at(-1)?.value ?? null;
+  const readings    = powerData?.readings ?? [];
+
+  return (
+    <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-2.5 last:border-0 dark:border-slate-800">
+      {/* Label */}
+      <div className="w-36 shrink-0">
+        <p className="truncate text-xs font-medium text-ink dark:text-slate-200">{label}</p>
+      </div>
+
+      {/* Power sparkline */}
+      <div className="flex-1">
+        {pPending ? (
+          <div className="h-8 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
+        ) : readings.length >= 2 ? (
+          <Sparkline points={readings} w={160} h={32} />
+        ) : (
+          <span className="text-xs text-ink-subtle dark:text-slate-500">No data yet</span>
+        )}
+      </div>
+
+      {/* Latest W */}
+      <div className="w-20 shrink-0 text-right tabular-nums text-sm font-semibold text-ink dark:text-slate-100">
+        {pPending ? "…" : latestW !== null ? (
+          <>{latestW.toFixed(1)}<span className="ml-0.5 text-xs font-normal text-ink-subtle dark:text-slate-400">W</span></>
+        ) : "—"}
+      </div>
+
+      {/* kWh today */}
+      <div className="w-20 shrink-0 text-right tabular-nums text-xs text-ink-subtle dark:text-slate-400">
+        {tPending ? "…" : latestToday !== null ? (
+          <>{latestToday.toFixed(3)}<span className="ml-0.5">kWh</span></>
+        ) : "—"}
+      </div>
+
+      {/* kWh total (cumulative across days) */}
+      <div className="w-20 shrink-0 text-right tabular-nums text-xs font-medium text-sky-700 dark:text-sky-400">
+        {cPending ? "…" : latestCumul !== null ? (
+          <>{latestCumul.toFixed(2)}<span className="ml-0.5 font-normal text-ink-subtle dark:text-slate-400">kWh ∑</span></>
+        ) : (
+          <span className="font-normal text-ink-subtle dark:text-slate-500">—</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Parse outlet labels from snapshot components (mirrors PowerStripTile logic). */
+function parseOutletMeta(snapshot: EquipmentSnapshot): { index: number; label: string }[] {
+  const components = snapshot.status.components ?? {};
+  return Object.entries(components)
+    .filter(([key]) => key.startsWith("outlet_"))
+    .map(([key, comp]) => ({
+      index: parseInt(key.replace("outlet_", ""), 10),
+      label: (comp.message as string | undefined) ?? key,
+    }))
+    .sort((a, b) => a.index - b.index);
+}
+
+/** One power-bar tile — header with time picker + per-outlet rows. */
+function SwitchTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
+  const [hours, setHours] = useState(1);
+  const outlets = parseOutletMeta(snapshot);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+      {/* Tile header — same style as PlatformGroup / SensorCard */}
+      <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/60">
+        <div className="min-w-0">
+          <h4 className="truncate text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+            {snapshot.name}
+          </h4>
+          <p className="font-mono text-[10px] text-ink-subtle dark:text-slate-500">{snapshot.id}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-950/40">
+            {SWITCH_WINDOWS.map((w) => (
+              <button
+                key={w.hours}
+                onClick={() => setHours(w.hours)}
+                className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
+                  hours === w.hours
+                    ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
+                    : "text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Column header */}
+      <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-1 dark:border-slate-800">
+        <span className="w-36 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Outlet</span>
+        <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Power trend</span>
+        <span className="w-20 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Now</span>
+        <span className="w-20 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Today</span>
+        <span className="w-20 text-right text-[10px] font-medium uppercase tracking-wide text-sky-600 dark:text-sky-500">Total ∑</span>
+      </div>
+
+      {/* Outlet rows */}
+      <div>
+        {outlets.length === 0 ? (
+          <p className="px-4 py-3 text-xs text-ink-subtle dark:text-slate-500">No outlets detected yet.</p>
+        ) : (
+          outlets.map((o) => (
+            <OutletPowerRow
+              key={o.index}
+              deviceId={snapshot.id}
+              outletIndex={o.index}
+              label={o.label}
+              sinceHours={hours}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SwitchesSection({ powerBars }: { powerBars: EquipmentSnapshot[] }) {
+  return (
+    <section className="flex flex-col gap-4">
+      {powerBars.length === 0 ? (
+        <EmptyState
+          message="No power bars in registry."
+          sub="Add entries with kind: power_strip or smart_plug in equipment.yaml."
+        />
+      ) : (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {powerBars.map((s) => (
+            <SwitchTile key={s.id} snapshot={s} />
           ))}
         </div>
       )}
@@ -657,7 +826,7 @@ function SensorsSection({ sensors }: { sensors: EquipmentSnapshot[] }) {
 // History page
 // ---------------------------------------------------------------------------
 
-type Section = "uptime" | "sensors";
+type Section = "uptime" | "sensors" | "switches";
 
 export default function HistoryPage() {
   const [section, setSection] = useState<Section>("uptime");
@@ -668,15 +837,16 @@ export default function HistoryPage() {
   }
 
   const all = equipmentData?.equipment ?? [];
-  const sensors = all.filter((s) => s.kind === "environmental_sensor");
-  // Everything except env sensors goes into the uptime table.
-  const modules = all.filter((s) => s.kind !== "environmental_sensor");
+  const sensors   = all.filter((s) => s.kind === "environmental_sensor");
+  const powerBars = all.filter((s) => s.kind === "power_strip" || s.kind === "smart_plug");
+  // Everything except env sensors and power bars goes into the uptime table.
+  const modules   = all.filter((s) => s.kind !== "environmental_sensor");
 
   return (
     <div className="flex flex-col gap-6">
       <header>
         <p className="text-sm text-ink-muted dark:text-slate-400">
-          Module uptime and environmental sensor trends. Refreshes every 30 s.
+          Module uptime, environmental sensor trends, and power consumption. Refreshes every 30 s.
         </p>
       </header>
 
@@ -684,8 +854,9 @@ export default function HistoryPage() {
       <div className="flex gap-1 border-b border-slate-200 pb-2 dark:border-slate-800">
         {(
           [
-            { id: "uptime", label: `Uptime (${modules.length})` },
-            { id: "sensors", label: `Sensors (${sensors.length})` },
+            { id: "uptime",   label: `Uptime (${modules.length})`    },
+            { id: "sensors",  label: `Sensors (${sensors.length})`   },
+            { id: "switches", label: `Switches (${powerBars.length})` },
           ] as { id: Section; label: string }[]
         ).map((tab) => (
           <SectionPill
@@ -700,12 +871,15 @@ export default function HistoryPage() {
       {/* Main content + right legend sidebar */}
       <div className="flex items-start gap-6">
         <div className="min-w-0 flex-1">
-          {section === "uptime" && <UptimeSection snapshots={modules} />}
-          {section === "sensors" && <SensorsSection sensors={sensors} />}
+          {section === "uptime"   && <UptimeSection snapshots={modules} />}
+          {section === "sensors"  && <SensorsSection sensors={sensors} />}
+          {section === "switches" && <SwitchesSection powerBars={powerBars} />}
         </div>
-        <div className="w-44 shrink-0">
-          <StateLegend />
-        </div>
+        {section !== "switches" && (
+          <div className="w-44 shrink-0">
+            <StateLegend />
+          </div>
+        )}
       </div>
     </div>
   );

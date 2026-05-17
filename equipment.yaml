@@ -55,6 +55,43 @@ equipment:
         - { id: wide, label: Wide, rtsp_path: stream1, ptz_capable: false }
         - { id: tele, label: Tele, rtsp_path: stream6 }
 
+  # HTE bench HS300 power strips (6 outlets each). Hosted by
+  # kasa-tapo-services; the gateway publishes one `outlet_N` ComponentStatus
+  # per outlet under `components`. The dashboard frontend currently renders
+  # power strips with the generic EquipmentStatusCard - a dedicated
+  # PowerStripTile (6-button grid) is a follow-up.
+  - id: plug_hte_strip_right
+    name: HTE Bench Power Strip (Right)
+    platform: hte
+    kind: power_strip
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8002
+    status_path: /plugs/plug_hte_strip_right/status
+    poll_timeout_seconds: 3.0
+    tile: { w: 2, h: 1 }
+
+  - id: plug_hte_strip_left
+    name: HTE Bench Power Strip (Left)
+    platform: hte
+    kind: power_strip
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8002
+    status_path: /plugs/plug_hte_strip_left/status
+    poll_timeout_seconds: 3.0
+    tile: { w: 2, h: 1 }
+  
+  - id: fume_hood_actuator
+    name: Fume Hood Actuator
+    platform: hte
+    kind: fume_hood
+    adapter: legacy_http
+    base_url: http://100.64.254.100:5000
+    status_path: /equipment/status
+    poll_timeout_seconds: 2.0
+    tile: { w: 2, h: 1 }
+
   - id: xarm_translocation
     name: UFactory xArm5
     platform: hte
@@ -113,16 +150,6 @@ equipment:
     # to /control/* in a follow-up release.
     do_not_call_connect: true
     tile: { w: 2, h: 2 }
-
-  - id: fume_hood_actuator
-    name: Fume Hood Actuator
-    platform: hte
-    kind: fume_hood
-    adapter: legacy_http
-    base_url: http://100.64.254.100:5000
-    status_path: /equipment/status
-    poll_timeout_seconds: 2.0
-    tile: { w: 2, h: 1 }
 
   - id: dose_every_well
     name: Dose Every Well
@@ -233,3 +260,5 @@ equipment:
   # it shows up both in the HTE PlatformCard (live preview) and on the
   # dedicated `/cameras` page. Add new cameras / plugs here.
   # ---------------------------------------------------------------------
+
+

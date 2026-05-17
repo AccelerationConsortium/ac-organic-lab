@@ -88,6 +88,7 @@ cd web
 sudo -u ac npm ci
 sudo -u ac npm run build
 sudo -u ac cp -r .next/static .next/standalone/.next/static
+sudo -u ac cp -r public        .next/standalone/public
 sudo systemctl restart ac-dashboard-web
 
 # Full redeploy (code change in api/)

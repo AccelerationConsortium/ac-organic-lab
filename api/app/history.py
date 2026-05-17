@@ -222,17 +222,20 @@ def build_history_router() -> APIRouter:
         sensor_id: str,
         metric: str,
         since_hours: float = 1.0,
-        limit: int = 500,
+        limit: int = 2000,
         request: Request = ...,
     ):
         """Downsampled readings for one metric over the last N hours.
 
-        Typical use: line chart on the environmental monitoring panel.
-        ``since_hours=24`` gives a 24-hour trend at ~1 reading/minute =
-        1 440 points maximum.
+        Typical use: line chart on the environmental monitoring panel or the
+        Switches power-consumption tile.
+
+        At 60 s poll intervals a 7-day window produces up to 10 080 points;
+        the default cap of 2 000 naturally downsamples that to ~1 point per
+        ~5 minutes, which is enough resolution for a sparkline.
 
         Common metric names: ``temperature_c``, ``humidity_pct``, ``co2_ppm``,
-        ``pressure_hpa``.
+        ``pressure_hpa``, ``power_outlet_N``, ``energy_kwh_cumul_outlet_N``.
         """
         import asyncio
         loop = asyncio.get_event_loop()

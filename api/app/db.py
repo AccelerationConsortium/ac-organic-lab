@@ -165,6 +165,11 @@ class LabDatabase:
         with self._lock:
             return self._conn.execute(sql, params).fetchall()
 
+    def _fetchone(self, sql: str, params: tuple = ()) -> Optional[sqlite3.Row]:
+        assert self._conn is not None, "Database not open"
+        with self._lock:
+            return self._conn.execute(sql, params).fetchone()
+
     # ------------------------------------------------------------------ writes
 
     def record_uptime_event(
@@ -456,6 +461,33 @@ class LabDatabase:
             """,
         )
         return [dict(r) for r in rows]
+
+    def get_last_sensor_value(self, sensor_id: str, metric: str) -> Optional[float]:
+        """Return the most recently stored value for a (sensor_id, metric) pair.
+
+        Returns ``None`` if no row exists yet (e.g. the first poll after a
+        fresh install or after the cumulative metric key was introduced).
+        """
+        row = self._fetchone(
+            "SELECT value FROM sensor_readings"
+            " WHERE sensor_id = ? AND metric = ?"
+            " ORDER BY id DESC LIMIT 1",
+            (sensor_id, metric),
+        )
+        return float(row["value"]) if row else None
+
+    def prune_sensor_readings(self, keep_days: int = 30) -> None:
+        """Delete sensor readings older than ``keep_days`` days.
+
+        Called once per poll cycle to bound unbounded growth.  At 60 s poll
+        intervals, 6 outlets × 3 metrics × 2 strips produces ~52 k rows/day;
+        30 days of retention caps the table at ~1.6 M rows (~30 MB).
+        """
+        self._execute(
+            "DELETE FROM sensor_readings"
+            " WHERE ts < datetime('now', '-' || ? || ' days')",
+            (str(keep_days),),
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -53,6 +53,12 @@ _last_reachable: dict[str, bool] = {}
 _consecutive_failures: dict[str, int] = {}
 _last_state: dict[str, str] = {}
 
+# Per-outlet energy accumulator for power strips/smart plugs.
+# Maps device_id → {metric_key → last_seen_today_value}.
+# Seeded on the first observation; used to compute cumulative kWh across
+# midnight resets (energy_kwh_today resets to 0 at midnight on the device).
+_plug_energy_accum: dict[str, dict[str, float]] = {}
+
 
 async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase, registry) -> None:
     """Poll all devices every 60 s and write uptime transition events to SQLite.
@@ -168,6 +174,11 @@ async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase, re
                     and reg_entry.adapter == "mock"
                 ):
                     _write_mock_sensor_readings(db, device_id)
+                elif (
+                    reg_entry is not None
+                    and reg_entry.kind in ("smart_plug", "power_strip")
+                ):
+                    _write_plug_readings(db, snap)
                 else:
                     _write_sensor_readings(db, snap)
 
@@ -175,6 +186,12 @@ async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase, re
             break
         except Exception as exc:
             logger.warning("Uptime poll error: %s", exc)
+
+        # Prune old sensor readings once per cycle to bound table growth.
+        try:
+            db.prune_sensor_readings(keep_days=30)
+        except Exception:
+            pass
 
         await asyncio.sleep(60)
 
@@ -217,6 +234,64 @@ def _write_sensor_readings(db: LabDatabase, snap) -> None:
                 db.record_sensor_reading(snap.id, metric, float(value), unit)
     except Exception:
         pass  # sensor data is best-effort; never crash the poll loop
+
+
+def _write_plug_readings(db: LabDatabase, snap) -> None:
+    """Write per-outlet power and energy metrics from a plug/power-strip snapshot.
+
+    Records three metric families into ``sensor_readings``:
+    - ``power_outlet_N``            (W)   — instantaneous draw
+    - ``current_outlet_N``          (A)   — instantaneous current
+    - ``energy_kwh_today_outlet_N`` (kWh) — device's own daily counter (resets at midnight)
+
+    Additionally maintains a running cumulative counter
+    ``energy_kwh_cumul_outlet_N`` (kWh) that survives midnight resets.  On the
+    first observation after an API restart the accumulator is seeded without
+    writing, so we never double-count today's usage.
+    """
+    try:
+        metrics = getattr(snap.status, "metrics", None) or {}
+
+        _PREFIX_UNIT = {
+            "power_outlet_":            "W",
+            "energy_kwh_today_outlet_": "kWh",
+            "current_outlet_":          "A",
+        }
+
+        device_accum = _plug_energy_accum.setdefault(snap.id, {})
+
+        for key, entry in metrics.items():
+            raw = entry.value if hasattr(entry, "value") else entry
+            if raw is None:
+                continue
+            value = float(raw)
+
+            # Store the raw metric for whichever family it belongs to.
+            for prefix, unit in _PREFIX_UNIT.items():
+                if key.startswith(prefix):
+                    db.record_sensor_reading(snap.id, key, value, unit)
+                    break
+
+            # Cumulative energy accumulation for daily-resetting counters.
+            if key.startswith("energy_kwh_today_outlet_"):
+                if key not in device_accum:
+                    # First observation after startup — seed the accumulator.
+                    # Don't write a delta yet; we have no reference point.
+                    device_accum[key] = value
+                else:
+                    prev = device_accum[key]
+                    # A decrease means midnight reset — treat the new reading
+                    # as the full delta since midnight.
+                    delta = value if value < prev else (value - prev)
+                    if delta > 0:
+                        outlet_idx = key[len("energy_kwh_today_outlet_"):]
+                        cumul_key  = f"energy_kwh_cumul_outlet_{outlet_idx}"
+                        last_cumul = db.get_last_sensor_value(snap.id, cumul_key) or 0.0
+                        db.record_sensor_reading(snap.id, cumul_key, last_cumul + delta, "kWh")
+                    device_accum[key] = value
+
+    except Exception:
+        pass  # never crash the poll loop
 
 
 def _mock_sensor_phase(sensor_id: str) -> float:

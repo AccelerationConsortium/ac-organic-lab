@@ -4,6 +4,7 @@ import type {
   EquipmentList,
   EquipmentSnapshot,
   MediaListing,
+  PlugSwitchRequest,
   PresetGotoRequest,
   PresetSaveRequest,
   PrivacyRequest,
@@ -165,6 +166,18 @@ export async function cancelRecording(
   return controlPost<RecordingCancelRequest, RecordingCancelResponse>(
     equipmentId, "recording/cancel", body,
   );
+}
+
+// -- Plug / power-strip control -------------------------------------------
+
+/** Toggle, turn on, or turn off a single outlet (or the whole strip if outlet is omitted). */
+export async function postPlugSwitch(
+  equipmentId: string,
+  action: "on" | "off" | "toggle",
+  outlet?: number,
+): Promise<ControlAck> {
+  const body: PlugSwitchRequest = { outlet: outlet ?? null };
+  return controlPost<PlugSwitchRequest>(equipmentId, action, body);
 }
 
 export async function startRolling(
