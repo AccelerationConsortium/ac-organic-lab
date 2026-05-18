@@ -3,35 +3,28 @@
 import { LabMap } from "@/components/LabMap";
 import { PlatformCard } from "@/components/PlatformCard";
 import { useEquipmentList } from "@/lib/use-equipment";
-import type { EquipmentSnapshot } from "@/types/api";
+import { usePlatforms } from "@/lib/use-platforms";
+import type { EquipmentSnapshot, PlatformSection } from "@/types/api";
 
-interface PlatformDef {
-  id: string;
-  title: string;
-  description?: string;
-  href?: string;
-}
-
-const PLATFORMS: PlatformDef[] = [
-  {
-    id: "hte",
-    title: "HTE Platform",
-    description: "High-throughput platform for chemistry",
-    href: "/platforms/hte",
-  },
-];
-
-function LabEnvironmentCard({ sensors }: { sensors: EquipmentSnapshot[] }) {
+function LabEnvironmentCard({
+  section,
+  sensors,
+}: {
+  section: PlatformSection;
+  sensors: EquipmentSnapshot[];
+}) {
   return (
     <section className="flex flex-col rounded-2xl border border-slate-200 bg-surface-raised p-4 dark:border-slate-800 dark:bg-slate-900">
       <header className="mb-3">
         <h2 className="text-base font-semibold text-ink dark:text-slate-100">
-          Lab Environment
+          {section.title}
         </h2>
         <p className="text-xs text-ink-subtle dark:text-slate-400">
           {sensors.length === 0
             ? "No environmental sensors configured."
-            : `Temperature, humidity, O₂, and VOC · ${sensors.length} stations · hover a marker for details.`}
+            : section.description
+              ? `${section.description} · ${sensors.length} stations · hover a marker for details.`
+              : `${sensors.length} stations · hover a marker for details.`}
         </p>
       </header>
       {sensors.length === 0 ? (
@@ -48,60 +41,62 @@ function LabEnvironmentCard({ sensors }: { sensors: EquipmentSnapshot[] }) {
   );
 }
 
-export default function LabOverviewPage() {
-  const { data, error, isPending } = useEquipmentList();
+export default function OverviewPage() {
+  const { data: equipmentData, error: equipmentError, isPending: equipmentPending } =
+    useEquipmentList();
+  const { data: platforms, error: platformsError, isPending: platformsPending } =
+    usePlatforms();
 
-  if (isPending) {
+  if (equipmentPending || platformsPending) {
     return <p className="text-sm text-ink-muted dark:text-slate-400">Loading…</p>;
   }
-  if (error) {
+  if (equipmentError) {
     return (
       <p className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
-        Failed to load equipment: {error.message}
+        Failed to load equipment: {equipmentError.message}
       </p>
     );
   }
-  if (!data) return null;
-
-  const all = data.equipment;
-  const sensors = all.filter(
-    (s: EquipmentSnapshot) => s.kind === "environmental_sensor" && s.location
-  );
-
-  // Group non-sensor equipment by platform.
-  const byPlatform = new Map<string, EquipmentSnapshot[]>();
-  for (const snapshot of all) {
-    if (snapshot.kind === "environmental_sensor") continue;
-    const arr = byPlatform.get(snapshot.platform) ?? [];
-    arr.push(snapshot);
-    byPlatform.set(snapshot.platform, arr);
+  if (platformsError) {
+    return (
+      <p className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
+        Failed to load platforms: {platformsError.message}
+      </p>
+    );
   }
+  if (!equipmentData || !platforms) return null;
 
-  // Known platforms in display order, then any unknown ones from the registry.
-  const knownIds = new Set(PLATFORMS.map((p) => p.id));
-  const platformsToShow: PlatformDef[] = [
-    ...PLATFORMS,
-    ...Array.from(byPlatform.keys())
-      .filter((id) => !knownIds.has(id))
-      .map((id) => ({ id, title: id })),
-  ];
+  const snapshotById = new Map<string, EquipmentSnapshot>(
+    equipmentData.equipment.map((s) => [s.id, s]),
+  );
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      {/* Lab Environment occupies the top-left cell. */}
-      <LabEnvironmentCard sensors={sensors} />
+      {platforms.sections.map((section) => {
+        if (section.kind === "environmental_map") {
+          const sensors = section.equipment
+            .map((id) => snapshotById.get(id))
+            .filter((s): s is EquipmentSnapshot => s !== undefined && s.location != null);
+          return (
+            <LabEnvironmentCard key={section.id} section={section} sensors={sensors} />
+          );
+        }
 
-      {/* Platforms fill the remaining cells, starting top-right. */}
-      {platformsToShow.map((p) => (
-        <PlatformCard
-          key={p.id}
-          id={p.id}
-          title={p.title}
-          description={p.description}
-          href={p.href}
-          snapshots={byPlatform.get(p.id) ?? []}
-        />
-      ))}
+        // kind === "platform"
+        const snapshots = section.equipment
+          .map((id) => snapshotById.get(id))
+          .filter((s): s is EquipmentSnapshot => s !== undefined);
+        return (
+          <PlatformCard
+            key={section.id}
+            id={section.id}
+            title={section.title}
+            description={section.description ?? undefined}
+            href={section.href ?? undefined}
+            snapshots={snapshots}
+          />
+        );
+      })}
     </div>
   );
 }

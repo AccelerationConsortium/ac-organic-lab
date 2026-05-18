@@ -27,7 +27,6 @@ def _entry() -> EquipmentEntry:
     return EquipmentEntry(
         id="sync_dev",
         name="Sync Device",
-        platform="hte",
         kind="plate_sealer",
         adapter="http",
         base_url="http://sync.test:8000",

@@ -33,7 +33,6 @@ def _entry(**overrides) -> EquipmentEntry:
     base = dict(
         id="test_dev",
         name="Test Device",
-        platform="hte",
         kind="plate_sealer",
         adapter="http",
         base_url="http://device.local:8000",

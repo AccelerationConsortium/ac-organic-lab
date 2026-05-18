@@ -3,7 +3,7 @@
 The committed ``equipment.yaml`` at the monorepo root is the single source of
 truth for "what equipment exists in this lab and where to reach it". This
 module parses the SDK-relevant fields. Dashboard-only presentation fields
-(``tile``, ``location``) are parsed separately by ``api/app/presentation.py``
+(``location``) are parsed separately by ``api/app/presentation.py``
 from the same file.
 
 Tailscale hostnames are not treated as secrets in this project.
@@ -23,6 +23,28 @@ from .models import EquipmentKind
 
 
 AdapterKind = Literal["http", "legacy_http", "mock"]
+
+
+class Tile(BaseModel):
+    """Tile size for the dashboard equipment grid.
+
+    The platform card lays equipment out on a 4-column CSS grid with
+    fixed-height rows.  ``w`` is the number of columns (1..4) and ``h``
+    is the number of rows (1..4).  Default 2×1.
+    """
+
+    w: int = Field(default=2, ge=1, le=4)
+    h: int = Field(default=1, ge=1, le=4)
+
+
+class PillConfig(BaseModel):
+    """Pill configuration for the Overview platform-card row.
+
+    ``open: true`` renders an "Open ↗" link to the equipment's ``base_url``.
+    Extensible: add ``label``, ``icon``, etc. without breaking older entries.
+    """
+
+    open: bool = False
 
 
 # Protocol version a device claims to implement. Drives client-side behavior
@@ -91,19 +113,24 @@ class EquipmentEntry(BaseModel):
     """One device's entry in ``equipment.yaml`` (SDK view).
 
     Carries every field the SDK and aggregator need. Dashboard-only fields
-    (``tile``, ``location``) are NOT on this model - they are parsed
-    separately by ``api/app/presentation.py``.
+    (``location``) are NOT on this model - they are parsed separately by
+    ``api/app/presentation.py``.
+
+    ``tiles`` is keyed by platform section id (from ``platforms.yaml``).
+    ``pills`` is the shared Overview pill config for this equipment.
     """
 
     id: str
     name: str
-    platform: str
     kind: EquipmentKind
     adapter: AdapterKind
     base_url: str | None = None
     status_path: str = "/status"
     poll_timeout_seconds: float = 2.0
     do_not_call_connect: bool = False
+
+    tiles: dict[str, Tile] = Field(default_factory=dict)
+    pills: PillConfig = Field(default_factory=PillConfig)
 
     # STATUS_SPEC version the device implements. ``"1.1"`` means the device
     # exposes ``POST /control/{claim,heartbeat,release}`` and populates

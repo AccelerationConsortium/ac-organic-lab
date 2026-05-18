@@ -38,7 +38,6 @@ def _entry(
     return EquipmentEntry(
         id=eid,
         name=eid.title(),
-        platform="hte",
         kind=kind,  # type: ignore[arg-type]
         adapter="http",
         base_url=base_url,

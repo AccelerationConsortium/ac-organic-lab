@@ -109,6 +109,27 @@ export type EquipmentStatus = Omit<
   details?: Record<string, unknown> & Partial<CameraDetails>;
 };
 
+// ---------------------------------------------------------------------
+// Platforms config types (mirrors lab_skills/platforms.py).
+// ---------------------------------------------------------------------
+
+export interface PillConfig {
+  open?: boolean;
+}
+
+export interface PlatformSection {
+  id: string;
+  title: string;
+  description?: string | null;
+  href?: string | null;
+  kind: "platform" | "environmental_map";
+  equipment: string[];
+}
+
+export interface PlatformsConfig {
+  sections: PlatformSection[];
+}
+
 export type EquipmentSnapshot = Omit<
   Schemas["EquipmentSnapshot"],
   "kind" | "status"
@@ -117,6 +138,7 @@ export type EquipmentSnapshot = Omit<
   status: EquipmentStatus;
   camera?: CameraConfig | null;
   plug?: PlugConfig | null;
+  pill?: PillConfig | null;
 };
 
 export interface EquipmentList {

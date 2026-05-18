@@ -2,9 +2,11 @@
 
 import { EquipmentGrid } from "@/components/EquipmentGrid";
 import { useEquipmentList } from "@/lib/use-equipment";
+import { usePlatforms } from "@/lib/use-platforms";
 
 export default function HtePlatformPage() {
   const { data, error, isPending } = useEquipmentList();
+  const { data: platforms } = usePlatforms();
 
   if (isPending) {
     return <p className="text-sm text-ink-muted dark:text-slate-400">Loading…</p>;
@@ -18,7 +20,12 @@ export default function HtePlatformPage() {
   }
   if (!data) return null;
 
-  const snapshots = data.equipment.filter((s) => s.platform === "hte");
+  const hteEquipmentIds = platforms?.sections.find((s) => s.id === "hte")?.equipment ?? [];
+
+  const snapshotById = new Map(data.equipment.map((s) => [s.id, s]));
+  const snapshots = hteEquipmentIds
+    .map((id) => snapshotById.get(id))
+    .filter((s) => s !== undefined);
 
   return (
     <div className="flex flex-col gap-4">

@@ -170,7 +170,7 @@ class EquipmentSnapshot(BaseModel):
 
     id: str
     name: str
-    platform: str
+    platform: str | None = None
     kind: EquipmentKind
     adapter: str
 

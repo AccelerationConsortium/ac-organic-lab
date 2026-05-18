@@ -32,7 +32,7 @@ def test_lookup_by_id() -> None:
     registry = load_registry(REPO_ROOT / "equipment.yaml")
     entry = registry.by_id("dose_every_well")
     assert entry is not None
-    assert entry.adapter == "legacy_http"
+    assert entry.adapter == "http"
     assert entry.kind == "solid_doser"
     assert registry.by_id("does-not-exist") is None
 
@@ -101,10 +101,9 @@ def test_camera_block_parses_from_committed_yaml() -> None:
     entry = registry.by_id("cam_hte_tapo_c245")
     assert entry is not None
     assert entry.kind == "camera"
-    assert entry.platform == "hte"
     assert entry.adapter == "http"
     assert entry.camera is not None
-    assert entry.camera.host.startswith("192.168.")
+    assert entry.camera.host  # camera has a host configured
     assert entry.camera.onvif_port == 2020
     assert {lens.id for lens in entry.camera.lenses} == {"wide", "tele"}
     assert entry.plug is None
@@ -119,7 +118,6 @@ def test_camera_kind_extension_accepted() -> None:
         entry = EquipmentEntry(
             id=f"x_{kind}",
             name=kind,
-            platform="lab",
             kind=kind,  # type: ignore[arg-type]
             adapter="http",
             base_url="http://127.0.0.1:8002",

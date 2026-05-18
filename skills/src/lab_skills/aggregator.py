@@ -78,7 +78,6 @@ def _snapshot(entry: EquipmentEntry, result: AdapterResult) -> EquipmentSnapshot
     return EquipmentSnapshot(
         id=entry.id,
         name=entry.name,
-        platform=entry.platform,
         kind=entry.kind,
         adapter=entry.adapter,
         status=result.status,

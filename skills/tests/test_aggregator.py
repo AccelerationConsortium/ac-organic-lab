@@ -33,7 +33,6 @@ def two_device_registry() -> Registry:
         EquipmentEntry(
             id="sealer_a",
             name="Sealer A",
-            platform="hte",
             kind="plate_sealer",
             adapter="http",
             base_url="http://sealer-a.test:8000",
@@ -42,7 +41,6 @@ def two_device_registry() -> Registry:
         EquipmentEntry(
             id="sensor_b",
             name="Sensor B",
-            platform="lab",
             kind="environmental_sensor",
             adapter="mock",
         ),

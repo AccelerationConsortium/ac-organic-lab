@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev",
-    "build": "next build",
+    "build": "next build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",

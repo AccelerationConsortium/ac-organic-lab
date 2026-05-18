@@ -82,6 +82,7 @@ function PlatformCameraPreview({ camera }: { camera: EquipmentSnapshot }) {
 }
 
 function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
+  const showOpen = snapshot.pill?.open === true && !!snapshot.base_url;
   return (
     <li className="flex items-center justify-between gap-2 rounded-md border border-slate-100 bg-white/60 px-2.5 py-1.5 dark:border-slate-800 dark:bg-slate-950/40">
       <div
@@ -90,7 +91,19 @@ function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
       >
         {snapshot.name}
       </div>
-      <StatusPill state={snapshot.status.equipment_status} />
+      <div className="flex shrink-0 items-center gap-2">
+        {showOpen && (
+          <a
+            href={snapshot.base_url!}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] font-medium text-sky-700 hover:underline dark:text-sky-400"
+          >
+            Open ↗
+          </a>
+        )}
+        <StatusPill state={snapshot.status.equipment_status} />
+      </div>
     </li>
   );
 }

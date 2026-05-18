@@ -4,6 +4,7 @@ import type {
   EquipmentList,
   EquipmentSnapshot,
   MediaListing,
+  PlatformsConfig,
   PlugSwitchRequest,
   PresetGotoRequest,
   PresetSaveRequest,
@@ -49,6 +50,10 @@ export async function getHealth(): Promise<AggregatorHealth> {
 
 export async function getEquipmentList(): Promise<EquipmentList> {
   return fetchJson<EquipmentList>("/api/equipment");
+}
+
+export async function getPlatforms(): Promise<PlatformsConfig> {
+  return fetchJson<PlatformsConfig>("/api/platforms");
 }
 
 export async function getEquipmentStatus(id: string): Promise<EquipmentSnapshot> {

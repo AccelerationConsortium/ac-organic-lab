@@ -1,0 +1,31 @@
+sections:
+  - id: lab_environment
+    title: Lab Environment
+    description: "Temperature, humidity, O₂, and VOC"
+    kind: environmental_map
+    equipment: [env_sample_prep, env_storage, env_lab499_west, env_lab499_east]
+
+  - id: hte
+    title: HTE Platform
+    description: High-throughput platform for chemistry
+    href: /platforms/hte
+    kind: platform
+    equipment:
+      - cam_hte_tapo_c245
+      - plug_hte_strip_right
+      - plug_hte_strip_left
+      - fume_hood_actuator
+      - xarm_translocation
+      - ot2
+      - dose_every_well
+      - filter_every_well
+      - plateloc
+      - cytation_5
+      - agilent_uplc_ms
+      - agilent_biostack
+
+  - id: web_services
+    title: Web Services
+    description: Lab web UIs and dashboards
+    kind: platform
+    equipment: [pypoe_web]

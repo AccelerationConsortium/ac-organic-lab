@@ -9,31 +9,26 @@
 #   legacy_http -> pre-migration shape; aggregator translates per-device
 #   mock        -> placeholder; emits an `unknown`-status envelope
 #
-# Replace the `tail-XXXX` segments below with your actual Tailscale magicDNS
-# names or tailnet-IPv4 addresses before deploying.
+# Replace placeholder Tailscale magicDNS hostnames with real ones before deploying.
+#
+# Schema (v2): `platform:` and single `tile:` fields are replaced by:
+#   tiles:  dict keyed by platform section id (see platforms.yaml).
+#           Each value is { w, h } spanning the 4-col equipment grid.
+#           Missing key → default { w: 2, h: 1 }.
+#   pills:  shared config for the Overview platform-card pill row.
+#           Currently only `open: true|false` (default false). When true,
+#           the equipment row renders an "Open ↗" link to its base_url.
 
 equipment:
   # ---------------------------------------------------------------------
-  # HTE platform - displayed in this order on the overview / HTE pages.
-  # The list above drives both the order of the Equipment tiles inside
-  # the HTE platform card and the order on the HTE detail page.
-  #
-  # Tile sizing (`tile: { w, h }`):
-  #   - The platform card lays its equipment out on a 4-column CSS grid
-  #     with fixed-height rows. `w` is how many columns a tile spans
-  #     (1..4) and `h` is how many rows it spans (1..4).
-  #   - Default is 2x1 (half-row, single-row tall). Omit `tile:` to use it.
-  #   - Set `w: 4` for a full-row banner; `w: 2, h: 2` for a square hero.
+  # HTE platform - displayed in the order defined in platforms.yaml.
+  # The `tiles.hte` values drive tile sizes on /platforms/hte.
   # ---------------------------------------------------------------------
 
-  # The HTE camera is the platform's hero tile: full-row width
-  # (`w: 4`) and 4 rows tall (~880 px), enough for the 16:9 live feed
-  # plus the PTZ pad / preset controls below it. Hosted by
-  # `kasa-tapo-services` (see the trailing "Cameras and smart plugs"
-  # comment block below).
+  # The HTE camera is the platform's hero tile. Hosted by
+  # `kasa-tapo-services` (see the "Cameras and smart plugs" section below).
   - id: cam_hte_tapo_c245
     name: HTE Camera
-    platform: hte
     kind: camera
     adapter: http
     protocol: "1.0"
@@ -43,7 +38,9 @@ equipment:
     # talks to the camera over ONVIF (SOAP) on every status poll, which
     # can take 1-2 s on its own.
     poll_timeout_seconds: 5.0
-    tile: { w: 2, h: 3 }
+    tiles:
+      hte: { w: 2, h: 3 }
+    pills: {}
     camera:
       host: 172.31.60.16
       onvif_port: 2020
@@ -62,39 +59,41 @@ equipment:
   # PowerStripTile (6-button grid) is a follow-up.
   - id: plug_hte_strip_right
     name: HTE Bench Power Strip (Right)
-    platform: hte
     kind: power_strip
     adapter: http
     protocol: "1.0"
     base_url: http://127.0.0.1:8002
     status_path: /plugs/plug_hte_strip_right/status
     poll_timeout_seconds: 3.0
-    tile: { w: 2, h: 1 }
+    tiles:
+      hte: { w: 2, h: 1 }
+    pills: {}
 
   - id: plug_hte_strip_left
     name: HTE Bench Power Strip (Left)
-    platform: hte
     kind: power_strip
     adapter: http
     protocol: "1.0"
     base_url: http://127.0.0.1:8002
     status_path: /plugs/plug_hte_strip_left/status
     poll_timeout_seconds: 3.0
-    tile: { w: 2, h: 1 }
-  
+    tiles:
+      hte: { w: 2, h: 1 }
+    pills: {}
+
   - id: fume_hood_actuator
     name: Fume Hood Actuator
-    platform: hte
     kind: fume_hood
     adapter: legacy_http
     base_url: http://100.64.254.100:5000
     status_path: /equipment/status
     poll_timeout_seconds: 2.0
-    tile: { w: 2, h: 1 }
+    tiles:
+      hte: { w: 2, h: 1 }
+    pills: {}
 
   - id: xarm_translocation
     name: UFactory xArm5
-    platform: hte
     kind: robot_arm
     adapter: http
     protocol: "1.0"
@@ -106,23 +105,12 @@ equipment:
     # device read-only by leaving `do_not_call_connect: true` in place;
     # specific unit operations will graduate to /control/* in follow-up.
     do_not_call_connect: true
-    tile: { w: 2, h: 2 }
-
-  - id: agilent_uplc_ms
-    name: Agilent UPLC-MS
-    platform: hte
-    kind: hplc
-    adapter: http
-    protocol: "1.0"
-    base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8010
-    status_path: /status
-    poll_timeout_seconds: 5.0
-    do_not_call_connect: true
-    tile: { w: 2, h: 2 }
+    tiles:
+      hte: { w: 2, h: 2 }
+    pills: {}
 
   - id: ot2
     name: Opentrons OT-2
-    platform: hte
     kind: liquid_handler
     adapter: http
     protocol: "1.1"
@@ -130,11 +118,47 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 30.0
     do_not_call_connect: true
-    tile: { w: 2, h: 2 }
+    tiles:
+      hte: { w: 2, h: 2 }
+    pills: {}
+
+  - id: dose_every_well
+    name: Dose Every Well
+    kind: solid_doser
+    adapter: http
+    protocol: "1.1"
+    base_url: http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000
+    status_path: /status
+    poll_timeout_seconds: 2.0
+    tiles:
+      hte: { w: 2, h: 2 }
+    pills: {}
+
+  - id: filter_every_well
+    name: Waters Filtration
+    kind: press
+    adapter: http
+    protocol: "1.1"
+    base_url: http://100.64.254.104:8000
+    status_path: /status
+    poll_timeout_seconds: 2.0
+    tiles: {}
+    pills: {}
+
+  - id: plateloc
+    name: Agilent PlateLoc
+    kind: plate_sealer
+    adapter: http
+    protocol: "1.1"
+    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8010
+    status_path: /status
+    poll_timeout_seconds: 2.0
+    tiles:
+      hte: { w: 2, h: 1 }
+    pills: {}
 
   - id: cytation_5
     name: BioTek Cytation 5
-    platform: hte
     kind: plate_reader
     adapter: http
     protocol: "1.0"
@@ -149,42 +173,25 @@ equipment:
     # imaging.capture, plate.load/unload, drawer.open/close) graduate
     # to /control/* in a follow-up release.
     do_not_call_connect: true
-    tile: { w: 2, h: 2 }
+    tiles:
+      hte: { w: 2, h: 3 }
+    pills: {}
 
-  - id: dose_every_well
-    name: Dose Every Well
-    platform: hte
-    kind: solid_doser
+  - id: agilent_uplc_ms
+    name: Agilent UPLC-MS
+    kind: hplc
     adapter: http
-    protocol: "1.1"
-    base_url: http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000
+    protocol: "1.0"
+    base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8010
     status_path: /status
-    poll_timeout_seconds: 2.0
-
-  - id: filter_every_well
-    name: Waters Filtration
-    platform: hte
-    kind: press
-    adapter: http
-    protocol: "1.1"
-    base_url: http://100.64.254.104:8000
-    status_path: /status
-    poll_timeout_seconds: 2.0
-
-  - id: plateloc
-    name: Agilent PlateLoc
-    platform: hte
-    kind: plate_sealer
-    adapter: http
-    protocol: "1.1"
-    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8010
-    status_path: /status
-    poll_timeout_seconds: 2.0
-    tile: { w: 2, h: 2 }
+    poll_timeout_seconds: 5.0
+    do_not_call_connect: true
+    tiles:
+      hte: { w: 2, h: 2 }
+    pills: {}
 
   - id: agilent_biostack
     name: Agilent BioStack
-    platform: hte
     kind: plate_stacker
     adapter: http
     protocol: "1.1"
@@ -192,18 +199,26 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 2.0
     do_not_call_connect: true
-    tile: { w: 2, h: 1 }
+    tiles:
+      hte: { w: 2, h: 1 }
+    pills: {}
+
+  # ---------------------------------------------------------------------
+  # Web Services
+  # ---------------------------------------------------------------------
 
   - id: pypoe_web
     name: PyPoe Web UI
-    platform: Web Services
     kind: other
     adapter: http
     protocol: "1.1"
     base_url: http://100.64.254.6:8000
     status_path: /status
     poll_timeout_seconds: 3.0
-    tile: { w: 2, h: 1 }
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills:
+      open: true
 
   # Environmental sensor stations. Add one entry per physical sensor unit.
   # The lab map is rotated 90° clockwise from the building plan, so on screen
@@ -219,30 +234,34 @@ equipment:
 
   - id: env_sample_prep
     name: Sample Prep Sensors
-    platform: lab
     kind: environmental_sensor
     adapter: mock
+    tiles: {}
+    pills: {}
     location: { x: 75, y: 12, label: "Sample Prep" }
 
   - id: env_storage
     name: Storage Sensors
-    platform: lab
     kind: environmental_sensor
     adapter: mock
+    tiles: {}
+    pills: {}
     location: { x: 50, y: 37, label: "Storage" }
 
   - id: env_lab499_west
     name: Lab 499 (West) Sensors
-    platform: lab
     kind: environmental_sensor
     adapter: mock
+    tiles: {}
+    pills: {}
     location: { x: 20, y: 75, label: "Lab 499 · West" }
 
   - id: env_lab499_east
     name: Lab 499 (East) Sensors
-    platform: lab
     kind: environmental_sensor
     adapter: mock
+    tiles: {}
+    pills: {}
     location: { x: 80, y: 75, label: "Lab 499 · East" }
 
   # ---------------------------------------------------------------------
@@ -260,5 +279,3 @@ equipment:
   # it shows up both in the HTE PlatformCard (live preview) and on the
   # dedicated `/cameras` page. Add new cameras / plugs here.
   # ---------------------------------------------------------------------
-
-

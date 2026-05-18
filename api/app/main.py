@@ -18,7 +18,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from lab_skills import EquipmentAggregator, load_registry
+from lab_skills import EquipmentAggregator, PlatformsConfig, load_platforms, load_registry
 from lab_skills.skill_catalog import SKILL_REGISTRY
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -338,7 +338,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.aggregator = aggregator
     app.state.registry = registry
     app.state.overrides = load_dashboard_overrides()
+    app.state.platforms_config = load_platforms()
     logger.info("Loaded equipment registry: %d entries", aggregator.equipment_count)
+    logger.info(
+        "Loaded platforms config: %d sections",
+        len(app.state.platforms_config.sections),
+    )
 
     # Lab history database
     db_path = resolve_db_path()
@@ -401,6 +406,12 @@ def _aggregator() -> EquipmentAggregator:
     return aggregator
 
 
+@app.get("/api/platforms", response_model=PlatformsConfig, tags=["meta"])
+async def list_platforms() -> PlatformsConfig:
+    """Return the static platforms configuration."""
+    return app.state.platforms_config
+
+
 @app.get("/api/health", response_model=AggregatorHealth, tags=["meta"])
 async def health() -> AggregatorHealth:
     aggregator = _aggregator()
@@ -420,6 +431,7 @@ async def list_equipment() -> EquipmentList:
         skill_list,
         app.state.overrides,
         app.state.registry,
+        app.state.platforms_config,
     )
 
 
@@ -432,10 +444,11 @@ async def skill_catalog() -> dict:
     This endpoint is read-only and does not contact any device.
     """
     registry: "Registry" = app.state.registry  # type: ignore[name-defined]
+    platforms_config: "PlatformsConfig" = app.state.platforms_config  # type: ignore[name-defined]
 
-    PLATFORM_LABELS = {"hte": "HTE Platform"}
+    eq_to_section = platforms_config.equipment_to_section_id()
+    section_titles = {s.id: s.title for s in platforms_config.sections}
 
-    # Build a map of kind → [action defs] from the catalog
     def _serialize_actions(kind: str) -> list[dict]:
         defs = SKILL_REGISTRY.get(kind, [])
         result = []
@@ -455,18 +468,18 @@ async def skill_catalog() -> dict:
             })
         return result
 
-    # Group registry entries by platform (exclude env sensors / cameras)
+    # Group registry entries by section (exclude env sensors / cameras)
     platforms: dict[str, dict] = {}
     for entry in registry.equipment:
         if entry.kind in ("environmental_sensor", "camera"):
             continue
-        p = entry.platform
-        if p not in platforms:
-            platforms[p] = {
-                "label": PLATFORM_LABELS.get(p, p.upper()),
+        section_id = eq_to_section.get(entry.id, "unknown")
+        if section_id not in platforms:
+            platforms[section_id] = {
+                "label": section_titles.get(section_id, section_id.upper()),
                 "instruments": [],
             }
-        platforms[p]["instruments"].append({
+        platforms[section_id]["instruments"].append({
             "id": entry.id,
             "name": entry.name,
             "kind": entry.kind,
@@ -492,4 +505,4 @@ async def get_equipment(equipment_id: str) -> EquipmentSnapshot:
     if sdk_snapshot is None:
         raise HTTPException(status_code=404, detail=f"Unknown equipment id: {equipment_id}")
     override = app.state.overrides.get(equipment_id)
-    return _snapshot(sdk_snapshot, override, app.state.registry)
+    return _snapshot(sdk_snapshot, override, app.state.registry, app.state.platforms_config)

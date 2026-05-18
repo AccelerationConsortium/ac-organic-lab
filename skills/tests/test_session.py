@@ -105,7 +105,6 @@ async def test_wait_until_state_succeeds(fixture_registry) -> None:
     entry = EquipmentEntry(
         id="ready_dev",
         name="Ready Device",
-        platform="hte",
         kind="plate_sealer",
         adapter="http",
         base_url="http://ready.test:8000",
@@ -137,7 +136,6 @@ async def test_wait_until_state_times_out() -> None:
     entry = EquipmentEntry(
         id="busy_dev",
         name="Busy Device",
-        platform="hte",
         kind="plate_sealer",
         adapter="http",
         base_url="http://busy.test:8000",

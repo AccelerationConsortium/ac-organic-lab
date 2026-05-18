@@ -2,16 +2,24 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { usePlatforms } from "@/lib/use-platforms";
 
-const tabs = [
-  { href: "/", label: "Lab Overview" },
-  { href: "/platforms/hte", label: "HTE Platform" },
+const STATIC_BEFORE = [{ href: "/", label: "Overview" }];
+const STATIC_AFTER = [
   { href: "/history", label: "History" },
   { href: "/api-reference", label: "API Reference" },
 ];
 
 export function Nav() {
   const pathname = usePathname();
+  const { data: platforms } = usePlatforms();
+
+  const platformTabs = (platforms?.sections ?? [])
+    .filter((s) => s.href != null)
+    .map((s) => ({ href: s.href as string, label: s.title }));
+
+  const tabs = [...STATIC_BEFORE, ...platformTabs, ...STATIC_AFTER];
+
   return (
     <nav className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-800">
       {tabs.map((tab) => {

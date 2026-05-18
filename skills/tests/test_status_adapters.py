@@ -25,7 +25,6 @@ def _entry(**overrides) -> EquipmentEntry:
     base = dict(
         id="test_equipment",
         name="Test Equipment",
-        platform="hte",
         kind="solid_doser",
         adapter="legacy_http",
         base_url="http://device.local:8000",

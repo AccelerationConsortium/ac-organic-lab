@@ -61,15 +61,22 @@ from .models import (
     PROTOCOL_VERSION,
     ProbeResponse,
 )
+from .platforms import (
+    PlatformSection,
+    PlatformsConfig,
+    load_platforms,
+)
 from .registry import (
     AdapterKind,
     CameraConfig,
     CameraLens,
     EquipmentEntry,
     Maintenance,
+    PillConfig,
     PlugConfig,
     PlugOutlet,
     Registry,
+    Tile,
     load_registry,
 )
 from .plan import Plan, PlanReport, Step, StepReport, validate_plan
@@ -111,9 +118,12 @@ __all__ = [
     "Maintenance",
     "MetricValue",
     "PROTOCOL_VERSION",
+    "PillConfig",
     "Plan",
     "PlanReport",
     "PlateSealerClient",
+    "PlatformSection",
+    "PlatformsConfig",
     "PlugConfig",
     "PlugOutlet",
     "PressClient",
@@ -128,10 +138,12 @@ __all__ = [
     "SolidDoserClient",
     "Step",
     "StepReport",
+    "Tile",
     "Violation",
     "WaitTimeout",
     "__version__",
     "clear_interlocks",
+    "load_platforms",
     "load_registry",
     "register_interlock",
     "registered_interlocks",
