@@ -12,7 +12,7 @@ Two systemd services, no app-level auth - access is gated by Tailscale ACLs.
 ## Layout on the server
 
 ```
-/opt/ac-organic-dashboard/
+/opt/ac-organic-lab/
 ├── api/                              # checked-out source + venv
 │   └── .venv/                        # python deps
 ├── web/
@@ -30,19 +30,19 @@ Two systemd services, no app-level auth - access is gated by Tailscale ACLs.
 
 ```bash
 # 1. Create a non-privileged service user
-sudo useradd --system --create-home --home /opt/ac-organic-dashboard \
+sudo useradd --system --create-home --home /opt/ac-organic-lab \
     --shell /usr/sbin/nologin ac
 
 # 2. Clone the repo
-sudo -u ac git clone <repo-url> /opt/ac-organic-dashboard
+sudo -u ac git clone <repo-url> /opt/ac-organic-lab
 
 # 3. Install the API
-cd /opt/ac-organic-dashboard/api
+cd /opt/ac-organic-lab/api
 sudo -u ac python3 -m venv .venv
 sudo -u ac .venv/bin/pip install -e .
 
 # 4. Build the web app
-cd /opt/ac-organic-dashboard/web
+cd /opt/ac-organic-lab/web
 sudo -u ac npm ci
 sudo -u ac npm run build
 
@@ -52,15 +52,15 @@ sudo -u ac cp -r .next/static .next/standalone/.next/static
 sudo -u ac cp -r public        .next/standalone/public 2>/dev/null || true
 
 # 6. Install systemd units
-sudo cp deploy/ac-dashboard-api.service /etc/systemd/system/
-sudo cp deploy/ac-dashboard-web.service /etc/systemd/system/
+sudo cp deploy/ac-organic-lab-api.service /etc/systemd/system/
+sudo cp deploy/ac-organic-lab-web.service /etc/systemd/system/
 sudo systemctl daemon-reload
 
 # 7. Enable at boot and start now
-sudo systemctl enable --now ac-dashboard-api ac-dashboard-web
+sudo systemctl enable --now ac-organic-lab-api ac-organic-lab-web
 
 # 8. Verify
-sudo systemctl status ac-dashboard-api ac-dashboard-web
+sudo systemctl status ac-organic-lab-api ac-organic-lab-web
 curl -s http://127.0.0.1:8001/api/health
 curl -s http://127.0.0.1:3000/
 ```
@@ -69,34 +69,34 @@ curl -s http://127.0.0.1:3000/
 
 ```bash
 # Live logs
-journalctl -fu ac-dashboard-api
-journalctl -fu ac-dashboard-web
+journalctl -fu ac-organic-lab-api
+journalctl -fu ac-organic-lab-web
 
 # Filter by service name (uses SyslogIdentifier)
-journalctl -t ac-dashboard-api -n 200
-journalctl -t ac-dashboard-web -n 200
+journalctl -t ac-organic-lab-api -n 200
+journalctl -t ac-organic-lab-web -n 200
 
 # Restart after editing equipment.yaml
-sudo -u ac git -C /opt/ac-organic-dashboard pull
-sudo systemctl restart ac-dashboard-api
+sudo -u ac git -C /opt/ac-organic-lab pull
+sudo systemctl restart ac-organic-lab-api
 # web does NOT need a restart; it only proxies to the API.
 
 # Full redeploy (code change in web/)
-cd /opt/ac-organic-dashboard
+cd /opt/ac-organic-lab
 sudo -u ac git pull
 cd web
 sudo -u ac npm ci
 sudo -u ac npm run build
 sudo -u ac cp -r .next/static .next/standalone/.next/static
 sudo -u ac cp -r public        .next/standalone/public
-sudo systemctl restart ac-dashboard-web
+sudo systemctl restart ac-organic-lab-web
 
 # Full redeploy (code change in api/)
-cd /opt/ac-organic-dashboard
+cd /opt/ac-organic-lab
 sudo -u ac git pull
 cd api
 sudo -u ac .venv/bin/pip install -e .
-sudo systemctl restart ac-dashboard-api
+sudo systemctl restart ac-organic-lab-api
 ```
 
 ## Exposing the dashboard on the Tailnet
@@ -119,7 +119,7 @@ using Caddy.
 
 ### Option B: Bind web directly to the Tailnet
 
-Edit `ac-dashboard-web.service` and change:
+Edit `ac-organic-lab-web.service` and change:
 
 ```
 Environment=HOSTNAME=127.0.0.1
@@ -132,7 +132,7 @@ Environment=HOSTNAME=0.0.0.0             # all interfaces, including tailscale0
 Environment=HOSTNAME=100.64.254.xxx      # only the server's tailnet IP
 ```
 
-Then `sudo systemctl daemon-reload && sudo systemctl restart ac-dashboard-web`.
+Then `sudo systemctl daemon-reload && sudo systemctl restart ac-organic-lab-web`.
 No TLS in this case - fine for lab use over the encrypted Tailscale network,
 but browsers may show "Not Secure".
 
@@ -142,14 +142,14 @@ The units include systemd hardening directives:
 `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`,
 `PrivateDevices`, and friends. These are safe for both services and buy
 free defense-in-depth. `ReadWritePaths` is limited to each service's own
-directory inside `/opt/ac-organic-dashboard/`.
+directory inside `/opt/ac-organic-lab/`.
 
 ## Service dependencies
 
 - **API** waits for `network-online.target` and `tailscaled.service` so
   the aggregator's first poll doesn't fail while the tailnet is still
   coming up.
-- **Web** requires the API (`Requires=ac-dashboard-api.service`). If the
+- **Web** requires the API (`Requires=ac-organic-lab-api.service`). If the
   API stops, the web service stops too. Both are set to
   `Restart=on-failure` with a 3s backoff.
 
@@ -209,7 +209,7 @@ in that number is a useful alert.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `journalctl -u ac-dashboard-web` shows `ENOENT server.js` | standalone static assets not copied | Re-run step 5 of the setup |
+| `journalctl -u ac-organic-lab-web` shows `ENOENT server.js` | standalone static assets not copied | Re-run step 5 of the setup |
 | API returns `unknown` state for every device | Tailscale down, or `base_url` in `equipment.yaml` wrong | `tailscale status`, verify URLs |
 | Aggregator can't reach a device that a manual `curl` can reach | the `ac` user isn't in the tailnet ACL | check tailnet ACL / `tailscale up --accept-routes` |
-| Web shows blank page | static assets missing from `.next/standalone` | Re-run step 5 and `systemctl restart ac-dashboard-web` |
+| Web shows blank page | static assets missing from `.next/standalone` | Re-run step 5 and `systemctl restart ac-organic-lab-web` |

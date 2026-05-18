@@ -1,9 +1,9 @@
 [Unit]
-Description=AC Organic Self-driving Lab dashboard web (Next.js standalone)
-Documentation=https://github.com/AccelerationConsortium/ac-organic-dashboard
-After=network-online.target ac-dashboard-api.service
+Description=AC Organic Self-driving Lab web (Next.js standalone)
+Documentation=https://github.com/AccelerationConsortium/ac-organic-lab
+After=network-online.target ac-organic-lab-api.service
 Wants=network-online.target
-Requires=ac-dashboard-api.service
+Requires=ac-organic-lab-api.service
 
 [Service]
 Type=simple
@@ -14,7 +14,7 @@ Group=ac
 # .next/standalone/server.js. That directory must be the working
 # directory because server.js resolves static assets with process.cwd().
 # Deploy step must copy .next/static and public/ into this directory.
-WorkingDirectory=/opt/ac-organic-dashboard/web/.next/standalone
+WorkingDirectory=/opt/ac-organic-lab/web/.next/standalone
 
 Environment=NODE_ENV=production
 Environment=PORT=3000
@@ -32,7 +32,7 @@ RestartSec=3
 TimeoutStopSec=10
 
 # Logging
-SyslogIdentifier=ac-dashboard-web
+SyslogIdentifier=ac-organic-lab-web
 StandardOutput=journal
 StandardError=journal
 
@@ -50,7 +50,7 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
-ReadWritePaths=/opt/ac-organic-dashboard/web/.next
+ReadWritePaths=/opt/ac-organic-lab/web/.next
 
 [Install]
 WantedBy=multi-user.target

@@ -1,6 +1,6 @@
 # AC Organic Self-driving Lab — Architecture
 
-**Status:** living document. Last revised when the monorepo restructure landed.
+**Status:** living document. Last revised after the platforms.yaml refactor (schema v2).
 
 This document describes the long-term architecture of the AC Organic Self-driving Lab software stack — what each piece is for, why it exists, and how the pieces fit together. For step-by-step implementation milestones see the working plan in `.cursor/plans/`.
 
@@ -10,6 +10,7 @@ This document describes the long-term architecture of the AC Organic Self-drivin
 
 - The unified equipment status contract (`docs/STATUS_SPEC.md`)
 - The equipment inventory (`equipment.yaml`)
+- The platform layout config (`platforms.yaml`)
 - The Python SDK that workflows, agents, and the dashboard use to drive the lab (`skills/`)
 - The dashboard's web server (`api/`) and Next.js UI (`web/`)
 - Deployment and operations docs (`deploy/`, `docs/`)
@@ -35,6 +36,7 @@ graph TB
       db[("data/lab.db<br/>SQLite<br/>uptime · events<br/>sensors · runs")]
       web["web Next.js UI<br/>(History tab, Equipment grid)"]
       yaml["equipment.yaml<br/>inventory"]
+      platforms["platforms.yaml<br/>Overview layout"]
       spec["docs/STATUS_SPEC.md<br/>contract"]
     end
 
@@ -47,6 +49,7 @@ graph TB
     api --> skills
     web --> api
     skills --> yaml
+    skills --> platforms
     skills --> dev
     api --> dev
     api --> db
@@ -81,6 +84,7 @@ The pieces *outside* are deliberately separate repos because they have different
 ac-organic-lab/
 ├── pyproject.toml                  # uv workspace declaration
 ├── equipment.yaml                  # inventory (root)
+├── platforms.yaml                  # Overview layout / section config (root)
 ├── data/
 │   └── lab.db                      # SQLite history database (gitignored)
 ├── docs/
@@ -89,11 +93,14 @@ ac-organic-lab/
 │   ├── OBSERVABILITY.md            # logging, events, history DB schema
 │   └── ROADMAP.md                  # milestone tracking
 ├── deploy/
-│   ├── ac-dashboard-api.service    # systemd unit (FastAPI)
-│   └── ac-dashboard-web.service    # systemd unit (Next.js)
+│   ├── ac-organic-lab-api.service    # systemd unit (FastAPI)
+│   └── ac-organic-lab-web.service    # systemd unit (Next.js)
 ├── skills/                         # PYTHON: lab-skills SDK
 │   ├── pyproject.toml
 │   └── src/lab_skills/
+│       ├── registry.py             # EquipmentEntry, Tile, PillConfig, Registry
+│       ├── platforms.py            # PlatformSection, PlatformsConfig, load_platforms
+│       └── aggregator.py           # EquipmentAggregator
 ├── api/                            # PYTHON: dashboard web server
 │   ├── pyproject.toml              # depends on ../skills
 │   └── app/
@@ -101,14 +108,19 @@ ac-organic-lab/
 │       ├── db.py                   # LabDatabase (SQLite, stdlib only)
 │       ├── history.py              # /api/history/* + /api/ingest/* routes
 │       ├── control.py              # control passthrough (cameras, plugs)
-│       └── presentation.py        # dashboard snapshot types + tile/location
+│       └── presentation.py        # dashboard snapshot types + location
 └── web/                            # Next.js UI
     └── src/
         ├── app/
-        │   ├── page.tsx            # Lab Overview
+        │   ├── page.tsx            # Overview (platforms.yaml-driven sections)
         │   ├── history/page.tsx    # History tab (uptime, sensors, runs)
         │   └── platforms/hte/      # HTE platform detail
+        ├── components/
+        │   └── Nav.tsx             # auto-injects platform tabs from /api/platforms
         └── lib/
+            ├── use-equipment.ts    # React Query hook — equipment list
+            ├── use-platforms.ts    # React Query hook — platforms config
+            ├── api.ts              # typed fetch fns
             ├── history-api.ts      # typed fetch fns for history endpoints
             └── use-history.ts      # React Query hooks (30 s refetch)
 ```
@@ -121,7 +133,8 @@ The Python SDK and aggregator. **The single authoritative layer for control and 
 
 Owns:
 
-- `equipment.yaml` parsing → `Registry` model
+- `equipment.yaml` parsing → `Registry` / `EquipmentEntry` model
+- `platforms.yaml` parsing → `PlatformsConfig` / `PlatformSection` model
 - One async polling loop per process (`EquipmentAggregator`) over all configured devices
 - Per-device adapters for STATUS_SPEC v1.0, legacy pre-spec devices, and mocks
 - The `Lab.connect()` / `LabSession` / `EquipmentClient` API used by workflow code
@@ -144,9 +157,9 @@ A FastAPI app that serves the dashboard. **Thin presentation + observability.**
 
 Owns:
 
-- HTTP routes consumed by the Next.js UI (`/api/equipment`, `/api/health`)
-- Presentation-only types (`EquipmentSnapshot`, tile layout, location coords)
-- The `_snapshot()` wrapper that decorates an `EquipmentEntry` with dashboard-specific fields like `tile` and `location`
+- HTTP routes consumed by the Next.js UI (`/api/equipment`, `/api/platforms`, `/api/health`)
+- Presentation-only types (`EquipmentSnapshot`, tile layout, location coords, pill config)
+- The `_snapshot()` wrapper that decorates an SDK snapshot with dashboard-specific fields: `platform` and `tile` are resolved from `PlatformsConfig` at compose time; `pill` is forwarded from `EquipmentEntry.pills`
 - CORS / auth at the dashboard edge
 - **Lab history database** (`db.py`, `history.py`): SQLite at `data/lab.db`
   - `equipment_events` — state transitions, errors, startup/shutdown
@@ -167,19 +180,59 @@ Does **not** own:
 
 The user-facing dashboard. Reads from `api/`. No Python.
 
+The Overview page (`page.tsx`) is entirely driven by `/api/platforms`: it iterates `sections` in order and dispatches on `kind` — `environmental_map` renders the `LabMap`; `platform` renders a `PlatformCard` with snapshots looked up by the section's equipment id list. Adding or reordering a section requires only a `platforms.yaml` edit; no frontend code changes.
+
+The Nav (`Nav.tsx`) auto-injects one tab per section that has an `href` field, between the static `Overview` and `History` tabs.
+
 ### `equipment.yaml` (root)
 
 The static inventory of "what equipment exists in this lab". Edited by humans when hardware physically changes or goes into maintenance.
 
-Each entry includes:
+**Schema v2** — each entry includes:
 
-- `id`, `name`, `kind`, `platform`
+- `id`, `name`, `kind`
 - `adapter` (`http` for spec-conformant, `legacy_http` for pre-spec, `mock` for not-yet-deployed)
 - `base_url`, `status_path`, `poll_timeout_seconds`
 - `enabled: bool`, `maintenance: { reason, until, contact }` for soft maintenance toggling without commenting out
-- `location` and `tile` for dashboard rendering (parsed only by `api/`, not `skills`)
+- `tiles: dict[section_id, {w, h}]` — per-section tile sizing for the equipment grid. A missing key defaults to `{w:2, h:1}`. The section id matches `platforms.yaml`
+- `pills: {open: bool}` — shared Overview pill config. `open: true` renders an "Open ↗" link to `base_url` in the platform card pill row
+- `location: {x, y, label}` — position on the lab floorplan map (environmental sensors only; parsed by `api/`, not `skills`)
+- `camera:` / `plug:` — kind-specific blocks (lenses, outlets); parsed by `api/` and forwarded to the frontend via `EquipmentSnapshot`
 
-> **Stream visibility** is not a YAML field. When a platform has a camera the Lab Overview card shows a "Show stream / Hide stream" toggle button — the live feed is collapsed by default so the overview page doesn't open live WebSocket connections for every visitor. There is no `hide_stream` flag in `equipment.yaml`; the toggle is purely a runtime UI control.
+> **`platform:` removed in schema v2.** Equipment entries no longer carry a `platform:` field. Section membership is declared exclusively in `platforms.yaml`; `EquipmentSnapshot.platform` is resolved by the API at compose time.
+
+> **Stream visibility** is not a YAML field. When a platform has a camera the platform card shows a "Show stream / Hide stream" toggle — the live feed is collapsed by default. There is no `hide_stream` flag; the toggle is purely a runtime UI control.
+
+### `platforms.yaml` (root)
+
+Defines which sections appear on the Overview page, in what order, and which equipment ids belong to each. This is the single source of truth for the Overview layout and Nav tab list.
+
+```yaml
+sections:
+  - id: lab_environment
+    title: Lab Environment
+    kind: environmental_map      # renders LabMap instead of PlatformCard
+    equipment: [env_sample_prep, ...]
+
+  - id: hte
+    title: HTE Platform
+    href: /platforms/hte         # presence of href → tab appears in Nav
+    kind: platform
+    equipment: [cam_hte_tapo_c245, ot2, ...]
+
+  - id: web_services
+    title: Web Services
+    kind: platform               # no href → no Nav tab
+    equipment: [pypoe_web]
+```
+
+Key behaviours:
+
+- **Section order** determines render order on the Overview page and tab order in the Nav.
+- **Equipment order** within a section determines tile order on the platform's detail page and pill order in the Overview card.
+- **Shared equipment** — an equipment id may appear in more than one section. The resolved `EquipmentSnapshot.platform` for that id is the **first** section listing it (sections are in display order, so this is deterministic).
+- **Missing file** raises immediately on startup; there is no fallback to defaults.
+- Loaded once at API server startup via `load_platforms()` in `lab_skills.platforms`; exposed as `GET /api/platforms`.
 
 ### `docs/STATUS_SPEC.md`
 
@@ -205,9 +258,14 @@ A workflow author writing `solubility-screening` adds **one** dependency: `lab-s
 
 Workflow code says `lab.role("sealer").seal_start(...)`, never `lab.get("plateloc").seal_start(...)`. A `binding: dict[str, str]` config in the project repo maps role → equipment_id. This makes workflows portable across labs and survivable through device replacements.
 
-### 5. Inventory: one file, two views
+### 5. Two YAML files, cleanly separated concerns
 
-`equipment.yaml` is the single source of truth. The SDK reads `id`/`adapter`/`base_url`/etc. The dashboard reads the same file plus presentation fields (`tile`, `location`). Neither owns the file; both read it.
+`equipment.yaml` answers "what hardware exists and how to reach it". `platforms.yaml` answers "how should the UI present it". Keeping them separate means:
+
+- Hardware changes (new device, maintenance, URL change) never touch the UI layout file
+- UI layout changes (reorder sections, add a new platform page) never touch hardware config
+- The SDK (`lab-skills`) parses both — `load_registry()` for equipment, `load_platforms()` for sections — but `EquipmentEntry` carries no UI concerns beyond tile sizing and pill config
+- `platform` assignment is computed at API compose time, not stored on the equipment entry
 
 ### 6. Soft maintenance over commented-out lines
 
@@ -231,7 +289,7 @@ These are non-binding directional commitments — not a roadmap.
 
 ### LG1. Multi-lab portability
 
-The platform should run unchanged in a second lab. Only `equipment.yaml`, deployment config, and the binding YAMLs in project repos differ between labs. No per-lab forks of `skills/`, `api/`, or `web/`.
+The platform should run unchanged in a second lab. Only `equipment.yaml`, `platforms.yaml`, deployment config, and the binding YAMLs in project repos differ between labs. No per-lab forks of `skills/`, `api/`, or `web/`.
 
 ### LG2. Spec-first device migrations
 
@@ -262,6 +320,7 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 - **Device** — one piece of physical equipment with its own REST service
 - **Adapter** — `skills/` code that translates a device's responses into `EquipmentStatus`
 - **Aggregator** — the polling loop in `skills/` that fans out to all configured devices
+- **Section** — one card on the Overview page, defined in `platforms.yaml`; either a `platform` (equipment tiles) or an `environmental_map`
 - **Skill** — a named capability (e.g. `seal.start`) invokable on a role; computed at runtime from `/status` + the equipment kind
 - **Role** — a logical capability slot in a workflow (e.g. `sealer`, `filtration`, `plate_mover`); bound to an `equipment_id` per project
 - **Claim / lease** — a short-lived, heartbeated lock on a device that prevents concurrent control by other clients
@@ -277,7 +336,8 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 - `docs/EQUIPMENT_INTEGRATION.md` — onboarding and maintenance runbook
 - `docs/DEVICE_PC_SETUP.md` — canonical install recipe for a Windows device PC
 - `docs/ROADMAP.md` — per-device migration status
-- `equipment.yaml` — the lab's inventory
+- `equipment.yaml` — the lab's equipment inventory (schema v2)
+- `platforms.yaml` — the Overview page layout and Nav tab config
 - `skills/README.md` — SDK usage (created when v0.1 ships)
 - `api/README.md` — dashboard server (created when api/ is reorganized in v0.1)
 - `.cursor/plans/build_lab-skills_*.plan.md` — current working milestone plan

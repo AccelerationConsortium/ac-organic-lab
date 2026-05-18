@@ -87,7 +87,7 @@ Tier 3 — Central SQLite on dashboard host (structured, for cross-device analys
   Who reads it: dashboard plots, workflow scripts, scientists.
   What belongs here: run records, well results, sensor summaries, uptime events.
   Rate: aggregator writes one row per completed action — never per-poll.
-  Location: /opt/ac-organic-dashboard/data/lab.db
+  Location: /opt/ac-organic-lab/data/lab.db
 ```
 
 ### Per-platform write rules
@@ -104,7 +104,7 @@ Tier 3 — Central SQLite on dashboard host (structured, for cross-device analys
 
 ## 4. Central SQLite schema (`lab.db`)
 
-Lives at `/opt/ac-organic-dashboard/data/lab.db` on the dashboard host.
+Lives at `/opt/ac-organic-lab/data/lab.db` on the dashboard host.
 Written exclusively by the FastAPI aggregator process — never by device services directly.
 
 ```sql
@@ -332,14 +332,14 @@ via Next's built-in proxy (`/api/...` → `http://127.0.0.1:8001/api/...`).
 
 ## 10. Direct database access
 
-The database lives at `/opt/ac-organic-dashboard/data/lab.db` on the dashboard host.
+The database lives at `/opt/ac-organic-lab/data/lab.db` on the dashboard host.
 Override the path with `LAB_DB_PATH` in `.env`.
 
 ### SQLite CLI inspection
 
 ```bash
 # Open the database (read-only is safer while the server is running)
-sqlite3 /opt/ac-organic-dashboard/data/lab.db
+sqlite3 /opt/ac-organic-lab/data/lab.db
 
 -- Check table sizes
 SELECT name, COUNT(*) FROM sqlite_master
@@ -372,7 +372,7 @@ ORDER BY sensor_id, metric;
 
 ```python
 import sqlite3, json
-db = sqlite3.connect("/opt/ac-organic-dashboard/data/lab.db")
+db = sqlite3.connect("/opt/ac-organic-lab/data/lab.db")
 db.row_factory = sqlite3.Row
 runs = [dict(r) for r in db.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT 10")]
 print(json.dumps(runs, indent=2))
@@ -384,14 +384,14 @@ print(json.dumps(runs, indent=2))
 
 ```bash
 # Safe hot backup while server is running (WAL mode makes this safe)
-sqlite3 /opt/ac-organic-dashboard/data/lab.db \
-    ".backup /opt/ac-organic-dashboard/data/lab.db.bak"
+sqlite3 /opt/ac-organic-lab/data/lab.db \
+    ".backup /opt/ac-organic-lab/data/lab.db.bak"
 
 # Cron example: daily backup to a dated file, keep 30 days
 # Add to /etc/cron.d/lab-db-backup:
-# 0 3 * * * ac sqlite3 /opt/ac-organic-dashboard/data/lab.db \
-#     ".backup /opt/ac-organic-dashboard/data/backups/lab_$(date +\%F).db" && \
-#     find /opt/ac-organic-dashboard/data/backups/ -name "lab_*.db" -mtime +30 -delete
+# 0 3 * * * ac sqlite3 /opt/ac-organic-lab/data/lab.db \
+#     ".backup /opt/ac-organic-lab/data/backups/lab_$(date +\%F).db" && \
+#     find /opt/ac-organic-lab/data/backups/ -name "lab_*.db" -mtime +30 -delete
 ```
 
 Retention guidelines:

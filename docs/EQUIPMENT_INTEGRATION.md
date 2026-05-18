@@ -3,14 +3,18 @@
 This runbook is the operational checklist for:
 
 - Adding a new equipment gateway to the dashboard (`GET /api/equipment`).
-- Preventing placeholder hostname regressions (like `tail-XXXX`).
+- Editing `platforms.yaml` to change section layout, display order, or equipment membership.
+- Tile sizing and sensor map positions.
+- Preventing placeholder hostname regressions.
 - Taking equipment offline for maintenance in a way that is visible and safe.
 
 This document complements:
 
 - [`docs/STATUS_SPEC.md`](STATUS_SPEC.md) (device contract — combined v1.0 + v1.1)
+- [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) (equipment.yaml and platforms.yaml schema)
 - `deploy/README.md` (service operations)
-- `equipment.yaml` (committed registry source of truth)
+- `equipment.yaml` — hardware inventory
+- `platforms.yaml` — Overview layout config
 
 ## 1) Add New Equipment
 
@@ -24,7 +28,7 @@ This document complements:
 
 ### Step A - Verify reachability from dashboard host
 
-From the dashboard server (the host running `ac-dashboard-api.service`):
+From the dashboard server (the host running `ac-organic-lab-api.service`):
 
 ```bash
 curl -fsS --max-time 3 http://<magicdns-host>:<port>/health
@@ -43,32 +47,55 @@ curl -fsS --max-time 3 http://<100.x.y.z>:<port>/health
 
 Add/update an entry under `equipment:` with:
 
-- stable `id` (used by APIs and UI),
-- `kind`, `adapter`, `platform`,
-- `base_url` pointing to the real MagicDNS host,
-- optional `status_path`, `protocol`, tile/location fields.
+- stable `id` (used by APIs and UI)
+- `kind`, `adapter`
+- `base_url` pointing to the real MagicDNS host
+- optional `status_path`, `protocol`, `poll_timeout_seconds`
+- `tiles:` — per-section tile sizing (keyed by the section id from `platforms.yaml`); omit a key to use the 2×1 default
+- `pills:` — Overview pill config; set `open: true` to render an "Open ↗" link to `base_url`
 
 Example:
 
 ```yaml
 - id: xarm_translocation
   name: UFactory xArm5
-  platform: hte
   kind: robot_arm
   adapter: http
   protocol: "1.0"
   base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000
   status_path: /status
   poll_timeout_seconds: 2.0
+  tiles:
+    hte: { w: 2, h: 2 }
+  pills: {}
 ```
+
+### Step B2 - Add the equipment to `platforms.yaml`
+
+Add the new `id` to the `equipment:` list of the appropriate section. The position in the list determines the render order on the Overview card and on the section's detail page.
+
+```yaml
+sections:
+  - id: hte
+    title: HTE Platform
+    href: /platforms/hte
+    kind: platform
+    equipment:
+      - cam_hte_tapo_c245
+      - xarm_translocation   # ← add here, in desired display order
+      - ot2
+      - ...
+```
+
+If the device should appear in a new section that doesn't exist yet, add a new `sections:` entry. Missing file or invalid schema raises on API startup (no silent fallback).
 
 ### Step C - Restart only the aggregator backend
 
-Only restart `ac-dashboard-api.service` (frontend usually does not need restart):
+Only restart `ac-organic-lab-api.service` (frontend usually does not need restart):
 
 ```bash
-sudo systemctl restart ac-dashboard-api.service
-sudo systemctl status ac-dashboard-api.service --no-pager
+sudo systemctl restart ac-organic-lab-api.service
+sudo systemctl status ac-organic-lab-api.service --no-pager
 ```
 
 ### Step D - Verify end-to-end from this server
@@ -123,7 +150,7 @@ disable.
 Then restart only the aggregator:
 
 ```bash
-sudo systemctl restart ac-dashboard-api.service
+sudo systemctl restart ac-organic-lab-api.service
 ```
 
 ### What should display on the dashboard
@@ -158,7 +185,68 @@ flows from proceeding against that equipment.
 - `fetch_error` matches expectation (`null` when online; explicit error if offline).
 - Dashboard tile state matches gateway `/status` (or expected offline behavior).
 
-## 5) Cameras (`kind: camera`) and plugs (`smart_plug`, `power_strip`)
+## 5) Customising the dashboard layout
+
+Everything visible on the dashboard — section order, equipment membership, tile sizes, and sensor positions — is driven by `equipment.yaml` and `platforms.yaml`. No frontend code changes are needed.
+
+### Section order and equipment membership (`platforms.yaml`)
+
+`platforms.yaml` is the single source of truth for what appears on the Overview page and in the Nav. Edit the `sections:` list to reorder sections or move equipment between them. The API reloads on the next restart (or `uvicorn --reload` picks it up automatically in dev).
+
+Each section has:
+- `id` — stable identifier, used as the tile-sizing key in `equipment.yaml`
+- `title` — display name (Overview card header, Nav tab)
+- `href` (optional) — if present, a Nav tab is auto-injected for this section
+- `kind: platform | environmental_map` — `platform` renders a `PlatformCard`; `environmental_map` renders the `LabMap`
+- `equipment:` — ordered list of equipment ids; this order is the render order everywhere
+
+### Tile sizes (platform detail pages)
+
+Platform detail pages (e.g. `/platforms/hte`) lay equipment cards on a 4-column CSS grid. Set the `tiles:` dict on an `equipment.yaml` entry to control the size per section:
+
+```yaml
+- id: xarm_translocation
+  ...
+  tiles:
+    hte: { w: 2, h: 2 }   # spans 2 of 4 columns, 2 rows tall
+```
+
+A missing section key defaults to `{ w: 2, h: 1 }`.
+
+| `w` | spans (lg+) | typical use |
+|-----|-------------|-------------|
+| `1` | quarter row | very compact, info-light device |
+| `2` | half row (default) | most devices |
+| `3` | three-quarters row | rare |
+| `4` | full row | banner / hero device |
+
+`h` (1..4) is honoured as a row span. Both fields are validated by Pydantic on startup — a typo fails the API immediately.
+
+Responsive behaviour: on mobile (< sm) every card is full-width; from sm to lg the grid is 2 columns and `w` is capped at 2; from lg+ the full 4-column grid applies.
+
+### "Open ↗" link on the Overview pill row
+
+Set `pills: { open: true }` on any equipment entry to render an "Open ↗" link to its `base_url` in the Overview platform card. Intended for web-service entries (e.g. `pypoe_web`). All other equipment should have `pills: {}`.
+
+### Sensor positions on the lab map
+
+Environmental sensors place markers on the SVG floorplan. The map is rotated 90° clockwise from the building plan (north is up on screen). Set `location.x` and `location.y` as percentages of the map (0-100):
+
+```yaml
+- id: env_lab499_west
+  kind: environmental_sensor
+  ...
+  location: { x: 20, y: 75, label: "Lab 499 · West" }
+```
+
+The four zones:
+
+- Stairs (top-left quadrant, greyed out)
+- Sample Prep (top-right quadrant)
+- Storage (middle horizontal band)
+- Lab 499 (bottom half — main lab)
+
+## 6) Cameras (`kind: camera`) and plugs (`smart_plug`, `power_strip`)
 
 Tapo cameras and Kasa plugs are not first-class HTTP devices - they speak proprietary lab-LAN protocols. They are bridged into the dashboard by the [`kasa-tapo-services`](https://github.com/your-org/kasa_tapo_services) gateway running on the dashboard host.
 
@@ -200,18 +288,20 @@ Steps:
    ```bash
    sudo systemctl restart kasa-tapo-services.service ac-go2rtc.service
    ```
-6. **Add the matching `equipment.yaml` entry** in this repo (note the `camera:` block mirrors `devices.yaml` for the dashboard-side lens labels):
+6. **Add the matching `equipment.yaml` entry** in this repo (note the `camera:` block mirrors `devices.yaml` for the dashboard-side lens labels); then add the id to the appropriate section in `platforms.yaml`:
    ```yaml
+   # equipment.yaml
    - id: cam_lab499_west
      name: Lab 499 (West) Camera
-     platform: lab
      kind: camera
      adapter: http
      protocol: "1.0"
      base_url: http://127.0.0.1:8002
      status_path: /cameras/cam_lab499_west/status
      poll_timeout_seconds: 2.0
-     tile: { w: 2, h: 2 }
+     tiles:
+       hte: { w: 2, h: 2 }   # adjust section id and size as needed
+     pills: {}
      camera:
        host: 192.168.1.42
        onvif_port: 2020
@@ -219,7 +309,7 @@ Steps:
          - { id: wide, label: Wide, rtsp_path: stream1 }
          - { id: tele, label: Tele, rtsp_path: stream2 }
    ```
-7. **Restart the dashboard API**: `sudo systemctl restart ac-dashboard-api.service`.
+7. **Restart the dashboard API**: `sudo systemctl restart ac-organic-lab-api.service`.
 8. **End-to-end check**:
    ```bash
    curl -fsS http://localhost:8001/api/equipment | python3 -c \

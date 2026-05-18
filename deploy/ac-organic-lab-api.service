@@ -1,6 +1,6 @@
 [Unit]
-Description=AC Organic Self-driving Lab dashboard API (FastAPI aggregator)
-Documentation=https://github.com/AccelerationConsortium/ac-organic-dashboard
+Description=AC Organic Self-driving Lab API (FastAPI aggregator)
+Documentation=https://github.com/AccelerationConsortium/ac-organic-lab
 After=network-online.target tailscaled.service
 Wants=network-online.target
 
@@ -8,17 +8,17 @@ Wants=network-online.target
 Type=simple
 User=ac
 Group=ac
-WorkingDirectory=/opt/ac-organic-dashboard/api
+WorkingDirectory=/opt/ac-organic-lab/api
 # Optional `.env` at the repo root; not required for v1 (read-only).
-EnvironmentFile=-/opt/ac-organic-dashboard/.env
+EnvironmentFile=-/opt/ac-organic-lab/.env
 
 # Reads ../equipment.yaml relative to WorkingDirectory unless LAB_REGISTRY_PATH
 # is set in the EnvironmentFile.
 #
 # Uses the shared uv-workspace venv at the repo root (see root pyproject.toml).
-# The editable install of `ac-organic-dashboard-api` exposes top-level `app`
+# The editable install of `ac-organic-lab-dashboard-api` exposes top-level `app`
 # on sys.path, so `app.main:app` resolves regardless of WorkingDirectory.
-ExecStart=/opt/ac-organic-dashboard/.venv/bin/uvicorn app.main:app \
+ExecStart=/opt/ac-organic-lab/.venv/bin/uvicorn app.main:app \
     --host 127.0.0.1 \
     --port 8001 \
     --no-server-header \
@@ -29,7 +29,7 @@ RestartSec=3
 TimeoutStopSec=10
 
 # Logging
-SyslogIdentifier=ac-dashboard-api
+SyslogIdentifier=ac-organic-lab-api
 StandardOutput=journal
 StandardError=journal
 
@@ -52,7 +52,7 @@ LockPersonality=true
 # Allow writing only to the python bytecode cache dirs under the repo.
 # Both `api/` and `skills/` are needed because both are editable installs in
 # the shared workspace venv, and CPython writes __pycache__/ next to source.
-ReadWritePaths=/opt/ac-organic-dashboard/api /opt/ac-organic-dashboard/skills /opt/ac-organic-dashboard/data
+ReadWritePaths=/opt/ac-organic-lab/api /opt/ac-organic-lab/skills /opt/ac-organic-lab/data
 
 [Install]
 WantedBy=multi-user.target

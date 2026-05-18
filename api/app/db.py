@@ -18,7 +18,7 @@ Resolved in this order:
 1. ``LAB_DB_PATH`` environment variable
 2. ``../data/lab.db`` relative to this file  (i.e. repo-root ``data/``)
 
-Add ``ReadWritePaths=/opt/ac-organic-dashboard/data`` to the systemd unit
+Add ``ReadWritePaths=/opt/ac-organic-lab/data`` to the systemd unit
 if you change the default, or point ``LAB_DB_PATH`` to a writable path.
 """
 

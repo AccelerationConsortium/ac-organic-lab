@@ -17,15 +17,16 @@ Cursor plan UI.
 | **v0.4** | MCP server companion (catalog → tools, `/status` → resources, CLI `lab-skills mcp serve`) | ⏸ paused, but the *fleet-readiness* reason has been cleared — see *Why v0.4 is paused* below |
 | **v0.5** | Standalone `lab-skills serve` CLI exposing the aggregator as a long-lived HTTP service | not started |
 
-`uv run pytest -q` from the repo root: **120 passed** (98 v0.1/v0.2 + 8 claims
-+ 14 plan/interlocks). Dashboard `/api/equipment` is verified end-to-end
-on `http://100.64.254.6:3000/api/equipment`. Of the 14 registered
-devices: 7 return live data from real hardware (5 on `adapter: http`
-— two of them at `protocol: "1.1"` — and 2 on `legacy_http`); 4
-environmental sensors emit synthetic readings; 1 BioStack is an
-explicit `mock` placeholder; 2 are broken — `cam_hte_tapo_c245`
-(gateway service down) and `dose_every_well` (placeholder hostname).
-See *Operational regressions* below for the broken ones.
+`uv run pytest -q` from the repo root: **137 passed** (98 v0.1/v0.2 + 8 claims
++ 14 plan/interlocks + 17 platforms-refactor). Dashboard `/api/equipment` is verified
+end-to-end on `http://100.64.254.6:3000/api/equipment`. Of the 17 registered
+devices (3 added since the sweep: `plug_hte_strip_right`, `plug_hte_strip_left`,
+`pypoe_web`): 7+ return live data from real hardware; 4 environmental sensors
+emit synthetic readings; 1 BioStack is an explicit `mock` placeholder;
+`cam_hte_tapo_c245` and the two power strips are offline because
+`kasa-tapo-services` is not running; `dose_every_well`'s placeholder hostname
+was resolved in the equipment.yaml rewrite — service reachability unverified.
+See *Operational regressions* below.
 
 ## Why v0.4 is paused
 
@@ -46,13 +47,14 @@ The fleet is no longer the bottleneck for v0.4. **What is blocking now:**
 
 1. **v0.3 carry-overs** (`execute_plan`, async interlocks, sync façades —
    listed below) need to land before MCP can wrap them as tools.
-2. **Two operational regressions** must be cleared so a clean v0.4
-   resumption can be verified end-to-end:
+2. **One remaining operational regression** must be cleared:
    - `kasa-tapo-services` is not running on the dashboard host; the
-     camera tile reports `connection_refused` on `127.0.0.1:8002`.
-   - `dose_every_well` still has the placeholder hostname
-     `doser.tail-XXXX.ts.net` in `equipment.yaml`; the aggregator hits
-     a DNS failure every poll cycle.
+     camera tile and both power-strip tiles report `connection_refused`
+     on `127.0.0.1:8002`.
+   - ~~`dose_every_well` placeholder hostname~~ — **resolved**: the
+     equipment.yaml rewrite replaced `doser.tail-XXXX.ts.net` with the
+     real Tailscale name `sdl2-pi5-minicnc.tail6a1dd7.ts.net`. Service
+     reachability still needs a live poll to confirm.
 
    See *Operational regressions* below.
 
@@ -94,16 +96,15 @@ response shape.
 | `cam_hte_tapo_c245` | `http` | 1.0 | ❌ `connection_refused` | Aggregator can't reach `127.0.0.1:8002`. `kasa-tapo-services` is not running on the dashboard host. *Operational regression.* |
 | `filter_every_well` | `http` | 1.1 | ✅ `ready` / `requires_init` | Migrated to STATUS_SPEC v1.1. `/status` returns `EquipmentStatus` with `allowed_actions`. Control endpoints under `/control/*`. Claim/heartbeat/release enforced (`ENFORCE_CLAIMS=True`). |
 | `fume_hood_actuator` | `legacy_http` | — | ✅ `ready` | Verified still legacy: Flask, `/equipment/status` (not `/status`), no `GET /` probe (404). Hand-rolled JSON shape with `equipment_name` / `equipment_status` / `system_state` / `sash_state`. |
-| `dose_every_well` | `legacy_http` | — | 🔴 DNS-fail | Placeholder hostname `doser.tail-XXXX.ts.net` still in `equipment.yaml`. Aggregator hits `Name or service not known` every poll cycle. *Operational regression.* |
+| `dose_every_well` | `http` | 1.1 | 🟡 unverified | Placeholder hostname resolved: `sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`. Adapter flipped to `http`, `protocol: "1.1"`. Live reachability not confirmed since the equipment.yaml rewrite. |
 | `agilent_biostack` | `mock` | — | — | No driver. `required_actions: ["integrate_repo"]`. |
 | `env_*` (4 sensors) | `mock` | — | — | Synthesised readings. Awaiting `env_sensors` repo. |
 
 ### Remaining migration work (priority order)
 
-1. **`dose_every_well` (solid_doser)** — same shape as press once
-   reachable. **First action is the registry fix** (replace `tail-XXXX`
-   with the real Tailscale name, or set `enabled: false` until the
-   service is deployed).
+1. **`dose_every_well` (solid_doser)** — hostname is resolved; same
+   migration shape as `filter_every_well` once service is reachable.
+   Confirm live `/status`, then proceed with the v1.0 checklist below.
 3. **`fume_hood_actuator`** — Flask → FastAPI port plus spec envelope.
    The live device today serves a hand-rolled shape on
    `/equipment/status`; the v1.0 work renames to `/status` and bumps
@@ -212,11 +213,11 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 
 #### `dose_every_well`
 
-- **Operational regression**: `equipment.yaml` still has the placeholder
-  `base_url: http://doser.tail-XXXX.ts.net:8000`. The dashboard
-  aggregator hits `Name or service not known` on every poll (~every
-  2 s). Fix as the very first step (see *Operational regressions*
-  below).
+- **Hostname resolved** (as of equipment.yaml rewrite): `base_url`
+  updated to `http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`;
+  `adapter` flipped from `legacy_http` to `http`, `protocol: "1.1"`.
+  DNS-failure regression is cleared. Live `/status` reachability should
+  be confirmed with a direct `curl` from the dashboard host.
 - Current driver state (per `dose_every_well/` repo, not directly
   re-verified in this sweep): FastAPI, `/status` returns `SystemStatus`
   (legacy), control endpoints are `/startup`, `/shutdown`, `/dose/well`,
@@ -368,18 +369,14 @@ dashboard's "what's running" picture wrong.
    then re-poll. While down, the camera tile, media listing, and
    PTZ/snapshot/record surface are all offline.
 
-2. **`dose_every_well` placeholder hostname.** `equipment.yaml` still
-   has `base_url: http://doser.tail-XXXX.ts.net:8000`. The aggregator
-   does a DNS lookup against `doser.tail-XXXX.ts.net` every poll
-   cycle and logs `Name or service not known`. This is exactly the
-   regression `docs/EQUIPMENT_INTEGRATION.md` § "Preventing
-   placeholder hostname regressions" calls out by name. Action:
-   either fill in the real Tailscale name, or set
-   `enabled: false` (with `maintenance: { reason: "doser service not
-   yet deployed" }`) until the service is up. Without `enabled:
-   false` the dashboard has no good way to distinguish "device is
-   deployed but down" from "device is intentionally not deployed
-   yet".
+2. ~~**`dose_every_well` placeholder hostname.**~~ **Resolved.**
+   `equipment.yaml` was rewritten: `base_url` is now
+   `http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`, adapter is
+   `http`, protocol is `"1.1"`. The DNS-failure poll loop is gone.
+   Confirm live reachability with
+   `curl -fsS --max-time 3 http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000/health`
+   from the dashboard host; if the service is not yet deployed, add
+   `enabled: false` until it is.
 
 3. **`plateloc` COM driver cannot reach hardware** (informational,
    not a software regression). Server is v1.1 and answering, but the
