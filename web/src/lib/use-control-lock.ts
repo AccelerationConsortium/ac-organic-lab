@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useControlAuth } from "@/lib/control-auth";
 
 const DEFAULT_UNLOCK_SECONDS = 5;
 
@@ -9,12 +10,17 @@ export interface UseControlLockResult {
   locked: boolean;
   /** Seconds remaining before auto-relock; meaningless while locked. */
   countdown: number;
-  /** Unlock controls and start the auto-relock countdown. */
-  unlock: () => void;
+  /**
+   * Unlock controls and start the auto-relock countdown. When the dashboard
+   * has CONTROL_PASSWORD enabled and the user is not yet authenticated,
+   * this first pops the shared password modal; the unlock only proceeds on
+   * successful auth.
+   */
+  unlock: () => Promise<void>;
   /** Lock controls immediately and clear any running countdown. */
   lock: () => void;
   /** Convenience: toggle between locked and unlocked. */
-  toggle: () => void;
+  toggle: () => Promise<void>;
 }
 
 /**
@@ -31,6 +37,7 @@ export function useControlLock(
   opts: { unlockSeconds?: number } = {},
 ): UseControlLockResult {
   const unlockSeconds = opts.unlockSeconds ?? DEFAULT_UNLOCK_SECONDS;
+  const { ensureAuth } = useControlAuth();
 
   const [locked, setLocked] = useState(true);
   const [countdown, setCountdown] = useState(unlockSeconds);
@@ -49,7 +56,10 @@ export function useControlLock(
     setCountdown(unlockSeconds);
   }
 
-  function unlock() {
+  async function unlock() {
+    const ok = await ensureAuth();
+    if (!ok) return;
+
     clearTimer();
     setCountdown(unlockSeconds);
     setLocked(false);
@@ -62,8 +72,8 @@ export function useControlLock(
     }, 1000);
   }
 
-  function toggle() {
-    if (locked) unlock();
+  async function toggle() {
+    if (locked) await unlock();
     else lock();
   }
 

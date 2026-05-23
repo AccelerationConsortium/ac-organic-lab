@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { QueryProvider } from "@/lib/query-client";
+import { ControlAuthProvider } from "@/lib/control-auth";
 import { Nav } from "@/components/Nav";
 
 export const metadata: Metadata = {
@@ -13,6 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="min-h-screen">
         <QueryProvider>
+         <ControlAuthProvider>
           <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
             <header className="flex flex-col gap-4">
               <div className="flex items-center justify-between gap-4">
@@ -38,6 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               Read-only dashboard · v1
             </footer>
           </div>
+         </ControlAuthProvider>
         </QueryProvider>
       </body>
     </html>

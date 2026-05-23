@@ -334,6 +334,48 @@ Steps:
 | PTZ buttons disabled                                 | ONVIF was unreachable on last poll                              | Same as the first row                                       |
 | Privacy toggle disabled                              | pytapo creds missing or wrong                                   | Set `<ID>_USER` / `<ID>_PASS` to the **Camera Account**     |
 
+## 6b) Password-gating the control surfaces (`CONTROL_PASSWORD`)
+
+Tiles with destructive actions (`PowerStripTile`, `FumeHoodTile`, future
+ones via `useControlLock`) share a single password gate. Set
+`CONTROL_PASSWORD` in the web service's environment to require it;
+leave it unset to keep the dashboard fully open (Tailscale-ACL-only).
+
+Enable on the dashboard host:
+
+```
+sudo systemctl edit ac-organic-lab-web.service
+# add (inside [Service]):
+Environment=CONTROL_PASSWORD=your-shared-password
+sudo systemctl restart ac-organic-lab-web.service
+```
+
+How it works:
+
+- **Frontend**: clicking the Unlock chip in any control tile opens a
+  shared password modal (`ControlAuthProvider` at the root). After a
+  correct password, the 5-second auto-relock countdown starts as
+  before. The cookie persists 30 minutes, so subsequent unlocks within
+  the window don't re-prompt.
+- **Server**: Next.js middleware blocks `POST`/`PUT`/`PATCH`/`DELETE`
+  on `/api/equipment/*/{control,sash}/*` unless the `control_auth`
+  cookie matches. The dashboard's FastAPI passthrough never sees the
+  request when auth fails.
+- **Scope**: dashboard-side only. The device REST endpoints
+  (`100.64.254.100:5000/move`, the camera gateway, etc.) remain
+  reachable directly by anyone on the Tailnet — change device-side
+  posture in the per-device repos if that's not acceptable.
+
+Caveats:
+
+- Cookie is `HttpOnly` and `SameSite=Strict`, but **not `Secure`**
+  because the dashboard is on plain `http://` over Tailscale. If the
+  dashboard ever moves to real TLS, flip `secure: true` in
+  `/api/control-unlock/route.ts`.
+- One password for the whole dashboard. Per-tile or per-user gating
+  would require real auth (out of scope).
+- Changing the password requires a web service restart.
+
 ## 7) Fume hood (`kind: fume_hood`)
 
 The fume-hood sash actuator (`fume_hood_actuator`, legacy Flask on
