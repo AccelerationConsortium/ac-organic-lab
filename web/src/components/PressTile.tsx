@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import {
   postPlateIn,
@@ -39,10 +39,24 @@ function parsePress(snapshot: EquipmentSnapshot): PressState {
   return { pressState, plateState };
 }
 
+// hold_time on /control/press/{up,down} is clamped 0..10 s by the device.
+const HOLD_MIN = 0;
+const HOLD_MAX = 10;
+const HOLD_STEP = 0.5;
+const UP_HOLD_DEFAULT = 2.0;
+const DOWN_HOLD_DEFAULT = 5.0;
+
+function clampHold(raw: number): number {
+  if (!Number.isFinite(raw)) return 0;
+  return Math.min(HOLD_MAX, Math.max(HOLD_MIN, raw));
+}
+
 export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const press = parsePress(snapshot);
   const [, startTransition] = useTransition();
   const { locked, countdown, toggle } = useControlLock();
+  const [upHold, setUpHold] = useState<number>(UP_HOLD_DEFAULT);
+  const [downHold, setDownHold] = useState<number>(DOWN_HOLD_DEFAULT);
 
   const status = snapshot.status.equipment_status;
   const isBusy = status === "busy";
@@ -78,7 +92,7 @@ export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
     >
       {/* Press + Plate rows: caption + two toggle pills each */}
       <div className="flex flex-col gap-1.5">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="w-12 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
             Press
           </span>
@@ -87,15 +101,43 @@ export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             isCurrent={press.pressState === "up"}
             isMoving={isBusy && press.pressState !== "up"}
             disabled={movementDisabled || press.pressState === "up"}
-            onClick={() => exec(() => postPressUp(snapshot.id))}
+            onClick={() => exec(() => postPressUp(snapshot.id, upHold))}
           />
+          <label className="flex items-center gap-1 text-[10px] text-ink-subtle dark:text-slate-500">
+            <input
+              type="number"
+              min={HOLD_MIN}
+              max={HOLD_MAX}
+              step={HOLD_STEP}
+              value={upHold}
+              onChange={(e) => setUpHold(clampHold(parseFloat(e.target.value)))}
+              disabled={locked || isBusy}
+              aria-label="UP hold time in seconds"
+              className="h-7 w-12 rounded border border-ink-subtle/40 bg-transparent px-1 text-right text-xs text-ink dark:border-slate-600 dark:text-slate-200 disabled:opacity-50"
+            />
+            s
+          </label>
           <PositionPill
             label="DOWN"
             isCurrent={press.pressState === "down"}
             isMoving={isBusy && press.pressState !== "down"}
             disabled={movementDisabled || press.pressState === "down"}
-            onClick={() => exec(() => postPressDown(snapshot.id))}
+            onClick={() => exec(() => postPressDown(snapshot.id, downHold))}
           />
+          <label className="flex items-center gap-1 text-[10px] text-ink-subtle dark:text-slate-500">
+            <input
+              type="number"
+              min={HOLD_MIN}
+              max={HOLD_MAX}
+              step={HOLD_STEP}
+              value={downHold}
+              onChange={(e) => setDownHold(clampHold(parseFloat(e.target.value)))}
+              disabled={locked || isBusy}
+              aria-label="DOWN hold time in seconds"
+              className="h-7 w-12 rounded border border-ink-subtle/40 bg-transparent px-1 text-right text-xs text-ink dark:border-slate-600 dark:text-slate-200 disabled:opacity-50"
+            />
+            s
+          </label>
         </div>
         <div className="flex items-center gap-2">
           <span className="w-12 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">

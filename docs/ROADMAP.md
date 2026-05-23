@@ -207,6 +207,13 @@ A repo is considered v1.1 conformant when, on top of v1.0:
     while a motion is in progress.
   - `equipment.yaml` flipped to `adapter: http`, `protocol: "1.1"`.
   - Skill catalog `press.py` updated: all endpoints are `/control/*`.
+    `press.up` / `press.down` use distinct `PressUpArgs` (default
+    `hold_time=2.0`) / `PressDownArgs` (default `hold_time=5.0`)
+    schemas so the API reference renders the per-direction defaults.
+  - Dashboard tile (`PressTile`) exposes per-direction `hold_time`
+    inputs (UP=2 s, DOWN=5 s defaults) next to the UP/DOWN pills.
+    Inputs are disabled while locked or `busy`. See
+    [`EQUIPMENT_INTEGRATION.md` §8](EQUIPMENT_INTEGRATION.md#8-filtration-press-kind-press).
 - Remaining: deploy to Pi at `100.64.254.104`, redeploy the service,
   confirm `/status` returns `requires_init` on boot then `ready` after
   `/control/startup`.

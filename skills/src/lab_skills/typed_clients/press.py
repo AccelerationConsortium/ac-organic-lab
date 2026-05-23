@@ -16,7 +16,8 @@ from typing import Any
 from ..skill_catalog.press import (
     InitArgs,
     PlateMoveArgs,
-    PressMoveArgs,
+    PressDownArgs,
+    PressUpArgs,
     StopArgs,
 )
 from ..client import EquipmentClient
@@ -31,17 +32,23 @@ class PressClient(EquipmentClient):
     async def stop(self) -> Any:
         return await self.command("/stop", StopArgs())
 
-    async def press_up(self, *, hold_time: float = 0.5) -> Any:
+    async def press_up(self, *, hold_time: float | None = None) -> Any:
         # Validate via the catalog schema, then forward as query string -
         # the legacy device reads `hold_time` from the URL, not the body.
-        args = PressMoveArgs(hold_time=hold_time)
+        # Default (2.0 s) comes from PressUpArgs when hold_time is omitted.
+        args = (
+            PressUpArgs() if hold_time is None else PressUpArgs(hold_time=hold_time)
+        )
         return await self.command(
             f"/press/up?hold_time={args.hold_time}",
             None,
         )
 
-    async def press_down(self, *, hold_time: float = 0.5) -> Any:
-        args = PressMoveArgs(hold_time=hold_time)
+    async def press_down(self, *, hold_time: float | None = None) -> Any:
+        # Default (5.0 s) comes from PressDownArgs when hold_time is omitted.
+        args = (
+            PressDownArgs() if hold_time is None else PressDownArgs(hold_time=hold_time)
+        )
         return await self.command(
             f"/press/down?hold_time={args.hold_time}",
             None,

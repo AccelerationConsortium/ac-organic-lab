@@ -230,3 +230,188 @@ def test_sash_rejects_non_fume_hood_kind() -> None:
         )
     assert r.status_code == 400
     assert "fume hood" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# v1.1 claim semantics (PlateLoc / filter_every_well)
+# ---------------------------------------------------------------------------
+
+
+def _v11_entry(**overrides: Any) -> Any:
+    """Mock a STATUS_SPEC v1.1 device entry (status_path == /status, no prefix)."""
+
+    base = {
+        "id": "plateloc",
+        "kind": "plate_sealer",
+        "adapter": "http",
+        "protocol": "1.1",
+        "base_url": "http://127.0.0.1:9999",
+        "status_path": "/status",
+    }
+    base.update(overrides)
+    obj = MagicMock(spec_set=list(base.keys()))
+    for key, value in base.items():
+        setattr(obj, key, value)
+    return obj
+
+
+@respx.mock
+def test_v11_control_acquires_claim_attaches_token_releases() -> None:
+    entry = _v11_entry()
+    app = _make_app(entry)
+
+    claim_route = respx.post("http://127.0.0.1:9999/control/claim").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "claim_token": "tok-abc",
+                "heartbeat_interval_s": 10.0,
+                "expires_at": "2026-05-23T16:00:00Z",
+            },
+        )
+    )
+    action_route = respx.post(
+        "http://127.0.0.1:9999/control/seal/temperature"
+    ).mock(return_value=httpx.Response(200, json={"ok": True}))
+    release_route = respx.post("http://127.0.0.1:9999/control/release").mock(
+        return_value=httpx.Response(204)
+    )
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/plateloc/control/seal/temperature",
+            json={"temperature_c": 50},
+        )
+
+    assert r.status_code == 200
+    assert claim_route.called
+    assert action_route.called
+    assert release_route.called
+
+    # The action call must carry the X-Claim-Token header from the claim
+    # response; the release call must carry the same token.
+    assert action_route.calls.last.request.headers["x-claim-token"] == "tok-abc"
+    assert release_route.calls.last.request.headers["x-claim-token"] == "tok-abc"
+
+
+@respx.mock
+def test_v11_claim_conflict_surfaces_claimed_by() -> None:
+    entry = _v11_entry()
+    app = _make_app(entry)
+
+    respx.post("http://127.0.0.1:9999/control/claim").mock(
+        return_value=httpx.Response(
+            409,
+            json={
+                "detail": "already claimed",
+                "claimed_by": {
+                    "session_id": "f1f1",
+                    "owner": "workflow:solubility",
+                    "expires_at": "2026-05-23T16:01:00Z",
+                },
+                "retry_after_s": 12.0,
+            },
+        )
+    )
+    action_route = respx.post(
+        "http://127.0.0.1:9999/control/seal/temperature"
+    )
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/plateloc/control/seal/temperature",
+            json={"temperature_c": 50},
+        )
+
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    # FastAPI wraps the dict under "detail", and our handler forwards the
+    # device's full JSON body as the detail field so the frontend can
+    # render claimed_by.owner + retry_after_s.
+    assert detail["claimed_by"]["owner"] == "workflow:solubility"
+    assert detail["retry_after_s"] == 12.0
+    assert not action_route.called  # we never made the action call
+
+
+@respx.mock
+def test_v11_releases_even_when_action_fails() -> None:
+    entry = _v11_entry()
+    app = _make_app(entry)
+
+    respx.post("http://127.0.0.1:9999/control/claim").mock(
+        return_value=httpx.Response(200, json={
+            "claim_token": "tok-zzz",
+            "heartbeat_interval_s": 10.0,
+            "expires_at": "2026-05-23T16:00:00Z",
+        })
+    )
+    respx.post("http://127.0.0.1:9999/control/seal/temperature").mock(
+        return_value=httpx.Response(503, json={"detail": "device busy"})
+    )
+    release_route = respx.post("http://127.0.0.1:9999/control/release").mock(
+        return_value=httpx.Response(204)
+    )
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/plateloc/control/seal/temperature",
+            json={"temperature_c": 50},
+        )
+
+    assert r.status_code == 503
+    # The failed-action response shouldn't leak a held claim. Release
+    # must still fire.
+    assert release_route.called
+
+
+@respx.mock
+def test_v11_claim_action_passes_through_without_wrapping() -> None:
+    """Calls to /control/claim itself must NOT trigger another claim dance."""
+
+    entry = _v11_entry()
+    app = _make_app(entry)
+
+    # Only one claim call should be made, and it should come from the
+    # passthrough itself - no recursive claim, no release.
+    claim_route = respx.post("http://127.0.0.1:9999/control/claim").mock(
+        return_value=httpx.Response(200, json={
+            "claim_token": "tok-passthrough",
+            "heartbeat_interval_s": 10.0,
+            "expires_at": "2026-05-23T16:00:00Z",
+        })
+    )
+    release_route = respx.post("http://127.0.0.1:9999/control/release")
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/plateloc/control/claim",
+            json={"owner": "manual", "session_id": "abc"},
+        )
+
+    assert r.status_code == 200
+    assert claim_route.call_count == 1
+    assert not release_route.called
+
+
+@respx.mock
+def test_v10_device_skips_claim_dance() -> None:
+    """v1.0 / no-protocol devices POST directly with no claim overhead."""
+
+    entry = _v11_entry(protocol="1.0")
+    app = _make_app(entry)
+
+    claim_route = respx.post("http://127.0.0.1:9999/control/claim")
+    action_route = respx.post(
+        "http://127.0.0.1:9999/control/seal/temperature"
+    ).mock(return_value=httpx.Response(200, json={"ok": True}))
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/plateloc/control/seal/temperature",
+            json={"temperature_c": 50},
+        )
+
+    assert r.status_code == 200
+    assert not claim_route.called
+    assert action_route.called
+    assert "x-claim-token" not in action_route.calls.last.request.headers

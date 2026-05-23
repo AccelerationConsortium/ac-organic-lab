@@ -23,6 +23,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import uuid
+
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -33,8 +35,10 @@ logger = logging.getLogger("ac_dashboard.api.control")
 
 # How long we'll wait for a control call to complete. Most actions
 # (PTZ nudge, plug toggle) finish in < 200ms; presets save can take a
-# couple of seconds because the camera persists to flash.
-_CONTROL_TIMEOUT_SECONDS = 6.0
+# couple of seconds because the camera persists to flash. The press
+# (filter_every_well) blocks for its `hold_time` parameter, which the
+# device caps at 10 s — budget is set above that with slack.
+_CONTROL_TIMEOUT_SECONDS = 15.0
 
 
 def _control_url(base_url: str, status_path: str, action: str) -> str:
@@ -210,6 +214,83 @@ async def _sash_proxy(
         return {"ok": True, "raw": response.text}
 
 
+# STATUS_SPEC v1.1 reserves three action names for the claim protocol
+# itself. We must NOT wrap calls to these in another claim dance (it
+# would loop or shadow the user's intent).
+_CLAIM_PROTOCOL_ACTIONS: frozenset[str] = frozenset({"claim", "heartbeat", "release"})
+
+# Identity surfaced in `details.claimed_by` on devices that publish it.
+# Workflows reading /status will see the dashboard as the current owner
+# during in-flight control calls, which is the right read.
+_DASHBOARD_CLAIM_OWNER = "ac-organic-lab-dashboard"
+
+# Claim TTL. Long enough to cover the slowest device action (PlateLoc's
+# seal cycle is ~8 s; press init is ~4 s) plus network slack. The device
+# may clamp this to its own min/max - the response's `expires_at` is
+# authoritative.
+_CLAIM_TTL_SECONDS = 30.0
+
+
+async def _acquire_claim(
+    client: httpx.AsyncClient,
+    base_url: str,
+    status_path: str,
+    equipment_id: str,
+) -> str:
+    """POST /control/claim and return the claim token.
+
+    Raises HTTPException on any non-200 (the device's status code and
+    body are forwarded so callers see ``claimed_by`` / ``retry_after_s``).
+    """
+
+    claim_url = _control_url(base_url, status_path, "claim")
+    body = {
+        "owner": _DASHBOARD_CLAIM_OWNER,
+        "session_id": str(uuid.uuid4()),
+        "ttl_s": _CLAIM_TTL_SECONDS,
+    }
+    try:
+        resp = await client.post(claim_url, json=body)
+    except httpx.HTTPError as exc:
+        logger.warning("claim transport error %s -> %s: %s", equipment_id, claim_url, exc)
+        raise HTTPException(status_code=502, detail=f"Cannot acquire claim: {exc}") from exc
+
+    if resp.status_code == 200:
+        try:
+            return str(resp.json()["claim_token"])
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Malformed claim response from {claim_url}",
+            ) from exc
+
+    # 409 / 423 / 503 / 422 — surface the device's body verbatim so the
+    # frontend modal can render `claimed_by.owner` and `retry_after_s`.
+    try:
+        detail = resp.json()
+    except ValueError:
+        detail = resp.text
+    raise HTTPException(status_code=resp.status_code, detail=detail)
+
+
+async def _release_claim_best_effort(
+    client: httpx.AsyncClient,
+    base_url: str,
+    status_path: str,
+    token: str,
+    equipment_id: str,
+) -> None:
+    """POST /control/release; swallow errors. Idempotent per the spec."""
+
+    try:
+        release_url = _control_url(base_url, status_path, "release")
+        await client.post(release_url, headers={"X-Claim-Token": token})
+    except Exception as exc:  # noqa: BLE001 - best-effort cleanup
+        logger.warning(
+            "claim release failed %s -> %s: %s", equipment_id, release_url, exc
+        )
+
+
 async def _proxy(
     request: Request,
     equipment_id: str,
@@ -234,6 +315,18 @@ async def _proxy(
 
     target = _control_url(entry.base_url, entry.status_path, action)
     timeout = httpx.Timeout(_CONTROL_TIMEOUT_SECONDS)
+
+    # v1.1 devices may enforce X-Claim-Token on /control/*. We acquire a
+    # short-lived claim per request, attach the token, then release in a
+    # finally block. Calls to the claim protocol itself (claim/heartbeat/
+    # release) are passed through unwrapped so callers that want to
+    # manage their own claim can. v1.0 devices skip the dance entirely.
+    needs_claim = (
+        getattr(entry, "protocol", None) == "1.1"
+        and method == "POST"
+        and action not in _CLAIM_PROTOCOL_ACTIONS
+    )
+
     # ``trust_env=False`` opts out of HTTP_PROXY / HTTPS_PROXY env vars.
     # Equipment ``base_url`` always points at a tailnet / loopback host
     # we control, so routing those calls through a corporate or local
@@ -241,12 +334,26 @@ async def _proxy(
     # aggregator follows the same convention.
     try:
         async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-            if method == "POST":
-                response = await client.post(target, json=body or {})
-            elif method == "DELETE":
-                response = await client.delete(target)
-            else:  # pragma: no cover - guarded by FastAPI routing
-                raise HTTPException(status_code=405, detail=f"Unsupported method: {method}")
+            token: str | None = None
+            if needs_claim:
+                token = await _acquire_claim(
+                    client, entry.base_url, entry.status_path, equipment_id
+                )
+            try:
+                headers = {"X-Claim-Token": token} if token else None
+                if method == "POST":
+                    response = await client.post(target, json=body or {}, headers=headers)
+                elif method == "DELETE":
+                    response = await client.delete(target, headers=headers)
+                else:  # pragma: no cover - guarded by FastAPI routing
+                    raise HTTPException(status_code=405, detail=f"Unsupported method: {method}")
+            finally:
+                if token is not None:
+                    await _release_claim_best_effort(
+                        client, entry.base_url, entry.status_path, token, equipment_id
+                    )
+    except HTTPException:
+        raise
     except httpx.TimeoutException as exc:
         logger.warning("control timeout %s %s -> %s: %s", method, equipment_id, target, exc)
         raise HTTPException(status_code=504, detail=f"Gateway timeout calling {target}") from exc

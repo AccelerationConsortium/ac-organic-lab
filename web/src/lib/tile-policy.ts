@@ -62,6 +62,25 @@ export function kindHasDestructiveControls(kind: Kind | string | undefined): boo
   return DESTRUCTIVE_KINDS.has(kind as Kind);
 }
 
+// Kinds whose entire control surface is convenience-only — they bypass
+// the dashboard password gate even when CONTROL_PASSWORD is set. Cameras
+// (PTZ, presets, snapshots, privacy/streaming toggles, recording) cannot
+// damage hardware or interrupt an experiment, and environmental sensors
+// have no controls at all. Power strips and smart plugs are NOT in this
+// set: a single power_strip can mix light outlets (safe) and hotplate
+// outlets (destructive), and the URL alone doesn't disambiguate, so the
+// middleware keeps them gated and the per-outlet decision happens in
+// PowerStripTile via outletIsSafe().
+const UNGATED_KINDS: ReadonlySet<Kind> = new Set<Kind>([
+  "camera",
+  "environmental_sensor",
+]);
+
+export function kindBypassesControlGate(kind: Kind | string | undefined | null): boolean {
+  if (!kind) return false;
+  return UNGATED_KINDS.has(kind as Kind);
+}
+
 const LIGHT_LABEL_RE = /\b(?:light|lamp)\b/i;
 
 export function outletIsSafe(label: string | null | undefined): boolean {

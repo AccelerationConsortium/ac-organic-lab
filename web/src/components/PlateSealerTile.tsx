@@ -29,25 +29,65 @@ const TEMP_MAX = 235;
 const TIME_MIN = 0.5;
 const TIME_MAX = 12.0;
 
+// Heater state from device's components.heater (added by the device service;
+// gracefully absent on older deployments).
+type HeaterState =
+  | "stable"
+  | "heating"
+  | "cooling"
+  | "unknown"
+  | "disconnected";
+
 interface SealerState {
   actualTempC: number | null;
   setpointTempC: number | null;
   sealingTimeS: number | null;
   cycleCount: number | null;
+  // Heater fields: null when the device hasn't published them yet (old service).
+  heaterState: HeaterState | null;
+  heaterMessage: string | null;
 }
 
 function parseSealer(snapshot: EquipmentSnapshot): SealerState {
   const metrics = snapshot.status.metrics ?? {};
+  const components = snapshot.status.components ?? {};
   const num = (key: string): number | null => {
     const v = metrics[key]?.value;
     return typeof v === "number" ? v : null;
   };
+  const heater = components["heater"];
+  const heaterState =
+    heater && typeof heater.state === "string"
+      ? (heater.state as HeaterState)
+      : null;
   return {
     actualTempC: num("actual_temperature"),
     setpointTempC: num("setpoint_temperature"),
     sealingTimeS: num("sealing_time"),
     cycleCount: num("cycle_count"),
+    heaterState,
+    heaterMessage: heater?.message ?? null,
   };
+}
+
+// Map heater.state -> visual tone applied to the Actual pill and a
+// short label appended to its caption ("Actual · heating", etc.).
+type Tone = "neutral" | "ok" | "warn" | "muted";
+
+const TONE_CLASSES: Record<Tone, string> = {
+  neutral:
+    "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/40",
+  ok: "border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-950/40",
+  warn: "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40",
+  muted:
+    "border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800/20",
+};
+
+function heaterTone(state: HeaterState | null): Tone {
+  if (state === "stable") return "ok";
+  if (state === "heating" || state === "cooling") return "warn";
+  if (state === "unknown" || state === "disconnected") return "muted";
+  return "neutral"; // heater field absent on the device
 }
 
 function fmt(value: number | null, unit: string, decimals: number): string {
@@ -55,16 +95,25 @@ function fmt(value: number | null, unit: string, decimals: number): string {
   return `${value.toFixed(decimals)} ${unit}`;
 }
 
-/** Single-line read-only pill: caption left, value right. */
+/** Single-line read-only pill: caption left, value right. `tone` tints
+ *  the border + background (used for heater state on the Actual pill);
+ *  `title` becomes the native hover tooltip (heater.message). */
 function MetricPill({
   caption,
   value,
+  tone = "neutral",
+  title,
 }: {
   caption: string;
   value: string;
+  tone?: Tone;
+  title?: string;
 }) {
   return (
-    <div className="flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 dark:border-slate-700 dark:bg-slate-800/40">
+    <div
+      className={`flex h-7 items-center gap-1 rounded-md border px-2 ${TONE_CLASSES[tone]}`}
+      title={title}
+    >
       <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
         {caption}
       </span>
@@ -162,6 +211,17 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   // server's claim semantics will reject if it doesn't).
   const controlsDisabled = locked;
 
+  // Seal start interlock: when the device reports a heater state, only
+  // allow Seal start while the heater is stable. If the device hasn't
+  // published components.heater (old service), heaterState is null and
+  // we fall back to the previous "lock-only" gating.
+  const heaterPresent = sealer.heaterState !== null;
+  const heaterStable = sealer.heaterState === "stable";
+  const sealStartBlockedByHeater = heaterPresent && !heaterStable;
+  const sealStartTitle = sealStartBlockedByHeater
+    ? sealer.heaterMessage ?? "Waiting for heater to reach setpoint"
+    : undefined;
+
   function exec<T>(fn: () => Promise<T>) {
     startTransition(() => {
       fn().catch(() => {
@@ -185,9 +245,16 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </>
       }
     >
-      {/* 2x2 metric grid */}
+      {/* 2x2 metric grid. The Actual pill is tinted by the heater state
+          (emerald=stable, amber=heating/cooling, slate=unknown/disconnected,
+          neutral when the device hasn't published components.heater). */}
       <div className="grid grid-cols-2 gap-1.5">
-        <MetricPill caption="Actual" value={fmt(sealer.actualTempC, "°C", 0)} />
+        <MetricPill
+          caption="Actual"
+          value={fmt(sealer.actualTempC, "°C", 0)}
+          tone={heaterTone(sealer.heaterState)}
+          title={sealer.heaterMessage ?? undefined}
+        />
         <EditablePill
           caption="Setpoint"
           current={sealer.setpointTempC}
@@ -258,8 +325,9 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             </TileButton>
             <TileButton
               onClick={() => exec(() => postSealerSealStart(snapshot.id))}
-              disabled={controlsDisabled}
+              disabled={controlsDisabled || sealStartBlockedByHeater}
               variant="primary"
+              title={sealStartTitle}
             >
               Seal start
             </TileButton>

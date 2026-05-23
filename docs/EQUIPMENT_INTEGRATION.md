@@ -483,3 +483,78 @@ the device migrates to STATUS_SPEC.
 | Pill click does nothing visible               | Controls still locked                                     | Click the **Locked** chip to unlock (5 s window before auto-relock) |
 | 422 from `/sash/move`                         | Position outside 1..5                                     | Pydantic validation; tile only emits 1..5, so this only happens via direct API calls |
 | 504 from `/sash/{move,stop}`                  | Device unreachable (Tailnet, Pi power)                    | `curl http://100.64.254.100:5000/health` from the dashboard host |
+
+## 8) Filtration press (`kind: press`)
+
+The Waters PP96 filtration press (`filter_every_well`, STATUS_SPEC
+v1.1 on `100.64.254.104:8000`) renders as a kind-specific
+`PressTile`. Two rows of click-to-move pills: **Press** (UP/DOWN) and
+**Plate** (IN/OUT), plus state-aware **Init** and **Stop** buttons.
+Each press pill has a paired numeric input for the `hold_time` the
+device should energise the pneumatic valve.
+
+### Tile behaviour
+
+- **Press row pills** — UP and DOWN. Solid emerald = current valve
+  position (read from `components.press_valve.state`). Amber pulse =
+  optimistic target while `equipment_status: busy`. Dimmed = idle /
+  not the current position.
+- **`hold_time` inputs** — one numeric box next to UP, one next to
+  DOWN. Range 0.0–10.0 s, step 0.5 s. Defaults:
+  - **UP: 2.0 s** (brief retract after seating)
+  - **DOWN: 5.0 s** (typical seating press for a filtration cycle)
+  These mirror the `PressUpArgs` / `PressDownArgs` defaults in
+  `skills/.../skill_catalog/press.py`, so SDK workflows that omit
+  `hold_time` see the same numbers the dashboard sends.
+- **Plate row pills** — IN and OUT, identical rendering rules but no
+  `hold_time` parameter (the device takes `smooth: bool` only).
+- **Lock toggle** in the header (5-second auto-relock). Pills, inputs,
+  Init, and Stop are all disabled while locked. Inputs are *also*
+  disabled while `equipment_status: busy`, so the operator can't
+  change the planned hold time mid-cycle.
+- **Init button** appears only when `equipment_status:
+  requires_init`. Calls `POST /control/startup`; the device moves
+  press → UP, plate → OUT, system → ACTIVE.
+- **Stop button** appears in `ready` or `busy`. Calls
+  `POST /control/stop`; re-init is required afterwards.
+
+### Status derivation (adapter side)
+
+Press uses the standard `http` adapter (no kind-specific adapter). The
+device reports the spec envelope verbatim. `components.press_valve` is
+the authoritative source for the current position; the tile falls back
+to `details.press_state` for legacy responses.
+
+### Control passthrough and claim handling
+
+All buttons hit the generic passthrough at
+`POST /api/equipment/filter_every_well/control/{action}` in
+`api/app/control.py`. Because the device enforces
+`ENFORCE_CLAIMS=True` (returns HTTP 423 without
+`X-Claim-Token`), the passthrough automatically:
+
+1. POSTs `/control/claim` as `owner: ac-organic-lab-dashboard`
+2. Attaches `X-Claim-Token` to the actual action call
+3. POSTs `/control/release` in a `finally` block
+
+The full dance is per-request — there is no long-lived dashboard
+claim. Workflows that need exclusive control should keep using
+`lab_skills.ClaimManager`; a workflow's longer-lived claim will cause
+the dashboard's per-request claim to 409, surfacing `claimed_by` to
+the browser so the operator knows the device is busy.
+
+The dashboard's per-request httpx timeout is set to 15 s
+(`_CONTROL_TIMEOUT_SECONDS` in `control.py`) so that a 10 s
+`hold_time` plus the claim/release round-trips never 504 while the
+device is still working.
+
+### What goes wrong (and how to spot it)
+
+| Symptom                                              | Likely cause                                              | Fix                                                                  |
+|------------------------------------------------------|-----------------------------------------------------------|----------------------------------------------------------------------|
+| All pills greyed even after Unlock                  | `equipment_status: requires_init`                         | Click **Init** first; pills enable after the device reaches `ready`. |
+| Pill click does nothing visible                      | Controls still locked                                     | Click the **Locked** chip to unlock (5 s window before auto-relock). |
+| Click returns HTTP 423                               | The dashboard's claim acquisition lost the race           | Refresh `/api/equipment` — `details.claimed_by.owner` shows who has the claim. Wait for them or release it via the SDK. |
+| 504 on a long `hold_time`                            | Bumped device hold beyond the 15 s budget                 | `hold_time` is hard-capped at 10 s by the device; values above that are clamped client-side by the input. |
+| 422 from `/control/press/{up,down}`                  | `hold_time` outside 0..10 s                               | Pydantic validation; the tile clamps to that range client-side, so this only happens via direct API calls. |
+| Tile pills stuck on amber pulse for tens of seconds | Device crashed mid-move and didn't transition back to `ready` | `curl http://100.64.254.104:8000/status` from the dashboard host; if it says `error`, restart the device service. |

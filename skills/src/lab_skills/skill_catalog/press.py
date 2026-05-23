@@ -37,10 +37,29 @@ class StopArgs(BaseModel):
     """Body for ``POST /control/stop`` (no parameters)."""
 
 
-class PressMoveArgs(BaseModel):
-    """Body for ``POST /control/press/up`` and ``POST /control/press/down``."""
+class PressUpArgs(BaseModel):
+    """Body for ``POST /control/press/up``.
 
-    hold_time: float = Field(default=0.5, ge=0.0, le=10.0)
+    ``hold_time`` is the number of seconds the device blocks while the
+    UP pneumatic valve is energised; the call returns only after the
+    hold elapses. The dashboard tile defaults to 2.0 s (briefly retract
+    after seating); workflows that need a different duration pass it
+    explicitly.
+    """
+
+    hold_time: float = Field(default=2.0, ge=0.0, le=10.0)
+
+
+class PressDownArgs(BaseModel):
+    """Body for ``POST /control/press/down``.
+
+    ``hold_time`` is the number of seconds the device blocks while the
+    DOWN pneumatic valve is energised. The dashboard tile defaults to
+    5.0 s (typical seating press for a filtration cycle); workflows
+    that need a different duration pass it explicitly.
+    """
+
+    hold_time: float = Field(default=5.0, ge=0.0, le=10.0)
 
 
 class PlateMoveArgs(BaseModel):
@@ -84,20 +103,28 @@ register(
         SkillDef(
             name="press.up",
             kind="press",
-            description="Move the pneumatic press to the UP position.",
+            description=(
+                "Move the pneumatic press to the UP position; the call "
+                "blocks for ``hold_time`` seconds while the valve is "
+                "energised."
+            ),
             endpoint="/control/press/up",
-            args_schema=PressMoveArgs,
+            args_schema=PressUpArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=2.0,
         ),
         SkillDef(
             name="press.down",
             kind="press",
-            description="Move the pneumatic press to the DOWN position.",
+            description=(
+                "Move the pneumatic press to the DOWN position; the call "
+                "blocks for ``hold_time`` seconds while the valve is "
+                "energised."
+            ),
             endpoint="/control/press/down",
-            args_schema=PressMoveArgs,
+            args_schema=PressDownArgs,
             requires_states=["ready", "dry_run"],
-            estimated_duration_s=2.0,
+            estimated_duration_s=5.0,
         ),
         SkillDef(
             name="plate.in",
@@ -124,6 +151,7 @@ register(
 __all__ = [
     "InitArgs",
     "PlateMoveArgs",
-    "PressMoveArgs",
+    "PressDownArgs",
+    "PressUpArgs",
     "StopArgs",
 ]
