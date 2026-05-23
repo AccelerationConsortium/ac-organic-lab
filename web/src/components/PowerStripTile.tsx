@@ -2,13 +2,12 @@
 
 import { useState, useTransition } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
-import { kindLabel } from "@/lib/format";
 import { postPlugSwitch } from "@/lib/api";
 import { useControlLock } from "@/lib/use-control-lock";
 import { outletIsSafe } from "@/lib/tile-policy";
 import { LockButton } from "./ControlLock";
-import { StalenessIndicator } from "./StalenessIndicator";
 import { StatusPill } from "./StatusPill";
+import { TileShell } from "./TileShell";
 
 interface OutletData {
   index: number;
@@ -64,7 +63,7 @@ function OutletPill({ outlet, optimisticOn, busy, locked, onToggle }: OutletPill
       title={locked ? "Unlock controls to toggle this outlet" : undefined}
       aria-label={`${isOn ? "Turn off" : "Turn on"} ${outlet.label}`}
       className={[
-        "flex w-full min-w-0 items-center gap-1.5 rounded-md border px-2 py-1.5 text-left transition-colors",
+        "flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md border px-2 text-left text-xs font-semibold transition-colors",
         "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500",
         locked ? "cursor-not-allowed opacity-40" : "disabled:opacity-50",
         isOn
@@ -130,34 +129,16 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const totalW = outlets.reduce((sum, o) => sum + (o.powerW ?? 0), 0);
 
   return (
-    <article className="flex h-full flex-col gap-3 overflow-hidden rounded-xl border border-slate-200 bg-surface-raised p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      {/* Header */}
-      <header className="flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h3 className="text-base font-semibold text-ink dark:text-slate-100">
-            {snapshot.name}
-          </h3>
-          <p className="text-xs text-ink-subtle dark:text-slate-500">
-            {kindLabel(snapshot.kind)} · <span className="font-mono">{snapshot.id}</span>
-            {totalW > 0 && (
-              <span className="ml-2 font-medium text-ink-muted dark:text-slate-300">
-                · {totalW.toFixed(1)} W
-              </span>
-            )}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+    <TileShell
+      snapshot={snapshot}
+      subtitleExtra={totalW > 0 ? `${totalW.toFixed(1)} W` : undefined}
+      headerRight={
+        <>
           <LockButton locked={locked} countdown={countdown} onToggle={toggle} noun="outlet" />
           <StatusPill state={snapshot.status.equipment_status} />
-        </div>
-      </header>
-
-      {snapshot.status.message && (
-        <p className="text-xs text-ink-muted dark:text-slate-400">
-          {snapshot.status.message}
-        </p>
-      )}
-
+        </>
+      }
+    >
       {/* 2-col × 3-row outlet grid. Light/lamp outlets bypass the lock
           (convenience controls per lib/tile-policy.outletIsSafe). */}
       <div className="grid flex-1 grid-cols-2 gap-1.5 content-start">
@@ -172,14 +153,6 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           />
         ))}
       </div>
-
-      {/* Footer */}
-      <footer className="flex items-center justify-between border-t border-slate-100 pt-2 text-xs text-ink-subtle dark:border-slate-800 dark:text-slate-500">
-        <span>
-          {snapshot.latency_ms != null ? `${snapshot.latency_ms} ms` : "—"}
-        </span>
-        <StalenessIndicator fetchedAt={snapshot.fetched_at} />
-      </footer>
-    </article>
+    </TileShell>
   );
 }

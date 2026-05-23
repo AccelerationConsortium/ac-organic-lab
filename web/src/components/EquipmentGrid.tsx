@@ -2,7 +2,9 @@ import type { EquipmentSnapshot } from "@/types/api";
 import { CameraTile } from "./CameraTile";
 import { EquipmentStatusCard } from "./EquipmentStatusCard";
 import { FumeHoodTile } from "./FumeHoodTile";
+import { PlateSealerTile } from "./PlateSealerTile";
 import { PowerStripTile } from "./PowerStripTile";
+import { PressTile } from "./PressTile";
 
 /**
  * Renders equipment cards on a 4-column CSS grid driven by `tile.{w,h}` in
@@ -55,6 +57,10 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
               <PowerStripTile snapshot={snapshot} />
             ) : snapshot.kind === "fume_hood" ? (
               <FumeHoodTile snapshot={snapshot} />
+            ) : snapshot.kind === "plate_sealer" ? (
+              <PlateSealerTile snapshot={snapshot} />
+            ) : snapshot.kind === "press" ? (
+              <PressTile snapshot={snapshot} />
             ) : (
               <EquipmentStatusCard snapshot={snapshot} />
             )}

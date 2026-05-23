@@ -185,6 +185,102 @@ export async function postPlugSwitch(
   return controlPost<PlugSwitchRequest>(equipmentId, action, body);
 }
 
+// -- Press (Waters Filtration / filter_every_well) control -----------------
+//
+// Endpoint shapes mirror skills/.../skill_catalog/press.py. The device is
+// at protocol v1.1 with claim semantics, but the dashboard's control
+// passthrough handles the X-Claim-Token side internally (or omits it; the
+// device accepts both per its README).
+
+export async function postPressInit(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "startup", {});
+}
+
+export async function postPressStop(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "stop", {});
+}
+
+export async function postPressUp(
+  equipmentId: string,
+  hold_time: number = 0.5,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "press/up", { hold_time });
+}
+
+export async function postPressDown(
+  equipmentId: string,
+  hold_time: number = 0.5,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "press/down", { hold_time });
+}
+
+export async function postPlateIn(
+  equipmentId: string,
+  smooth: boolean = true,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "plate/in", { smooth });
+}
+
+export async function postPlateOut(
+  equipmentId: string,
+  smooth: boolean = true,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "plate/out", { smooth });
+}
+
+// -- Plate sealer (Agilent PlateLoc) control -------------------------------
+//
+// Endpoint shapes mirror skills/.../skill_catalog/plate_sealer.py. Argument
+// ranges (20..235 °C, 0.5..12.0 s) are enforced server-side; the tile
+// validates on the client too for UX.
+
+export async function postSealerStartup(
+  equipmentId: string,
+  profile?: string | null,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "startup", { profile: profile ?? null });
+}
+
+export async function postSealerShutdown(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "shutdown", {});
+}
+
+export async function postSealerSealStart(
+  equipmentId: string,
+  opts: { temperature_c?: number | null; seconds?: number | null } = {},
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "seal/start", {
+    temperature_c: opts.temperature_c ?? null,
+    seconds: opts.seconds ?? null,
+  });
+}
+
+export async function postSealerSealStop(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "seal/stop", {});
+}
+
+export async function postSealerSetTemperature(
+  equipmentId: string,
+  temperature_c: number,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "seal/temperature", { temperature_c });
+}
+
+export async function postSealerSetTime(
+  equipmentId: string,
+  seconds: number,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "seal/time", { seconds });
+}
+
+export async function postSealerStageIn(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "stage/in", {});
+}
+
+export async function postSealerStageOut(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "stage/out", {});
+}
+
 // -- Sash (legacy fume hood) control ---------------------------------------
 
 export interface SashCommandResponse {
