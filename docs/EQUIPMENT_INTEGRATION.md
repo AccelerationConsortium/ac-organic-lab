@@ -376,6 +376,54 @@ Caveats:
   would require real auth (out of scope).
 - Changing the password requires a web service restart.
 
+### What's behind the lock — design policy
+
+The lock chip is intentionally surgical: it guards **destructive
+controls only**. Convenience controls stay open even when the password
+gate is enabled. The single source of truth for this rule is
+`web/src/lib/tile-policy.ts`.
+
+| Tile / control                                  | Lock applies? | Why |
+|--------------------------------------------------|---------------|-----|
+| Sash move / stop (`FumeHoodTile`)               | Yes           | Mechanical movement |
+| Future press / sealer / stacker / robot-arm controls (rendered today as `EquipmentStatusCard`) | Yes (placeholder chip already shown) | Will move hardware or run cycles |
+| Plate-reader, HPLC, solid-doser, liquid-handler controls (when they land) | Yes | Same |
+| Power-strip outlet labelled *light* / *lamp*    | No            | Convenience lighting |
+| Power-strip outlet driving equipment (hotplate, stirrer, etc.) | Yes           | Can damage a sample / hardware |
+| Camera PTZ, presets, snapshots (`CameraTile`)   | No            | Convenience; cannot damage hardware |
+| OT-2 light toggle *(forward-looking; tile not built yet)* | No            | Convenience lighting |
+| Environmental sensors, UPLC-MS sidecar (read-only) | No            | No controls at all |
+
+#### How "light" outlets are detected
+
+`outletIsSafe(label)` matches the outlet's gateway-supplied label
+against `/\b(light|lamp)\b/i`. Labels come from
+`kasa_tapo_services/devices.yaml`'s per-outlet `label:` field. So
+naming an outlet `Bench Light A` or `Desk lamp 1` opts it out of the
+lock automatically; naming it `Hotplate A` keeps it gated.
+
+False positives are possible (e.g. `Lighthouse fan` would match). When
+that becomes a problem, replace the heuristic with an explicit
+`safe: true` flag per outlet in `devices.yaml`; this is a one-line
+change in `tile-policy.ts`.
+
+#### Adding a new destructive kind
+
+When a new `EquipmentKind` joins the spec, add it to the
+`DESTRUCTIVE_KINDS` set in `tile-policy.ts`. The lock chip then
+appears automatically on every `EquipmentStatusCard` of that kind.
+Kind-specific tiles (`FumeHoodTile` etc.) should also call
+`useControlLock()` directly so the chip lives in their header too.
+
+#### Placeholder chips
+
+`EquipmentStatusCard` shows the lock chip whenever the kind is
+destructive, even if no clickable controls are rendered yet. This is
+deliberate: it makes the design promise visible — when controls land,
+they will respect this lock — and keeps the chrome consistent across
+the lab. Until controls land, clicking the chip is harmless; the
+countdown ticks down and auto-relocks with nothing to actually gate.
+
 ## 7) Fume hood (`kind: fume_hood`)
 
 The fume-hood sash actuator (`fume_hood_actuator`, legacy Flask on

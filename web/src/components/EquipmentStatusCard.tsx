@@ -1,5 +1,10 @@
+"use client";
+
 import type { EquipmentSnapshot } from "@/types/api";
 import { kindLabel } from "@/lib/format";
+import { useControlLock } from "@/lib/use-control-lock";
+import { kindHasDestructiveControls } from "@/lib/tile-policy";
+import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
 import { StalenessIndicator } from "./StalenessIndicator";
 import { MetricList } from "./MetricList";
@@ -13,6 +18,14 @@ export function EquipmentStatusCard({ snapshot }: { snapshot: EquipmentSnapshot 
   const hasMetrics = Object.keys(metrics).length > 0;
   const hasComponents = Object.keys(components).length > 0;
 
+  // The lock chip appears on every kind that will eventually expose
+  // destructive controls, even before kind-specific buttons are wired
+  // up. Once they are, they should respect `locked` from this hook.
+  // See lib/tile-policy.ts for the policy and EQUIPMENT_INTEGRATION
+  // §6b for the operator-facing explanation.
+  const showsLock = kindHasDestructiveControls(snapshot.kind);
+  const { locked, countdown, toggle } = useControlLock();
+
   return (
     <article className="flex h-full flex-col gap-4 overflow-hidden rounded-xl border border-slate-200 bg-surface-raised p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <header className="flex items-start justify-between gap-3">
@@ -24,7 +37,17 @@ export function EquipmentStatusCard({ snapshot }: { snapshot: EquipmentSnapshot 
             {kindLabel(snapshot.kind)} · <span className="font-mono">{snapshot.id}</span>
           </p>
         </div>
-        <StatusPill state={status.equipment_status} />
+        <div className="flex shrink-0 items-center gap-2">
+          {showsLock && (
+            <LockButton
+              locked={locked}
+              countdown={countdown}
+              onToggle={toggle}
+              noun={kindLabel(snapshot.kind).toLowerCase()}
+            />
+          )}
+          <StatusPill state={status.equipment_status} />
+        </div>
       </header>
 
       {status.message && (

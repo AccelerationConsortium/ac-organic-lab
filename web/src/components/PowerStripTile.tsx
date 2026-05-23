@@ -5,6 +5,7 @@ import type { EquipmentSnapshot } from "@/types/api";
 import { kindLabel } from "@/lib/format";
 import { postPlugSwitch } from "@/lib/api";
 import { useControlLock } from "@/lib/use-control-lock";
+import { outletIsSafe } from "@/lib/tile-policy";
 import { LockButton } from "./ControlLock";
 import { StalenessIndicator } from "./StalenessIndicator";
 import { StatusPill } from "./StatusPill";
@@ -105,7 +106,9 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const { locked, countdown, toggle } = useControlLock();
 
   function handleToggle(outlet: OutletData) {
-    if (locked) return;
+    // Light/lamp outlets are convenience controls (see tile-policy.ts);
+    // the lock does not apply to them.
+    if (locked && !outletIsSafe(outlet.label)) return;
 
     const nextOn = !(optimistic[outlet.index] !== undefined
       ? optimistic[outlet.index]
@@ -155,7 +158,8 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </p>
       )}
 
-      {/* 2-col × 3-row outlet grid */}
+      {/* 2-col × 3-row outlet grid. Light/lamp outlets bypass the lock
+          (convenience controls per lib/tile-policy.outletIsSafe). */}
       <div className="grid flex-1 grid-cols-2 gap-1.5 content-start">
         {outlets.map((outlet) => (
           <OutletPill
@@ -163,7 +167,7 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             outlet={outlet}
             optimisticOn={optimistic[outlet.index] !== undefined ? optimistic[outlet.index] : null}
             busy={false}
-            locked={locked}
+            locked={locked && !outletIsSafe(outlet.label)}
             onToggle={() => handleToggle(outlet)}
           />
         ))}
