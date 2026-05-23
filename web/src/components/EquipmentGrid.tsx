@@ -1,6 +1,7 @@
 import type { EquipmentSnapshot } from "@/types/api";
 import { CameraTile } from "./CameraTile";
 import { EquipmentStatusCard } from "./EquipmentStatusCard";
+import { FumeHoodTile } from "./FumeHoodTile";
 import { PowerStripTile } from "./PowerStripTile";
 
 /**
@@ -52,6 +53,8 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
               <CameraTile snapshot={snapshot} />
             ) : snapshot.kind === "power_strip" || snapshot.kind === "smart_plug" ? (
               <PowerStripTile snapshot={snapshot} />
+            ) : snapshot.kind === "fume_hood" ? (
+              <FumeHoodTile snapshot={snapshot} />
             ) : (
               <EquipmentStatusCard snapshot={snapshot} />
             )}

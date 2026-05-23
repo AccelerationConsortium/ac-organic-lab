@@ -214,6 +214,27 @@ async def test_fume_hood_busy(load_fixture, client) -> None:
     assert result.status.metrics["target_position"].value == 4
 
 
+@pytest.mark.asyncio
+async def test_fume_hood_requires_init_when_position_unknown(load_fixture, client) -> None:
+    http_status, body = load_fixture("fume_hood_actuator_requires_init")
+    entry = _entry(
+        id="fume_hood_actuator",
+        kind="fume_hood",
+        status_path="/equipment/status",
+    )
+    adapter = LegacyFumeHoodActuatorAdapter(entry)
+
+    with respx.mock(base_url=entry.base_url) as router:
+        router.get("/equipment/status").mock(
+            return_value=httpx.Response(http_status, json=body)
+        )
+        result = await adapter.fetch(client)
+
+    assert result.status.equipment_status == "requires_init"
+    assert "sash_position" not in result.status.metrics
+    assert "target_position" not in result.status.metrics
+
+
 # ---------------------------------------------------------------------------
 # xarm_translocation
 #

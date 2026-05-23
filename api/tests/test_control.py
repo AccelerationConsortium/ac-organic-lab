@@ -152,3 +152,81 @@ def test_gateway_5xx_propagates_with_detail() -> None:
 
     assert r.status_code == 503
     assert "pytapo" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Sash (legacy fume hood) passthrough
+# ---------------------------------------------------------------------------
+
+
+def _fume_hood_entry(**overrides: Any) -> Any:
+    base = {
+        "id": "fume_hood_actuator",
+        "kind": "fume_hood",
+        "adapter": "legacy_http",
+        "base_url": "http://100.64.254.100:5000",
+        "status_path": "/equipment/status",
+    }
+    base.update(overrides)
+    obj = MagicMock(spec_set=list(base.keys()))
+    for key, value in base.items():
+        setattr(obj, key, value)
+    return obj
+
+
+@respx.mock
+def test_sash_move_proxies_to_device() -> None:
+    entry = _fume_hood_entry()
+    app = _make_app(entry)
+    route = respx.post("http://100.64.254.100:5000/move").mock(
+        return_value=httpx.Response(
+            200, json={"equipment_status": "moving", "target_position": 3}
+        )
+    )
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/fume_hood_actuator/sash/move", json={"position": 3}
+        )
+
+    assert r.status_code == 200
+    assert r.json()["target_position"] == 3
+    assert route.called
+    import json as _json
+    assert _json.loads(route.calls.last.request.content) == {"position": 3}
+
+
+@respx.mock
+def test_sash_stop_proxies_to_device() -> None:
+    entry = _fume_hood_entry()
+    app = _make_app(entry)
+    route = respx.post("http://100.64.254.100:5000/stop").mock(
+        return_value=httpx.Response(200, json={"equipment_status": "stopped"})
+    )
+
+    with TestClient(app) as client:
+        r = client.post("/api/equipment/fume_hood_actuator/sash/stop")
+
+    assert r.status_code == 200
+    assert route.called
+
+
+def test_sash_rejects_out_of_range_position() -> None:
+    entry = _fume_hood_entry()
+    app = _make_app(entry)
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/fume_hood_actuator/sash/move", json={"position": 7}
+        )
+    assert r.status_code == 422
+
+
+def test_sash_rejects_non_fume_hood_kind() -> None:
+    entry = _fume_hood_entry(kind="plate_sealer")
+    app = _make_app(entry)
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/fume_hood_actuator/sash/move", json={"position": 1}
+        )
+    assert r.status_code == 400
+    assert "fume hood" in r.json()["detail"]

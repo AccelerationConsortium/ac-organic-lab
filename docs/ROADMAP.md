@@ -95,7 +95,7 @@ response shape.
 | `plateloc` | `http` | 1.1 | ✅ `requires_init`, `allowed_actions: ["startup"]`, `last_error: COM driver` | Server v1.1 deployed and answering. Physical PlateLoc not responding to the COM control — distinct issue from spec conformance, tracked under *Operational regressions*. |
 | `cam_hte_tapo_c245` | `http` | 1.0 | ❌ `connection_refused` | Aggregator can't reach `127.0.0.1:8002`. `kasa-tapo-services` is not running on the dashboard host. *Operational regression.* |
 | `filter_every_well` | `http` | 1.1 | ✅ `ready` / `requires_init` | Migrated to STATUS_SPEC v1.1. `/status` returns `EquipmentStatus` with `allowed_actions`. Control endpoints under `/control/*`. Claim/heartbeat/release enforced (`ENFORCE_CLAIMS=True`). |
-| `fume_hood_actuator` | `legacy_http` | — | ✅ `ready` | Verified still legacy: Flask, `/equipment/status` (not `/status`), no `GET /` probe (404). Hand-rolled JSON shape with `equipment_name` / `equipment_status` / `system_state` / `sash_state`. |
+| `fume_hood_actuator` | `legacy_http` | — | ✅ `ready` / `requires_init` | Still legacy (Flask, `/equipment/status`), but now has a kind-specific `FumeHoodTile` (5 sash pills LOW→HIGH, lock + Stop) and a `/api/equipment/{id}/sash/{move,stop}` passthrough. Adapter derives status from physical signals (`is_moving`, `sash_position`) rather than the device's own `equipment_status` string. See [`EQUIPMENT_INTEGRATION.md` §7](EQUIPMENT_INTEGRATION.md#7-fume-hood-kind-fume_hood). |
 | `dose_every_well` | `http` | 1.1 | 🟡 unverified | Placeholder hostname resolved: `sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`. Adapter flipped to `http`, `protocol: "1.1"`. Live reachability not confirmed since the equipment.yaml rewrite. |
 | `agilent_biostack` | `mock` | — | — | No driver. `required_actions: ["integrate_repo"]`. |
 | `env_*` (4 sensors) | `mock` | — | — | Synthesised readings. Awaiting `env_sensors` repo. |
@@ -247,7 +247,18 @@ A repo is considered v1.1 conformant when, on top of v1.0:
     `EquipmentStatus`).
   - `GET /` → 404. `GET /health` → `{status: "healthy", actuator: ...}`
     (not the spec `HealthResponse` shape).
-- Repo confirmed: `fume-hood-sash-automation`.
+- Repo confirmed: `fume-hood-sash-automation` (Pi has 5 hall-effect
+  sensors at preset positions; position 1 = closed/home, position 5
+  = fully open. `home_on_startup: false` in bundled config, so boot
+  does not move the sash — initial `sash_position` is whatever hall
+  sensor happens to be triggered, or `null` if parked between
+  presets).
+- Dashboard side (2026-05-23): added `FumeHoodTile` (5 pills + lock
+  + Stop), `LegacyFumeHoodActuatorAdapter` now derives state from
+  physical signals (`is_moving`, `sash_position`), and a sash
+  passthrough route at `POST /api/equipment/{id}/sash/{move,stop}`.
+  Operator-facing docs in
+  [`EQUIPMENT_INTEGRATION.md` §7](EQUIPMENT_INTEGRATION.md#7-fume-hood-kind-fume_hood).
 - v1.0 work:
   - [ ] Port from Flask to FastAPI. Re-use the actuator/sensor classes
     untouched.

@@ -272,15 +272,20 @@ class LegacyFilterEveryWellAdapter(EquipmentAdapter):
 # ---------------------------------------------------------------------------
 
 
-_FUME_HOOD_STATE_MAP: dict[str, EquipmentState] = {
-    "ready": "ready",
-    "moving": "busy",
-    "stopped": "requires_init",
-}
-
-
 class LegacyFumeHoodActuatorAdapter(EquipmentAdapter):
-    """Adapter for the fume-hood actuator service (port 5000) before migration."""
+    """Adapter for the fume-hood actuator service (port 5000) before migration.
+
+    Status derivation (legacy device does not implement STATUS_SPEC):
+
+    * ``is_moving=true``                 -> ``busy``
+    * ``sash_position`` known (1-5)      -> ``ready`` (parked at a hall sensor)
+    * otherwise (mid-travel / post-stop) -> ``requires_init``
+
+    The device reports ``equipment_status`` itself but its ``"stopped"`` value
+    only means "the last command was /stop", not "needs init" -- it can be
+    parked at a known preset and still report ``stopped``. We derive from the
+    physical signals instead.
+    """
 
     async def fetch(self, client: httpx.AsyncClient) -> AdapterResult:
         if not self.entry.base_url:
@@ -315,8 +320,14 @@ class LegacyFumeHoodActuatorAdapter(EquipmentAdapter):
         if not isinstance(body, dict):
             return self.fail("Non-JSON body", kind="parse_error", elapsed_ms=elapsed_ms)
 
-        raw_status = str(body.get("equipment_status", "unknown"))
-        equipment_status = _FUME_HOOD_STATE_MAP.get(raw_status, "unknown")
+        sash_position = body.get("sash_position")
+        is_moving = bool(body.get("is_moving", False))
+        if is_moving:
+            equipment_status: EquipmentState = "busy"
+        elif sash_position is not None:
+            equipment_status = "ready"
+        else:
+            equipment_status = "requires_init"
 
         sash_state = str(body.get("sash_state", "unknown"))
         components = {
@@ -327,8 +338,8 @@ class LegacyFumeHoodActuatorAdapter(EquipmentAdapter):
         }
 
         metrics: dict[str, MetricValue] = {}
-        if (sash := body.get("sash_position")) is not None:
-            metrics["sash_position"] = MetricValue(value=int(sash), unit="preset")
+        if sash_position is not None:
+            metrics["sash_position"] = MetricValue(value=int(sash_position), unit="preset")
         if (target := body.get("target_position")) is not None:
             metrics["target_position"] = MetricValue(value=int(target), unit="preset")
 

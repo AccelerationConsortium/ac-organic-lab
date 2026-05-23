@@ -185,6 +185,45 @@ export async function postPlugSwitch(
   return controlPost<PlugSwitchRequest>(equipmentId, action, body);
 }
 
+// -- Sash (legacy fume hood) control ---------------------------------------
+
+export interface SashCommandResponse {
+  equipment_status?: string;
+  sash_position?: number | null;
+  target_position?: number | null;
+  sash_state?: string;
+  is_moving?: boolean;
+  message?: string;
+  error?: string;
+}
+
+export async function postSashMove(
+  equipmentId: string,
+  position: number,
+): Promise<SashCommandResponse> {
+  return fetchJson<SashCommandResponse>(
+    `/api/equipment/${encodeURIComponent(equipmentId)}/sash/move`,
+    {
+      method: "POST",
+      body: JSON.stringify({ position }),
+      headers: { "Content-Type": "application/json" },
+    },
+  );
+}
+
+export async function postSashStop(
+  equipmentId: string,
+): Promise<SashCommandResponse> {
+  return fetchJson<SashCommandResponse>(
+    `/api/equipment/${encodeURIComponent(equipmentId)}/sash/stop`,
+    {
+      method: "POST",
+      body: "{}",
+      headers: { "Content-Type": "application/json" },
+    },
+  );
+}
+
 export async function startRolling(
   equipmentId: string,
   body: RollingStartRequest = {},

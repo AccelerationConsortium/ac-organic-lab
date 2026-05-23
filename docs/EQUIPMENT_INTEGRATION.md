@@ -333,3 +333,63 @@ Steps:
 | MSE viewport shows "No stream"                       | Caddy `/streams/*` block missing                                | Add the snippet in `kasa_tapo_services/deploy/Caddyfile.snippet` |
 | PTZ buttons disabled                                 | ONVIF was unreachable on last poll                              | Same as the first row                                       |
 | Privacy toggle disabled                              | pytapo creds missing or wrong                                   | Set `<ID>_USER` / `<ID>_PASS` to the **Camera Account**     |
+
+## 7) Fume hood (`kind: fume_hood`)
+
+The fume-hood sash actuator (`fume_hood_actuator`, legacy Flask on
+`100.64.254.100:5000`) renders as a kind-specific `FumeHoodTile`.
+It shows the 5 sash presets as a row of horizontal pills (1 = closed
+/ "LOW" on the left, 5 = fully open / "HIGH" on the right), and
+exposes click-to-move and stop controls behind a lock toggle.
+
+### Tile behaviour
+
+- **Pill states**
+  - Solid emerald = current preset (sash parked at hall sensor N).
+  - Amber pulse = optimistic target while the device reports `busy`.
+  - Dimmed = idle / not the current position.
+- **No pill lit** = sash is between hall sensors. The legacy device
+  has no encoder readback, so position is only known at the 5 hall
+  triggers. The aggregator surfaces this as
+  `equipment_status: requires_init` rather than masking it.
+- **Lock toggle** in the header (matches the power-strip tile,
+  5-second auto-relock). Pills and the Stop button are disabled
+  while locked.
+- **Stop button** appears only while the device is `busy`. It POSTs
+  to the device's `/stop` and the tile drops its optimistic target.
+
+### Status derivation (adapter side)
+
+`LegacyFumeHoodActuatorAdapter` derives `equipment_status` from
+physical signals, not the device's own status string:
+
+| `is_moving` | `sash_position` | Dashboard `equipment_status` |
+|-------------|------------------|------------------------------|
+| `true`      | any              | `busy`                       |
+| `false`     | `1..5`           | `ready`                      |
+| `false`     | `null`           | `requires_init`              |
+
+The device's `equipment_status: "stopped"` (which it returns after
+any `/stop` call, even when parked at a preset) is intentionally
+ignored — it does not reflect operational state, only "last command
+was stop".
+
+### Control passthrough
+
+Two passthrough routes on the dashboard API call the device's
+non-spec-conformant endpoints:
+
+- `POST /api/equipment/{id}/sash/move` body `{"position": 1..5}`
+- `POST /api/equipment/{id}/sash/stop`  body `{}`
+
+These will collapse into the generic `/control/{action}` path once
+the device migrates to STATUS_SPEC.
+
+### What goes wrong (and how to spot it)
+
+| Symptom                                       | Likely cause                                              | Fix                                                          |
+|-----------------------------------------------|------------------------------------------------------------|--------------------------------------------------------------|
+| Tile is `requires_init` after a successful move | Sash overshot/undershot a hall sensor                    | Click any pill again; the controller's "search by pulsing down" routine relocates within 5 pulses |
+| Pill click does nothing visible               | Controls still locked                                     | Click the **Locked** chip to unlock (5 s window before auto-relock) |
+| 422 from `/sash/move`                         | Position outside 1..5                                     | Pydantic validation; tile only emits 1..5, so this only happens via direct API calls |
+| 504 from `/sash/{move,stop}`                  | Device unreachable (Tailnet, Pi power)                    | `curl http://100.64.254.100:5000/health` from the dashboard host |

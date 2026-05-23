@@ -1,0 +1,15 @@
+{
+  "_http_status": 200,
+  "_body": {
+    "equipment_name": "hood_sash_actuator",
+    "equipment_ip": "10.0.0.55",
+    "equipment_tailscale": "100.65.4.8",
+    "equipment_status": "stopped",
+    "message": "Stop command issued - System is STOPPED",
+    "system_state": "stopped",
+    "sash_position": null,
+    "target_position": null,
+    "sash_state": "stopped",
+    "is_moving": false
+  }
+}
