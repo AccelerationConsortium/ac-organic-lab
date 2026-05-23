@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import { kindLabel } from "@/lib/format";
 import { postPlugSwitch } from "@/lib/api";
+import { useControlLock } from "@/lib/use-control-lock";
+import { LockButton } from "./ControlLock";
 import { StalenessIndicator } from "./StalenessIndicator";
 import { StatusPill } from "./StatusPill";
-
-const UNLOCK_DURATION_S = 5;
 
 interface OutletData {
   index: number;
@@ -96,128 +96,13 @@ function OutletPill({ outlet, optimisticOn, busy, locked, onToggle }: OutletPill
   );
 }
 
-function LockIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      aria-hidden
-    >
-      <path d="M11 7V5a3 3 0 1 0-6 0v2H4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1h-1Zm-5-2a2 2 0 1 1 4 0v2H6V5Zm2 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z" />
-    </svg>
-  );
-}
-
-function UnlockIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      aria-hidden
-    >
-      {/* open shackle on the right, body same as lock */}
-      <path d="M11 7H5V5a3 3 0 0 1 5.83-1H12a1 1 0 0 0 0-2h-1.35A5 5 0 0 0 3 5v2H2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1Zm-4 5a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" />
-    </svg>
-  );
-}
-
-/** Lock/unlock toggle button shown in the tile header. */
-function LockButton({
-  locked,
-  countdown,
-  onToggle,
-}: {
-  locked: boolean;
-  countdown: number;
-  onToggle: () => void;
-}) {
-  if (locked) {
-    return (
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-label="Unlock outlet controls"
-        className={[
-          "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold",
-          "ring-1 ring-inset transition-colors",
-          "bg-rose-50 text-rose-700 ring-rose-300",
-          "hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300 dark:ring-rose-800 dark:hover:bg-rose-900/60",
-        ].join(" ")}
-      >
-        <LockIcon className="h-3 w-3 shrink-0" />
-        Locked
-      </button>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-label={`Lock outlet controls (auto-locks in ${countdown}s)`}
-      className={[
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold",
-        "ring-1 ring-inset transition-colors",
-        "bg-amber-50 text-amber-700 ring-amber-300",
-        "hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-700 dark:hover:bg-amber-900/60",
-      ].join(" ")}
-    >
-      <UnlockIcon className="h-3 w-3 shrink-0" />
-      {`Unlocked · ${countdown}s`}
-    </button>
-  );
-}
-
 export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const outlets = parseOutlets(snapshot);
 
   const [optimistic, setOptimistic] = useState<Record<number, boolean>>({});
   const [, startTransition] = useTransition();
 
-  const [locked, setLocked] = useState(true);
-  const [countdown, setCountdown] = useState(UNLOCK_DURATION_S);
-  const lockTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  function clearLockTimer() {
-    if (lockTimerRef.current !== null) {
-      clearInterval(lockTimerRef.current);
-      lockTimerRef.current = null;
-    }
-  }
-
-  function lock() {
-    clearLockTimer();
-    setLocked(true);
-    setCountdown(UNLOCK_DURATION_S);
-  }
-
-  function unlock() {
-    clearLockTimer();
-    setCountdown(UNLOCK_DURATION_S);
-    setLocked(false);
-
-    let remaining = UNLOCK_DURATION_S;
-    lockTimerRef.current = setInterval(() => {
-      remaining -= 1;
-      setCountdown(remaining);
-      if (remaining <= 0) {
-        lock();
-      }
-    }, 1000);
-  }
-
-  // Clean up on unmount
-  useEffect(() => () => clearLockTimer(), []);
-
-  function handleLockToggle() {
-    if (locked) {
-      unlock();
-    } else {
-      lock();
-    }
-  }
+  const { locked, countdown, toggle } = useControlLock();
 
   function handleToggle(outlet: OutletData) {
     if (locked) return;
@@ -259,7 +144,7 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <LockButton locked={locked} countdown={countdown} onToggle={handleLockToggle} />
+          <LockButton locked={locked} countdown={countdown} onToggle={toggle} noun="outlet" />
           <StatusPill state={snapshot.status.equipment_status} />
         </div>
       </header>
