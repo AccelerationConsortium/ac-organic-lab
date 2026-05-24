@@ -1,0 +1,40 @@
+{
+  "_http_status": 200,
+  "_body": {
+    "protocol_version": "1.1",
+    "equipment_id": "plateloc",
+    "equipment_name": "Agilent PlateLoc",
+    "equipment_kind": "plate_sealer",
+    "equipment_status": "ready",
+    "message": "Idle, stage out",
+    "required_actions": [],
+    "allowed_actions": [
+      "startup",
+      "shutdown",
+      "seal.set_temperature",
+      "seal.set_time",
+      "stage.in"
+    ],
+    "device_time": "2026-05-23T17:30:00+00:00",
+    "components": {
+      "sealer": {"connected": true, "state": "idle"},
+      "heater": {"connected": true, "state": "stable", "message": "At setpoint (170 C)"},
+      "stage": {"connected": true, "state": "out"}
+    },
+    "metrics": {
+      "actual_temperature": {"value": 170, "unit": "C"},
+      "setpoint_temperature": {"value": 170, "unit": "C"},
+      "temperature_delta_c": {"value": 0.0, "unit": "C"},
+      "sealing_time": {"value": 1.2, "unit": "s"},
+      "cycle_count": {"value": 1820, "unit": "count"}
+    },
+    "last_error": null,
+    "details": {
+      "firmware_version": "6.2.4",
+      "activex_version": "13.1.9",
+      "com_port": "COM7",
+      "temperature_tolerance_c": 2.0,
+      "claimed_by": null
+    }
+  }
+}

@@ -30,6 +30,8 @@ class SkillDef(BaseModel):
     returns_schema: type[BaseModel] | None   # for skills that return values
     requires_states: list[EquipmentState]    # states that permit this skill
                                              # (used in v0.2 before allowed_actions exists)
+    requires_components: dict[str, str]      # AND-gate: per-component state
+                                             # e.g. {"heater": "stable"} for seal.start
     estimated_duration_s: float | None       # rough cost hint for planners
 
 
@@ -144,6 +146,7 @@ For each (role, equipment_id) in the binding:
 4. For each `SkillDef`, build a `Skill`:
    - **Available** if and only if all of:
      - `status.equipment_status in def.requires_states` (or `status.allowed_actions` contains `def.name` once v1.1 is in)
+     - every entry in `def.requires_components` matches a corresponding `components[name].state` in the live status (AND-gate on top of the state check; empty dict is "no constraint")
      - the device is reachable (no `fetch_error`)
      - if claims are required (v0.3), this session holds a valid lease
      - the device is not under maintenance
@@ -163,8 +166,9 @@ The SDK uses these in priority order:
 
 1. If `status.allowed_actions` is present (STATUS_SPEC v1.1 device), use it directly. The local table is a *hint* for missing fields like `description` and `args_schema`.
 2. Else fall back to `def.requires_states` (v1.0 devices).
+3. Independently of which source resolves the state check, also enforce `def.requires_components` as an AND-gate. Example: `seal.start` carries `requires_components={"heater": "stable"}` so even a v1.1 device that lists `seal.start` in `allowed_actions` will be reported `available=False` from `lab.skills()` while the heater is heating — matching the device's own layer-1 HTTP 412 refusal (plateloc v1.2+).
 
-This means devices migrating to v1.1 progressively make the catalog more accurate without any SDK rebuild. The SDK never needs to "know" the precondition rules of a specific device — the device declares them.
+This means devices migrating to v1.1 progressively make the catalog more accurate without any SDK rebuild. The SDK never needs to "know" the precondition rules of a specific device — the device declares them. `requires_components` is a curated SDK-side hint for the cases where the device's coarse state (or `allowed_actions`) is too permissive for a specific action.
 
 ## Auto-derivation from OpenAPI (deferred)
 

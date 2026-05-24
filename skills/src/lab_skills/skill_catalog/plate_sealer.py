@@ -95,6 +95,19 @@ register(
             endpoint="/control/seal/start",
             args_schema=SealStartArgs,
             requires_states=["ready", "dry_run"],
+            # Two preconditions, both enforced by plateloc v1.3+ at layer 1
+            # via HTTP 412 with distinct body shapes:
+            #
+            #   - heater stable: |actual − setpoint| ≤ tolerance and
+            #     PID settled (v1.2+). Refusal body has
+            #     actual_c / setpoint_c / tolerance_c / retry_after_s.
+            #   - stage in: plate carriage retracted under the press
+            #     (v1.3+). Refusal body has stage_state + required.
+            #
+            # The dashboard tile and lab.skills() honor both hints so
+            # workflow callers see available=False with a useful reason
+            # before round-tripping the call.
+            requires_components={"heater": "stable", "stage": "in"},
             estimated_duration_s=8.0,
         ),
         SkillDef(

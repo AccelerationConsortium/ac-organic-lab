@@ -235,9 +235,17 @@ def _availability(
 
     1. Maintenance / disabled wins everything.
     2. Unreachable device -> not available.
-    3. ``status.allowed_actions`` (v1.1+ device, non-empty) is authoritative.
-    4. ``status.equipment_status in def.requires_states`` is the v1.0
-       fallback. Empty ``requires_states`` is treated as "no constraint".
+    3. State-level gate (one of):
+       a. ``status.allowed_actions`` (v1.1+ device, non-empty) is
+          authoritative — skill must appear in the list.
+       b. ``status.equipment_status in def.requires_states`` is the v1.0
+          fallback. Empty ``requires_states`` is treated as "no constraint".
+    4. Component-level gate (AND on top of #3): every entry in
+       ``def.requires_components`` must match a corresponding
+       ``components[name].state`` in the live status. Empty dict is
+       "no constraint". Used for fine-grained gating, e.g. seal.start
+       requires ``components["heater"].state == "stable"`` in addition
+       to ``equipment_status == "ready"``.
     """
 
     if maintenance_reason is not None:
@@ -247,25 +255,36 @@ def _availability(
     if status is None:
         return False, "no status available"
 
-    # STATUS_SPEC v1.1 forward-compat: device-declared allowed_actions wins
-    # whenever the device reports a non-empty list.
+    # State-level check (#3).
     if status.allowed_actions:
-        if skill_def.name in status.allowed_actions:
-            return True, None
-        return False, (
-            f"device does not currently allow {skill_def.name!r} "
-            f"(equipment_status={status.equipment_status!r})"
-        )
+        # STATUS_SPEC v1.1 forward-compat: device-declared allowed_actions
+        # is authoritative when the device reports a non-empty list.
+        if skill_def.name not in status.allowed_actions:
+            return False, (
+                f"device does not currently allow {skill_def.name!r} "
+                f"(equipment_status={status.equipment_status!r})"
+            )
+    elif skill_def.requires_states:
+        # STATUS_SPEC v1.0 fallback. Empty requires_states is "no constraint".
+        if status.equipment_status not in skill_def.requires_states:
+            return False, (
+                f"equipment_status={status.equipment_status!r}; "
+                f"requires one of {sorted(skill_def.requires_states)!r}"
+            )
 
-    # STATUS_SPEC v1.0 fallback.
-    if not skill_def.requires_states:
-        return True, None
-    if status.equipment_status in skill_def.requires_states:
-        return True, None
-    return False, (
-        f"equipment_status={status.equipment_status!r}; "
-        f"requires one of {sorted(skill_def.requires_states)!r}"
-    )
+    # Component-level check (#4) — AND condition on top of the state gate.
+    if skill_def.requires_components:
+        components = status.components or {}
+        for comp_name, required_state in skill_def.requires_components.items():
+            comp = components.get(comp_name)
+            actual_state = comp.state if comp is not None else None
+            if actual_state != required_state:
+                return False, (
+                    f"component {comp_name!r}.state={actual_state!r}; "
+                    f"requires {required_state!r}"
+                )
+
+    return True, None
 
 
 __all__ = ["LabSession"]

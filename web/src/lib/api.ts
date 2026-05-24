@@ -24,6 +24,45 @@ import type {
   StreamingRequest,
 } from "@/types/api";
 
+/**
+ * Error thrown by {@link fetchJson} on a non-2xx response. Preserves the
+ * HTTP status code and the parsed JSON body so callers can branch on the
+ * code (e.g. 412 vs 423) and surface the device's structured detail
+ * (claimed_by, retry_after_s, actual_c / setpoint_c / tolerance_c, ...).
+ *
+ * The legacy `Error.message` is still set to the device's `detail` string
+ * when present, so naive callers that only show `e.message` keep working.
+ */
+export class ApiError extends Error {
+  /** HTTP status code from the failed response. */
+  readonly status: number;
+  /** Raw parsed JSON body if the response was JSON; otherwise `null`. */
+  readonly body: unknown;
+  /** The path that failed, for diagnostics. */
+  readonly path: string;
+  /** `Retry-After` header value in seconds if the server sent one. */
+  readonly retryAfterS: number | null;
+
+  constructor(
+    status: number,
+    statusText: string,
+    body: unknown,
+    path: string,
+    retryAfterS: number | null,
+  ) {
+    const detail =
+      body && typeof body === "object" && "detail" in body
+        ? String((body as { detail: unknown }).detail)
+        : undefined;
+    super(detail ?? `${status} ${statusText} from ${path}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+    this.path = path;
+    this.retryAfterS = retryAfterS;
+  }
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -31,14 +70,18 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     cache: "no-store",
   });
   if (!response.ok) {
-    let detail: string | undefined;
+    let body: unknown = null;
     try {
-      const body = (await response.json()) as { detail?: string };
-      detail = typeof body?.detail === "string" ? body.detail : undefined;
+      body = await response.json();
     } catch {
-      detail = undefined;
+      body = null;
     }
-    throw new Error(detail ?? `${response.status} ${response.statusText} from ${path}`);
+    const retryAfterHeader = response.headers.get("Retry-After");
+    const retryAfterS =
+      retryAfterHeader && /^\d+(\.\d+)?$/.test(retryAfterHeader)
+        ? parseFloat(retryAfterHeader)
+        : null;
+    throw new ApiError(response.status, response.statusText, body, path, retryAfterS);
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

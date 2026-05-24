@@ -183,7 +183,7 @@ class HealthResponse(BaseModel):
 
 5. **Units belong in `metrics`, not field names.** Prefer `metrics["flow_rate"] = {value: 50.0, unit: "mg/s"}` over `flow_rate_mg_per_s`. Legacy fields can stay in `details` for backwards compatibility.
 
-6. **Errors are structured.** Don't pack everything into `message`. Use `last_error: {code, message, severity, timestamp}`.
+6. **Errors are structured.** Don't pack everything into `message`. Use `last_error: {code, message, severity, timestamp}`. `code` SHOULD be a stable enum drawn from a per-repo taxonomy so clients can branch on `code` and surface targeted recovery hints, rather than string-matching on `message`. Define the taxonomy as a `frozenset[str]` or `Literal[...]` in one place; require every mutation site to use a setter that validates against it. See [`agilent_plateloc`](https://github.com/cyrilcaoyang/agilent_plateloc) v1.3.1+ for the reference taxonomy.
 
 7. **Snake_case** for all field names everywhere.
 
@@ -200,6 +200,12 @@ class HealthResponse(BaseModel):
 13. **Stable enums.** `equipment_status` and `equipment_kind` use the closed enums above. To extend, propose a PR against this spec doc.
 
 14. **Component naming.** Use snake_case component keys (e.g. `gantry`, `solid_doser`, `actuator`, `magnet_sensor`). Pick stable names; renaming a component breaks dashboards.
+
+15. **Precondition refusals use HTTP 412 with structured bodies.** When `/control/<X>` is invoked while a per-action precondition is violated (heater out of band, plate stage not loaded, …), return 412 with a JSON body distinguishable by *shape*, not by `detail` text. Set `Retry-After` when recovery is time-bounded. See §6 for the full pattern.
+
+16. **`allowed_actions` mirrors precondition refusals.** If `/control/<X>` would currently 412, `/status.allowed_actions` MUST omit `<X>`. Implement via a single helper called from both surfaces; the SDK and dashboard otherwise spend effort compensating for drift. See §6.2.
+
+17. **`last_error` auto-clears on the next successful operational action.** Reserved for execution failures, not precondition refusals. 412 responses never mutate it. See §6.3 / §6.4.
 
 ---
 
@@ -302,7 +308,110 @@ A v1.1 device that wants to keep claims advisory MAY accept `/control/*` without
 
 ---
 
-## 6. SDK side (`lab-skills`) — v1.1 surface
+## 6. Preconditions and Refusals (v1.1+)
+
+Some `/control/*` actions are only meaningful when the device is in a specific runtime state — heater within band, plate stage loaded, etc. — distinct from the coarse `equipment_status` enum. v1.1 codifies how a device should refuse such actions, and how `allowed_actions` should reflect those refusals so clients can avoid the round-trip.
+
+This section is normative for v1.1 devices that implement any precondition richer than `equipment_status in requires_states`. The reference implementation is `agilent_plateloc` v1.2.1+ (temperature interlock) / v1.3+ (stage interlock).
+
+### 6.1 Refusing with HTTP 412 Precondition Failed
+
+When `/control/<action>` is invoked while a precondition is violated, the device SHOULD return **HTTP 412 Precondition Failed** with a structured JSON body. Distinct preconditions get distinct body shapes so clients can branch on the shape, not on `detail` string-matching.
+
+Required body fields:
+
+- `detail: str` — short human-readable summary (used as a fallback when the client doesn't recognise the body shape).
+
+Recommended additional fields (per precondition type):
+
+- `retry_after_s: float | int | null` — best-effort estimate of seconds until the precondition is expected to clear, when the precondition resolves over time (heater ramp, queue drain). `null` when recovery is operator-driven (e.g. load a plate). When non-null, the device SHOULD also set a `Retry-After: <seconds>` HTTP header.
+- Precondition-specific fields named to make the body shape self-describing. Examples in the reference implementation:
+
+```json
+// Temperature interlock (plateloc v1.2+)
+{
+  "detail":         "Temperature outside seal band",
+  "actual_c":       166.0,
+  "setpoint_c":     170.0,
+  "tolerance_c":    2.0,
+  "retry_after_s":  2
+}
+
+// Stage interlock (plateloc v1.3+)
+{
+  "detail":      "Stage not loaded",
+  "stage_state": "out",
+  "required":    "in"
+}
+```
+
+Why 412 (and not 409 or 422):
+
+- **409 Conflict** is appropriate for device-state conflicts ("driver not connected; call /control/startup first"). Reserved for that.
+- **422 Unprocessable Entity** is for invalid request bodies (FastAPI's default). The body is fine here; the *device state* isn't.
+- **412 Precondition Failed** is the closest semantic fit: "your request would be valid if a precondition were met, and it isn't right now."
+
+A device MAY choose a different code if it has a strong local convention, but 412 is the recommended default and what the dashboard / SDK render targeted hints for.
+
+### 6.2 `allowed_actions` must mirror precondition refusals
+
+If a device returns 412 from `POST /control/<X>` whenever precondition P is violated, then `GET /status` MUST omit `<X>` from `allowed_actions` whenever P is currently violated.
+
+In other words: **`allowed_actions` is advisory and `/control/*`'s 412 is authoritative, but the two must never disagree.** A client that reads `/status`, sees `<X>` in `allowed_actions`, and immediately POSTs `/control/<X>` must not get a 412 — that's a contract violation.
+
+Implementation pattern (proven out by plateloc v1.2.1+):
+
+- Extract the precondition check into a single helper, e.g. `evaluate_temperature_interlock() -> tuple[bool, dict | None]` (returns `(should_block, body_for_412)`).
+- The `/control/<X>` endpoint calls the helper and returns 412 with the body on block.
+- The `/status` response builder calls the same helper (just inspecting the boolean) when deciding whether to include `<X>` in `allowed_actions`.
+- Override flags (see §6.4) short-circuit the helper, so they affect both surfaces identically.
+
+This is enforced as a property test on the reference implementation: for every value of the relevant runtime state, `<X> in allowed_actions` iff a hypothetical POST would NOT return 412. The two surfaces cannot drift.
+
+### 6.3 `last_error` semantics for precondition refusals
+
+Precondition refusals (412 in §6.1) are **not** operational failures. They are the device declining an inapplicable request — the equipment is healthy, the request just doesn't make sense right now. Therefore:
+
+- 412 responses MUST NOT populate `last_error`. `last_error` is reserved for things that *went wrong during execution* (driver errors, mid-cycle hardware faults, communication timeouts).
+- The distinction matters for dashboards / history DBs: 412 is render-once-then-discard; `last_error` is "what was the most recent thing that broke."
+
+### 6.4 `last_error` auto-clear policy
+
+A device SHOULD clear `last_error` to `null` on the first 2xx response from any **operational** `/control/<X>` endpoint after the error was recorded. "Operational" means actions that drive the underlying hardware or workflow state, not infrastructure calls:
+
+| Endpoint kind | Clear on 2xx? |
+|---|---|
+| Hardware actions (`/control/startup`, `/control/seal/start`, `/control/stage/in`, etc.) | Yes |
+| Heartbeat / claim release (`/control/heartbeat`, `/control/release`) | No |
+| Claim acquisition (`/control/claim`) | No |
+| Read endpoints (`/`, `/health`, `/status`) | No |
+| 4xx / 5xx from any endpoint | No |
+
+The clearing happens *before* the response body is built, so a successful action that echoes a status snapshot in its body returns the cleared state.
+
+Why: `last_error` should mean "the most recent operational failure since the last successful action," not "the most recent failure since process start." Otherwise stale errors from hours ago surface alongside a currently-healthy device — the operator wonders why the tile is screaming when nothing is wrong.
+
+### 6.5 Override flags for emergency operation
+
+A device MAY expose a config flag to disable a precondition interlock at runtime (e.g. `enforce_temp_interlock`, `enforce_stage_interlock`). When set false:
+
+- The 412 path returns the original 2xx (the action runs as if the precondition passed).
+- `allowed_actions` includes `<X>` regardless of the precondition's current value.
+
+Both surfaces must honor the flag identically — which falls out naturally from the single-helper pattern in §6.2.
+
+Override flags exist for emergency calibration / debugging. They are **not** intended for production. The device's README should call out that they exist and that there is no plan to ship with them disabled in production.
+
+### 6.6 SDK consumption
+
+The `lab-skills` SDK consumes §6 patterns as follows:
+
+- **Precondition-aware availability.** `SkillDef.requires_components: dict[str, str]` is an AND-gate layered on top of `allowed_actions` / `requires_states`. The SDK pre-checks per-component state (e.g. `{"heater": "stable", "stage": "in"}` for `seal.start`) before issuing the call, so workflow code sees `available=False` with a useful reason rather than round-tripping a 412. See [`docs/SKILLS_CATALOG.md`](SKILLS_CATALOG.md).
+- **Structured 412 handling.** The dashboard's control passthrough (`api/app/control.py`) forwards 412 bodies verbatim so the frontend can branch on the body shape. The lab-skills SDK is expected to grow a typed `PreconditionNotMet(LabError)` exception in v0.4 that distinguishes 412 from `ClaimRejected(409|423)` and exposes the body for diagnostic rendering.
+
+---
+
+## 7. SDK side (`lab-skills`) — v1.1 surface
 
 Implemented in `lab-skills` v0.3:
 
@@ -325,7 +434,7 @@ The `protocol` field on `EquipmentEntry` in the registry defaults to `"1.0"`, so
 
 ---
 
-## 7. Back-compatibility (normative)
+## 8. Back-compatibility (normative)
 
 The SDK's contract for v1.0 devices, post-v1.1:
 
@@ -341,7 +450,7 @@ A workflow that talks to a mix of v1.0 and v1.1 devices in the same `LabSession`
 
 ---
 
-## 8. Conformance Checklists
+## 9. Conformance Checklists
 
 ### v1.0 (read-only baseline)
 
@@ -368,7 +477,14 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 - [ ] `EquipmentStatus.allowed_actions` is populated with the skill names (matching `Skill.name` from the catalog) the device will currently honor.
 - [ ] `details.claimed_by` populated while a claim is held; cleared on release / expiry.
 - [ ] `X-Claim-Token` enforced on `/control/*` (recommended; HTTP 423 on miss) **or** the README documents that claims are advisory.
-- [ ] Snapshot fixtures cover `ready` with no claim, `ready` with a claim held, `requires_init`.
+- [ ] If the device implements any precondition richer than `equipment_status in requires_states`, it follows §6:
+  - [ ] Refusals return HTTP 412 with a structured JSON body distinguishable by shape (not by `detail` string).
+  - [ ] When recovery is time-bounded, `retry_after_s` is populated and a `Retry-After` header is set.
+  - [ ] `allowed_actions` omits the action whenever the device would 412 it — single source of truth (recommended: a `evaluate_<name>_interlock()` helper called from both surfaces).
+  - [ ] 412 responses do NOT mutate `last_error`.
+  - [ ] `last_error` auto-clears to `null` on the first 2xx response from any operational `/control/*` endpoint. Heartbeat / claim / read endpoints do not clear.
+  - [ ] Optional config flag (`enforce_<name>_interlock`, default `true`) short-circuits both surfaces identically.
+- [ ] Snapshot fixtures cover `ready` with no claim, `ready` with a claim held, `requires_init`. If §6 preconditions exist, also cover the precondition-blocked shape (`allowed_actions` lacking the gated skill) plus a successfully-failed-then-cleared `last_error` lifecycle.
 - [ ] `README.md` says "This repo conforms to lab status spec v1.1".
 - [ ] `equipment.yaml` entry has `protocol: "1.1"`.
 
@@ -380,7 +496,7 @@ For onboarding the device into the dashboard registry and handling maintenance w
 
 ---
 
-## 9. Reference Examples
+## 10. Reference Examples
 
 ### Solid doser (`dose_every_well`) — v1.0 `requires_init`
 
@@ -454,6 +570,44 @@ For onboarding the device into the dashboard registry and handling maintenance w
       "owner": "agent:solubility-screening",
       "expires_at": "2026-04-29T22:50:31Z"
     }
+  }
+}
+```
+
+### PlateLoc (`plateloc`) — v1.1 `ready`, heater warming up (§6 precondition active)
+
+This is the reference implementation of §6.2: the heater is below band, so the device omits `seal.start` from `allowed_actions`. A client that POSTed `/control/seal/start` right now would receive HTTP 412 with the temperature-interlock body shape (§6.1). `last_error` is `null` because the last operational action (`seal/set_temperature` here) succeeded (§6.4).
+
+```json
+{
+  "protocol_version": "1.1",
+  "equipment_id": "plateloc",
+  "equipment_name": "Agilent PlateLoc",
+  "equipment_kind": "plate_sealer",
+  "host": "sdl2-pc-03-cytation",
+  "equipment_status": "ready",
+  "message": "Heater warming up",
+  "device_time": "2026-05-23T17:30:00Z",
+  "allowed_actions": [
+    "startup", "shutdown",
+    "seal.set_temperature", "seal.set_time",
+    "stage.in", "stage.out"
+  ],
+  "components": {
+    "sealer": {"connected": true, "state": "idle"},
+    "heater": {"connected": true, "state": "heating", "message": "Warming to setpoint (170 C)"},
+    "stage":  {"connected": true, "state": "in"}
+  },
+  "metrics": {
+    "actual_temperature":   {"value": 150, "unit": "C"},
+    "setpoint_temperature": {"value": 170, "unit": "C"},
+    "sealing_time":         {"value": 1.2, "unit": "s"},
+    "cycle_count":          {"value": 1820, "unit": "count"}
+  },
+  "last_error": null,
+  "details": {
+    "temperature_tolerance_c": 2.0,
+    "claimed_by": null
   }
 }
 ```

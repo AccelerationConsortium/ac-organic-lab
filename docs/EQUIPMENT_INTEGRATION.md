@@ -558,3 +558,176 @@ device is still working.
 | 504 on a long `hold_time`                            | Bumped device hold beyond the 15 s budget                 | `hold_time` is hard-capped at 10 s by the device; values above that are clamped client-side by the input. |
 | 422 from `/control/press/{up,down}`                  | `hold_time` outside 0..10 s                               | Pydantic validation; the tile clamps to that range client-side, so this only happens via direct API calls. |
 | Tile pills stuck on amber pulse for tens of seconds | Device crashed mid-move and didn't transition back to `ready` | `curl http://100.64.254.104:8000/status` from the dashboard host; if it says `error`, restart the device service. |
+
+## 9) Plate sealer (`kind: plate_sealer`)
+
+The Agilent PlateLoc (`plateloc`, STATUS_SPEC v1.1) renders as
+`PlateSealerTile`. A 2×2 metric grid (Actual / Setpoint /
+Seal time / Cycles), editable Setpoint + Seal time inputs, and
+state-aware action buttons (Startup, Stage in/out, Seal start,
+Seal stop, Shutdown). The **Stage in** / **Stage out** buttons are
+rendered as `PositionPill`s (same pattern as `PressTile`'s plate
+IN/OUT pills): whichever pill matches the live
+`components.stage.state` is highlighted emerald — no separate Stage
+indicator row.
+
+### Seal-start interlocks (defence in depth)
+
+`Seal start` is enforced at **three layers**, all on by default, across
+**two independent preconditions**:
+
+1. **Temperature-band interlock** — `|actual_temperature −
+   setpoint_temperature| ≤ details.temperature_tolerance_c`
+   (plateloc v1.2+).
+2. **Stage-position interlock** — `components.stage.state == "in"`
+   (plateloc v1.3+). The plate must be loaded under the press.
+
+Both are enforced at all three layers:
+
+1. **Device (layer 1, authoritative).** Plateloc v1.2+ / v1.3+ refuses
+   `POST /control/seal/start` with **HTTP 412 Precondition Failed**.
+   Two distinct body shapes depending on which interlock fires first
+   (the device checks stage before temperature):
+
+   *Stage interlock body* (v1.3+):
+   ```json
+   {
+     "detail":      "Stage not loaded",
+     "stage_state": "out",
+     "required":    "in"
+   }
+   ```
+
+   *Temperature interlock body* (v1.2+):
+   ```json
+   {
+     "detail":         "Temperature outside seal band",
+     "actual_c":       166.0,
+     "setpoint_c":     170.0,
+     "tolerance_c":    2.0,
+     "retry_after_s":  2
+   }
+   ```
+   The temperature 412 also carries a `Retry-After` header (seconds,
+   integer); the stage 412 does not (recovery is operator-driven, not
+   time-based). Bypassable via the device-side config flags
+   `[service].enforce_temp_interlock = false` and
+   `[service].enforce_stage_interlock = false` respectively, both
+   reserved for emergency calibration runs.
+
+2. **SDK (layer 3, `lab-skills`).** The `seal.start` SkillDef carries
+   `requires_components={"heater": "stable", "stage": "in"}`.
+   `lab.skills()` reports `available=False, reason="component
+   '<name>'.state='<actual>'; requires '<wanted>'"` whenever either
+   gate fails, so workflow code sees the same precondition before it
+   tries the call. The catalog gate is an AND condition layered on
+   top of `allowed_actions` / `requires_states` — see
+   [`docs/SKILLS_CATALOG.md`](SKILLS_CATALOG.md) for the field shape.
+   `_availability` iterates in insertion order (heater first, then
+   stage), so the surfaced reason is whichever check fires first.
+
+3. **Dashboard tile (UX safety net).** `PlateSealerTile` disables the
+   **Seal start** button when it can compute either precondition
+   itself:
+   - **Temperature** — needs `details.temperature_tolerance_c`,
+     `actual_temperature`, `setpoint_temperature` all present.
+     Falls through to the device's 412 if any are missing.
+   - **Stage** — needs `components.stage.state`. Falls through if
+     the device doesn't publish the component at all (older
+     firmware). The client-side `DEFAULT_TOLERANCE_C` fallback was
+     retired in 2026-05-23 once the device started publishing
+     tolerance unconditionally.
+
+The dashboard tile also independently checks the device's
+`components.heater.state == "stable"` as a secondary heater signal —
+catches disconnected/error cases that fell inside the band by luck.
+
+When blocked, the tile shows the reason in three places, all from the
+same `sealStartTitle` string. The string is computed in priority
+order: **stage → temperature → heater** — matching the device's 412
+precedence so the tile and the device agree on which interlock is the
+"current" reason.
+
+- **Seal start** button tooltip on hover.
+- **Actual** pill turns amber whenever the temperature interlock
+  is the active block, overriding the device-side heater tone.
+- **Stage in** / **Stage out** pills: whichever matches the live
+  `components.stage.state` glows emerald; the other sits neutral.
+  When `stage.state == "unknown"` (fresh restart, or after a
+  mid-cycle failure) **neither** pill is highlighted — the operator
+  needs to click one to home before sealing.
+- **Footer-left text** replaces `status.message` (which otherwise reads
+  the device's verbatim *"Idle, ready to seal"* — true from the device's
+  perspective but misleading when the dashboard's interlock blocks the
+  click). The footer falls through to the device message whenever the
+  dashboard's gate isn't the bottleneck (e.g. `requires_init` or
+  `busy`).
+
+### Inline error band (412 / 423 / 409)
+
+The sealer tile renders an amber inline message below the action
+buttons when an action returns one of these structured errors:
+
+| Status | Source | Example rendered text |
+|---|---|---|
+| **412 / stage** | layer-1 stage interlock (race past the tile's block) | *"Plate stage is out, needs to be loaded. Click \"Stage in\" first."* |
+| **412 / temperature** | layer-1 temperature interlock (race past the tile's block) | *"Heater at 166 °C, need 170 ±2 °C. Try again in ~2 s."* |
+| **423** | claim conflict — another caller holds the device | *"Device claim is held by workflow:solubility. Try again later."* |
+| **409** | device-state conflict (e.g. not initialised) | *"Driver not connected. Click Startup first."* |
+
+The 412 / 409 / 423 paths are differentiated in
+`PlateSealerTile.interpretActionError` and the structured body is
+parsed there. Auto-clear policy: the band clears on (a) the next click,
+or (b) the next `/status` poll that observes `equipment_status: ready`
+and the band/heater interlock satisfied.
+
+### `last_error` band (v1.3.1+)
+
+A separate **rose-toned** band renders above the action buttons
+whenever `status.last_error` is non-null. Distinct from the amber
+refusal band so the operator can tell at a glance whether the message
+is "hardware reported a fault" (rose) or "your action was refused"
+(amber). Both can be visible simultaneously.
+
+Branching is done in `PlateSealerTile.interpretLastError` on the
+`last_error.code` taxonomy plateloc shipped in v1.3.1:
+
+| `code` | Rendered recovery text |
+|---|---|
+| `low_air_pressure` | *"Air supply low. Check the regulator at ~80 psi."* |
+| `com_init_failed` / `com_timeout` | *"Driver unresponsive — restart the device service."* |
+| `profile_not_found` | *"Open the Diagnostics dialog on the device PC and create the profile."* |
+| `stage_jam` | *"Stage move failed. Check the carriage path, then re-home with Stage in / Stage out."* |
+| `heater_overtemp` / `heater_undertemp` | *"Heater fault — service required."* |
+| `process_internal` | *"Lab-software bug — please file an issue."* |
+| `com_other` | *"Driver fault — see message."* |
+| missing / null / unknown code | Raw `last_error.message` rendered verbatim (back-compat for pre-v1.3.1 / forward-compat for new codes) |
+
+The device's verbatim driver message is always shown after the
+recovery sentence (dimmed) and as the hover `title` attribute on the
+whole band — operators can still inspect the underlying error code
+when filing a ticket.
+
+**Auto-clear is device-driven.** Plateloc v1.2.1+ clears
+`last_error` to `null` on the first 2xx response from any operational
+`/control/*` endpoint (per [`docs/STATUS_SPEC.md`](STATUS_SPEC.md)
+§6.4), so the rose band naturally goes away the next time the
+operator does something that works. The dashboard does no
+client-side clearing.
+
+When `last_error.code` is a value not in the table above, that is the
+**operational watch signal**: it usually means plateloc started
+emitting a new failure mode the dashboard hasn't grown copy for yet.
+Add a branch in `interpretLastError` (paired with copy in this
+table) when that happens.
+
+### What this interlock does NOT cover
+
+- **Air-pressure faults.** The 2026-05-23 incident's downstream
+  symptom (`Low Air Pressure Error` from the pneumatic press inside
+  the sealer) needs a facility-level sensor; the device has no
+  pressure introspection. The dashboard surfaces it post-hoc via
+  `last_error`.
+- **Cross-device chemistry interlocks.** Sealing at 170 °C with a
+  flammable solvent below its flash point belongs in layer 4 (project
+  plan interlocks); see [`docs/INTERLOCKS.md`](INTERLOCKS.md).

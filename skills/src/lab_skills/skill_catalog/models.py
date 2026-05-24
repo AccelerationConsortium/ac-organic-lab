@@ -54,6 +54,22 @@ class SkillDef(BaseModel):
     """States that permit this skill on a v1.0 (pre-allowed_actions) device.
     Used as a fallback when ``status.allowed_actions`` is empty / missing."""
 
+    requires_components: dict[str, str] = Field(default_factory=dict)
+    """Fine-grained gate: ``{component_name: required_state}``. **All**
+    listed components must report that exact ``state`` for the skill to
+    be considered available. Layered on top of ``allowed_actions`` /
+    ``requires_states`` as an AND condition.
+
+    Use this when the device's coarse ``equipment_status`` (or its
+    declared ``allowed_actions``) is too permissive for a specific action.
+    Example: ``seal.start`` on a plate sealer requires
+    ``equipment_status == "ready"`` *and* ``components["heater"].state ==
+    "stable"`` — the heater check is the bit ``requires_components``
+    expresses.
+
+    Empty dict (the default) means "no per-component constraint", so
+    existing SkillDefs are unaffected."""
+
     estimated_duration_s: float | None = None
     """Rough cost hint for planners. ``None`` means "unknown / not estimable"."""
 

@@ -61,6 +61,17 @@ def _status_body(
         "equipment_status": state,
         "device_time": "2026-04-29T22:50:01Z",
     }
+    # Default components per kind so tests in "ready" state implicitly
+    # satisfy component-level interlocks (e.g. seal.start requires
+    # `components["heater"].state == "stable"` and
+    # `components["stage"].state == "in"`). Tests that exercise the
+    # per-component gate explicitly pass `extras={"components": ...}`
+    # to override.
+    if entry.kind == "plate_sealer":
+        base["components"] = {
+            "heater": {"connected": True, "state": "stable"},
+            "stage": {"connected": True, "state": "in"},
+        }
     if extras:
         base.update(extras)
     return base
@@ -210,6 +221,216 @@ async def test_skills_v11_allowed_actions_overrides_requires_states() -> None:
     assert by_name["seal.start"].available is False
     assert "does not currently allow" in (by_name["seal.start"].reason or "")
     assert by_name["stage.out"].available is True
+
+
+@pytest.mark.asyncio
+async def test_skills_requires_components_blocks_seal_start_when_heater_heating() -> None:
+    """``SkillDef.requires_components`` gates AND-style on top of the state
+    check. Even with ``equipment_status='ready'``, ``seal.start`` is
+    unavailable while ``components['heater'].state != 'stable'``.
+
+    Mirrors plateloc v1.2+'s layer-1 enforcement on the SDK side so
+    workflow code can ask ``lab.skills()`` and see ``available=False``
+    without round-tripping a 412.
+    """
+
+    sealer = _entry()
+    registry = Registry(equipment=[sealer])
+    body = _status_body(
+        sealer,
+        "ready",
+        extras={
+            "components": {
+                "heater": {"connected": True, "state": "heating"},
+            },
+        },
+    )
+
+    with respx.mock(base_url=sealer.base_url) as router:
+        router.get("/status").mock(return_value=httpx.Response(200, json=body))
+        async with Lab.connect(
+            registry=registry, binding={"sealer": sealer.id}
+        ) as lab:
+            skills = await lab.skills()
+
+    by_name = {s.name: s for s in skills}
+    assert by_name["seal.start"].available is False
+    reason = by_name["seal.start"].reason or ""
+    assert "heater" in reason
+    assert "'heating'" in reason  # repr-style observed state
+    assert "'stable'" in reason  # required state
+    # Other actions that don't carry the heater hint stay available.
+    assert by_name["stage.in"].available is True
+    assert by_name["stage.out"].available is True
+
+
+@pytest.mark.asyncio
+async def test_skills_requires_components_blocks_when_component_missing() -> None:
+    """If the device hasn't published the required component at all,
+    treat it as failing the precondition (fail closed)."""
+
+    sealer = _entry()
+    registry = Registry(equipment=[sealer])
+    # Explicitly empty components - no heater entry.
+    body = _status_body(sealer, "ready", extras={"components": {}})
+
+    with respx.mock(base_url=sealer.base_url) as router:
+        router.get("/status").mock(return_value=httpx.Response(200, json=body))
+        async with Lab.connect(
+            registry=registry, binding={"sealer": sealer.id}
+        ) as lab:
+            skills = await lab.skills()
+
+    by_name = {s.name: s for s in skills}
+    assert by_name["seal.start"].available is False
+    reason = by_name["seal.start"].reason or ""
+    assert "heater" in reason
+    assert "None" in reason  # actual_state is None
+
+
+@pytest.mark.asyncio
+async def test_skills_v121_device_omits_seal_start_composes_unambiguously() -> None:
+    """When a v1.2.1+ device drops ``seal.start`` from ``allowed_actions``
+    itself (because its own temperature interlock would refuse), the SDK's
+    ``requires_components`` AND-gate must compose as a no-op: the reason
+    must come from the allowed_actions check (which fires first), not
+    from the heater AND-gate.
+
+    Forward-compat assertion: the dashboard and SDK never report
+    heater-state ambiguity against a device that's already speaking
+    the same language.
+    """
+
+    sealer = _entry()
+    registry = Registry(equipment=[sealer])
+    # v1.2.1 device: heater is heating AND device knows to omit seal.start
+    # from allowed_actions. Both gates would block; the question is which
+    # reason the SDK surfaces.
+    body = _status_body(
+        sealer,
+        "ready",
+        extras={
+            "allowed_actions": [
+                "startup",
+                "shutdown",
+                "seal.set_temperature",
+                "seal.set_time",
+                "stage.in",
+                "stage.out",
+            ],
+            "components": {
+                "heater": {"connected": True, "state": "heating"},
+            },
+        },
+    )
+
+    with respx.mock(base_url=sealer.base_url) as router:
+        router.get("/status").mock(return_value=httpx.Response(200, json=body))
+        async with Lab.connect(
+            registry=registry, binding={"sealer": sealer.id}
+        ) as lab:
+            skills = await lab.skills()
+
+    by_name = {s.name: s for s in skills}
+    assert by_name["seal.start"].available is False
+    reason = by_name["seal.start"].reason or ""
+    # The reason comes from the allowed_actions gate, not the AND-gate -
+    # because allowed_actions is checked first and fires.
+    assert "does not currently allow" in reason
+    assert "heater" not in reason  # no AND-gate noise
+
+
+@pytest.mark.asyncio
+async def test_skills_requires_components_blocks_seal_start_when_stage_out() -> None:
+    """v1.3+ stage interlock: even with the heater stable and in band,
+    ``seal.start`` is unavailable while the plate stage is OUT.
+
+    Mirrors plateloc v1.3+'s layer-1 stage-interlock 412 on the SDK side.
+    """
+
+    sealer = _entry()
+    registry = Registry(equipment=[sealer])
+    # Heater stable but stage out - stage is the load-bearing block.
+    body = _status_body(
+        sealer,
+        "ready",
+        extras={
+            "components": {
+                "heater": {"connected": True, "state": "stable"},
+                "stage": {"connected": True, "state": "out"},
+            },
+        },
+    )
+
+    with respx.mock(base_url=sealer.base_url) as router:
+        router.get("/status").mock(return_value=httpx.Response(200, json=body))
+        async with Lab.connect(
+            registry=registry, binding={"sealer": sealer.id}
+        ) as lab:
+            skills = await lab.skills()
+
+    by_name = {s.name: s for s in skills}
+    assert by_name["seal.start"].available is False
+    reason = by_name["seal.start"].reason or ""
+    assert "stage" in reason
+    assert "'out'" in reason  # observed state
+    assert "'in'" in reason  # required state
+    # Stage.{in,out} themselves stay available (no requires_components).
+    assert by_name["stage.in"].available is True
+    assert by_name["stage.out"].available is True
+
+
+@pytest.mark.asyncio
+async def test_skills_v120_device_lists_seal_start_and_and_gate_catches() -> None:
+    """Inverse of the above: a v1.2.0 device (or any non-fixed v1.1 device)
+    still lists ``seal.start`` in ``allowed_actions`` even while the
+    heater is heating. The SDK's AND-gate is the load-bearing block in
+    that case, and the reason mentions the heater.
+
+    This is the original motivation for the AND-gate; the test exists
+    to make sure it stays operational as a generic compensation layer
+    for devices that haven't shipped the v1.2.1-style fix.
+    """
+
+    sealer = _entry()
+    registry = Registry(equipment=[sealer])
+    # v1.2.0-ish: device's own allowed_actions still includes seal.start
+    # despite the heater being heating - the SDK's requires_components
+    # gate must catch it.
+    body = _status_body(
+        sealer,
+        "ready",
+        extras={
+            "allowed_actions": [
+                "startup",
+                "shutdown",
+                "seal.start",
+                "seal.set_temperature",
+                "seal.set_time",
+                "stage.in",
+                "stage.out",
+            ],
+            "components": {
+                "heater": {"connected": True, "state": "heating"},
+            },
+        },
+    )
+
+    with respx.mock(base_url=sealer.base_url) as router:
+        router.get("/status").mock(return_value=httpx.Response(200, json=body))
+        async with Lab.connect(
+            registry=registry, binding={"sealer": sealer.id}
+        ) as lab:
+            skills = await lab.skills()
+
+    by_name = {s.name: s for s in skills}
+    assert by_name["seal.start"].available is False
+    reason = by_name["seal.start"].reason or ""
+    # The reason comes from the requires_components AND-gate this time.
+    assert "heater" in reason
+    assert "'heating'" in reason
+    assert "'stable'" in reason
+    assert "does not currently allow" not in reason
 
 
 @pytest.mark.asyncio
