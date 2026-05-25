@@ -57,6 +57,7 @@ EquipmentKind = Literal[
     "plate_reader",
     "plate_sealer",
     "plate_stacker",
+    "shaker",        # orbital shaker w/ heater (e.g. Torrey Pines SC20)
     "camera",        # PTZ + lenses, fronted by kasa-tapo-services
     "smart_plug",    # single-outlet (e.g. Kasa HS103)
     "power_strip",   # multi-outlet (e.g. Kasa HS300)

@@ -131,7 +131,19 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 2.0
     tiles:
-      hte: { w: 2, h: 2 }
+      hte: { w: 2, h: 1 }
+    pills: {}
+
+  - id: torry_pines_shaker
+    name: Torrey Pines Shaker
+    kind: shaker
+    adapter: http
+    protocol: "1.1"
+    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8030
+    status_path: /status
+    poll_timeout_seconds: 2.0
+    tiles:
+      hte: { w: 2, h: 1 }
     pills: {}
 
   - id: filter_every_well
@@ -195,7 +207,7 @@ equipment:
     kind: plate_stacker
     adapter: http
     protocol: "1.1"
-    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8030
+    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8050
     status_path: /status
     poll_timeout_seconds: 2.0
     do_not_call_connect: true

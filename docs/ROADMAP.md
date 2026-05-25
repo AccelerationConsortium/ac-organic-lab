@@ -97,6 +97,7 @@ response shape.
 | `filter_every_well` | `http` | 1.1 | ✅ `ready` / `requires_init` | Migrated to STATUS_SPEC v1.1. `/status` returns `EquipmentStatus` with `allowed_actions`. Control endpoints under `/control/*`. Claim/heartbeat/release enforced (`ENFORCE_CLAIMS=True`). |
 | `fume_hood_actuator` | `legacy_http` | — | ✅ `ready` / `requires_init` | Still legacy (Flask, `/equipment/status`), but now has a kind-specific `FumeHoodTile` (5 sash pills LOW→HIGH, lock + Stop) and a `/api/equipment/{id}/sash/{move,stop}` passthrough. Adapter derives status from physical signals (`is_moving`, `sash_position`) rather than the device's own `equipment_status` string. See [`EQUIPMENT_INTEGRATION.md` §7](EQUIPMENT_INTEGRATION.md#7-fume-hood-kind-fume_hood). |
 | `dose_every_well` | `http` | 1.1 | 🟡 unverified | Placeholder hostname resolved: `sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`. Adapter flipped to `http`, `protocol: "1.1"`. Live reachability not confirmed since the equipment.yaml rewrite. |
+| `torry_pines_shaker` | `http` | 1.1 | 🟡 unverified | `torry-pines-shaker-server` shipped (matterlab_shakers + STATUS_SPEC v1.1). Server-owned duration watchdog per recipe v2 §3.5. NSSM install + live `/status` pending. Added `"shaker"` to `EquipmentKind` and a `skill_catalog/shaker.py` entry in this round. |
 | `agilent_biostack` | `mock` | — | — | No driver. `required_actions: ["integrate_repo"]`. |
 | `env_*` (4 sensors) | `mock` | — | — | Synthesised readings. Awaiting `env_sensors` repo. |
 

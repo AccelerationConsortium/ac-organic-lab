@@ -17,12 +17,14 @@ import type { components } from "./api.generated";
 type Schemas = components["schemas"];
 
 // Equipment kind: regenerate the OpenAPI types after adding `camera`,
-// `smart_plug`, `power_strip` to lab_skills/models.py to drop this widen.
+// `smart_plug`, `power_strip`, `shaker` to lab_skills/models.py to drop
+// this widen.
 export type EquipmentKind =
   | NonNullable<Schemas["EquipmentSnapshot"]["kind"]>
   | "camera"
   | "smart_plug"
-  | "power_strip";
+  | "power_strip"
+  | "shaker";
 
 export type EquipmentState = Schemas["EquipmentStatus"]["equipment_status"];
 export type ErrorSeverity = Schemas["ErrorInfo"]["severity"];

@@ -30,6 +30,7 @@ from . import fume_hood as _fume_hood  # noqa: F401
 from . import plate_sealer as _plate_sealer  # noqa: F401
 from . import press as _press  # noqa: F401
 from . import robot_arm as _robot_arm  # noqa: F401
+from . import shaker as _shaker  # noqa: F401
 from . import solid_doser as _solid_doser  # noqa: F401
 
 __all__ = [

@@ -190,6 +190,8 @@ The lab account also needs the "Log on as a service" right. NSSM grants this aut
 | `agilent_plateloc`        | `plateloc`     | 8010 | `run --extra api agilent-plateloc-serve`  | `sdl2-pc-03-cytation.<tailnet>` |
 | `agilent-cytation-server` | `cytation`     | 9333 | `run agilent-cytation-serve`              | `sdl2-pc-03-cytation.<tailnet>` |
 | `opentrons_workflows`     | `ot2-gateway`  | 8020 | `run uvicorn opentrons_workflows.gateway.api:app --host 0.0.0.0 --port 8020` | `sdl2-pc-03-cytation.<tailnet>` |
+| `torry-pines-shaker-server` | `torry-pines-shaker` | 8030 | `run --extra api torry-pines-shaker-serve` | `sdl2-pc-03-cytation.<tailnet>` |
+| `agilent-biostack4-standalone` | `biostack4`     | 8050 | `run --extra api agilent-biostack4-serve --dry-run` (set `[service].port = 8050` in `config.toml` to override the 8030 default) | `sdl2-pc-03-cytation.<tailnet>` |
 | `ac-organic-lab`          | `ac-organic-lab-api` | 8001 | `run uvicorn app.main:app --host 0.0.0.0 --port 8001` (AppDirectory=`api/`) | `sdl2-pc-03-cytation.<tailnet>` |
 | `bmg_platereader` (TBD)   | `platereader`  | 8001 | `run platereader-serve`                   | `platereader-pc.<tailnet>` |
 | `agilent_platestacker` (TBD) | `platestacker` | 8002 | `run platestacker-serve`               | `platestacker-pc.<tailnet>` |

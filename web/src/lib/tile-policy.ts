@@ -44,6 +44,7 @@ const DESTRUCTIVE_KINDS: ReadonlySet<Kind> = new Set<Kind>([
   "plate_reader",
   "plate_sealer",
   "plate_stacker",
+  "shaker",
 ]);
 
 // Kinds explicitly outside the lock policy:

@@ -18,6 +18,7 @@ sections:
       - xarm_translocation
       - ot2
       - dose_every_well
+      - torry_pines_shaker
       - filter_every_well
       - plateloc
       - cytation_5

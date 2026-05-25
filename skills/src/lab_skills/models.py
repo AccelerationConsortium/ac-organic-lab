@@ -37,6 +37,7 @@ EquipmentKind = Literal[
     "plate_reader",
     "plate_sealer",
     "plate_stacker",
+    "shaker",        # orbital shakers with integrated heater (e.g. Torrey Pines SC20)
     # Lab-LAN devices fronted by ``kasa-tapo-services``. Cameras carry a
     # ``details.lenses[]`` + ``details.presets[]`` block; plugs carry one
     # ``ComponentStatus`` per outlet (``outlet_0`` … ``outlet_5`` for the
