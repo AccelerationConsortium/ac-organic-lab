@@ -3,7 +3,7 @@
 The STATUS_SPEC v1.0 portion of this file (everything from ``PROTOCOL_VERSION``
 down through ``HealthResponse``) is the authoritative copy that mirrors
 ``docs/STATUS_SPEC.md`` at the repo root and is kept verbatim-identical to the
-copies vendored into per-device repos (see ``agilent_plateloc/src/agilent_plateloc/models.py``).
+copies vendored into per-device repos (each carries its own ``models.py``).
 Once a shared ``lab-status-contract`` package ships, this section will be
 replaced by ``from lab_status_contract import ...``.
 

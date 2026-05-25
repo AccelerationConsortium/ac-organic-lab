@@ -77,8 +77,8 @@ def plate_sealer_heater_must_be_stable_for_seal_start(
     isn't reporting ``components.heater.state == "stable"``.
 
     Reads ``components.heater`` from the device's live ``/status``.
-    Devices that don't publish ``components.heater`` (older
-    deployments of ``agilent_plateloc``) are treated as "no evidence
+    Devices that don't publish ``components.heater`` (older v1.x
+    deployments predating the heater component) are treated as "no evidence
     available" - the interlock emits no Violation, deferring to other
     interlocks / Layer 3 device-side guards.
 

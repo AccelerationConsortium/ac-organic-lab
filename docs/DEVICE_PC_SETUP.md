@@ -21,7 +21,7 @@ If you only ever read one section, read [§3 Install a single device service](#3
 - **Tailscale** enrolled with the same tailnet as the dashboard. Device services bind to `0.0.0.0:<port>`; access is gated by Tailscale ACLs, not by Windows firewall rules.
 - **PowerShell 5.1 or later** (ships with Windows; no install needed).
 - **Per-device pre-reqs** (when applicable):
-  - 32-bit Python + `pywin32` for ActiveX-backed drivers (`agilent_plateloc`, future Agilent devices). The device repo's README documents the exact `py -X.Y-32` setup; the `.venv` managed by uv is unaffected by it.
+  - 32-bit Python + `pywin32` for ActiveX-backed drivers (`agilent-plateloc-server`, future Agilent devices). The device repo's README documents the exact `py -X.Y-32` setup; the `.venv` managed by uv is unaffected by it.
   - A serial-port profile created in the vendor's diagnostics dialog (PlateLoc, etc.). Profile creation requires **Administrator** the first time; normal operation does not.
 
 ## 2. One-time host setup
@@ -143,7 +143,7 @@ Pop-Location
 ```
 
 ```powershell
-.\update.ps1 plateloc C:\Users\sdl2\Projects\agilent_plateloc
+.\update.ps1 plateloc C:\Users\sdl2\Projects\agilent-plateloc-server
 ```
 
 Multi-service "update everything" (run nightly via Task Scheduler, or manually after an SDK release):
@@ -151,7 +151,7 @@ Multi-service "update everything" (run nightly via Task Scheduler, or manually a
 ```powershell
 # C:\Users\sdl2\Projects\update_all.ps1
 $services = @(
-    @{ Name = "plateloc";     Repo = "C:\Users\sdl2\Projects\agilent_plateloc"     },
+    @{ Name = "plateloc";     Repo = "C:\Users\sdl2\Projects\agilent-plateloc-server" },
     @{ Name = "platereader";  Repo = "C:\Users\sdl2\Projects\bmg_platereader"      },
     @{ Name = "platestacker"; Repo = "C:\Users\sdl2\Projects\agilent_platestacker" }
 )
@@ -187,9 +187,9 @@ The lab account also needs the "Log on as a service" right. NSSM grants this aut
 | Repo                      | Service name   | Port | Entry point / NSSM AppParameters          | Tailnet host        |
 |---------------------------|----------------|------|-------------------------------------------|---------------------|
 | `xarm-translocation`      | `xarm`         | 8000 | `run pyxarm api` (NOT `pyxarm web`)       | `sdl2-pc-03-cytation.<tailnet>` |
-| `agilent_plateloc`        | `plateloc`     | 8010 | `run --extra api agilent-plateloc-serve`  | `sdl2-pc-03-cytation.<tailnet>` |
+| `agilent-plateloc-server` | `plateloc`     | 8010 | `run --extra api agilent-plateloc-serve`  | `sdl2-pc-03-cytation.<tailnet>` |
 | `agilent-cytation-server` | `cytation`     | 9333 | `run agilent-cytation-serve`              | `sdl2-pc-03-cytation.<tailnet>` |
-| `opentrons_workflows`     | `ot2-gateway`  | 8020 | `run uvicorn opentrons_workflows.gateway.api:app --host 0.0.0.0 --port 8020` | `sdl2-pc-03-cytation.<tailnet>` |
+| `opentrons-server`        | `ot2-gateway`  | 8020 | `run uvicorn opentrons_server.gateway.api:app --host 0.0.0.0 --port 8020` | `sdl2-pc-03-cytation.<tailnet>` |
 | `torry-pines-shaker-server` | `torry-pines-shaker` | 8030 | `run --extra api torry-pines-shaker-serve` | `sdl2-pc-03-cytation.<tailnet>` |
 | `agilent-biostack4-standalone` | `biostack4`     | 8050 | `run --extra api agilent-biostack4-serve --dry-run` (set `[service].port = 8050` in `config.toml` to override the 8030 default) | `sdl2-pc-03-cytation.<tailnet>` |
 | `ac-organic-lab`          | `ac-organic-lab-api` | 8001 | `run uvicorn app.main:app --host 0.0.0.0 --port 8001` (AppDirectory=`api/`) | `sdl2-pc-03-cytation.<tailnet>` |

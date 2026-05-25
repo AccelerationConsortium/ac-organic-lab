@@ -184,7 +184,7 @@ class HealthResponse(BaseModel):
 
 5. **Units belong in `metrics`, not field names.** Prefer `metrics["flow_rate"] = {value: 50.0, unit: "mg/s"}` over `flow_rate_mg_per_s`. Legacy fields can stay in `details` for backwards compatibility.
 
-6. **Errors are structured.** Don't pack everything into `message`. Use `last_error: {code, message, severity, timestamp}`. `code` SHOULD be a stable enum drawn from a per-repo taxonomy so clients can branch on `code` and surface targeted recovery hints, rather than string-matching on `message`. Define the taxonomy as a `frozenset[str]` or `Literal[...]` in one place; require every mutation site to use a setter that validates against it. See [`agilent_plateloc`](https://github.com/cyrilcaoyang/agilent_plateloc) v1.3.1+ for the reference taxonomy.
+6. **Errors are structured.** Don't pack everything into `message`. Use `last_error: {code, message, severity, timestamp}`. `code` SHOULD be a stable enum drawn from a per-repo taxonomy so clients can branch on `code` and surface targeted recovery hints, rather than string-matching on `message`. Define the taxonomy as a `frozenset[str]` or `Literal[...]` in one place; require every mutation site to use a setter that validates against it. Each device repo defines its own `last_error.code` taxonomy and documents it in that repo's README; the spec only requires the set be stable.
 
 7. **Snake_case** for all field names everywhere.
 
@@ -313,7 +313,7 @@ A v1.1 device that wants to keep claims advisory MAY accept `/control/*` without
 
 Some `/control/*` actions are only meaningful when the device is in a specific runtime state — heater within band, plate stage loaded, etc. — distinct from the coarse `equipment_status` enum. v1.1 codifies how a device should refuse such actions, and how `allowed_actions` should reflect those refusals so clients can avoid the round-trip.
 
-This section is normative for v1.1 devices that implement any precondition richer than `equipment_status in requires_states`. The reference implementation is `agilent_plateloc` v1.2.1+ (temperature interlock) / v1.3+ (stage interlock).
+This section is normative for v1.1 devices that implement any precondition richer than `equipment_status in requires_states`. The body shapes in §6.1 are the spec's reference taxonomy; per-device READMEs document their own precondition catalog.
 
 ### 6.1 Refusing with HTTP 412 Precondition Failed
 

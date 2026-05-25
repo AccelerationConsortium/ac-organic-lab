@@ -45,8 +45,9 @@ def test_robot_arm_kind_intentionally_empty() -> None:
     assert SKILL_REGISTRY["robot_arm"] == []
 
 
-def test_plate_sealer_skills_match_agilent_plateloc_endpoints() -> None:
-    """Catalog endpoints mirror the live ``agilent_plateloc/api.py`` paths.
+def test_plate_sealer_skill_endpoints_match_spec() -> None:
+    """Catalog endpoints mirror the STATUS_SPEC ``kind=plate_sealer`` ``/control/*``
+    contract.
 
     If those endpoints ever rename, the catalog file is the one place to
     update (the typed clients in v0.3 will not duplicate them).

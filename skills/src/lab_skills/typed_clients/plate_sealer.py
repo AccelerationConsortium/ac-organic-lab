@@ -29,7 +29,7 @@ from ..client import EquipmentClient
 
 
 class PlateSealerClient(EquipmentClient):
-    """Typed control wrapper for ``agilent_plateloc``-style sealers.
+    """Typed control wrapper for STATUS_SPEC ``kind=plate_sealer`` devices.
 
     Inherits :meth:`status` / :meth:`probe` / :meth:`health` / :meth:`command`
     from :class:`EquipmentClient`. Each typed method below validates its

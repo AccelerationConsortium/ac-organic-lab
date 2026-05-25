@@ -164,8 +164,7 @@ async def test_command_400_not_connected_raises_requires_init(http) -> None:
 async def test_command_409_not_connected_still_busy(http) -> None:
     """When the device returns 409, the SDK reports ``EquipmentBusy`` even if
     the body mentions "not connected" - the HTTP code wins. Ensures we don't
-    misclassify devices (like ``agilent_plateloc``) that fold "not connected"
-    into 409 rather than 400.
+    misclassify v1.1 devices that fold "not connected" into 409 rather than 400.
     """
 
     entry = _entry()

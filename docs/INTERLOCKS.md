@@ -42,7 +42,7 @@ Each layer is enforced by the closest authority. Workflows do not duplicate devi
 
 Examples:
 
-- `temperature_c: int = Field(ge=20, le=235)` on `SetSealingTemperatureRequest` in `agilent_plateloc/api.py`.
+- `temperature_c: int = Field(ge=20, le=235)` on a plate-sealer's `SetSealingTemperatureRequest` request body.
 - Firmware refusing to seal below ambient.
 
 Authored by: device-driver authors. Enforced by: Pydantic + firmware. Consumed by: 422 responses surfacing as Pydantic `ValidationError` in workflow code.
@@ -51,8 +51,8 @@ Authored by: device-driver authors. Enforced by: Pydantic + firmware. Consumed b
 
 Examples:
 
-- `agilent_plateloc/service.py` `_do()` raising `RuntimeError` when not connected.
-- `filter_every_well/api.py` returning `equipment_status: stopped` when commands are issued before `/init`.
+- A device's `service.py` raising `RuntimeError` when an action is called before connect.
+- A device returning `equipment_status: stopped` (or `requires_init`) when commands are issued before `/control/startup`.
 
 Authored by: device-driver authors. Enforced by: device REST returning HTTP 409. Consumed by: `EquipmentBusy`, `RequiresInit`, `Degraded` exceptions in `skills/`.
 

@@ -90,14 +90,14 @@ response shape.
 |---|---|---|---|---|
 | `xarm_translocation` | `http` | 1.0 | ✅ `requires_init` | Idle, healthy. `/control/*` deferred to gateway-PC shim discussion. |
 | `agilent_uplc_ms` | `http` | 1.0 | ✅ `ready` | `agilent-hplcms-server` shipped. Read-only sidecar over `moses` + OpenLab. Polling latency ~1.5 s — borderline against the 5 s timeout if OpenLab WMI gets slower. |
-| `ot2` | `http` | 1.1 | ✅ `requires_init`, `allowed_actions: ["startup"]` | `opentrons_workflows` shipped: SSH transport, FastAPI gateway, claim/lease scaffolding. v1.1 server side; physical OT-2 idle until `/control/startup`. |
+| `ot2` | `http` | 1.1 | ✅ `requires_init`, `allowed_actions: ["startup"]` | `opentrons-server` shipped: SSH transport, FastAPI gateway, claim/lease scaffolding. v1.1 server side; physical OT-2 idle until `/control/startup`. |
 | `cytation_5` | `http` | 1.0 | ✅ `dry_run` | `agilent-cytation-server` shipped (PyLabRobot-backed). That repo's own roadmap: Phase 0+1 done; Phase 2 (per-well sample tracking), Phase 3 (v1.1 + `/control/*`), Phase 4 (skill catalog) still ahead. |
 | `plateloc` | `http` | 1.1 | ✅ `requires_init`, `allowed_actions: ["startup"]`, `last_error: COM driver` | Server v1.1 deployed and answering. Physical PlateLoc not responding to the COM control — distinct issue from spec conformance, tracked under *Operational regressions*. |
 | `cam_hte_tapo_c245` | `http` | 1.0 | ❌ `connection_refused` | Aggregator can't reach `127.0.0.1:8002`. `kasa-tapo-services` is not running on the dashboard host. *Operational regression.* |
 | `filter_every_well` | `http` | 1.1 | ✅ `ready` / `requires_init` | Migrated to STATUS_SPEC v1.1. `/status` returns `EquipmentStatus` with `allowed_actions`. Control endpoints under `/control/*`. Claim/heartbeat/release enforced (`ENFORCE_CLAIMS=True`). |
 | `fume_hood_actuator` | `legacy_http` | — | ✅ `ready` / `requires_init` | Still legacy (Flask, `/equipment/status`), but now has a kind-specific `FumeHoodTile` (5 sash pills LOW→HIGH, lock + Stop) and a `/api/equipment/{id}/sash/{move,stop}` passthrough. Adapter derives status from physical signals (`is_moving`, `sash_position`) rather than the device's own `equipment_status` string. See [`EQUIPMENT_INTEGRATION.md` §7](EQUIPMENT_INTEGRATION.md#7-fume-hood-kind-fume_hood). |
 | `dose_every_well` | `http` | 1.1 | 🟡 unverified | Placeholder hostname resolved: `sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`. Adapter flipped to `http`, `protocol: "1.1"`. Live reachability not confirmed since the equipment.yaml rewrite. |
-| `torry_pines_shaker` | `http` | 1.1 | 🟡 unverified | `torry-pines-shaker-server` shipped (matterlab_shakers + STATUS_SPEC v1.1). Server-owned duration watchdog per recipe v2 §3.5. NSSM install + live `/status` pending. Added `"shaker"` to `EquipmentKind` and a `skill_catalog/shaker.py` entry in this round. |
+| `torry_pines_shaker` | `http` | 1.1 | ✅ `degraded` | `torry-pines-shaker-server` shipped, NSSM installed on `sdl2-pc-03-cytation:8030`, COM5 connected, end-to-end 2 s shake verified (claim → `shake.start` → server-owned watchdog → motor returns to idle 0). Three `matterlab_shakers` vendor bugs worked around locally (`Shaker.__init__(errors=…)`, `self.errors` never set, `connect()` reads non-existent `device_serial_number`). Pinned at `degraded` because the SC25XR controller (serial 50014748) returns vendor error code `cal3` to every `p` temperature query — RTD calibration table on the controller is inverted/corrupt and needs re-flashing per the Torrey Pines manual. Motor side is healthy. Also: `service.get_status()` holds the service lock across 4 serial round-trips (~1.7 s); under the dashboard's 2–3 s poll cadence this starves out concurrent `/control/*` calls — operational fix queued in the device repo (drop the duplicate `idle` read; release the lock around serial reads). |
 | `agilent_biostack` | `mock` | — | — | No driver. `required_actions: ["integrate_repo"]`. |
 | `env_*` (4 sensors) | `mock` | — | — | Synthesised readings. Awaiting `env_sensors` repo. |
 
@@ -110,7 +110,7 @@ response shape.
    The live device today serves a hand-rolled shape on
    `/equipment/status`; the v1.0 work renames to `/status` and bumps
    the envelope.
-4. **`agilent_plateloc` (claim semantics depth)** — server is at v1.1
+4. **`agilent-plateloc-server` (claim semantics depth)** — server is at v1.1
    but `_lock` is still the placeholder. Real claim/heartbeat/release
    with TTL expiry is the highest-value carry-over from this section
    and is what gives v0.4 something to validate against.
@@ -169,7 +169,7 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 
 ### Per-device sub-tasks (current state)
 
-#### `agilent_plateloc`
+#### `agilent-plateloc-server`
 
 - v1.0 conformance: ✅ shipped.
 - v1.1 deployment: ✅ live as of 2026-05-09. `equipment.yaml` flipped to
@@ -320,7 +320,7 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 
 #### `ot2` (newly shipped)
 
-- Repo: `opentrons_workflows` — split into `transport/` (SSH),
+- Repo: `opentrons-server` — split into `transport/` (SSH),
   `control/` (OT-2 wrapper + state readers), `gateway/` (FastAPI
   service + claims), `labware/`.
 - Conformance: STATUS_SPEC v1.1. Live `/status` returns
@@ -414,7 +414,7 @@ The MCP milestone resumes when **all** of the following are true:
    ✅ **met** — five non-camera devices (`xarm_translocation`,
    `agilent_uplc_ms`, `ot2`, `cytation_5`, `plateloc`) plus the camera
    are registered as `http`. Five are responding live.
-2. **`agilent_plateloc` is at `protocol: "1.1"`.** ✅ **met** —
+2. **`agilent-plateloc-server` is at `protocol: "1.1"`.** ✅ **met** —
    confirmed via live `/status` returning `protocol_version: "1.1"`
    and `allowed_actions: ["startup"]`.
 3. **`lab.skills()` returns a non-empty catalog with `available=True`
@@ -423,13 +423,13 @@ The MCP milestone resumes when **all** of the following are true:
    reporting `allowed_actions: ["startup"]`, which the SDK's skill
    evaluation should surface as available. Run
    `lab.skills()` against the deployed binding and confirm.
-4. **A workflow can run a five-step `Plan` against `agilent_plateloc`
+4. **A workflow can run a five-step `Plan` against `agilent-plateloc-server`
    (dry-run is fine) using `validate_plan` + an executor.**
    🔴 **blocked** on the v0.3 carry-overs (`execute_plan`, async
    interlocks, sync façades). Until those land there is no executor
    to run the plan with. Also blocked on the `_lock` →
    claim/heartbeat/release deepening listed under
-   `agilent_plateloc` above; until that ships, "claim semantics
+   `agilent-plateloc-server` above; until that ships, "claim semantics
    intact" is not actually verifiable.
 
 Once those are green, v0.4 PR-1 (`execute_plan` + async interlocks +

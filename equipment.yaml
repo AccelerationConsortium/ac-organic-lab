@@ -141,7 +141,10 @@ equipment:
     protocol: "1.1"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8030
     status_path: /status
-    poll_timeout_seconds: 2.0
+    # /status currently holds the service lock across 4 serial round-trips
+    # (~1.7 s on the live SC25XR). Bumped from 2.0 until the device repo
+    # ships the _build_status read-off-lock fix; see ROADMAP shaker row.
+    poll_timeout_seconds: 6.0
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}

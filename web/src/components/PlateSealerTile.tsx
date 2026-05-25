@@ -247,7 +247,9 @@ interface LastErrorBand {
  * forward-compat path for new device codes and the back-compat path for
  * v1.0 / pre-v1.3.1 devices that don't populate `code`.
  *
- * Reference: agilent_plateloc README "Last error codes" section.
+ * Reference: STATUS_SPEC §6 — last_error.code taxonomy is per-device;
+ * each device's README documents its own codes. New codes need a branch
+ * here when devices introduce them.
  */
 function interpretLastError(
   errorInfo: { code?: string | null; message?: string | null } | null | undefined,

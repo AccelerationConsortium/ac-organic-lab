@@ -17,7 +17,7 @@ This document describes the long-term architecture of the AC Organic Self-drivin
 
 It does **not** house:
 
-- Per-device drivers / REST APIs (one repo per instrument: `agilent_plateloc`, `filter_every_well`, `xarm_translocation`, `dose_every_well`, `fume_hood_actuator`, ...)
+- Per-device drivers / REST APIs (one repo per instrument: `agilent-plateloc-server`, `filter_every_well`, `xarm_translocation`, `dose_every_well`, `fume_hood_actuator`, ...)
 - Project-specific workflow code (e.g. `solubility-screening`, `hte-screening`)
 - Agent code (LLM planners, prompts, evals — future `ac-organic-lab-agents`)
 
@@ -313,7 +313,7 @@ The lab is operable by humans, by scripted workflows, and by agents — using th
 
 ### LG7. Deterministic dry-run for the entire lab
 
-The SDK should run end-to-end in dry-run mode without any device powered on. Per-device dry-run modes (already implemented in `agilent_plateloc`, `filter_every_well`) compose into a full simulated lab usable for CI, dev, and agent training.
+The SDK should run end-to-end in dry-run mode without any device powered on. Per-device dry-run modes (already implemented in `agilent-plateloc-server`, `filter_every_well`) compose into a full simulated lab usable for CI, dev, and agent training.
 
 ## Glossary
 

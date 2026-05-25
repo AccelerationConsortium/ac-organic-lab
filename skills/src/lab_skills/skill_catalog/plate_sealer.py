@@ -1,9 +1,9 @@
 """Skill catalog entries for ``kind=plate_sealer``.
 
-Reference device: :mod:`agilent_plateloc` - implements STATUS_SPEC v1.0 and
-exposes spec-conformant ``/control/*`` endpoints. Endpoints and arg ranges
-mirror ``agilent_plateloc/src/agilent_plateloc/api.py``; argument ranges
-match the Pydantic ``Field(ge=, le=)`` constraints declared on the device.
+Skills map 1:1 to the ``/control/*`` endpoints defined by STATUS_SPEC v1.x for
+plate sealers (see ``docs/STATUS_SPEC.md``). Argument ranges mirror the
+Pydantic ``Field(ge=, le=)`` constraints declared on the device side; tightening
+either side is a coordinated change.
 """
 
 from __future__ import annotations
