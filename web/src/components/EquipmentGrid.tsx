@@ -5,6 +5,7 @@ import { FumeHoodTile } from "./FumeHoodTile";
 import { PlateSealerTile } from "./PlateSealerTile";
 import { PowerStripTile } from "./PowerStripTile";
 import { PressTile } from "./PressTile";
+import { ShakerTile } from "./ShakerTile";
 
 /**
  * Renders equipment cards on a 4-column CSS grid driven by `tile.{w,h}` in
@@ -61,6 +62,8 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
               <PlateSealerTile snapshot={snapshot} />
             ) : snapshot.kind === "press" ? (
               <PressTile snapshot={snapshot} />
+            ) : snapshot.kind === "shaker" ? (
+              <ShakerTile snapshot={snapshot} />
             ) : (
               <EquipmentStatusCard snapshot={snapshot} />
             )}

@@ -324,6 +324,50 @@ export async function postSealerStageOut(equipmentId: string): Promise<ControlAc
   return controlPost(equipmentId, "stage/out", {});
 }
 
+// -- Shaker (Torrey Pines SC20 / torry-pines-shaker-server) ---------------
+//
+// Endpoint shapes mirror skills/.../skill_catalog/shaker.py. The device is
+// STATUS_SPEC v1.1; per-request claim/release is handled by the dashboard's
+// control passthrough.
+
+export async function postShakerStartup(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "startup", {});
+}
+
+export async function postShakerShutdown(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "shutdown", {});
+}
+
+export async function postShakerShakeStart(
+  equipmentId: string,
+  body: {
+    speed_level: number;
+    temperature_c: number;
+    duration_s: number;
+    wait_for_temperature?: boolean;
+  },
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "shake/start", body);
+}
+
+export async function postShakerShakeStop(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "shake/stop", {});
+}
+
+export async function postShakerSetTemperature(
+  equipmentId: string,
+  temperature_c: number,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "shake/set_temperature", { temperature_c });
+}
+
+export async function postShakerSetSpeed(
+  equipmentId: string,
+  speed_level: number,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "shake/set_speed", { speed_level });
+}
+
 // -- Sash (legacy fume hood) control ---------------------------------------
 
 export interface SashCommandResponse {

@@ -22,6 +22,19 @@ def test_registry_populated_for_active_kinds() -> None:
     assert "fume_hood" in SKILL_REGISTRY
 
 
+def test_plate_reader_catalog_registered() -> None:
+    from lab_skills.skill_catalog import SKILL_REGISTRY
+
+    names = {d.name for d in SKILL_REGISTRY["plate_reader"]}
+    assert {
+        "startup", "shutdown",
+        "drawer.open", "drawer.close",
+        "plate.load", "plate.unload", "well.update",
+        "read.absorbance", "read.fluorescence", "read.luminescence",
+        "imaging.capture",
+    } <= names
+
+
 def test_robot_arm_kind_intentionally_empty() -> None:
     """xArm is registered with an empty list because equipment.yaml sets
     ``do_not_call_connect: true``. Keeping the key present makes the catalog
