@@ -304,10 +304,10 @@ async def test_fume_hood_move_round_trip() -> None:
 
     def _record(request: httpx.Request) -> httpx.Response:
         captured["json"] = json.loads(request.content)
-        return httpx.Response(202, json={"position": 3})
+        return httpx.Response(202, json={"equipment_status": "busy"})
 
     with respx.mock(base_url=entry.base_url) as router:
-        router.post("/move").mock(side_effect=_record)
+        router.post("/control/sash/move").mock(side_effect=_record)
         async with Lab.connect(registry=registry) as lab:
             await lab.get(entry.id).move(position=3)
     assert captured["json"] == {"position": 3}

@@ -368,43 +368,21 @@ export async function postShakerSetSpeed(
   return controlPost(equipmentId, "shake/set_speed", { speed_level });
 }
 
-// -- Sash (legacy fume hood) control ---------------------------------------
-
-export interface SashCommandResponse {
-  equipment_status?: string;
-  sash_position?: number | null;
-  target_position?: number | null;
-  sash_state?: string;
-  is_moving?: boolean;
-  message?: string;
-  error?: string;
-}
+// -- Sash (fume hood) control ----------------------------------------------
+//
+// As of STATUS_SPEC v1.1 the actuator exposes `/control/sash/{move,stop}`;
+// the dashboard's generic /api/equipment/{id}/control/{action} passthrough
+// handles claim acquisition. Response is the full EquipmentStatus envelope.
 
 export async function postSashMove(
   equipmentId: string,
   position: number,
-): Promise<SashCommandResponse> {
-  return fetchJson<SashCommandResponse>(
-    `/api/equipment/${encodeURIComponent(equipmentId)}/sash/move`,
-    {
-      method: "POST",
-      body: JSON.stringify({ position }),
-      headers: { "Content-Type": "application/json" },
-    },
-  );
+): Promise<unknown> {
+  return controlPost(equipmentId, "sash/move", { position });
 }
 
-export async function postSashStop(
-  equipmentId: string,
-): Promise<SashCommandResponse> {
-  return fetchJson<SashCommandResponse>(
-    `/api/equipment/${encodeURIComponent(equipmentId)}/sash/stop`,
-    {
-      method: "POST",
-      body: "{}",
-      headers: { "Content-Type": "application/json" },
-    },
-  );
+export async function postSashStop(equipmentId: string): Promise<unknown> {
+  return controlPost(equipmentId, "sash/stop", {});
 }
 
 export async function startRolling(

@@ -13,7 +13,6 @@ from .http_status import HttpStatusAdapter
 from .legacy import (
     LegacyDoseEveryWellAdapter,
     LegacyFilterEveryWellAdapter,
-    LegacyFumeHoodActuatorAdapter,
 )
 from .mock import MockAdapter
 
@@ -21,12 +20,14 @@ from .mock import MockAdapter
 _LEGACY_BY_ID: dict[str, type[EquipmentAdapter]] = {
     "dose_every_well": LegacyDoseEveryWellAdapter,
     "filter_every_well": LegacyFilterEveryWellAdapter,
-    "fume_hood_actuator": LegacyFumeHoodActuatorAdapter,
-    # xarm_translocation now conforms to STATUS_SPEC v1.0 (see
-    # ``xarm-translocation/src/core/models.py``); registered as
-    # ``adapter: http`` in equipment.yaml and routed through
-    # ``HttpStatusAdapter`` directly. The ``LegacyXArmAdapter`` remains
-    # importable from ``.legacy`` for one release cycle for rollback.
+    # fume_hood_actuator now conforms to STATUS_SPEC v1.1 (see
+    # ``fume-hood-sash-automation/src/hood_sash_automation/api/models.py``);
+    # registered as ``adapter: http`` in equipment.yaml and routed through
+    # ``HttpStatusAdapter`` directly. The ``LegacyFumeHoodActuatorAdapter``
+    # remains importable from ``.legacy`` for one release cycle as a
+    # rollback path; see the LegacyXArmAdapter precedent.
+    #
+    # xarm_translocation: same story, on STATUS_SPEC v1.0.
 }
 
 

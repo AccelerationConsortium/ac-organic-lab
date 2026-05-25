@@ -95,7 +95,7 @@ response shape.
 | `plateloc` | `http` | 1.1 | ✅ `requires_init`, `allowed_actions: ["startup"]`, `last_error: COM driver` | Server v1.1 deployed and answering. Physical PlateLoc not responding to the COM control — distinct issue from spec conformance, tracked under *Operational regressions*. |
 | `cam_hte_tapo_c245` | `http` | 1.0 | ❌ `connection_refused` | Aggregator can't reach `127.0.0.1:8002`. `kasa-tapo-services` is not running on the dashboard host. *Operational regression.* |
 | `filter_every_well` | `http` | 1.1 | ✅ `ready` / `requires_init` | Migrated to STATUS_SPEC v1.1. `/status` returns `EquipmentStatus` with `allowed_actions`. Control endpoints under `/control/*`. Claim/heartbeat/release enforced (`ENFORCE_CLAIMS=True`). |
-| `fume_hood_actuator` | `legacy_http` | — | ✅ `ready` / `requires_init` | Still legacy (Flask, `/equipment/status`), but now has a kind-specific `FumeHoodTile` (5 sash pills LOW→HIGH, lock + Stop) and a `/api/equipment/{id}/sash/{move,stop}` passthrough. Adapter derives status from physical signals (`is_moving`, `sash_position`) rather than the device's own `equipment_status` string. See [`EQUIPMENT_INTEGRATION.md` §7](EQUIPMENT_INTEGRATION.md#7-fume-hood-kind-fume_hood). |
+| `fume_hood_actuator` | `http` | 1.1 | 🟡 unverified | Migrated from Flask to FastAPI; conforms to STATUS_SPEC v1.1 (`/control/sash/{move,stop}`, claim/heartbeat/release, `allowed_actions`, `details.claimed_by`). Dashboard's dedicated `/sash/*` passthrough collapsed into the generic `/control/{action}` path. `LegacyFumeHoodActuatorAdapter` retired from the factory (kept importable for one cycle). Live `/status` reachability against the Pi at `100.64.254.100:5000` not yet confirmed since the rewrite. |
 | `dose_every_well` | `http` | 1.1 | 🟡 unverified | Placeholder hostname resolved: `sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`. Adapter flipped to `http`, `protocol: "1.1"`. Live reachability not confirmed since the equipment.yaml rewrite. |
 | `torry_pines_shaker` | `http` | 1.1 | ✅ `degraded` | `torry-pines-shaker-server` shipped, NSSM installed on `sdl2-pc-03-cytation:8030`, COM5 connected, end-to-end 2 s shake verified (claim → `shake.start` → server-owned watchdog → motor returns to idle 0). Three `matterlab_shakers` vendor bugs worked around locally (`Shaker.__init__(errors=…)`, `self.errors` never set, `connect()` reads non-existent `device_serial_number`). Pinned at `degraded` because the SC25XR controller (serial 50014748) returns vendor error code `cal3` to every `p` temperature query — RTD calibration table on the controller is inverted/corrupt and needs re-flashing per the Torrey Pines manual. Motor side is healthy. Also: `service.get_status()` holds the service lock across 4 serial round-trips (~1.7 s); under the dashboard's 2–3 s poll cadence this starves out concurrent `/control/*` calls — operational fix queued in the device repo (drop the duplicate `idle` read; release the lock around serial reads). |
 | `agilent_biostack` | `mock` | — | — | No driver. `required_actions: ["integrate_repo"]`. |
@@ -106,17 +106,13 @@ response shape.
 1. **`dose_every_well` (solid_doser)** — hostname is resolved; same
    migration shape as `filter_every_well` once service is reachable.
    Confirm live `/status`, then proceed with the v1.0 checklist below.
-3. **`fume_hood_actuator`** — Flask → FastAPI port plus spec envelope.
-   The live device today serves a hand-rolled shape on
-   `/equipment/status`; the v1.0 work renames to `/status` and bumps
-   the envelope.
-4. **`agilent-plateloc-server` (claim semantics depth)** — server is at v1.1
+2. **`agilent-plateloc-server` (claim semantics depth)** — server is at v1.1
    but `_lock` is still the placeholder. Real claim/heartbeat/release
    with TTL expiry is the highest-value carry-over from this section
    and is what gives v0.4 something to validate against.
-5. **`xarm_translocation` (graduating control ops)** — gateway-PC shim
+3. **`xarm_translocation` (graduating control ops)** — gateway-PC shim
    discussion still open; defer per existing note.
-6. **`agilent_biostack`** — no driver, no migration. Without a stacker
+4. **`agilent_biostack`** — no driver, no migration. Without a stacker
    driver the xArm is the only plate mover, which makes it both a
    throughput bottleneck and a single point of failure for the
    solubility workflow.
@@ -243,38 +239,52 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 
 #### `fume_hood_actuator`
 
-- Current (2026-05-09 verified): Flask on `100.64.254.100:5000`. Direct
-  probes:
-  - `GET /equipment/status` → `{equipment_name: "fume_hood_sash_actuator",
-    equipment_ip: "172.31.32.236", equipment_status: "ready",
-    system_state: "active", sash_state: "stationary", is_moving: false,
-    ...}` (legacy hand-rolled shape; aggregator translates via
-    `legacy_http`).
-  - `GET /status` → `{current_position: null, is_moving: false}`
-    (different ad-hoc shape; not the legacy `StatusResponse` and not
-    `EquipmentStatus`).
-  - `GET /` → 404. `GET /health` → `{status: "healthy", actuator: ...}`
-    (not the spec `HealthResponse` shape).
-- Repo confirmed: `fume-hood-sash-automation` (Pi has 5 hall-effect
-  sensors at preset positions; position 1 = closed/home, position 5
-  = fully open. `home_on_startup: false` in bundled config, so boot
-  does not move the sash — initial `sash_position` is whatever hall
-  sensor happens to be triggered, or `null` if parked between
-  presets).
-- Dashboard side (2026-05-23): added `FumeHoodTile` (5 pills + lock
-  + Stop), `LegacyFumeHoodActuatorAdapter` now derives state from
-  physical signals (`is_moving`, `sash_position`), and a sash
-  passthrough route at `POST /api/equipment/{id}/sash/{move,stop}`.
-  Operator-facing docs in
-  [`EQUIPMENT_INTEGRATION.md` §7](EQUIPMENT_INTEGRATION.md#7-fume-hood-kind-fume_hood).
-- v1.0 work:
-  - [ ] Port from Flask to FastAPI. Re-use the actuator/sensor classes
-    untouched.
-  - [ ] Add `models.py` with STATUS_SPEC types.
-  - [ ] Standardise `/status` (drop the `/equipment/` prefix).
-  - [ ] Add `/`, `/health`, `/control/*`.
-  - [ ] Update `equipment.yaml`: `status_path: /equipment/status` →
-    `/status`; `adapter: legacy_http` → `http`.
+- v1.1 migration: ✅ landed in fume-hood-sash-automation branch
+  `v1.1-migration`.
+  - Port from Flask to FastAPI (`api/api_service.py` rewritten as a
+    `build_app()` factory; hardware deps lazy-imported so tests can
+    stand up the app on dev machines).
+  - `api/models.py` vendoring STATUS_SPEC v1.1 types.
+  - `api/claims.py` in-process single-slot claim registry with TTL.
+  - `api/status_builder.py` shared helper: both `/status` and the
+    `/control/sash/*` gates derive `equipment_status` +
+    `allowed_actions` from `(is_moving, sash_position)`, so STATUS_SPEC
+    §6.2's mirror invariant ("allowed_actions and 412/423 refusals
+    never disagree") holds by construction.
+  - Endpoints: `GET /`, `GET /health`, `GET /status`,
+    `POST /control/claim`, `POST /control/heartbeat`,
+    `POST /control/release`, `POST /control/sash/move`,
+    `POST /control/sash/stop`. `X-Claim-Token` is enforced on
+    `/control/sash/*` (HTTP 423 on miss).
+  - Removed: `/equipment/status`, `/position`, `/move`, `/stop` legacy
+    routes; `_get_interface_ip()` self-discovery; `equipment_ip` /
+    `equipment_tailscale` (spec §4.12).
+  - `tests/fixtures/status_*.json`: snapshots for ready (no claim),
+    ready (claim held), busy, requires_init, error.
+  - `tests/docker-test/tests/test_actuator_api.py`: 20 cases against
+    `fastapi.testclient.TestClient` with a hand-rolled FakeActuator.
+    All pass.
+  - The sensor service in `src/hood_sash_automation/sensor/` is
+    untouched (still Flask, still on its pre-spec shape); it will
+    migrate separately.
+- Dashboard side: `equipment.yaml` flipped to `adapter: http`,
+  `protocol: "1.1"`, `status_path: /status`. The dedicated
+  `/api/equipment/{id}/sash/{move,stop}` passthrough was collapsed —
+  the generic `/api/equipment/{id}/control/{action}` route now handles
+  both calls (including dashboard-side claim acquire/release per
+  request, matching `filter_every_well`). The skill catalog entries
+  rename from `move`/`/move` to `sash.move`/`/control/sash/move`
+  (same for stop); the typed client follows. `FumeHoodTile` reads
+  `metrics.sash_position` / `metrics.target_position` /
+  `equipment_status` unchanged — works against the new envelope.
+  `LegacyFumeHoodActuatorAdapter` is unwired from the factory but
+  remains importable from `.legacy` for one release cycle as a
+  rollback path.
+- Outstanding (not blocking the migration): redeploy
+  `hood_sash_automation_actuator` on the Pi (uv-install the new
+  fastapi/uvicorn deps; the entry-point name is unchanged); verify
+  live `/status` returns `protocol_version: "1.1"`; verify
+  `/control/sash/move` round-trip from the dashboard tile.
 
 #### `xarm_translocation`
 
