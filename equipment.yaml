@@ -84,10 +84,9 @@ equipment:
   - id: fume_hood_actuator
     name: Fume Hood Actuator
     kind: fume_hood
-    adapter: http
-    protocol: "1.1"
+    adapter: legacy_http
     base_url: http://100.64.254.100:5000
-    status_path: /status
+    status_path: /equipment/status
     poll_timeout_seconds: 2.0
     tiles:
       hte: { w: 2, h: 1 }

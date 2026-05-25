@@ -426,12 +426,11 @@ countdown ticks down and auto-relocks with nothing to actually gate.
 
 ## 7) Fume hood (`kind: fume_hood`)
 
-The fume-hood sash actuator (`fume_hood_actuator`, FastAPI on
-`100.64.254.100:5000`) conforms to STATUS_SPEC v1.1. It renders as a
-kind-specific `FumeHoodTile` with the 5 sash presets as a row of
-horizontal pills (1 = closed / "LOW" on the left, 5 = fully open /
-"HIGH" on the right), and exposes click-to-move and stop controls
-behind a lock toggle.
+The fume-hood sash actuator (`fume_hood_actuator`, legacy Flask on
+`100.64.254.100:5000`) renders as a kind-specific `FumeHoodTile`.
+It shows the 5 sash presets as a row of horizontal pills (1 = closed
+/ "LOW" on the left, 5 = fully open / "HIGH" on the right), and
+exposes click-to-move and stop controls behind a lock toggle.
 
 ### Tile behaviour
 
@@ -439,47 +438,42 @@ behind a lock toggle.
   - Solid emerald = current preset (sash parked at hall sensor N).
   - Amber pulse = optimistic target while the device reports `busy`.
   - Dimmed = idle / not the current position.
-- **No pill lit** = sash is between hall sensors. The device has no
-  encoder readback, so position is only known at the 5 hall triggers.
-  The device surfaces this as `equipment_status: requires_init`
-  rather than masking it.
+- **No pill lit** = sash is between hall sensors. The legacy device
+  has no encoder readback, so position is only known at the 5 hall
+  triggers. The aggregator surfaces this as
+  `equipment_status: requires_init` rather than masking it.
 - **Lock toggle** in the header (matches the power-strip tile,
   5-second auto-relock). Pills and the Stop button are disabled
   while locked.
 - **Stop button** appears only while the device is `busy`. It POSTs
-  to `/control/sash/stop` and the tile drops its optimistic target.
+  to the device's `/stop` and the tile drops its optimistic target.
 
-### Status derivation (device side)
+### Status derivation (adapter side)
 
-`status_builder.py` on the device derives `equipment_status` from
-physical signals — it is the single source of truth for both
-`/status` and `/control/sash/*`'s precondition gates, so STATUS_SPEC
-§6.2's mirror invariant holds by construction.
+`LegacyFumeHoodActuatorAdapter` derives `equipment_status` from
+physical signals, not the device's own status string:
 
-| `is_moving` | `sash_position` | `equipment_status` | `allowed_actions`              |
-|-------------|------------------|--------------------|--------------------------------|
-| `true`      | any              | `busy`             | `["sash.stop"]`                |
-| `false`     | `1..5`           | `ready`            | `["sash.move", "sash.stop"]`   |
-| `false`     | `null`           | `requires_init`    | `["sash.move"]`                |
+| `is_moving` | `sash_position` | Dashboard `equipment_status` |
+|-------------|------------------|------------------------------|
+| `true`      | any              | `busy`                       |
+| `false`     | `1..5`           | `ready`                      |
+| `false`     | `null`           | `requires_init`              |
 
-The device's pre-spec `equipment_status: "stopped"` string has been
-removed; the new device reports the values above directly.
+The device's `equipment_status: "stopped"` (which it returns after
+any `/stop` call, even when parked at a preset) is intentionally
+ignored — it does not reflect operational state, only "last command
+was stop".
 
 ### Control passthrough
 
-Both controls flow through the generic
-`/api/equipment/{id}/control/{action}` route (`api/app/control.py`),
-which handles the v1.1 claim/heartbeat/release dance per request:
+Two passthrough routes on the dashboard API call the device's
+non-spec-conformant endpoints:
 
-- `POST /api/equipment/fume_hood_actuator/control/sash/move` body `{"position": 1..5}`
-- `POST /api/equipment/fume_hood_actuator/control/sash/stop`  body `{}`
+- `POST /api/equipment/{id}/sash/move` body `{"position": 1..5}`
+- `POST /api/equipment/{id}/sash/stop`  body `{}`
 
-The dashboard acquires a short-lived claim as
-`owner: ac-organic-lab-dashboard`, attaches the `X-Claim-Token` to
-the action, then releases in a `finally` block. Workflows that need
-exclusive control should keep using `lab_skills.ClaimManager`; a
-workflow's longer-lived claim will cause the dashboard's per-request
-claim to 409, surfacing `claimed_by` to the browser.
+These will collapse into the generic `/control/{action}` path once
+the device migrates to STATUS_SPEC.
 
 ### What goes wrong (and how to spot it)
 
@@ -487,9 +481,8 @@ claim to 409, surfacing `claimed_by` to the browser.
 |-----------------------------------------------|------------------------------------------------------------|--------------------------------------------------------------|
 | Tile is `requires_init` after a successful move | Sash overshot/undershot a hall sensor                    | Click any pill again; the controller's "search by pulsing down" routine relocates within 5 pulses |
 | Pill click does nothing visible               | Controls still locked                                     | Click the **Locked** chip to unlock (5 s window before auto-relock) |
-| 422 from `/control/sash/move`                 | Position outside 1..5                                     | Pydantic validation on the device; tile only emits 1..5, so this only happens via direct API calls |
-| 423 from `/control/sash/{move,stop}`          | Another workflow holds a longer-lived claim               | Refresh `/api/equipment` — `details.claimed_by.owner` shows who has the claim. Wait for them or release it via the SDK. |
-| 504 from `/control/sash/{move,stop}`          | Device unreachable (Tailnet, Pi power)                    | `curl http://100.64.254.100:5000/health` from the dashboard host |
+| 422 from `/sash/move`                         | Position outside 1..5                                     | Pydantic validation; tile only emits 1..5, so this only happens via direct API calls |
+| 504 from `/sash/{move,stop}`                  | Device unreachable (Tailnet, Pi power)                    | `curl http://100.64.254.100:5000/health` from the dashboard host |
 
 ## 8) Filtration press (`kind: press`)
 

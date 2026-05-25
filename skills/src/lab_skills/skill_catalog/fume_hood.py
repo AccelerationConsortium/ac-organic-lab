@@ -1,14 +1,15 @@
 """Skill catalog entries for ``kind=fume_hood``.
 
-Reference device: ``fume-hood-sash-automation`` v1.1+ (FastAPI,
-STATUS_SPEC v1.1). Endpoints:
+Reference device: :mod:`fume-hood-sash-automation`. Flask-based, not yet on
+STATUS_SPEC v1.x; current shape from
+``fume-hood-sash-automation/src/hood_sash_automation/api/api_service.py``:
 
-* ``POST /control/sash/move`` body ``{position: 1..5}`` - move to preset.
-* ``POST /control/sash/stop``                            - stop movement.
+* ``POST /move`` body ``{position: 1..5}`` - move sash to a preset position
+* ``POST /stop``                            - stop a running movement
 
-Both require ``X-Claim-Token`` obtained via ``POST /control/claim``; the
-dashboard's control passthrough and ``ClaimManager`` handle that
-transparently.
+When the device migrates to STATUS_SPEC v1.x with spec-conformant
+``/control/*`` endpoints, only this catalog file changes; the typed wrapper
+in v0.3 keeps the same Python signatures.
 """
 
 from __future__ import annotations
@@ -20,32 +21,32 @@ from .registry import register
 
 
 class MoveArgs(BaseModel):
-    """Body for ``POST /control/sash/move``."""
+    """Body for ``POST /move``."""
 
     position: int = Field(ge=1, le=5, description="Sash preset position, 1 (closed) - 5 (full open).")
 
 
 class StopArgs(BaseModel):
-    """Body for ``POST /control/sash/stop`` (no parameters)."""
+    """Body for ``POST /stop`` (no parameters)."""
 
 
 register(
     "fume_hood",
     [
         SkillDef(
-            name="sash.move",
+            name="move",
             kind="fume_hood",
             description="Move the sash to a preset position (1 closed - 5 fully open).",
-            endpoint="/control/sash/move",
+            endpoint="/move",
             args_schema=MoveArgs,
-            requires_states=["ready", "requires_init", "dry_run"],
+            requires_states=["ready", "dry_run"],
             estimated_duration_s=4.0,
         ),
         SkillDef(
-            name="sash.stop",
+            name="stop",
             kind="fume_hood",
             description="Stop any in-progress sash movement.",
-            endpoint="/control/sash/stop",
+            endpoint="/stop",
             args_schema=StopArgs,
             requires_states=["ready", "busy", "degraded", "dry_run"],
             estimated_duration_s=0.5,

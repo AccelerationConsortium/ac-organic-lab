@@ -28,6 +28,7 @@ import uuid
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("ac_dashboard.api.control")
 
@@ -126,6 +127,16 @@ def build_control_router() -> APIRouter:
 
         return await _media_proxy_json(request, equipment_id, "media")
 
+    @router.post("/{equipment_id}/sash/move")
+    async def sash_move(
+        equipment_id: str, body: SashMoveBody, request: Request
+    ) -> dict:
+        return await _sash_proxy(request, equipment_id, "/move", {"position": body.position})
+
+    @router.post("/{equipment_id}/sash/stop")
+    async def sash_stop(equipment_id: str, request: Request) -> dict:
+        return await _sash_proxy(request, equipment_id, "/stop", {})
+
     @router.get("/{equipment_id}/media/{rest:path}")
     async def media_download(
         equipment_id: str, rest: str, request: Request
@@ -144,6 +155,63 @@ def build_control_router() -> APIRouter:
         return await _media_proxy_stream(request, equipment_id, f"media/{rest}")
 
     return router
+
+
+class SashMoveBody(BaseModel):
+    position: int = Field(ge=1, le=5)
+
+
+async def _sash_proxy(
+    request: Request, equipment_id: str, path: str, body: dict
+) -> dict:
+    """Forward a sash command to the legacy fume-hood actuator.
+
+    The actuator does not yet conform to STATUS_SPEC, so its mutating
+    endpoints (``POST /move``, ``POST /stop``) live at the root, not under
+    ``/control/*``. When the device migrates this can collapse into the
+    generic ``_proxy`` path.
+    """
+
+    aggregator = getattr(request.app.state, "aggregator", None)
+    if aggregator is None:
+        raise HTTPException(status_code=503, detail="Aggregator not initialised")
+    entry = aggregator.entry(equipment_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Unknown equipment id: {equipment_id}")
+    if entry.kind != "fume_hood":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Equipment {equipment_id!r} is not a fume hood (kind={entry.kind})",
+        )
+    if not entry.base_url:
+        raise HTTPException(
+            status_code=503, detail=f"Equipment {equipment_id!r} has no base_url"
+        )
+
+    target = entry.base_url.rstrip("/") + path
+    timeout = httpx.Timeout(_CONTROL_TIMEOUT_SECONDS)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            response = await client.post(target, json=body)
+    except httpx.TimeoutException as exc:
+        logger.warning("sash timeout %s -> %s: %s", equipment_id, target, exc)
+        raise HTTPException(status_code=504, detail=f"Gateway timeout calling {target}") from exc
+    except httpx.HTTPError as exc:
+        logger.warning("sash transport error %s -> %s: %s", equipment_id, target, exc)
+        raise HTTPException(status_code=502, detail=f"Cannot reach gateway: {exc}") from exc
+
+    if response.status_code >= 400:
+        try:
+            payload = response.json()
+            detail = payload.get("error") or payload.get("detail") or payload
+        except ValueError:
+            detail = response.text
+        raise HTTPException(status_code=response.status_code, detail=detail)
+
+    try:
+        return response.json()
+    except ValueError:
+        return {"ok": True, "raw": response.text}
 
 
 # STATUS_SPEC v1.1 reserves three action names for the claim protocol
