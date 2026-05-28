@@ -18,12 +18,20 @@ import time
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from lab_skills import EquipmentAggregator, PlatformsConfig, load_platforms, load_registry
+from lab_skills import (
+    AgentRuntime,
+    EquipmentAggregator,
+    PlatformsConfig,
+    Registry,
+    load_platforms,
+    load_registry,
+)
 from lab_skills.skill_catalog import SKILL_REGISTRY
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
+from .agent import build_agent_router
 from .control import build_control_router
 from .db import LabDatabase, resolve_db_path
 from .history import build_history_router
@@ -337,6 +345,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await aggregator.startup()
     app.state.aggregator = aggregator
     app.state.registry = registry
+    app.state.agent_runtime = AgentRuntime()
     app.state.overrides = load_dashboard_overrides()
     app.state.platforms_config = load_platforms()
     logger.info("Loaded equipment registry: %d entries", aggregator.equipment_count)
@@ -397,6 +406,8 @@ app.add_middleware(
 app.include_router(build_control_router())
 # History + ingest endpoints (SQLite-backed).
 app.include_router(build_history_router())
+# Agent workflow composition + expert-review runtime.
+app.include_router(build_agent_router())
 
 
 def _aggregator() -> EquipmentAggregator:

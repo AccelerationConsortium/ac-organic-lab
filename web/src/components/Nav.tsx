@@ -6,6 +6,7 @@ import { usePlatforms } from "@/lib/use-platforms";
 
 const STATIC_BEFORE = [{ href: "/", label: "Overview" }];
 const STATIC_AFTER = [
+  { href: "/workflow", label: "Workflow" },
   { href: "/history", label: "History" },
   { href: "/api-reference", label: "API Reference" },
 ];

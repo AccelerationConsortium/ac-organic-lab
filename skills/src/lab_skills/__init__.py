@@ -15,6 +15,18 @@ layer for control and runtime equipment state.
 from __future__ import annotations
 
 from .aggregator import EquipmentAggregator
+from .agent import (
+    AgentRun,
+    AgentRunEvent,
+    AgentRuntime,
+    AgentTask,
+    ComposedWorkflow,
+    ExecutionStep,
+    ExpertDecision,
+    ExpertReviewRequest,
+    SkillCandidate,
+    compose_workflow,
+)
 from .claims import ClaimManager
 from .skill_catalog import SKILL_REGISTRY, Skill, SkillDef
 from .client import EquipmentClient
@@ -87,12 +99,17 @@ __version__ = "0.1.0"
 
 __all__ = [
     "AdapterKind",
+    "AgentRun",
+    "AgentRunEvent",
+    "AgentRuntime",
+    "AgentTask",
     "BadRequest",
     "CameraConfig",
     "CameraLens",
     "ClaimManager",
     "ClaimRejected",
     "ComponentStatus",
+    "ComposedWorkflow",
     "Degraded",
     "EquipmentAggregator",
     "EquipmentBusy",
@@ -107,6 +124,9 @@ __all__ = [
     "EquipmentUnreachable",
     "ErrorInfo",
     "ErrorSeverity",
+    "ExecutionStep",
+    "ExpertDecision",
+    "ExpertReviewRequest",
     "FetchError",
     "FetchErrorKind",
     "FumeHoodClient",
@@ -134,6 +154,7 @@ __all__ = [
     "RobotArmClient",
     "SKILL_REGISTRY",
     "Skill",
+    "SkillCandidate",
     "SkillDef",
     "SolidDoserClient",
     "Step",
@@ -143,6 +164,7 @@ __all__ = [
     "WaitTimeout",
     "__version__",
     "clear_interlocks",
+    "compose_workflow",
     "load_platforms",
     "load_registry",
     "register_interlock",

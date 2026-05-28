@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import "@xyflow/react/dist/style.css";
 import "./globals.css";
 import { QueryProvider } from "@/lib/query-client";
 import { ControlAuthProvider } from "@/lib/control-auth";
