@@ -1,0 +1,4 @@
+.page    { padding: var(--space-8); max-width: 1200px; }
+.heading { font-family: var(--font-display); font-size: 22px; font-weight: 600; color: var(--text-primary); margin: 0 0 var(--space-6); }
+.grid    { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: var(--space-4); }
+.loading { padding: var(--space-8); font-family: var(--font-mono); color: var(--text-tertiary); }

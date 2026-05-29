@@ -1,0 +1,7 @@
+module:
+  repo: "github.com/AccelerationConsortium/infrastructure-modules"
+  path: "modules/specialized/react-python-fullstack"
+  ref: "main"
+
+backend:
+  ssm_param: "/shared/terraform/state-bucket"

@@ -1,0 +1,5 @@
+.grid     { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--space-3); }
+.card     { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: var(--space-4); text-align: center; }
+.deviceId { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); margin-bottom: var(--space-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pct      { font-family: var(--font-mono); font-size: 22px; font-weight: 600; }
+.label    { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); margin-top: 2px; }

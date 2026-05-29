@@ -1,4 +1,5 @@
-# Optional: front the dashboard with Caddy on the Tailscale-attached server.
+# Optional: front the local dashboard dev server with Caddy on the
+# Tailscale-attached lab host.
 # Caddy uses Tailscale's `tailscale cert` for TLS automatically when the
 # hostname matches a tailnet name.
 #
@@ -27,6 +28,14 @@ lab-dashboard.tail-XXXX.ts.net {
         reverse_proxy 127.0.0.1:8002
     }
 
-    # Next.js handles both / and /api/* (the latter via its rewrite to FastAPI).
-    reverse_proxy 127.0.0.1:3000
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8001
+    }
+
+    handle /camera/* {
+        reverse_proxy 127.0.0.1:8001
+    }
+
+    # Vite dashboard dev server.
+    reverse_proxy 127.0.0.1:5174
 }

@@ -1,6 +1,6 @@
 # ac-organic-lab
 
-Monorepo for the Acceleration Consortium (AC) Organic Self-driving Lab platform stack: the equipment-status contract, the inventory, the Python SDK that workflows and the dashboard share, and the dashboard's web server and Next.js UI.
+Monorepo for the Acceleration Consortium (AC) Organic Self-driving Lab platform stack: the equipment-status contract, the inventory, the Python SDK that workflows and the dashboard share, the FastAPI lab server, and the organic dashboard.
 
 The dashboard runs on a single Tailscale-attached server and aggregates status from each lab equipment's REST API into one normalized contract. The browser only ever talks to the dashboard server; the dashboard server is the only client that calls the equipment APIs over the lab Tailnet. Workflow code uses the same SDK directly without going through the dashboard.
 
@@ -11,14 +11,18 @@ The dashboard runs on a single Tailscale-attached server and aggregates status f
 ## Architecture
 
 ```
-Browser  ->  Next.js (web/, port 3000)  ->  FastAPI (api/, port 8001)  ->  lab-skills (skills/)  ->  Equipment APIs over Tailscale
-                                                                                       ^
-                                                       Workflow scripts ----------------+
+Browser  ->  Vite React dashboard (app/frontend, port 5174)
+            -> FastAPI lab server (api/, port 8001)
+            -> lab-skills (skills/)
+            -> Equipment APIs over Tailscale
+                         ^
+Workflow scripts --------+
 ```
 
 - **`skills/`** — `lab-skills` Python SDK. Owns the registry, polling aggregator, per-device adapters, and the workflow-facing session API. Imported by `api/` and by project workflow repos.
-- **`api/`** — FastAPI dashboard server. Thin presentation layer over `skills/`.
-- **`web/`** — Next.js 14 (App Router) + TypeScript + TanStack Query.
+- **`api/`** — FastAPI lab server. Thin presentation layer over `skills/`.
+- **`app/frontend/`** — Vite React dashboard using the same design system as the AC battery dashboard. Local dev proxy points at `api/` on port 8001.
+- **`app/backend/`** — Thin FastAPI proxy used by the AWS full-stack deployment to forward dashboard traffic to the lab API backend.
 - **`equipment.yaml`** — equipment inventory (committed). Hardware identity, adapter, URLs, tile sizing, and pill config. Edit when hardware physically changes.
 - **`platforms.yaml`** — Overview layout config (committed). Defines sections, display order, and which equipment ids belong to each section. Edit when the dashboard layout changes.
 - **`deploy/`** — systemd units for the two services.
@@ -31,7 +35,7 @@ All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](doc
 | Document | What it covers |
 |---|---|
 | [`docs/STATUS_SPEC.md`](docs/STATUS_SPEC.md) | **Authoritative device contract.** Combined v1.0 baseline + v1.1 additions (cooperative claims, `allowed_actions`, `details.claimed_by`). Includes the conformance checklists every device repo follows and an appendix comparing this contract to the **SiLA 2** standard. |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Long-form description of the monorepo's layering, the responsibilities of `skills/`, `api/`, `web/`, `equipment.yaml`, and `platforms.yaml`, and the key design decisions. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Long-form description of the monorepo's layering, the responsibilities of `skills/`, `api/`, `app/frontend/`, `equipment.yaml`, and `platforms.yaml`, and the key design decisions. |
 | [`docs/EQUIPMENT_INTEGRATION.md`](docs/EQUIPMENT_INTEGRATION.md) | Operational runbook: registering a new device, editing `equipment.yaml` and `platforms.yaml`, tile sizing, sensor map positions, maintenance windows, camera + smart-plug onboarding. |
 | [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) | How the SDK describes "what the lab can do right now": `SkillDef` (static) vs `Skill` (runtime), how `allowed_actions` is computed, evolution from hard-coded → device-declared. |
 | [`docs/INTERLOCKS.md`](docs/INTERLOCKS.md) | Four-layer safety model (hardware limits → device state machine → skill preconditions → project plan interlocks); `validate_plan` / `execute_plan` API. |
@@ -57,36 +61,17 @@ The API reads `equipment.yaml` and `platforms.yaml` from the repo root at startu
 
 The extra `--reload-include` flags are required: `uvicorn --reload` only watches `*.py` by default. With them set, saving either YAML file triggers an automatic API restart and the browser picks up the change on its next poll.
 
-### Frontend (Next.js)
+### Frontend dashboard (Vite React)
 
 ```bash
-cd web
+cd app/frontend
 npm install
-npm run dev
+npm run dev -- --host 127.0.0.1 --port 5174
 ```
 
-The dev server runs on `http://localhost:3000` and proxies `/api/*` to `http://localhost:8001`.
+Use Node.js 20 or newer. The local dashboard runs on `http://127.0.0.1:5174` and proxies `/api/*` and `/camera/*` to `http://localhost:8001`.
 
-The `dev` script sets `WATCHPACK_POLLING=true` so Next.js's file watcher uses polling instead of FSEvents. This avoids the `EMFILE: too many open files` errors that happen on macOS because `launchctl limit maxfiles` defaults to 256 (way below what Next.js watches). Polling adds ~1-2% CPU and no dev-experience downside.
-
-If you want native FSEvents back (slightly lower idle CPU), raise the system limit permanently and remove the env vars from `web/package.json`:
-
-```bash
-sudo cp deploy/limit.maxfiles.plist /Library/LaunchDaemons/limit.maxfiles.plist
-sudo chown root:wheel /Library/LaunchDaemons/limit.maxfiles.plist
-sudo chmod 644 /Library/LaunchDaemons/limit.maxfiles.plist
-sudo launchctl load -w /Library/LaunchDaemons/limit.maxfiles.plist
-# reboot, then verify: launchctl limit maxfiles  -> 65536 65536
-```
-
-To regenerate the TypeScript types from the live FastAPI OpenAPI doc (the aggregator must be running):
-
-```bash
-cd web
-npm run gen:api-types   # writes src/types/api.generated.ts
-```
-
-`web/src/types/api.ts` is hand-curated and re-exports the friendly type names from the auto-generated file. Edit `api.ts` if you want to add aliases; never edit `api.generated.ts`.
+`app/frontend/src/types/api.ts` is hand-curated and re-exports friendly type names from the generated API types. Edit `api.ts` if you want to add aliases; do not edit `api.generated.ts` by hand unless you are intentionally refreshing the API snapshot.
 
 ## Customising the layout
 
@@ -105,14 +90,25 @@ uv run pytest skills/tests api/tests -q
 Frontend type-check and build:
 
 ```bash
-cd web
-npm run typecheck
+cd app/frontend
+npx vitest run
 npm run build
 ```
 
+## AWS dashboard deployment
+
+The AWS-oriented dashboard deployment lives in `.github/workflows/deploy.yml`
+and `platform/`. It keeps the dashboard deployable as a React + Python
+full-stack app while preserving the local lab server in `api/` for bench-top
+development.
+
+- Local lab work: run `api/` on port 8001 and `app/frontend/` on port 5174.
+- AWS deployment: build `app/frontend/`, deploy `app/backend/` as the Python
+  proxy, and configure `API_BACKEND_URL` to the reachable lab API endpoint.
+
 ## Deployment (Linux server with systemd)
 
-Both processes run as separate systemd services on one Tailscale-attached Linux server. There is no per-equipment authentication in v1 - access is gated by Tailscale ACLs.
+The lab API can run as a systemd service on one Tailscale-attached Linux server. There is no per-equipment authentication in v1 - access is gated by Tailscale ACLs.
 
 See [`deploy/README.md`](deploy/README.md) for:
 
@@ -127,7 +123,7 @@ For equipment onboarding and maintenance/offline procedures, see
 the canonical install recipe on a Windows device PC see
 [`docs/DEVICE_PC_SETUP.md`](docs/DEVICE_PC_SETUP.md).
 
-The unit files themselves live at [`deploy/ac-organic-lab-api.service`](deploy/ac-organic-lab-api.service) and [`deploy/ac-organic-lab-web.service`](deploy/ac-organic-lab-web.service). Both set `Restart=on-failure`, journal logging, `LimitNOFILE=65536`, and standard systemd hardening directives (`ProtectSystem=strict`, `NoNewPrivileges`, etc.).
+The lab API systemd unit lives at [`deploy/ac-organic-lab-api.service`](deploy/ac-organic-lab-api.service). The current dashboard frontend is the Vite app in `app/frontend/`; AWS deployment is configured separately in `.github/workflows/deploy.yml` and `platform/`.
 
 ## Cameras and smart plugs
 

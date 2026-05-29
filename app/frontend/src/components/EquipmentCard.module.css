@@ -1,0 +1,7 @@
+.card        { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: var(--space-4); }
+.card[data-state="error"]       { border-color: var(--color-error-dim); }
+.card[data-state="unreachable"] { border-color: var(--border-subtle); opacity: 0.7; }
+.header      { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-1); }
+.name        { font-family: var(--font-display); font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.id          { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.error       { font-family: var(--font-mono); font-size: 11px; color: var(--color-error); margin-top: var(--space-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

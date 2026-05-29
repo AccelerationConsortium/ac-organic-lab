@@ -12,7 +12,8 @@ This document describes the long-term architecture of the AC Organic Self-drivin
 - The equipment inventory (`equipment.yaml`)
 - The platform layout config (`platforms.yaml`)
 - The Python SDK that workflows, agents, and the dashboard use to drive the lab (`skills/`)
-- The dashboard's web server (`api/`) and Next.js UI (`web/`)
+- The lab API server (`api/`) and Vite React dashboard (`app/frontend/`)
+- The AWS dashboard proxy/deploy adapter (`app/backend/`, `platform/`)
 - Deployment and operations docs (`deploy/`, `docs/`)
 
 It does **not** house:
@@ -34,7 +35,7 @@ graph TB
       skills["skills SDK<br/>registry, aggregator, adapters,<br/>session, claims, plan validation, MCP"]
       api["api dashboard server<br/>presentation + history DB<br/>(db.py, history.py)"]
       db[("data/lab.db<br/>SQLite<br/>uptime · events<br/>sensors · runs")]
-      web["web Next.js UI<br/>(History tab, Equipment grid)"]
+      web["app/frontend React UI<br/>(monitoring, workflow canvas)"]
       yaml["equipment.yaml<br/>inventory"]
       platforms["platforms.yaml<br/>Overview layout"]
       spec["docs/STATUS_SPEC.md<br/>contract"]
@@ -60,14 +61,14 @@ graph TB
 Three responsibilities, three layers:
 
 1. **Device layer** — each instrument runs its own REST service implementing `STATUS_SPEC`. Authoritative for that device's state.
-2. **Platform layer** (this repo) — the SDK aggregates device state, provides typed control, manages claims/leases, and exposes the runtime skill catalog. The dashboard's web server is a thin client of the SDK. The Next.js UI calls the dashboard server.
+2. **Platform layer** (this repo) — the SDK aggregates device state, provides typed control, manages claims/leases, and exposes the runtime skill catalog. The lab API server is a thin client of the SDK. The React dashboard calls the lab API server locally, or the AWS proxy when deployed.
 3. **Application layer** — project workflows and agents consume the SDK to run experiments. Each project lives in its own repo with its own data model, recipes, and interlocks.
 
 ## Why a monorepo
 
 The pieces inside `ac-organic-lab/` change together. Putting them in one repo means:
 
-- One PR for cross-package changes (e.g. registry schema bumps that touch `skills/`, `api/`, and `web/` simultaneously)
+- One PR for cross-package changes (e.g. registry schema bumps that touch `skills/`, `api/`, and `app/frontend/` simultaneously)
 - One canonical `equipment.yaml` at the root, no path/URL/sync games
 - One CI pipeline with package-scoped jobs
 - The Python packages still publish independently — workflow project repos depend on `lab-skills` via package, not on the whole monorepo
@@ -93,8 +94,7 @@ ac-organic-lab/
 │   ├── OBSERVABILITY.md            # logging, events, history DB schema
 │   └── ROADMAP.md                  # milestone tracking
 ├── deploy/
-│   ├── ac-organic-lab-api.service    # systemd unit (FastAPI)
-│   └── ac-organic-lab-web.service    # systemd unit (Next.js)
+│   └── ac-organic-lab-api.service    # systemd unit (FastAPI lab API)
 ├── skills/                         # PYTHON: lab-skills SDK
 │   ├── pyproject.toml
 │   └── src/lab_skills/
@@ -109,20 +109,14 @@ ac-organic-lab/
 │       ├── history.py              # /api/history/* + /api/ingest/* routes
 │       ├── control.py              # control passthrough (cameras, plugs)
 │       └── presentation.py        # dashboard snapshot types + location
-└── web/                            # Next.js UI
-    └── src/
-        ├── app/
-        │   ├── page.tsx            # Overview (platforms.yaml-driven sections)
-        │   ├── history/page.tsx    # History tab (uptime, sensors, runs)
-        │   └── platforms/hte/      # HTE platform detail
-        ├── components/
-        │   └── Nav.tsx             # auto-injects platform tabs from /api/platforms
-        └── lib/
-            ├── use-equipment.ts    # React Query hook — equipment list
-            ├── use-platforms.ts    # React Query hook — platforms config
-            ├── api.ts              # typed fetch fns
-            ├── history-api.ts      # typed fetch fns for history endpoints
-            └── use-history.ts      # React Query hooks (30 s refetch)
+├── app/
+│   ├── frontend/                    # Vite React dashboard
+│   │   └── src/
+│   │       ├── pages/               # overview, history, energy, workflow
+│   │       ├── components/          # battery-dashboard-style UI
+│   │       └── services/            # typed API clients
+│   └── backend/                     # AWS deployment proxy to the lab API
+└── platform/                        # AC AWS deployment config
 ```
 
 ## Component responsibilities
@@ -151,13 +145,13 @@ Does **not** own:
 - Project chemistry or interlocks (those live in project repos)
 - LLM/agent code
 
-### `api/` — dashboard web server
+### `api/` — lab API server
 
-A FastAPI app that serves the dashboard. **Thin presentation + observability.**
+A FastAPI app that serves lab state, history, and control passthroughs. **Thin presentation + observability.**
 
 Owns:
 
-- HTTP routes consumed by the Next.js UI (`/api/equipment`, `/api/platforms`, `/api/health`)
+- HTTP routes consumed by the React dashboard (`/api/equipment`, `/api/platforms`, `/api/health`)
 - Presentation-only types (`EquipmentSnapshot`, tile layout, location coords, pill config)
 - The `_snapshot()` wrapper that decorates an SDK snapshot with dashboard-specific fields: `platform` and `tile` are resolved from `PlatformsConfig` at compose time; `pill` is forwarded from `EquipmentEntry.pills`
 - CORS / auth at the dashboard edge
@@ -176,13 +170,15 @@ Does **not** own:
 - Polling, adapters, or the registry model — all imported from `skills`
 - Any control logic — control calls are forwarded to device gateways verbatim
 
-### `web/` — Next.js UI
+### `app/frontend/` — React dashboard
 
-The user-facing dashboard. Reads from `api/`. No Python.
+The user-facing dashboard. Reads from `api/` in local development and from the AWS proxy in deployed environments. No Python.
 
-The Overview page (`page.tsx`) is entirely driven by `/api/platforms`: it iterates `sections` in order and dispatches on `kind` — `environmental_map` renders the `LabMap`; `platform` renders a `PlatformCard` with snapshots looked up by the section's equipment id list. Adding or reordering a section requires only a `platforms.yaml` edit; no frontend code changes.
+The dashboard shares visual conventions with the AC battery dashboard and includes overview, live monitoring, history, energy, alert, HTE platform, and workflow canvas pages.
 
-The Nav (`Nav.tsx`) auto-injects one tab per section that has an `href` field, between the static `Overview` and `History` tabs.
+### `app/backend/` — AWS dashboard proxy
+
+A small FastAPI proxy used by the AWS full-stack deployment. It forwards dashboard traffic to the reachable lab API backend configured by `API_BACKEND_URL`.
 
 ### `equipment.yaml` (root)
 
@@ -289,7 +285,7 @@ These are non-binding directional commitments — not a roadmap.
 
 ### LG1. Multi-lab portability
 
-The platform should run unchanged in a second lab. Only `equipment.yaml`, `platforms.yaml`, deployment config, and the binding YAMLs in project repos differ between labs. No per-lab forks of `skills/`, `api/`, or `web/`.
+The platform should run unchanged in a second lab. Only `equipment.yaml`, `platforms.yaml`, deployment config, and the binding YAMLs in project repos differ between labs. No per-lab forks of `skills/`, `api/`, or `app/frontend/`.
 
 ### LG2. Spec-first device migrations
 

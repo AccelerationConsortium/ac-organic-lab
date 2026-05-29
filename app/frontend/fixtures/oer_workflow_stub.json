@@ -1,0 +1,35 @@
+{
+  "workflow_name": "Test",
+  "version": "1.0",
+  "description": "Minimal stub for testing",
+  "phases": [
+    {
+      "phase_name": "setup",
+      "description": "Initialise hardware",
+      "steps": [
+        { "step_id": "s1", "action": "robot.home", "params": {}, "description": "Home the robot arm" },
+        { "step_id": "s2", "action": "ot2.pick_tip", "params": {}, "description": "Pick up a tip" }
+      ]
+    },
+    {
+      "phase_name": "batch_deposition",
+      "description": "Deposit samples",
+      "for_each_spot": true,
+      "parallel_threads": [
+        {
+          "thread_name": "dispense",
+          "steps": [
+            { "step_id": "t1_s1", "action": "dose_every_well.dispense", "params": { "volume_ul": 5 } }
+          ]
+        }
+      ]
+    },
+    {
+      "phase_name": "teardown",
+      "description": "Clean up",
+      "steps": [
+        { "step_id": "z1", "action": "robot.home", "params": {} }
+      ]
+    }
+  ]
+}

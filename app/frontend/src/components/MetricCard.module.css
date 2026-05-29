@@ -1,0 +1,132 @@
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  transition: all var(--transition-base);
+  position: relative;
+  overflow: hidden;
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: transparent;
+  transition: background var(--transition-base);
+}
+
+.card:hover {
+  border-color: var(--border-default);
+  transform: translateY(-1px);
+}
+
+/* Variants */
+.accent::before {
+  background: linear-gradient(90deg, var(--color-accent) 0%, var(--color-accent-bright) 100%);
+}
+
+.success::before {
+  background: var(--color-success);
+}
+
+.warning::before {
+  background: var(--color-warning);
+}
+
+.error::before {
+  background: var(--color-error);
+}
+
+/* Sizes */
+.sm {
+  padding: var(--space-2) var(--space-3);
+}
+
+.sm .value {
+  font-size: 1.25rem;
+}
+
+.lg {
+  padding: var(--space-4) var(--space-5);
+}
+
+.lg .value {
+  font-size: 2rem;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.icon {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+.valueRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.value {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.trend-up {
+  color: var(--color-success);
+  background: var(--color-success-dim);
+}
+
+.trend-down {
+  color: var(--color-error);
+  background: var(--color-error-dim);
+}
+
+.trend-neutral {
+  color: var(--text-tertiary);
+  background: var(--bg-elevated);
+}
+
+.sublabel {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
