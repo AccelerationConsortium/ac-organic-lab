@@ -166,7 +166,10 @@ The SDK uses these in priority order:
 
 1. If `status.allowed_actions` is present (STATUS_SPEC v1.1 device), use it directly. The local table is a *hint* for missing fields like `description` and `args_schema`.
 2. Else fall back to `def.requires_states` (v1.0 devices).
-3. Independently of which source resolves the state check, also enforce `def.requires_components` as an AND-gate. Example: `seal.start` carries `requires_components={"heater": "stable"}` so even a v1.1 device that lists `seal.start` in `allowed_actions` will be reported `available=False` from `lab.skills()` while the heater is heating — matching the device's own layer-1 HTTP 412 refusal (plateloc v1.2+).
+3. Independently of which source resolves the state check, also enforce `def.requires_components` as an AND-gate. Examples in the registered catalog:
+   - **`plate_sealer.seal.start`** — `requires_components={"heater": "stable", "stage": "in"}`. Mirrors plateloc v1.3+'s two-precondition HTTP 412 (heater band + stage interlock). The dashboard tile pre-checks both client-side; `lab.skills()` would also report `available=False` if either condition fails.
+   - **`shaker.shake.start`** — `requires_components={"motor": "idle"}`. Motor-only AND-gate so a heater-side `degraded` (e.g. SC25XR `cal3` RTD fault) doesn't block shaking. The corresponding heater-side action `shaker.shake.set_temperature` carries the complementary `requires_components={"heater": "stable"}` so it stays unavailable when the heater is the failing subsystem.
+   - **`liquid_handler.lights.set`** (OT-2 deck-light) — `requires_states=[]`, no `requires_components`. Convenience-class control; advertised in `allowed_actions` whenever the robot is reachable regardless of `equipment_status`.
 
 This means devices migrating to v1.1 progressively make the catalog more accurate without any SDK rebuild. The SDK never needs to "know" the precondition rules of a specific device — the device declares them. `requires_components` is a curated SDK-side hint for the cases where the device's coarse state (or `allowed_actions`) is too permissive for a specific action.
 

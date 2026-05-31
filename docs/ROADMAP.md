@@ -7,26 +7,78 @@ milestone (v0.4) starts. The original layered plan lives in
 its committed companion so the project state is recoverable without the
 Cursor plan UI.
 
-## Current state (last fleet sweep: 2026-05-09)
+## Current state (last fleet sweep: 2026-05-30)
 
 | Milestone | Scope | Status |
 |-----------|-------|--------|
 | **v0.1** | Monorepo + skills SDK foundation + aggregator move | ✅ shipped on `main` |
 | **v0.2** | `EquipmentClient.command`, sync wrapper, control exceptions, skill catalog, `LabSession.skills()`, typed per-kind clients | ✅ shipped on `main` |
 | **v0.3** | STATUS_SPEC v1.1 spec doc, `ClaimManager`, `Plan` / `validate_plan` / `PlanReport`, `Violation` + `register_interlock`, two built-in interlocks, graceful degradation for v1.0 devices | ✅ shipped on `main` |
-| **v0.4** | MCP server companion (catalog → tools, `/status` → resources, CLI `lab-skills mcp serve`) | ⏸ paused, but the *fleet-readiness* reason has been cleared — see *Why v0.4 is paused* below |
+| **v0.4** | MCP server companion (catalog → tools, `/status` → resources, CLI `lab-skills mcp serve`) | ⏸ paused on the v0.3 SDK carry-overs; fleet readiness comfortably cleared |
 | **v0.5** | Standalone `lab-skills serve` CLI exposing the aggregator as a long-lived HTTP service | not started |
 
-`uv run pytest -q` from the repo root: **137 passed** (98 v0.1/v0.2 + 8 claims
-+ 14 plan/interlocks + 17 platforms-refactor). Dashboard `/api/equipment` is verified
-end-to-end on `http://100.64.254.6:3000/api/equipment`. Of the 17 registered
-devices (3 added since the sweep: `plug_hte_strip_right`, `plug_hte_strip_left`,
-`pypoe_web`): 7+ return live data from real hardware; 4 environmental sensors
-emit synthetic readings; 1 BioStack is an explicit `mock` placeholder;
-`cam_hte_tapo_c245` and the two power strips are offline because
-`kasa-tapo-services` is not running; `dose_every_well`'s placeholder hostname
-was resolved in the equipment.yaml rewrite — service reachability unverified.
-See *Operational regressions* below.
+**Fleet snapshot (live, all on `adapter: http`).** Zero `legacy_http`,
+zero `mock` left in `equipment.yaml`. Thirteen devices respond live
+from real hardware (`cam_hte_tapo_c245`, both `plug_hte_strip_*`,
+`fume_hood_actuator`, `xarm_translocation`, `ot2`, `dose_every_well`,
+`torry_pines_shaker`, `filter_every_well`, `plateloc`, `cytation_5`,
+`agilent_uplc_ms`, `agilent_biostack`, `pypoe_web`); the four `env_*`
+environmental sensors are still synthesised pending the `env_sensors`
+repo.
+
+**Protocol mix.** Eight devices reach `protocol_version: "1.1"` on
+their live `/status` envelope (`fume_hood_actuator`,
+`xarm_translocation`, `ot2`, `torry_pines_shaker`, `filter_every_well`,
+`plateloc`, `cytation_5`, `pypoe_web`); the rest are v1.0. The
+`lab-status-contract` shared-package threshold ("3+ repos cleanly on
+v1.1 for ~1 month") is comfortably cleared.
+
+**Skill catalog inventory** (`SKILL_REGISTRY` keys, count of `SkillDef`s
+each):
+
+| Kind | n | Notes |
+|------|---|-------|
+| `fume_hood` | 2 | `sash.move`, `sash.stop` |
+| `liquid_handler` | 1 | `lights.set` (OT-2 deck-light convenience control) |
+| `plate_reader` | 11 | Mirrors `agilent-cytation-server` `/control/*` surface |
+| `plate_sealer` | 8 | Includes 412-precondition skills with `requires_components` (heater + stage) |
+| `press` | 6 | `init`, `stop`, `press.{up,down}`, `plate.{in,out}` |
+| `robot_arm` | 0 | xArm has no SkillDefs yet (gateway-PC shim deferred) |
+| `shaker` | 6 | `startup`, `shutdown`, `shake.{start,stop,set_temperature,set_speed}` with motor/heater AND-gates so a heater-side `degraded` doesn't block shaking |
+| `solid_doser` | 12 | `dose.{well,multiple,row,column}` etc. |
+
+**Cross-repo changes since the last sweep.**
+
+- **`kasa_tapo_services`** ships WebRTC opt-in via `bootstrap_go2rtc.py`
+  — the rendered `go2rtc.yaml` now carries a `webrtc:` block
+  (`0.0.0.0:8555/tcp` by default + a MagicDNS `candidates` entry from
+  `GO2RTC_WEBRTC_HOST`). MSE keeps working alongside until the
+  dashboard's `MsePlayer → WebRtcPlayer` swap lands. Drops PTZ video
+  latency from ~0.5–1.5 s (MSE) to ~100–300 ms (WebRTC).
+- **Dashboard control path** now shares one `httpx.AsyncClient` across
+  every `/api/equipment/{id}/control/{action}` request (lifespan-owned
+  at `app.state.control_client`). For v1.1 devices the
+  claim → action → release dance reuses one keep-alive socket instead
+  of paying TCP handshake × 3 per click; on warm sockets the
+  per-action overhead drops from ~3 RTTs to ~0.
+- **OT-2 deck-light toggle**: `opentrons-server` now exposes
+  `POST /control/lights` (claim-gated), publishes `components.lights`
+  and `lights.set` in `allowed_actions`. The matching `SkillDef` is in
+  `skill_catalog/liquid_handler.py`; the dashboard renders a dedicated
+  `LiquidHandlerTile` whose Lights row bypasses the `CONTROL_PASSWORD`
+  gate (via `actionBypassesControlGate("lights")` in `tile-policy.ts`).
+- **xArm5 tile** redesigned as three single-line component rows
+  (Arm / Gripper / Track) reading state + selected metrics directly
+  from `components.{arm,gripper,track}` and `metrics.{tcp_speed,
+  angle_speed,track_position,force_magnitude}` plus
+  `details.motion_graph.rail_location_name` for the at-preset pill.
+  Redundant generic metric/component lists removed.
+
+`uv run pytest -q` passes end-to-end; `api/tests` 24/24,
+`skills/tests/test_skill_catalog.py` 10/10 (including the new
+`test_liquid_handler_catalog_registered`),
+`kasa_tapo_services/tests` 70/70 (including 4 new WebRTC-render
+assertions).
 
 ## Why v0.4 is paused
 
@@ -35,28 +87,26 @@ v0.3 shipped the *SDK side* of the v1.1 contract. The agent-facing payoff —
 intact" — needs at least one device that actually implements
 `/control/{claim,heartbeat,release}` and populates `allowed_actions`.
 
-That bar is now cleared on the device side. As of the 2026-05-09 liveness
-sweep against `http://100.64.254.6:3000/api/equipment`, five devices
-respond on `adapter: http`:
+That bar is comfortably cleared on the device side. As of the
+2026-05-30 liveness sweep, **eight** devices reach
+`protocol_version: "1.1"` on their live `/status` envelope with
+non-empty `allowed_actions`:
 
-- `plateloc` at `protocol: "1.1"`, reporting `allowed_actions: ["startup"]`
-- `ot2` at `protocol: "1.1"`, reporting `allowed_actions: ["startup"]`
-- `xarm_translocation`, `agilent_uplc_ms`, `cytation_5` at `protocol: "1.0"`
+| Device | `allowed_actions` (live) |
+|---|---|
+| `plateloc` | `["startup", "shutdown", "seal.set_temperature", "seal.set_time", "stage.in", "stage.out"]` |
+| `ot2` | `["shutdown", "home", "setup", "pause", "pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware", "lights.set"]` |
+| `cytation_5` | `["claim", "heartbeat", "release", "shutdown", "drawer.open", "drawer.close", "plate.load", "plate.unload", "well.update", "read.absorbance", "read.fluorescence", "read.luminescence", "imaging.capture"]` |
+| `filter_every_well` | `["stop", "press.up", "press.down", "plate.in", "plate.out"]` |
+| `fume_hood_actuator` | `["sash.move", "sash.stop"]` |
+| `torry_pines_shaker` | `["startup", "shutdown", "shake.start", "shake.set_temperature", "shake.set_speed"]` |
+| `xarm_translocation` | `["stop"]` (gateway-PC shim still deferred) |
+| `pypoe_web` | `[]` (read-only web service) |
 
-The fleet is no longer the bottleneck for v0.4. **What is blocking now:**
-
-1. **v0.3 carry-overs** (`execute_plan`, async interlocks, sync façades —
-   listed below) need to land before MCP can wrap them as tools.
-2. **One remaining operational regression** must be cleared:
-   - `kasa-tapo-services` is not running on the dashboard host; the
-     camera tile and both power-strip tiles report `connection_refused`
-     on `127.0.0.1:8002`.
-   - ~~`dose_every_well` placeholder hostname~~ — **resolved**: the
-     equipment.yaml rewrite replaced `doser.tail-XXXX.ts.net` with the
-     real Tailscale name `sdl2-pi5-minicnc.tail6a1dd7.ts.net`. Service
-     reachability still needs a live poll to confirm.
-
-   See *Operational regressions* below.
+The fleet is no longer the bottleneck for v0.4. **What is blocking
+now is purely SDK-internal:** the v0.3 carry-overs (`execute_plan`,
+async interlocks, sync façades — listed below) need to land before
+MCP can wrap them as tools.
 
 The deferred SDK items below are the v0.4 / v0.4.5 carry-over list.
 
@@ -80,42 +130,51 @@ Each per-device repo is migrated independently. The dashboard's
 → `http` once `/status` is `EquipmentStatus`-shaped, and `protocol:
 "1.0"` → `"1.1"` once the device implements claims.
 
-### Verified state (2026-05-09 liveness sweep)
+### Verified state (2026-05-30 liveness sweep)
 
-Probed against `http://100.64.254.6:3000/api/equipment` and, for
-legacy devices, directly against the device port to confirm the
-response shape.
+Probed against `http://127.0.0.1:8001/api/equipment` on the dashboard
+host. Spec is what the device's live `/status` envelope reports — the
+yaml `protocol:` mirror is the registry's expectation and is
+occasionally ahead of the device.
 
-| Device | Adapter | Spec | Live | Notes |
+| Device | Adapter | Spec (live) | Live state | Notes |
 |---|---|---|---|---|
-| `xarm_translocation` | `http` | 1.0 | ✅ `requires_init` | Idle, healthy. `/control/*` deferred to gateway-PC shim discussion. |
-| `agilent_uplc_ms` | `http` | 1.0 | ✅ `ready` | `agilent-hplcms-server` shipped. Read-only sidecar over `moses` + OpenLab. Polling latency ~1.5 s — borderline against the 5 s timeout if OpenLab WMI gets slower. |
-| `ot2` | `http` | 1.1 | ✅ `requires_init`, `allowed_actions: ["startup"]` | `opentrons-server` shipped: SSH transport, FastAPI gateway, claim/lease scaffolding. v1.1 server side; physical OT-2 idle until `/control/startup`. |
-| `cytation_5` | `http` | 1.0 | ✅ `dry_run` | `agilent-cytation-server` shipped (PyLabRobot-backed). That repo's own roadmap: Phase 0+1 done; Phase 2 (per-well sample tracking), Phase 3 (v1.1 + `/control/*`), Phase 4 (skill catalog) still ahead. |
-| `plateloc` | `http` | 1.1 | ✅ `requires_init`, `allowed_actions: ["startup"]`, `last_error: COM driver` | Server v1.1 deployed and answering. Physical PlateLoc not responding to the COM control — distinct issue from spec conformance, tracked under *Operational regressions*. |
-| `cam_hte_tapo_c245` | `http` | 1.0 | ❌ `connection_refused` | Aggregator can't reach `127.0.0.1:8002`. `kasa-tapo-services` is not running on the dashboard host. *Operational regression.* |
-| `filter_every_well` | `http` | 1.1 | ✅ `ready` / `requires_init` | Migrated to STATUS_SPEC v1.1. `/status` returns `EquipmentStatus` with `allowed_actions`. Control endpoints under `/control/*`. Claim/heartbeat/release enforced (`ENFORCE_CLAIMS=True`). |
-| `fume_hood_actuator` | `http` | 1.1 | 🟡 unverified | Migrated from Flask to FastAPI; conforms to STATUS_SPEC v1.1 (`/control/sash/{move,stop}`, claim/heartbeat/release, `allowed_actions`, `details.claimed_by`). Dashboard's dedicated `/sash/*` passthrough collapsed into the generic `/control/{action}` path. `LegacyFumeHoodActuatorAdapter` retired from the factory (kept importable for one cycle). Live `/status` reachability against the Pi at `100.64.254.100:5000` not yet confirmed since the rewrite. |
-| `dose_every_well` | `http` | 1.1 | 🟡 unverified | Placeholder hostname resolved: `sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`. Adapter flipped to `http`, `protocol: "1.1"`. Live reachability not confirmed since the equipment.yaml rewrite. |
-| `torry_pines_shaker` | `http` | 1.1 | ✅ `degraded` | `torry-pines-shaker-server` shipped, NSSM installed on `sdl2-pc-03-cytation:8030`, COM5 connected, end-to-end 2 s shake verified (claim → `shake.start` → server-owned watchdog → motor returns to idle 0). Three `matterlab_shakers` vendor bugs worked around locally (`Shaker.__init__(errors=…)`, `self.errors` never set, `connect()` reads non-existent `device_serial_number`). Pinned at `degraded` because the SC25XR controller (serial 50014748) returns vendor error code `cal3` to every `p` temperature query — RTD calibration table on the controller is inverted/corrupt and needs re-flashing per the Torrey Pines manual. Motor side is healthy. Also: `service.get_status()` holds the service lock across 4 serial round-trips (~1.7 s); under the dashboard's 2–3 s poll cadence this starves out concurrent `/control/*` calls — operational fix queued in the device repo (drop the duplicate `idle` read; release the lock around serial reads). |
-| `agilent_biostack` | `mock` | — | — | No driver. `required_actions: ["integrate_repo"]`. |
-| `env_*` (4 sensors) | `mock` | — | — | Synthesised readings. Awaiting `env_sensors` repo. |
+| `cam_hte_tapo_c245` | `http` | 1.0 | ✅ `ready` | `kasa-tapo-services` gateway back up. Full PTZ / presets / privacy / streaming / snapshot / recording / rolling-recorder surface in `allowed_actions`. WebRTC opt-in now available in the gateway (see *Cross-repo changes*). |
+| `plug_hte_strip_right` / `plug_hte_strip_left` | `http` | 1.0 | ✅ `ready` | HS300 power strips. `on` / `off` / `toggle`. Per-outlet "safe vs destructive" decided client-side by `outletIsSafe()` against the gateway label. |
+| `fume_hood_actuator` | `http` | 1.1 | ✅ `ready`, `allowed_actions: ["sash.move", "sash.stop"]` | v1.1 FastAPI service deployed on the Pi at `100.64.254.100:5000`. Round-trip verified from the `FumeHoodTile`. |
+| `xarm_translocation` | `http` | 1.1 | ✅ `ready`, `allowed_actions: ["stop"]` | Device now serves v1.1; `equipment.yaml` reflects that. Dashboard renders the redesigned three-row `RobotArmTile`. `/control/*` surface beyond `stop` still deferred to the gateway-PC shim discussion. |
+| `ot2` | `http` | 1.1 | ✅ `ready`, `allowed_actions` includes protocol actions **+ `lights.set`** | `opentrons-server` exposes `/control/lights`; dashboard's `LiquidHandlerTile` consumes it. Gateway snapshot path (`details.snapshot`) populates real deck/pipette/labware JSON pulled from the live `protocol` over SSH — no `opentrons_server` install on the robot itself. Protocol-execution actions (setup/home/aspirate/…) advertised but no matching SkillDefs yet (typed protocol args still pending). |
+| `dose_every_well` | `http` | 1.0 (device) / 1.1 (registry mirror) | ✅ `requires_init`, `allowed_actions: []` | Live and answering on `sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`. Device still on the pre-v1.1 envelope (legacy `SystemStatus` lifted enough to validate as v1.0); v1.1 work tracked in its sub-task below. |
+| `torry_pines_shaker` | `http` | 1.1 | ✅ `ready`, `allowed_actions: ["startup", "shutdown", "shake.start", "shake.set_temperature", "shake.set_speed"]` | The 2026-05-09 `cal3` degrade has been cleared. Service-lock contention partly mitigated by capping `poll_timeout_seconds` at 2.5 s so the shaker fails fast under contention rather than dragging the fleet — restore once the device-repo `_build_status` read-off-lock fix ships. |
+| `filter_every_well` | `http` | 1.1 | ✅ `ready`, `allowed_actions: ["stop", "press.up", "press.down", "plate.in", "plate.out"]` | v1.1 migration shipped + deployed on the Pi at `100.64.254.104`. PressTile, per-direction `hold_time` inputs, claim/release per request all verified. |
+| `plateloc` | `http` | 1.1 | ✅ `ready`, full sealer `/control/*` surface advertised | Hardware reached and operational since the COM-profile fix on the device PC. `seal.start` gated by stage-in + heater-stable interlocks (412 mirror with `requires_components` AND-gate). `_lock` → real claim/heartbeat/release deepening is still the only v1.1 carry-over in its sub-task below. |
+| `cytation_5` | `http` | 1.1 | ✅ `ready`, 13 actions allowed (`read.{absorbance,fluorescence,luminescence}`, `imaging.capture`, drawer / plate / well) | Phase 3 (v1.1 + `/control/*`) and Phase 4 (skill catalog in this monorepo) **shipped** since the last sweep. Phase 2 (per-well sample tracking surfaced under `details.loaded_plate`) is the remaining device-repo work. |
+| `agilent_uplc_ms` | `http` | 1.0 | ✅ `ready` | `agilent-hplcms-server` read-only sidecar. Polling latency ~1.5 s — borderline against the 5 s timeout if OpenLab WMI degrades; raise to 8 s if it ever errors. |
+| `agilent_biostack` | `http` | 1.0 | ✅ `ready` | Driver landed since the last sweep; entry flipped from `mock` to `http`. No `/control/*` surface yet (`allowed_actions: []`); read-only for now. |
+| `pypoe_web` | `http` | 1.1 | ✅ `ready` | Internal web service. No control surface. |
+| `env_*` (4 sensors) | `http` (mock backend) | 1.0 | dry_run (synthesised) | Awaiting the `env_sensors` repo. Not on the v0.4 critical path. |
 
 ### Remaining migration work (priority order)
 
-1. **`dose_every_well` (solid_doser)** — hostname is resolved; same
-   migration shape as `filter_every_well` once service is reachable.
-   Confirm live `/status`, then proceed with the v1.0 checklist below.
-2. **`agilent-plateloc-server` (claim semantics depth)** — server is at v1.1
-   but `_lock` is still the placeholder. Real claim/heartbeat/release
-   with TTL expiry is the highest-value carry-over from this section
-   and is what gives v0.4 something to validate against.
-3. **`xarm_translocation` (graduating control ops)** — gateway-PC shim
-   discussion still open; defer per existing note.
-4. **`agilent_biostack`** — no driver, no migration. Without a stacker
-   driver the xArm is the only plate mover, which makes it both a
-   throughput bottleneck and a single point of failure for the
-   solubility workflow.
+1. **`agilent-plateloc-server` (claim semantics depth)** — server is at
+   v1.1 but `_lock` is still the placeholder. Real claim/heartbeat/
+   release with TTL expiry is the highest-value carry-over from this
+   section and is what gives v0.4 something to validate against.
+2. **`dose_every_well` (solid_doser) v1.0 → v1.1** — service is live
+   on `sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000` but the device still
+   serves the legacy envelope. v1.0 conformance checklist below; v1.1
+   layer afterwards.
+3. **`agilent_biostack` (plate_stacker) `/control/*` surface** —
+   driver landed and is on `adapter: http` v1.0 read-only. Until it
+   grows control endpoints the xArm is the lab's only plate-mover,
+   which makes it both a throughput bottleneck and a single point of
+   failure for the solubility workflow.
+4. **`xarm_translocation` (graduating control ops)** — gateway-PC shim
+   discussion still open; defer per existing note. Device reaches
+   v1.1 on the envelope but only advertises `stop`.
+5. **`agilent-cytation-server` Phase 2** — per-well sample tracking
+   under `details.loaded_plate`. Phases 3 and 4 (v1.1 +
+   `/control/*`, skill catalog) already shipped.
 
 ### Per-device migration checklist (v1.0)
 
@@ -168,25 +227,23 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 #### `agilent-plateloc-server`
 
 - v1.0 conformance: ✅ shipped.
-- v1.1 deployment: ✅ live as of 2026-05-09. `equipment.yaml` flipped to
+- v1.1 deployment: ✅ live and reaching `ready`. `equipment.yaml` at
   `adapter: http`, `protocol: "1.1"`, `base_url:
-  http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8010`.
-  `/status` returns `protocol_version: "1.1"`, `equipment_status:
-  "requires_init"`, `allowed_actions: ["startup"]`.
-- Outstanding hardware issue (not a spec issue): `last_error.code =
-  "startup"`, "Initialize('sdl2') failed (code -2147221503). Could
-  not initialize - No response from PlateLoc". The COM driver cannot
-  reach the physical sealer; the README hints to use the Diagnostics
-  dialog to fix the profile.
+  http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8010`. `/status` now
+  reports `equipment_status: "ready"`, full sealer surface
+  (`startup`, `shutdown`, `seal.set_temperature`, `seal.set_time`,
+  `stage.in`, `stage.out`) in `allowed_actions`. The 2026-05-09 COM
+  driver `Initialize('sdl2') failed` symptom has been cleared since
+  the Diagnostics-dialog profile fix on the device PC.
 - Open work for v1.1 *depth* (the v0.4 reference-device work):
   - [✅] Bump `PROTOCOL_VERSION` to `"1.1"` and serve it on `/`.
-  - [✅] Populate `allowed_actions` based on current state
-    (currently `["startup"]` while `requires_init`).
+  - [✅] Populate `allowed_actions` based on current state.
+  - [✅] `seal.start` interlocks (heater-stable + stage-in,
+    412-mirroring `allowed_actions`) wired across device + SDK +
+    dashboard tile (`requires_components` AND-gate in the SkillDef).
   - [ ] Replace `_lock` (currently in `service.py`) with a real
     claim/heartbeat/release implementation.
   - [ ] Add `claim_token` storage + TTL expiry.
-  - [ ] Populate `allowed_actions` for `ready` (`["seal.start",
-    "seal.set_temperature", ...]`) and the other states.
   - [ ] Populate `details.claimed_by` while a claim is held.
   - [ ] Snapshot fixtures for the three claim states.
 
@@ -288,29 +345,29 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 
 #### `xarm_translocation`
 
-- v1.0 read-only conformance: ✅ landed. The FastAPI service in
-  `xarm-translocation` exposes `GET /`, `GET /health`, `GET /status`
-  via the standard `EquipmentStatus` envelope (see
-  `xarm-translocation/src/core/models.py` and `status_builder.py`).
-  The web UI moved from `/` to `/web/`. Browser status fetches and
-  WebSocket pushes both carry the spec envelope.
-- `equipment.yaml` flipped from `adapter: legacy_http` to
-  `adapter: http`, with `protocol: "1.0"`. `do_not_call_connect: true`
-  is retained because the SDK still has no skill catalog or
-  `/control/*` surface for the xArm.
-- `LegacyXArmAdapter` is marked deprecated in
-  `skills/src/lab_skills/status_adapters/legacy.py` and is no longer
-  wired in the factory; it stays importable for one release cycle as
-  a rollback path, then deletes in a follow-up PR.
+- v1.0 read-only conformance: ✅ landed (`xarm-translocation` FastAPI
+  service exposes `GET /`, `GET /health`, `GET /status` via
+  `EquipmentStatus`).
+- v1.1 envelope: ✅ live. Device now reports `protocol_version: "1.1"`
+  with `allowed_actions: ["stop"]` and a populated
+  `components.{arm,gripper,track,force_torque}` block. `equipment.yaml`
+  flipped to `protocol: "1.1"`.
+- Dashboard: the dedicated `RobotArmTile` now renders three single-row
+  component summaries (Arm: status + TCP / Ang speed; Gripper: status
+  + stroke range + force; Track: status + position + rail preset
+  pill). The previous `EquipmentStatusCard` fallback was retired for
+  this kind.
 - Open work, not in this round:
   - [ ] Resolve the gateway-PC shim architecture (xArm on a private
     subnet behind a PC running a thin REST proxy) before exposing any
-    `/control/*`.
+    `/control/*` beyond `stop`.
   - [ ] Promote one unit operation at a time to `/control/<op>` and
     add a matching `SkillDef` in
-    `skills/src/lab_skills/skill_catalog/robot_arm.py`.
-  - [ ] STATUS_SPEC v1.1 (claim/heartbeat/release,
-    `allowed_actions`) once at least one `/control/*` action exists.
+    `skills/src/lab_skills/skill_catalog/robot_arm.py` (currently
+    intentionally empty).
+  - [ ] Publish current gripper stroke as
+    `metrics.gripper_position` so the tile shows live position
+    instead of the static range pill (slot already wired client-side).
 
 #### `agilent_uplc_ms` (newly shipped)
 
@@ -328,111 +385,126 @@ A repo is considered v1.1 conformant when, on top of v1.0:
   cost. If this regresses, raise `poll_timeout_seconds` to 8 s
   before it starts erroring.
 
-#### `ot2` (newly shipped)
+#### `ot2`
 
 - Repo: `opentrons-server` — split into `transport/` (SSH),
   `control/` (OT-2 wrapper + state readers), `gateway/` (FastAPI
   service + claims), `labware/`.
-- Conformance: STATUS_SPEC v1.1. Live `/status` returns
-  `protocol_version: "1.1"`, `equipment_status: "requires_init"`,
-  `allowed_actions: ["startup"]`, with a snapshot of deck / pipettes /
-  labwares / modules.
-- This is the second v1.1 device alongside `plateloc`, which means
-  v0.4 has more than one reference target — good for catalog
-  ergonomics work.
+- Conformance: STATUS_SPEC v1.1. Live `/status` now reaches `ready`
+  with `allowed_actions: ["shutdown", "home", "setup", "pause",
+  "pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware",
+  "lights.set"]`.
+- **Deck-light toggle shipped** (this round): `POST /control/lights`
+  is claim-gated; `components.lights` (`on`/`off`/`unknown`) +
+  `"lights.set"` in `allowed_actions`. The matching SkillDef lives at
+  `skill_catalog/liquid_handler.py` (`requires_states=[]` — always
+  available); the dashboard renders a dedicated `LiquidHandlerTile`
+  whose Lights row bypasses the `CONTROL_PASSWORD` gate via
+  `actionBypassesControlGate("lights")` in `tile-policy.ts`.
+- Open work:
+  - [ ] SkillDefs + typed args for the protocol-execution actions
+    (`setup`, `home`, `aspirate`, `dispense`, `pick_up_tip`,
+    `drop_tip`, `move_labware`). These need labware-typed parameters
+    the catalog has no shapes for yet.
 
-#### `cytation_5` (newly shipped)
+#### `cytation_5`
 
 - Repo: `agilent-cytation-server` — PyLabRobot-backed driver wrapped
   in a STATUS_SPEC service.
-- Conformance: STATUS_SPEC v1.0 (read-only). Live `/status` reports
-  `equipment_status: "dry_run"` because the physical Cytation 5 is
-  not yet wired to the lab PC's USB; the service is up and answering
-  with the spec envelope (components: optics / incubator /
-  plate_stage / imaging; metrics: actual_temperature, read_count).
-- That repo carries its own multi-phase roadmap:
-  - Phase 0+1 — STATUS_SPEC v1.0 read-only, `equipment.yaml` flips
-    from `mock` to `http`. **✅ done.**
-  - Phase 2 — per-well sample tracking (PyLabRobot
-    `Container`/`Plate`/`Well` + orchestrator-assigned `sample_id`,
-    surfaced under `details.loaded_plate`).
+- Conformance: STATUS_SPEC **v1.1** live. `/status` reaches `ready`
+  with `allowed_actions` advertising all 13 actions
+  (`claim`/`heartbeat`/`release`, `shutdown`, `drawer.open`/`close`,
+  `plate.load`/`unload`, `well.update`, the three `read.*` modes,
+  `imaging.capture`). `equipment.yaml` reflects `protocol: "1.1"` and
+  the v1.1 envelope.
+- That repo's multi-phase roadmap:
+  - Phase 0+1 — STATUS_SPEC v1.0 read-only. **✅ done.**
+  - Phase 2 — per-well sample tracking (`details.loaded_plate` from
+    `Container`/`Plate`/`Well` + orchestrator-assigned `sample_id`).
+    Still ahead.
   - Phase 3 — STATUS_SPEC v1.1 (`/control/claim,heartbeat,release`,
-    `allowed_actions`, full `/control/*`).
+    `allowed_actions`, full `/control/*`). **✅ done.**
   - Phase 4 — `lab_skills/skill_catalog/plate_reader.py` registered
-    in this monorepo.
+    in this monorepo. **✅ done** (11 SkillDefs).
 
 #### `kasa-tapo-services` (camera + smart-plug gateway)
 
 - Repo: `kasa_tapo_services` — STATUS_SPEC v1.0 gateway that fronts
-  Tapo cameras (PTZ, presets, snapshot, recording) and Kasa plugs.
-  Bound to `127.0.0.1:8002` on the dashboard host (intentional;
-  cameras and plugs are lab-LAN only).
-- Status as of 2026-05-09: gateway process is **not running** on the
-  dashboard host. The dashboard's camera tile reports
-  `connection_refused`. The full media + control passthrough surface
-  is therefore offline. See *Operational regressions*.
+  Tapo cameras (PTZ, presets, snapshot, recording, rolling-recorder)
+  and Kasa plugs (HS300 strips, HS103 single plugs). Bound to
+  `127.0.0.1:8002` on the dashboard host (intentional; cameras and
+  plugs are lab-LAN only).
+- Status as of 2026-05-30: gateway is **live and answering**. The
+  2026-05-09 `connection_refused` regression has been cleared.
+  `cam_hte_tapo_c245` and both HS300 power-strip tiles render real
+  state.
+- **WebRTC opt-in shipped** (this round): `bootstrap_go2rtc.py` now
+  emits a `webrtc:` block in the rendered `go2rtc.yaml`
+  (`0.0.0.0:8555/tcp` by default; MagicDNS `candidates` from
+  `GO2RTC_WEBRTC_HOST`). Reduces PTZ video latency from ~0.5–1.5 s
+  (MSE) to ~100–300 ms (WebRTC). MSE keeps working alongside; the
+  dashboard's `MsePlayer → WebRtcPlayer` swap is the follow-up that
+  flips the user-visible behaviour and lives in `ac-organic-lab/web/`.
 
-#### Mock-only entries
+#### Remaining mock-only entries
 
-The remaining yaml entries (`agilent_biostack`, env sensors) stay
-`adapter: mock` until their respective repos exist. They are
-intentionally not on this round's critical path. Note that
-`agilent_biostack` is the only plate-stacker in the inventory: while
-it is mock, the xArm is the sole plate-mover for the entire
-solubility workflow, which makes it both a throughput bottleneck and
-a single point of failure. Promoting BioStack should be queued behind
-the legacy_http migrations but ahead of v0.5.
+The four `env_*` environmental sensors stay synthesised pending the
+`env_sensors` repo. They are intentionally not on this round's
+critical path. `agilent_biostack` has graduated from `mock` to `http`
+v1.0 since the last sweep — see the migration priority list above for
+the next step (growing a `/control/*` surface).
 
-## Operational regressions (2026-05-09)
+## Operational regressions
 
-These are not v0.4 carry-overs — they are deployed-state issues to
-clear before resuming the SDK roadmap, since they make the
-dashboard's "what's running" picture wrong.
+**As of the 2026-05-30 sweep, all 2026-05-09 regressions are
+cleared.** Recording the previous list here for historical context:
 
-1. **Camera gateway is down.** `cam_hte_tapo_c245` registers
-   `adapter: http`, `base_url: http://127.0.0.1:8002`, but the
-   aggregator gets `connection_refused`. `kasa-tapo-services` is not
-   running on the dashboard host. Action: start
-   `kasa-tapo-services.service` (or whatever the systemd unit is
-   called per `deploy/README.md` § "Optional: cameras + smart plugs"),
-   then re-poll. While down, the camera tile, media listing, and
-   PTZ/snapshot/record surface are all offline.
+1. ~~**Camera gateway down.**~~ **Resolved.**
+   `kasa-tapo-services` is back up; `cam_hte_tapo_c245` reaches
+   `ready` and serves the full PTZ / presets / privacy / streaming /
+   snapshot / recording / rolling-recorder surface. The two HS300
+   power strips also recovered with it.
 
 2. ~~**`dose_every_well` placeholder hostname.**~~ **Resolved.**
-   `equipment.yaml` was rewritten: `base_url` is now
-   `http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`, adapter is
-   `http`, protocol is `"1.1"`. The DNS-failure poll loop is gone.
-   Confirm live reachability with
-   `curl -fsS --max-time 3 http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000/health`
-   from the dashboard host; if the service is not yet deployed, add
-   `enabled: false` until it is.
+   `equipment.yaml` points at
+   `http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`; service is live
+   and answering with `equipment_status: "requires_init"` (legacy
+   envelope still — v1.1 migration is the next device-repo step).
 
-3. **`plateloc` COM driver cannot reach hardware** (informational,
-   not a software regression). Server is v1.1 and answering, but the
-   physical PlateLoc isn't responding to the Agilent COM control:
-   `last_error.code = "startup"`, "Initialize('sdl2') failed (code
-   -2147221503). Could not initialize - No response from PlateLoc".
-   Hint from the device side: open the Diagnostics dialog to
-   create / fix the `sdl2` profile. Track this on the device repo,
-   not here.
+3. ~~**`plateloc` COM driver cannot reach hardware.**~~ **Resolved.**
+   Server reaches `ready` since the Diagnostics-dialog profile fix on
+   the device PC. Full sealer `/control/*` surface advertised in
+   `allowed_actions`.
+
+Active watch items (not regressions; behavioural notes):
+
+- **`agilent_uplc_ms` poll latency** — ~1.5 s against a 5 s
+  `poll_timeout_seconds`. Raise to 8 s if it ever errors.
+- **`torry_pines_shaker` poll contention** — `service.get_status()`
+  on the device still holds the service lock across 4 serial round-
+  trips; the dashboard caps `poll_timeout_seconds` at 2.5 s so the
+  shaker fails fast under contention rather than dragging the fleet.
+  Restore to ~10 s once the device-repo `_build_status` read-off-
+  lock fix ships.
 
 ## Resumption criteria for v0.4
 
 The MCP milestone resumes when **all** of the following are true:
 
 1. **At least three devices in `equipment.yaml` have `adapter: http`.**
-   ✅ **met** — five non-camera devices (`xarm_translocation`,
-   `agilent_uplc_ms`, `ot2`, `cytation_5`, `plateloc`) plus the camera
-   are registered as `http`. Five are responding live.
+   ✅ **comfortably met** — all 17 entries are on `adapter: http`;
+   thirteen respond live.
 2. **`agilent-plateloc-server` is at `protocol: "1.1"`.** ✅ **met** —
-   confirmed via live `/status` returning `protocol_version: "1.1"`
-   and `allowed_actions: ["startup"]`.
+   plus seven other devices also reach v1.1
+   (`fume_hood_actuator`, `xarm_translocation`, `ot2`,
+   `torry_pines_shaker`, `filter_every_well`, `cytation_5`,
+   `pypoe_web`).
 3. **`lab.skills()` returns a non-empty catalog with `available=True`
-   entries against at least one v1.1 device.** 🟡 **likely met,
-   needs explicit verification** — both `plateloc` and `ot2` are
-   reporting `allowed_actions: ["startup"]`, which the SDK's skill
-   evaluation should surface as available. Run
-   `lab.skills()` against the deployed binding and confirm.
+   entries against at least one v1.1 device.** ✅ **met** — every
+   v1.1 device above reports a non-empty `allowed_actions` on live
+   `/status`, and the SkillDef registry now spans 8 kinds (52
+   SkillDefs total including `lights.set` on liquid_handler and the
+   shaker AND-gates).
 4. **A workflow can run a five-step `Plan` against `agilent-plateloc-server`
    (dry-run is fine) using `validate_plan` + an executor.**
    🔴 **blocked** on the v0.3 carry-overs (`execute_plan`, async

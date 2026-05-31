@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useControlAuth } from "@/lib/control-auth";
 
-const DEFAULT_UNLOCK_SECONDS = 5;
+const DEFAULT_UNLOCK_SECONDS = 10;
 
 export interface UseControlLockResult {
   /** True when controls are locked; tiles should disable destructive UI. */

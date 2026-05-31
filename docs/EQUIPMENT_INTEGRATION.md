@@ -354,7 +354,7 @@ How it works:
 
 - **Frontend**: clicking the Unlock chip in any control tile opens a
   shared password modal (`ControlAuthProvider` at the root). After a
-  correct password, the 5-second auto-relock countdown starts as
+  correct password, the 10-second auto-relock countdown starts as
   before. The cookie persists 30 minutes, so subsequent unlocks within
   the window don't re-prompt.
 - **Server**: Next.js middleware blocks `POST`/`PUT`/`PATCH`/`DELETE`
@@ -386,13 +386,47 @@ gate is enabled. The single source of truth for this rule is
 | Tile / control                                  | Lock applies? | Why |
 |--------------------------------------------------|---------------|-----|
 | Sash move / stop (`FumeHoodTile`)               | Yes           | Mechanical movement |
-| Future press / sealer / stacker / robot-arm controls (rendered today as `EquipmentStatusCard`) | Yes (placeholder chip already shown) | Will move hardware or run cycles |
-| Plate-reader, HPLC, solid-doser, liquid-handler controls (when they land) | Yes | Same |
-| Power-strip outlet labelled *light* / *lamp*    | No            | Convenience lighting |
+| Press up/down + plate in/out (`PressTile`)      | Yes           | Pneumatic + plate motion |
+| Sealer startup/shutdown, stage in/out, seal start/stop, set temperature/time (`PlateSealerTile`) | Yes | Heated cycle, mechanical motion |
+| Shake start/stop, set temperature/speed (`ShakerTile`) | Yes | Heated, mechanical motion |
+| xArm `stop` button + future control ops (`RobotArmTile`) | Yes (chip in header) | Will move hardware once `/control/*` graduates beyond `stop` |
+| Plate-reader, HPLC, solid-doser controls (when they land) | Yes | Same — destructive kinds carry the chip even before controls land |
+| **OT-2 deck lights** (`LiquidHandlerTile`, `lights.set`) | **No** | Convenience lighting; bypassed per-action at the middleware (see below) |
+| OT-2 protocol-execution actions (setup, home, aspirate, dispense, etc.) when they land | Yes | Move pipettes / labware |
+| Power-strip outlet labelled *light* / *lamp*    | No (tile chip) / Yes (middleware) | Convenience lighting — see *Two layers* below |
 | Power-strip outlet driving equipment (hotplate, stirrer, etc.) | Yes           | Can damage a sample / hardware |
-| Camera PTZ, presets, snapshots (`CameraTile`)   | No            | Convenience; cannot damage hardware |
-| OT-2 light toggle *(forward-looking; tile not built yet)* | No            | Convenience lighting |
+| Camera PTZ, presets, snapshots, recording (`CameraTile`) | No | Convenience; cannot damage hardware. `kind: camera` is in `UNGATED_KINDS` |
 | Environmental sensors, UPLC-MS sidecar (read-only) | No            | No controls at all |
+
+#### Two layers, two bypass points
+
+The lock policy has two enforcement layers, and they don't always
+agree. Be deliberate about which layer you mean when you say
+"bypassed".
+
+| Layer | Source of truth | Bypass mechanism |
+|---|---|---|
+| **Tile lock chip** (in-tile, 5 s auto-relock) | `useControlLock()` per-tile | `outletIsSafe(label)` per outlet on `PowerStripTile`; tile-level decision not to call `useControlLock()` on the lights row in `LiquidHandlerTile` |
+| **`CONTROL_PASSWORD` middleware** (cookie-gated; only when env var is set) | `web/src/middleware.ts` + `tile-policy.ts` | `kindBypassesControlGate(kind)` (camera + env sensors) **OR** `actionBypassesControlGate(action)` (any `/control/lights*` URL — added 2026-05-30 for OT-2) |
+
+The two combinations that matter today:
+
+- **OT-2 deck lights** are bypassed at **both** layers — the
+  `LiquidHandlerTile` doesn't gate the lights row on `locked`, and the
+  middleware `actionBypassesControlGate("lights")` lets the POST
+  through without the `control_auth` cookie. Operator can flip the
+  lights regardless of lock state or `CONTROL_PASSWORD`.
+- **Power-strip light outlets** are bypassed only at the **tile**
+  layer. The middleware still requires the cookie because a single
+  `power_strip` mixes safe outlets (light) with destructive outlets
+  (hotplate, stirrer) and the URL alone doesn't disambiguate the per-
+  outlet decision. The per-outlet "safe" decision happens in
+  `PowerStripTile` against `outletIsSafe(label)`.
+
+If you ever need a *new* convenience-class `/control/*` action on a
+destructive kind, the pattern is: extend `UNGATED_ACTION_RE` in
+`tile-policy.ts` (the regex currently matches `lights*`) and skip
+`useControlLock()` on that specific row in the kind-specific tile.
 
 #### How "light" outlets are detected
 
@@ -444,7 +478,7 @@ behind a lock toggle.
   The device surfaces this as `equipment_status: requires_init`
   rather than masking it.
 - **Lock toggle** in the header (matches the power-strip tile,
-  5-second auto-relock). Pills and the Stop button are disabled
+  10-second auto-relock). Pills and the Stop button are disabled
   while locked.
 - **Stop button** appears only while the device is `busy`. It POSTs
   to `/control/sash/stop` and the tile drops its optimistic target.
@@ -515,7 +549,7 @@ device should energise the pneumatic valve.
   `hold_time` see the same numbers the dashboard sends.
 - **Plate row pills** — IN and OUT, identical rendering rules but no
   `hold_time` parameter (the device takes `smooth: bool` only).
-- **Lock toggle** in the header (5-second auto-relock). Pills, inputs,
+- **Lock toggle** in the header (10-second auto-relock). Pills, inputs,
   Init, and Stop are all disabled while locked. Inputs are *also*
   disabled while `equipment_status: busy`, so the operator can't
   change the planned hold time mid-cycle.
@@ -738,3 +772,114 @@ table) when that happens.
 - **Cross-device chemistry interlocks.** Sealing at 170 °C with a
   flammable solvent below its flash point belongs in layer 4 (project
   plan interlocks); see [`docs/INTERLOCKS.md`](INTERLOCKS.md).
+
+## 10) Robot arm (`kind: robot_arm`)
+
+The UFactory xArm5 (`xarm_translocation`, STATUS_SPEC v1.1 on
+`sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000`) renders as the
+kind-specific `RobotArmTile`. Today the device's `/control/*` surface
+only exposes `stop`; the rest is read-only state introspection. The
+tile is information-dense: three single-line component summaries plus
+the lock chip and an "Open control panel ↗" deep-link to the device's
+own `/web/` UI.
+
+### Tile layout
+
+Three rows, each leading with a `w-14` caption pill:
+
+| Row | Cells |
+|-----|-------|
+| **Arm** | component state pill (`enabled` → emerald, `disabled` / `disconnected` → muted, `error` / `fault` → warn) · `TCP <mm/s>` · `Ang <°/s>` |
+| **Gripper** | component state pill (tooltip shows the model, e.g. `bio_gen2`) · `Stroke <mm>` if `metrics.gripper_position` is published; otherwise `Range 71–150 mm` from the device's static `gripper_config.stroke_range` · `Force <N>` from `metrics.force_magnitude` when the wrist FT sensor is enabled; otherwise the configured grip force from `gripper_config.force` with a `cfg` suffix |
+| **Track** | component state pill · `Pos <mm>` from `metrics.track_position` · `At <name>` in emerald when `details.motion_graph.rail_location_name` is non-null (track parked at a named rail location); otherwise `At —` muted |
+
+The lock chip lives in the header and is the visible promise that
+controls — when they graduate beyond `stop` — will be gated.
+
+### Why not a generic `EquipmentStatusCard`?
+
+The previous tile rendered `MetricList` + `ComponentList` verbatim,
+which produced six pills on top of four metrics — readable but noisy
+and redundant against the device's `/web/` panel. The three-row layout
+trades the generic introspection for a glanceable per-component
+summary that maps to the operator's mental model (arm motion, gripper
+state, track position).
+
+### Open work
+
+- **Live `metrics.gripper_position`** — the device repo doesn't yet
+  publish current stroke. The tile already prefers a live value over
+  the static range; the slot lights up automatically once the device
+  emits the metric.
+- **Promoting `/control/*` actions** — gated on the gateway-PC shim
+  discussion (see [`docs/ROADMAP.md`](ROADMAP.md)). When it lands,
+  add SkillDefs to `skill_catalog/robot_arm.py` and grow the tile's
+  control surface; the lock chip then becomes load-bearing.
+
+## 11) Liquid handler (`kind: liquid_handler`) — OT-2 deck lights
+
+The Opentrons OT-2 (`ot2`, STATUS_SPEC v1.1 via `opentrons-server` on
+`sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020`) renders as the
+kind-specific `LiquidHandlerTile`. Protocol-execution actions
+(`setup`, `home`, `aspirate`, `dispense`, `pick_up_tip`, `drop_tip`,
+`move_labware`, `pause`) are advertised by the device today but the
+catalog has no typed protocol-arg shapes for them yet — those land in
+a follow-up. **What ships now is the deck-light toggle.**
+
+### Tile behaviour
+
+A single Lights row at the top of the tile, followed by the standard
+`MetricList` / `ComponentList` for everything else:
+
+| Element | Source | Behaviour |
+|---|---|---|
+| Status dot + `ON` / `OFF` / `—` label | `components.lights.state` (`on` / `off` / `unknown`) | Amber-glow dot when ON; muted dot when OFF; pale dot when state not reported |
+| **On** button | — | Disabled when `pending` or already `on`. POSTs to `/api/equipment/ot2/control/lights` with `{ "on": true }` |
+| **Off** button | — | Disabled when `pending` or already `off`. POSTs same endpoint with `{ "on": false }` |
+
+The Lights row is **always interactable** — it does NOT respect the
+in-tile lock chip (see §6b "Two layers, two bypass points"). The
+lock chip is in the header because protocol-execution actions will
+land later and they *will* be gated.
+
+The remaining components (deliberately filtered to exclude `lights`,
+which has its own row) and any `metrics` are rendered as standard
+read-only lists below the Lights row.
+
+### Status derivation (device side)
+
+`opentrons-server` polls `GET /robot/lights` on the OT-2's own HTTP
+API and surfaces the result as `components.lights = {connected: true,
+state: "on"|"off"|"unknown"}`. Whenever the robot is reachable,
+`"lights.set"` appears in `allowed_actions` regardless of
+`equipment_status` — lights work in `requires_init` just as well as
+in `ready`.
+
+### Control passthrough and claim handling
+
+`POST /api/equipment/ot2/control/lights` flows through the generic
+passthrough in `api/app/control.py`, which handles claim acquire /
+`X-Claim-Token` attach / release per request (the device enforces
+`X-Claim-Token` on `/control/*`).
+
+The `CONTROL_PASSWORD` middleware **does not** gate this path even
+when the env var is set — `actionBypassesControlGate("lights")`
+returns true so the POST goes through without a `control_auth`
+cookie. This is intentional convenience-class behaviour, same
+operator-facing class as camera PTZ. See §6b for the matrix.
+
+### What goes wrong (and how to spot it)
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Buttons render but POST returns HTTP 423 | Another workflow holds a longer-lived claim on the OT-2 | `details.claimed_by.owner` on `/api/equipment/ot2/status` shows who. Release via the SDK, then retry. |
+| Buttons render but POST returns HTTP 404 | `opentrons-server` predates the `lights` endpoint | Update the gateway on `sdl2-pc-03-cytation:8020`. |
+| Lights dot stuck on `—` | Device repo isn't publishing `components.lights` yet | Check `/api/equipment/ot2/status` — if the component is missing, the gateway version is too old. |
+| Lights dot reflects the wrong state | Browser tab has a stale `react-query` cache | Status refreshes on the next aggregator poll (~2 s); a hard refresh is also fine. |
+
+### Open work
+
+- **Protocol-execution skills** — add SkillDefs for `setup`, `home`,
+  `aspirate`, `dispense`, `pick_up_tip`, `drop_tip`,
+  `move_labware`, `pause`, `resume`, `reconcile`. These need labware-
+  typed Pydantic args that the catalog has no shapes for yet.
