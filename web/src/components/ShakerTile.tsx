@@ -277,6 +277,15 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const isReady = status === "ready";
   const isRequiresInit = status === "requires_init";
   const isDryRun = status === "dry_run";
+  // Motor side may be healthy even when the device is `degraded` because of
+  // a heater-side fault (e.g. SC25XR `cal3` RTD calibration). Treat that as
+  // motor-controls-OK so the operator can still shake without the heater.
+  const motorHealthy =
+    shaker.motorState === "idle" ||
+    shaker.motorState === "running" ||
+    shaker.motorState === "shaking";
+  const isDegradedMotorOk = status === "degraded" && motorHealthy;
+  const heaterHealthy = shaker.heaterState === "stable";
 
   const controlsDisabled = locked;
 
@@ -294,10 +303,10 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   }, [actionError, isReady]);
 
   // Cycle row is visible whenever the device is past startup; the Shake
-  // button enables only in ready/dry_run, STOP enables whenever the row
-  // is visible (shake.stop is idempotent per the catalog).
-  const cycleRowVisible = isReady || isBusy || isDryRun;
-  const canShake = (isReady || isDryRun) && !isBusy;
+  // button enables only in ready/dry_run/degraded-motor-ok, STOP enables
+  // whenever the row is visible (shake.stop is idempotent per the catalog).
+  const cycleRowVisible = isReady || isBusy || isDryRun || isDegradedMotorOk;
+  const canShake = (isReady || isDryRun || isDegradedMotorOk) && !isBusy;
   const shakeStartValid =
     Number.isFinite(cycleTempC) &&
     cycleTempC >= TEMP_MIN &&
@@ -343,7 +352,7 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           max={TEMP_MAX}
           decimals={0}
           locked={locked}
-          busy={isBusy}
+          busy={isBusy || (status === "degraded" && !heaterHealthy)}
           onSet={(v) =>
             exec(() => postShakerSetTemperature(snapshot.id, v))
           }
@@ -426,10 +435,15 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           >
             <input
               type="checkbox"
-              checked={waitForTemp}
-              disabled={controlsDisabled}
+              checked={waitForTemp && heaterHealthy}
+              disabled={controlsDisabled || !heaterHealthy}
               onChange={(e) => setWaitForTemp(e.target.checked)}
               aria-label="Wait for heater to reach setpoint before counting down"
+              title={
+                !heaterHealthy
+                  ? "Heater not stable; wait-for-temperature would hang."
+                  : undefined
+              }
               className="h-3 w-3 rounded border-slate-300 disabled:opacity-50 dark:border-slate-600"
             />
             wait

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { QueryProvider } from "@/lib/query-client";
 import { ControlAuthProvider } from "@/lib/control-auth";
+import { AssistantBubble } from "@/components/AssistantBubble";
 import { Nav } from "@/components/Nav";
 
 export const metadata: Metadata = {
@@ -40,6 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               Read-only dashboard · v1
             </footer>
           </div>
+          <AssistantBubble />
          </ControlAuthProvider>
         </QueryProvider>
       </body>

@@ -34,9 +34,11 @@ equipment:
     protocol: "1.0"
     base_url: http://127.0.0.1:8002
     status_path: /cameras/cam_hte_tapo_c245/status
-    # Cameras need a longer poll budget than the 2s default - the gateway
-    # talks to the camera over ONVIF (SOAP) on every status poll, which
-    # can take 1-2 s on its own.
+    # The kasa-tapo-services gateway serves /status from a per-device cache
+    # refreshed by a background poller, so dashboard polls return in ~ms
+    # regardless of the underlying ONVIF SOAP cost. The 5 s budget is kept
+    # as cold-start headroom for the very first request after a gateway
+    # restart (cache empty, route falls back to a live build).
     poll_timeout_seconds: 5.0
     tiles:
       hte: { w: 2, h: 3 }
@@ -63,8 +65,14 @@ equipment:
     adapter: http
     protocol: "1.0"
     base_url: http://127.0.0.1:8002
+    # python-kasa's per-outlet emeter sweep on a busy HS300 takes ~3-4 s
+    # per cycle. The kasa-tapo-services gateway now hides that with a
+    # per-device background poller + cache, so dashboard polls return in
+    # ~ms. The 10 s budget is cold-start headroom for the first request
+    # after a gateway restart (cache empty, route falls back to a live
+    # build).
     status_path: /plugs/plug_hte_strip_right/status
-    poll_timeout_seconds: 3.0
+    poll_timeout_seconds: 10.0
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -76,7 +84,7 @@ equipment:
     protocol: "1.0"
     base_url: http://127.0.0.1:8002
     status_path: /plugs/plug_hte_strip_left/status
-    poll_timeout_seconds: 3.0
+    poll_timeout_seconds: 10.0
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -107,7 +115,7 @@ equipment:
     # specific unit operations will graduate to /control/* in follow-up.
     do_not_call_connect: true
     tiles:
-      hte: { w: 2, h: 2 }
+      hte: { w: 2, h: 1 }
     pills: {}
 
   - id: ot2
@@ -120,7 +128,7 @@ equipment:
     poll_timeout_seconds: 30.0
     do_not_call_connect: true
     tiles:
-      hte: { w: 2, h: 2 }
+      hte: { w: 2, h: 1}
     pills: {}
 
   - id: dose_every_well
@@ -142,10 +150,16 @@ equipment:
     protocol: "1.1"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8030
     status_path: /status
-    # /status currently holds the service lock across 4 serial round-trips
-    # (~1.7 s on the live SC25XR). Bumped from 2.0 until the device repo
-    # ships the _build_status read-off-lock fix; see ROADMAP shaker row.
-    poll_timeout_seconds: 6.0
+    # /status on the device holds a service lock across 4 serial round-trips
+    # (~1.7 s on the live SC25XR). Under dashboard load that lock queues
+    # callers up to ~10 s, which used to pin every /api/equipment fan-out
+    # against this device's timeout (measured: 9.57 s vs 32 ms direct).
+    # Capped at 2.5 s so the shaker fails fast and stops dragging the rest
+    # of the fleet down -- the shaker tile will show fetch_error / unknown
+    # while contended, which is the correct signal. Restore to ~10 s once
+    # the device repo ships the _build_status read-off-lock fix
+    # (ROADMAP shaker row).
+    poll_timeout_seconds: 2.5
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -186,7 +200,7 @@ equipment:
     # management, reads, imaging). The skill catalog entry lives in
     # lab_skills/skill_catalog/plate_reader.py.
     tiles:
-      hte: { w: 2, h: 3 }
+      hte: { w: 2, h: 2 }
     pills: {}
 
   - id: agilent_uplc_ms
@@ -199,7 +213,7 @@ equipment:
     poll_timeout_seconds: 5.0
     do_not_call_connect: true
     tiles:
-      hte: { w: 2, h: 2 }
+      hte: { w: 2, h: 1 }
     pills: {}
 
   - id: agilent_biostack

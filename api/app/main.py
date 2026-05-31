@@ -24,6 +24,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
+from .assistant import build_assistant_router
 from .control import build_control_router
 from .db import LabDatabase, resolve_db_path
 from .history import build_history_router
@@ -397,6 +398,9 @@ app.add_middleware(
 app.include_router(build_control_router())
 # History + ingest endpoints (SQLite-backed).
 app.include_router(build_history_router())
+# Read-only Claude assistant -- streams chat over SSE, has tool access to
+# the history DB and a whitelisted set of systemd journals. See assistant.py.
+app.include_router(build_assistant_router())
 
 
 def _aggregator() -> EquipmentAggregator:

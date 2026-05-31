@@ -5,6 +5,7 @@ import { FumeHoodTile } from "./FumeHoodTile";
 import { PlateSealerTile } from "./PlateSealerTile";
 import { PowerStripTile } from "./PowerStripTile";
 import { PressTile } from "./PressTile";
+import { RobotArmTile } from "./RobotArmTile";
 import { ShakerTile } from "./ShakerTile";
 
 /**
@@ -64,6 +65,8 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
               <PressTile snapshot={snapshot} />
             ) : snapshot.kind === "shaker" ? (
               <ShakerTile snapshot={snapshot} />
+            ) : snapshot.kind === "robot_arm" ? (
+              <RobotArmTile snapshot={snapshot} />
             ) : (
               <EquipmentStatusCard snapshot={snapshot} />
             )}

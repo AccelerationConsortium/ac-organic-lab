@@ -13,7 +13,11 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
     "pyyaml>=6.0",
+    "mcp>=1.0",
 ]
+
+[project.scripts]
+lab-history-mcp = "app.mcp_server:run"
 
 [project.optional-dependencies]
 dev = [

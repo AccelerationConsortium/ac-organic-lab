@@ -380,7 +380,19 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           title={rollingActive ? `${rollingSegmentCount} segment(s) on disk · click to stop` : "Start rolling recorder (30 min segments, keep 96)"}
           onChange={(value) => rollingMutation.mutate(value)}
         />
-        <span className="ml-auto text-[11px] text-ink-subtle dark:text-slate-500">
+        <span className="ml-auto flex items-center gap-2 text-[11px] text-ink-subtle dark:text-slate-500">
+          {snapshot.latency_ms != null && (
+            <span
+              className={
+                snapshot.latency_ms >= 500
+                  ? "text-amber-700 dark:text-amber-400"
+                  : undefined
+              }
+              title={snapshot.latency_ms >= 500 ? "Slow poll (>=500 ms)" : undefined}
+            >
+              {snapshot.latency_ms} ms
+            </span>
+          )}
           <StalenessIndicator fetchedAt={snapshot.fetched_at} />
         </span>
       </div>

@@ -101,7 +101,12 @@ register(
             ),
             endpoint="/control/shake/start",
             args_schema=ShakeStartArgs,
-            requires_states=["ready", "dry_run"],
+            requires_states=["ready", "dry_run", "degraded"],
+            # Motor-only AND-gate so a heater-side degrade (SC25XR cal3
+            # RTD fault) does not block shake.start. The device's
+            # allowed_actions remains authoritative; this gate just
+            # mirrors that on the SDK side for workflow consumers.
+            requires_components={"motor": "idle"},
             # The device returns HTTP 412 when wait_for_temperature=True
             # and the setpoint is not reached within the configured
             # timeout; the SDK surfaces that via PreconditionNotMet (v0.4).
@@ -116,7 +121,7 @@ register(
             ),
             endpoint="/control/shake/stop",
             args_schema=ShakeStopArgs,
-            requires_states=["busy", "ready", "dry_run"],
+            requires_states=["busy", "ready", "dry_run", "degraded"],
             estimated_duration_s=1.0,
         ),
         SkillDef(
@@ -126,6 +131,9 @@ register(
             endpoint="/control/shake/set_temperature",
             args_schema=SetTemperatureArgs,
             requires_states=["ready", "dry_run"],
+            # Heater AND-gate: stays unavailable in degraded when the
+            # heater side is the failing subsystem.
+            requires_components={"heater": "stable"},
             estimated_duration_s=0.5,
         ),
         SkillDef(
@@ -137,7 +145,7 @@ register(
             ),
             endpoint="/control/shake/set_speed",
             args_schema=SetSpeedArgs,
-            requires_states=["ready", "dry_run"],
+            requires_states=["ready", "dry_run", "degraded"],
             estimated_duration_s=0.5,
         ),
     ],
