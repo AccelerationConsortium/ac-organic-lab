@@ -28,7 +28,7 @@ import type {
   SnapshotResponse,
 } from "@/types/api";
 
-import { MsePlayer } from "./MsePlayer";
+import { CameraPlayer } from "./CameraPlayer";
 import { PtzPad } from "./PtzPad";
 import { StalenessIndicator } from "./StalenessIndicator";
 import { StatusPill } from "./StatusPill";
@@ -41,7 +41,8 @@ type CameraStatusDetails = CameraDetails & Record<string, unknown>;
  * Layout (top to bottom):
  *
  *   - header: name + status pill (lens tabs stack under pill, right-aligned)
- *   - <MsePlayer> for the active lens's MSE feed (absorbs vertical slack)
+ *   - <CameraPlayer> for the active lens's feed (MSE on desktop, WebRTC
+ *     on iPhone; absorbs vertical slack)
  *   - control row, three columns side-by-side:
  *       1. <PtzPad> for live pan/tilt
  *       2. preset column: dropdown + "Save current view as..."
@@ -231,7 +232,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         the toggle row pinned to the bottom of the card - no awkward
         gap below the controls.
       */}
-      <MsePlayer
+      <CameraPlayer
         src={activeLens?.mse_url ?? null}
         disabled={!streamingEnabled || privacyMode}
         className="flex-1 min-h-0 w-full"

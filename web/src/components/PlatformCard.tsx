@@ -8,7 +8,7 @@ import type {
   LensStatusEntry,
 } from "@/types/api";
 import { kindLabel } from "@/lib/format";
-import { MsePlayer } from "./MsePlayer";
+import { CameraPlayer } from "./CameraPlayer";
 import { StatusPill } from "./StatusPill";
 
 function VideoFeedPlaceholder({ label }: { label: string }) {
@@ -56,7 +56,7 @@ function PlatformCameraPreview({ camera }: { camera: EquipmentSnapshot }) {
   return (
     <div className="relative">
       {lens?.mse_url ? (
-        <MsePlayer
+        <CameraPlayer
           src={lens.mse_url}
           disabled={!streamingEnabled || privacyMode}
         />
