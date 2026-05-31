@@ -52,9 +52,20 @@ each):
 - **`kasa_tapo_services`** ships WebRTC opt-in via `bootstrap_go2rtc.py`
   — the rendered `go2rtc.yaml` now carries a `webrtc:` block
   (`0.0.0.0:8555/tcp` by default + a MagicDNS `candidates` entry from
-  `GO2RTC_WEBRTC_HOST`). MSE keeps working alongside until the
-  dashboard's `MsePlayer → WebRtcPlayer` swap lands. Drops PTZ video
-  latency from ~0.5–1.5 s (MSE) to ~100–300 ms (WebRTC).
+  `GO2RTC_WEBRTC_HOST`). Drops PTZ video latency from ~0.5–1.5 s (MSE)
+  to ~100–300 ms (WebRTC).
+- **Dashboard `MsePlayer → WebRtcPlayer` swap shipped.** The web UI now
+  has a `CameraPlayer` chooser (`web/src/components/CameraPlayer.tsx`)
+  that renders `WebRtcPlayer` when the browser lacks the unmanaged
+  `MediaSource` API (iPhone Safari) and `MsePlayer` otherwise. Both
+  players share `web/src/lib/go2rtc.ts` and connect to the same
+  `/streams/api/ws?src=<stream>` endpoint (go2rtc multiplexes MSE and
+  WebRTC over one socket). This fixes "can't view the camera stream on
+  iPhone" — iPhone never exposes `MediaSource`, so the MSE-only path
+  always failed there. WebRTC media flows iPhone → `<magicdns>:8555/tcp`
+  directly over the Tailnet; signaling still routes through Caddy
+  `/streams/*`. Requires a one-time `ac-go2rtc.service` restart so
+  `ExecStartPre` re-renders the `webrtc:` block (done 2026-05-31).
 - **Dashboard control path** now shares one `httpx.AsyncClient` across
   every `/api/equipment/{id}/control/{action}` request (lifespan-owned
   at `app.state.control_client`). For v1.1 devices the
@@ -442,9 +453,10 @@ A repo is considered v1.1 conformant when, on top of v1.0:
   emits a `webrtc:` block in the rendered `go2rtc.yaml`
   (`0.0.0.0:8555/tcp` by default; MagicDNS `candidates` from
   `GO2RTC_WEBRTC_HOST`). Reduces PTZ video latency from ~0.5–1.5 s
-  (MSE) to ~100–300 ms (WebRTC). MSE keeps working alongside; the
-  dashboard's `MsePlayer → WebRtcPlayer` swap is the follow-up that
-  flips the user-visible behaviour and lives in `ac-organic-lab/web/`.
+  (MSE) to ~100–300 ms (WebRTC). The dashboard-side
+  `MsePlayer → WebRtcPlayer` swap (a `CameraPlayer` chooser in
+  `ac-organic-lab/web/`) has since shipped — see *Cross-repo changes*
+  above. MSE keeps working alongside for browsers that support it.
 
 #### Remaining mock-only entries
 
