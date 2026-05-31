@@ -171,15 +171,16 @@ export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             Init
           </TileButton>
         )}
-        {(isReady || isBusy) && (
-          <TileButton
-            onClick={() => exec(() => postPressStop(snapshot.id))}
-            disabled={locked}
-            variant="danger"
-          >
-            Stop
-          </TileButton>
-        )}
+        {/* Stop is always visible — an abort control should never disappear,
+            including before init and after a move completes. Only the control
+            lock gates it. */}
+        <TileButton
+          onClick={() => exec(() => postPressStop(snapshot.id))}
+          disabled={locked}
+          variant="danger"
+        >
+          Stop
+        </TileButton>
       </div>
     </TileShell>
   );

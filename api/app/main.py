@@ -18,6 +18,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+import httpx
 from lab_skills import EquipmentAggregator, PlatformsConfig, load_platforms, load_registry
 from lab_skills.skill_catalog import SKILL_REGISTRY
 from fastapi import FastAPI, HTTPException
@@ -338,6 +339,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await aggregator.startup()
     app.state.aggregator = aggregator
     app.state.registry = registry
+    # Long-lived httpx client for the control passthrough. Sharing one
+    # client across requests is what unlocks HTTP/1.1 keep-alive: the
+    # first POST to a device pays the TCP handshake; subsequent POSTs
+    # reuse the warm socket. Per STATUS_SPEC v1.1 every control click
+    # does 3 sequential round-trips (claim → action → release), so a
+    # cold connection used to cost ~3 × handshake. trust_env=False
+    # matches the aggregator's stance (no proxy auto-discovery).
+    app.state.control_client = httpx.AsyncClient(
+        trust_env=False,
+        timeout=httpx.Timeout(15.0),
+    )
     app.state.overrides = load_dashboard_overrides()
     app.state.platforms_config = load_platforms()
     logger.info("Loaded equipment registry: %d entries", aggregator.equipment_count)
@@ -371,6 +383,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             except asyncio.CancelledError:
                 pass
         await aggregator.shutdown()
+        await app.state.control_client.aclose()
         if db is not None:
             db.close()
 

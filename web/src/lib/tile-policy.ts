@@ -88,3 +88,21 @@ export function outletIsSafe(label: string | null | undefined): boolean {
   if (!label) return false;
   return LIGHT_LABEL_RE.test(label);
 }
+
+// Per-action convenience bypass: some `/control/<action>` paths are pure
+// convenience controls even on a destructive kind. The OT-2 deck-light
+// toggle is the first instance — same operator-facing class as camera PTZ.
+// The middleware consults this on the trailing action segment so the
+// password gate doesn't sit between an operator and the light switch.
+//
+// Match action segments that begin with "lights" (covers a future
+// `/control/lights/dim` etc. without listing them here). Anything else
+// stays gated by the kind-level destructive-controls policy.
+const UNGATED_ACTION_RE = /^lights(?:\/|$)/;
+
+export function actionBypassesControlGate(
+  action: string | null | undefined,
+): boolean {
+  if (!action) return false;
+  return UNGATED_ACTION_RE.test(action);
+}

@@ -70,7 +70,6 @@ export function FumeHoodTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   }
 
   const displayTarget = optimisticTarget ?? sash.target;
-  const showStop = sash.isMoving;
 
   return (
     <TileShell
@@ -103,14 +102,14 @@ export function FumeHoodTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </div>
       </div>
 
-      {/* Stop button — only shown when actually moving */}
-      {showStop && (
-        <div className="self-start">
-          <TileButton onClick={handleStop} disabled={locked} variant="danger">
-            Stop
-          </TileButton>
-        </div>
-      )}
+      {/* Stop button — always visible so the sash can be halted at any
+          time, including after it has reached a position. Only the control
+          lock gates it. */}
+      <div className="self-start">
+        <TileButton onClick={handleStop} disabled={locked} variant="danger">
+          Stop
+        </TileButton>
+      </div>
     </TileShell>
   );
 }

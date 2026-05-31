@@ -662,17 +662,18 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             </TileButton>
           </>
         )}
-        {isBusy && (
-          <TileButton
-            onClick={() =>
-              exec("seal.stop", () => postSealerSealStop(snapshot.id))
-            }
-            disabled={controlsDisabled}
-            variant="danger"
-          >
-            Seal stop
-          </TileButton>
-        )}
+        {/* Seal stop is always visible — an abort control should never
+            disappear, including when idle or before init. Only the control
+            lock gates it. */}
+        <TileButton
+          onClick={() =>
+            exec("seal.stop", () => postSealerSealStop(snapshot.id))
+          }
+          disabled={controlsDisabled}
+          variant="danger"
+        >
+          Seal stop
+        </TileButton>
       </div>
 
       {/* Inline error band: 412 / 423 / 409 from the last action.

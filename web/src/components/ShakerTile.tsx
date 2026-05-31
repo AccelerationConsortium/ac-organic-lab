@@ -303,8 +303,9 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   }, [actionError, isReady]);
 
   // Cycle row is visible whenever the device is past startup; the Shake
-  // button enables only in ready/dry_run/degraded-motor-ok, STOP enables
-  // whenever the row is visible (shake.stop is idempotent per the catalog).
+  // button enables only in ready/dry_run/degraded-motor-ok. STOP lives in
+  // its own always-visible row below (shake.stop is idempotent per the
+  // catalog), so an abort is reachable from every state.
   const cycleRowVisible = isReady || isBusy || isDryRun || isDegradedMotorOk;
   const canShake = (isReady || isDryRun || isDegradedMotorOk) && !isBusy;
   const shakeStartValid =
@@ -465,21 +466,15 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           >
             Shake
           </TileButton>
-          <TileButton
-            onClick={() => exec(() => postShakerShakeStop(snapshot.id))}
-            disabled={controlsDisabled}
-            variant="danger"
-            title="Abort the current cycle (halts motor and heating)."
-          >
-            STOP
-          </TileButton>
         </div>
       )}
 
-      {/* Startup is the only out-of-row action; Shake/STOP live inside
-          the cycle row so they share the cycle parameters visually. */}
-      {isRequiresInit && (
-        <div className="flex flex-wrap items-center gap-1">
+      {/* Out-of-row actions. STOP is always visible so the cycle can be
+          aborted from any state — including requires_init, where the cycle
+          row (and its Shake button) is hidden. Only the control lock gates
+          it. Startup appears only while uninitialised. */}
+      <div className="flex flex-wrap items-center gap-1">
+        {isRequiresInit && (
           <TileButton
             onClick={() => exec(() => postShakerStartup(snapshot.id))}
             disabled={controlsDisabled}
@@ -487,8 +482,16 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           >
             Startup
           </TileButton>
-        </div>
-      )}
+        )}
+        <TileButton
+          onClick={() => exec(() => postShakerShakeStop(snapshot.id))}
+          disabled={controlsDisabled}
+          variant="danger"
+          title="Abort the current cycle (halts motor and heating)."
+        >
+          STOP
+        </TileButton>
+      </div>
 
       {actionError !== null && (
         <div

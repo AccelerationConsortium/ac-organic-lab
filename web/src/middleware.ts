@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { kindBypassesControlGate } from "@/lib/tile-policy";
+import {
+  actionBypassesControlGate,
+  kindBypassesControlGate,
+} from "@/lib/tile-policy";
 
 // -- /api-reference page gate (pre-existing) --------------------------------
 
@@ -22,7 +25,10 @@ const API_REF_UNLOCK = "/api-reference/unlock";
 // request. On lookup failure we fail closed (require the cookie).
 
 const CONTROL_COOKIE = "control_auth";
-const CONTROL_PATH_RE = /^\/api\/equipment\/([^/]+)\/(?:control|sash)(?:\/|$)/;
+// Capture both the equipment id and the trailing action segment so per-action
+// bypasses (e.g. OT-2 deck lights) can be evaluated without re-parsing.
+const CONTROL_PATH_RE =
+  /^\/api\/equipment\/([^/]+)\/(?:control|sash)(?:\/(.*))?$/;
 const CONTROL_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 const DASHBOARD_API_BASE =
@@ -84,8 +90,11 @@ export async function middleware(request: NextRequest) {
       const expected = process.env.CONTROL_PASSWORD;
       if (expected) {
         const equipmentId = decodeURIComponent(match[1]);
+        const action = match[2] ? decodeURIComponent(match[2]) : null;
         const kind = await lookupKind(equipmentId);
-        if (!kindBypassesControlGate(kind)) {
+        const bypass =
+          kindBypassesControlGate(kind) || actionBypassesControlGate(action);
+        if (!bypass) {
           const cookie = request.cookies.get(CONTROL_COOKIE)?.value;
           if (cookie !== expected) {
             return NextResponse.json(

@@ -2,6 +2,7 @@ import type { EquipmentSnapshot } from "@/types/api";
 import { CameraTile } from "./CameraTile";
 import { EquipmentStatusCard } from "./EquipmentStatusCard";
 import { FumeHoodTile } from "./FumeHoodTile";
+import { LiquidHandlerTile } from "./LiquidHandlerTile";
 import { PlateSealerTile } from "./PlateSealerTile";
 import { PowerStripTile } from "./PowerStripTile";
 import { PressTile } from "./PressTile";
@@ -67,6 +68,8 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
               <ShakerTile snapshot={snapshot} />
             ) : snapshot.kind === "robot_arm" ? (
               <RobotArmTile snapshot={snapshot} />
+            ) : snapshot.kind === "liquid_handler" ? (
+              <LiquidHandlerTile snapshot={snapshot} />
             ) : (
               <EquipmentStatusCard snapshot={snapshot} />
             )}

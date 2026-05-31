@@ -115,7 +115,7 @@ equipment:
     # specific unit operations will graduate to /control/* in follow-up.
     do_not_call_connect: true
     tiles:
-      hte: { w: 2, h: 1 }
+      hte: { w: 2, h: 2 }
     pills: {}
 
   - id: ot2
@@ -128,7 +128,7 @@ equipment:
     poll_timeout_seconds: 30.0
     do_not_call_connect: true
     tiles:
-      hte: { w: 2, h: 1}
+      hte: { w: 2, h: 2}
     pills: {}
 
   - id: dose_every_well
@@ -220,7 +220,7 @@ equipment:
     name: Agilent BioStack
     kind: plate_stacker
     adapter: http
-    protocol: "1.1"
+    protocol: "1.0"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8050
     status_path: /status
     poll_timeout_seconds: 2.0

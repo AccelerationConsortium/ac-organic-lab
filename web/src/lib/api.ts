@@ -368,6 +368,20 @@ export async function postShakerSetSpeed(
   return controlPost(equipmentId, "shake/set_speed", { speed_level });
 }
 
+// -- Liquid handler (OT-2) control -----------------------------------------
+//
+// The OT-2 gateway exposes `/control/lights` as a claim-gated convenience
+// control (the dashboard's generic passthrough handles claim acquire /
+// release per request). The lights toggle is intentionally NOT behind the
+// CONTROL_PASSWORD middleware (see tile-policy.ts → actionBypassesControlGate).
+
+export async function postSetLights(
+  equipmentId: string,
+  on: boolean,
+): Promise<unknown> {
+  return controlPost(equipmentId, "lights", { on });
+}
+
 // -- Sash (fume hood) control ----------------------------------------------
 //
 // As of STATUS_SPEC v1.1 the actuator exposes `/control/sash/{move,stop}`;

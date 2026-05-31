@@ -89,6 +89,25 @@ def _device_url(base_url: str, status_path: str, sub: str) -> str:
     return f"{base}{prefix}/{suffix}"
 
 
+def _get_control_client(request: Request) -> httpx.AsyncClient:
+    """Return the app-wide shared :class:`httpx.AsyncClient`.
+
+    Configured in :func:`main.lifespan`; if it's missing we're being
+    invoked outside the normal app context (a test harness or a
+    misconfigured deployment) — fall back to a one-shot client so the
+    handler degrades to the previous behaviour instead of 500-ing.
+    """
+
+    client = getattr(request.app.state, "control_client", None)
+    if client is None:
+        # No lifespan-managed client; degrade to per-request behaviour.
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(_CONTROL_TIMEOUT_SECONDS),
+            trust_env=False,
+        )
+    return client
+
+
 def _has_control_capability(entry: Any) -> bool:
     """Cheap precondition guard.
 
@@ -246,7 +265,6 @@ async def _proxy(
         )
 
     target = _control_url(entry.base_url, entry.status_path, action)
-    timeout = httpx.Timeout(_CONTROL_TIMEOUT_SECONDS)
 
     # v1.1 devices may enforce X-Claim-Token on /control/*. We acquire a
     # short-lived claim per request, attach the token, then release in a
@@ -259,31 +277,31 @@ async def _proxy(
         and action not in _CLAIM_PROTOCOL_ACTIONS
     )
 
-    # ``trust_env=False`` opts out of HTTP_PROXY / HTTPS_PROXY env vars.
-    # Equipment ``base_url`` always points at a tailnet / loopback host
-    # we control, so routing those calls through a corporate or local
-    # dev proxy (e.g. Cursor's :51503) just causes 4xx/timeouts. The
-    # aggregator follows the same convention.
+    # Shared, long-lived httpx client (configured in main.lifespan with
+    # ``trust_env=False`` and a 15 s default timeout). Re-using one client
+    # is what unlocks HTTP/1.1 keep-alive — for v1.1 devices the three
+    # round-trips (claim → action → release) share one warm socket
+    # instead of paying TCP handshake × 3 per click.
+    client = _get_control_client(request)
     try:
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-            token: str | None = None
-            if needs_claim:
-                token = await _acquire_claim(
-                    client, entry.base_url, entry.status_path, equipment_id
+        token: str | None = None
+        if needs_claim:
+            token = await _acquire_claim(
+                client, entry.base_url, entry.status_path, equipment_id
+            )
+        try:
+            headers = {"X-Claim-Token": token} if token else None
+            if method == "POST":
+                response = await client.post(target, json=body or {}, headers=headers)
+            elif method == "DELETE":
+                response = await client.delete(target, headers=headers)
+            else:  # pragma: no cover - guarded by FastAPI routing
+                raise HTTPException(status_code=405, detail=f"Unsupported method: {method}")
+        finally:
+            if token is not None:
+                await _release_claim_best_effort(
+                    client, entry.base_url, entry.status_path, token, equipment_id
                 )
-            try:
-                headers = {"X-Claim-Token": token} if token else None
-                if method == "POST":
-                    response = await client.post(target, json=body or {}, headers=headers)
-                elif method == "DELETE":
-                    response = await client.delete(target, headers=headers)
-                else:  # pragma: no cover - guarded by FastAPI routing
-                    raise HTTPException(status_code=405, detail=f"Unsupported method: {method}")
-            finally:
-                if token is not None:
-                    await _release_claim_best_effort(
-                        client, entry.base_url, entry.status_path, token, equipment_id
-                    )
     except HTTPException:
         raise
     except httpx.TimeoutException as exc:
@@ -328,10 +346,9 @@ async def _media_proxy_json(
         )
 
     target = _device_url(entry.base_url, entry.status_path, sub)
-    timeout = httpx.Timeout(_CONTROL_TIMEOUT_SECONDS)
+    client = _get_control_client(request)
     try:
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-            response = await client.get(target)
+        response = await client.get(target)
     except httpx.HTTPError as exc:
         logger.warning("media list error %s -> %s: %s", equipment_id, target, exc)
         raise HTTPException(status_code=502, detail=f"Cannot reach gateway: {exc}") from exc
@@ -373,23 +390,22 @@ async def _media_proxy_stream(
         )
 
     target = _device_url(entry.base_url, entry.status_path, sub)
-    # Generous timeout for big recordings; the actual end-to-end transfer
-    # time is bounded by the file size, not by us.
-    timeout = httpx.Timeout(connect=5.0, read=60.0, write=60.0, pool=5.0)
-    client = httpx.AsyncClient(timeout=timeout, trust_env=False)
+    client = _get_control_client(request)
+    # Per-request timeout for big recordings; the client default (15 s)
+    # would 504 on a 200 MB file. The actual end-to-end transfer time
+    # is bounded by the file size, not by us.
+    media_timeout = httpx.Timeout(connect=5.0, read=60.0, write=60.0, pool=5.0)
 
     try:
-        req = client.build_request("GET", target)
+        req = client.build_request("GET", target, timeout=media_timeout)
         upstream = await client.send(req, stream=True)
     except httpx.HTTPError as exc:
-        await client.aclose()
         logger.warning("media stream error %s -> %s: %s", equipment_id, target, exc)
         raise HTTPException(status_code=502, detail=f"Cannot reach gateway: {exc}") from exc
 
     if upstream.status_code >= 400:
         body = (await upstream.aread()).decode("utf-8", errors="replace")
         await upstream.aclose()
-        await client.aclose()
         raise HTTPException(status_code=upstream.status_code, detail=body[:400] or "media error")
 
     # Hop-by-hop / encoding headers must not be forwarded; we let
@@ -404,8 +420,10 @@ async def _media_proxy_stream(
             async for chunk in upstream.aiter_raw():
                 yield chunk
         finally:
+            # NB: don't close `client` — it's app-state shared and lives
+            # for the process lifetime. Only the per-stream response is
+            # closed here.
             await upstream.aclose()
-            await client.aclose()
 
     return StreamingResponse(
         iter_body(),

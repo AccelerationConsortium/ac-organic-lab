@@ -35,6 +35,21 @@ def test_plate_reader_catalog_registered() -> None:
     } <= names
 
 
+def test_liquid_handler_catalog_registered() -> None:
+    """OT-2 deck-light toggle (convenience control)."""
+
+    from lab_skills.skill_catalog import SKILL_REGISTRY
+
+    by_name = {d.name: d for d in SKILL_REGISTRY["liquid_handler"]}
+    assert "lights.set" in by_name
+    lights = by_name["lights.set"]
+    assert lights.endpoint == "/control/lights"
+    assert lights.method == "POST"
+    # Convenience control: no state precondition.
+    assert lights.requires_states == []
+    assert not lights.requires_components
+
+
 def test_robot_arm_kind_intentionally_empty() -> None:
     """xArm is registered with an empty list because equipment.yaml sets
     ``do_not_call_connect: true``. Keeping the key present makes the catalog

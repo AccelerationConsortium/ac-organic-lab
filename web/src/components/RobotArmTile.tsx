@@ -77,6 +77,7 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
 
   const arm = components["arm"];
   const gripper = components["gripper"];
+  const track = components["track"];
 
   const tcpSpeed = num(snapshot, "tcp_speed");
   const angleSpeed = num(snapshot, "angle_speed");
@@ -98,10 +99,19 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       : null;
   const ftEnabled = components["force_torque"]?.state === "enabled";
 
-  // Current gripper position is not (yet) in /status; show "—" with tooltip
-  // so it's clear the slot is reserved for it once the device repo publishes
-  // it under metrics.gripper_position.
+  // Current gripper position is not (yet) in /status; fall back to the
+  // configured stroke range from gripper_config so the operator at least
+  // sees the gripper's working envelope (71–150 mm on the BioGripper Gen2).
+  // When the device repo starts publishing metrics.gripper_position, the
+  // live value takes over automatically.
   const gripperPos = num(snapshot, "gripper_position");
+  const strokeRange = gripperConfig?.["stroke_range"] as
+    | { min?: number; max?: number }
+    | undefined;
+  const strokeMin =
+    strokeRange && typeof strokeRange.min === "number" ? strokeRange.min : null;
+  const strokeMax =
+    strokeRange && typeof strokeRange.max === "number" ? strokeRange.max : null;
 
   // Track preset: motion_graph.rail_location_name is non-null when the track
   // is currently parked at a named rail location.
@@ -158,12 +168,18 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             title={gripper?.message ?? undefined}
           />
           <Pill
-            caption="Pos"
-            value={fmt(gripperPos, 1)}
+            caption={gripperPos ? "Stroke" : "Range"}
+            value={
+              gripperPos
+                ? fmt(gripperPos, 1)
+                : strokeMin != null && strokeMax != null
+                  ? `${strokeMin}–${strokeMax} mm`
+                  : "—"
+            }
             title={
               gripperPos
-                ? undefined
-                : "Current gripper position not published by /status yet"
+                ? "Current gripper stroke (opening width)"
+                : "Configured stroke range; device does not publish current position yet"
             }
             tone={gripperPos ? "neutral" : "muted"}
           />
@@ -192,6 +208,11 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
             Track
           </span>
+          <Pill
+            value={track?.state ?? "—"}
+            tone={componentTone(track?.state)}
+            title={track?.message ?? undefined}
+          />
           <Pill caption="Pos" value={fmt(trackPos, 1)} />
           {railPreset ? (
             <Pill caption="At" value={railPreset} tone="ok" />
