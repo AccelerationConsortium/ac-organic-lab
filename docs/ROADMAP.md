@@ -499,6 +499,94 @@ Active watch items (not regressions; behavioural notes):
   Restore to ~10 s once the device-repo `_build_status` read-off-
   lock fix ships.
 
+## Control-surface exposure (known security / safety risk)
+
+**Recorded 2026-05-31.** Surfaced while wiring the dashboard control
+audit trail (see below). This is a *known, partly-by-design* posture,
+not a regression — captured here so it's tracked rather than tribal.
+
+**The exposure.** Every spec device's `/control/*` surface is reachable
+**directly on the Tailnet**; the dashboard is only one client of it.
+Anyone on the Tailnet can `curl -X POST http://<device>/control/...` and
+move hardware, bypassing both the dashboard's `CONTROL_PASSWORD` gate and
+its audit trail. This is the documented v1 stance — STATUS_SPEC §11
+(*"Auth. None at the equipment-repo level for v1. Tailscale ACLs gate
+access"*) and the `CONTROL_PASSWORD` note in EQUIPMENT_INTEGRATION §6b
+(*"the device REST endpoints … remain reachable directly by anyone on
+the Tailnet"*). Auth was deliberately pushed to the network layer.
+
+**What the 2026-05-31 audit change does and doesn't cover.**
+`api/app/control.py` now writes one `equipment_events` row
+(`event_type: "control_action"`, with actor / action / outcome) per
+dashboard passthrough call. It captures **dashboard-mediated** control
+only; it structurally *cannot* see direct-to-device traffic because the
+dashboard isn't in that path.
+
+**Per-device exposure** (during a workflow: "can someone move it
+out-of-band, un-audited?"):
+
+| Device(s) | Tailnet-direct? | Claims enforced? | Out-of-band move risk |
+|---|---|---|---|
+| cameras, plugs | **No** — gateway is loopback (`127.0.0.1:8002`) | n/a | **Low** — dashboard is the only network path |
+| press, fume hood, ot2, cytation | Yes | **Yes** (X-Claim-Token → 423) | Rejected *if* a workflow holds the claim; cooperative + un-audited |
+| `plateloc` | Yes | **No** — `_lock` is a stub | **Full bypass** — claim does not lock |
+| `dose_every_well` | Yes | **No** — v1.0, no claim concept | **Full bypass** |
+| `xarm_translocation` | Yes | only `stop`; native `/web/` ignores claims | **Worst** — second surface, claim-blind, *advertised* by the tile's "Open control panel ↗" deep-link |
+| uplc, biostack, pypoe | Yes | read-only, no control surface | n/a (nothing to move) |
+
+**Key framing: claims are a concurrency guard, not a security guard.**
+STATUS_SPEC §5 is explicit that claims are *cooperative, not
+authenticated*. Where enforced, they stop a second *cooperating* client
+(another dashboard, a workflow) from racing — surfacing as 423 with
+`claimed_by`. They do not stop a determined human, a direct `curl`, or
+the xArm `/web/` panel. And on `plateloc`, `dose_every_well`, and the
+xArm native panel there is currently **neither** a working claim **nor**
+audit coverage.
+
+**What closes it, in order:**
+
+1. **Finish claims where stubbed/absent** — `plateloc` real `_lock`
+   (already the top item under *Remaining migration work*), then the
+   v1.0 devices. Gives enforceable mutual exclusion for the cooperating
+   case. Does *not* stop out-of-band humans or the xArm panel.
+2. **Front device control surfaces behind the auth/audit edge** — the
+   [`AUTH.md`](AUTH.md) sidecar, but note its Caddy `forward_auth` as
+   drafted covers only the *dashboard's* `/api/equipment/*/control/*`
+   routes. Closing the direct-device hole needs the devices themselves
+   behind that edge (AUTH.md Phase 5) or bound to loopback +
+   reverse-proxied like the camera/plug gateway already is.
+3. **xArm `/web/` panel specifically** — fold into the gateway-PC shim
+   work (see the `xarm_translocation` sub-task): replace the
+   "Open control panel ↗" deep-link with audited, claim-gated dashboard
+   controls, and/or front the native panel at the edge. Until then it is
+   the single most exposed control path in the lab.
+4. **Operational / physical** — for the genuinely un-closeable cases
+   (Tailnet + shell access), discipline and the hardware e-stop remain
+   the backstop, per INTERLOCKS ("not a real-time safety system").
+
+**Design decision: the claim *is* the mode — do not build per-device
+AUTOMATED/MANUAL switches.** A separate mode state machine is only needed
+where a device has a *second* control surface to coordinate (today: the
+xArm `/web/`), and even there the right fix is to make that surface honor
+the claim, not to add a parallel flag. For single-`/control/*` devices the
+claim already provides mutual exclusion. Treat "manual mode" as *a human
+holds the claim* (`owner: human@…`) and "automated mode" as *a workflow
+holds the claim* — one mechanism, already exclusive and audited. If an
+explicit AUTOMATED/MANUAL UX is ever wanted, implement it as a convention
+on top of claims (a long-lived operator-held claim), not a new field.
+
+The enforcement target is **one invariant, not a per-device feature**:
+*every path to the hardware goes through a hard-enforced claim.* That
+decomposes into (a) turn on STATUS_SPEC §5 hard enforcement
+(`X-Claim-Token` required → 423) on the stragglers — `plateloc` (stub) and
+`dose_every_well` (v1.0) — reusing shared claim code (the future
+`lab-status-contract`, LG5) rather than hand-rolling per repo; and (b)
+ensure each device has exactly one control path (the xArm `/web/`
+side-door fix). Auth can centralize at the edge; claim *exclusivity state*
+cannot (the device is the authority on its own state, ARCHITECTURE
+decision #2) — only the chokepoint can be consolidated, via the
+gateway-PC shim, where one proxy fronts several devices.
+
 ## Resumption criteria for v0.4
 
 The MCP milestone resumes when **all** of the following are true:
