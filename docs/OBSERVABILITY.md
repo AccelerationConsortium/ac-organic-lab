@@ -117,7 +117,10 @@ CREATE TABLE IF NOT EXISTS equipment_events (
     ts          TEXT    NOT NULL,           -- ISO-8601 UTC
     device_id   TEXT    NOT NULL,           -- equipment.yaml key, e.g. "dose_every_well"
     event_type  TEXT    NOT NULL,           -- "state_transition" | "error" | "startup" |
-                                            -- "shutdown" | "calibration" | "claim_acquired"
+                                            -- "shutdown" | "calibration" | "claim_acquired" |
+                                            -- "control_action" (dashboard operator write —
+                                            --   payload: {action, method, status_code,
+                                            --   outcome, owner}; written by api/app/control.py)
     from_state  TEXT,                       -- for state_transition
     to_state    TEXT,                       -- for state_transition
     message     TEXT,                       -- human-readable description
@@ -299,6 +302,7 @@ if (now - last_sensor_write[sensor_id]) > timedelta(minutes=1):
 | Sensor reading (history plot) | `sensor_readings` SQLite (1/min) | Aggregator poll loop |
 | Device uptime | `service_uptime` SQLite | Aggregator poll loop (on state change) |
 | State transition / error | `equipment_events` SQLite | Aggregator (via ingest endpoint) |
+| Operator control action (who clicked what) | `equipment_events` SQLite (`event_type: control_action`) | Dashboard control passthrough (`api/app/control.py`) |
 | Camera snapshots | `/var/lib/kasa-tapo-media/` on dashboard host | kasa-tapo-services |
 
 ---
