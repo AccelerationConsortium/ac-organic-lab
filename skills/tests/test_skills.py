@@ -483,22 +483,22 @@ async def test_skills_unbound_session_returns_empty_list() -> None:
 
 @pytest.mark.asyncio
 async def test_skills_kind_with_no_registered_defs_returns_no_entries() -> None:
-    """A role bound to ``kind=robot_arm`` (registered with empty defs)
+    """A role bound to ``kind=plate_stacker`` (no registered defs)
     contributes nothing to the catalog. The role still works for ``status()``
     via ``role()``; it just has no invokable capabilities surfaced.
     """
 
-    arm = _entry("xarm", kind="robot_arm", base_url="http://xarm.test:8000")
-    registry = Registry(equipment=[arm])
+    stacker = _entry("biostack", kind="plate_stacker", base_url="http://biostack.test:8000")
+    registry = Registry(equipment=[stacker])
 
-    with respx.mock(base_url=arm.base_url) as router:
+    with respx.mock(base_url=stacker.base_url) as router:
         # No /status request expected because there are no SkillDefs to
         # evaluate; respx would raise on an unexpected request.
         router  # noqa: B018 - keep the context manager alive
         async with Lab.connect(
-            registry=registry, binding={"arm": arm.id}
+            registry=registry, binding={"stacker": stacker.id}
         ) as lab:
             skills = await lab.skills()
 
-    arm_skills = [s for s in skills if s.role == "arm"]
-    assert arm_skills == []
+    stacker_skills = [s for s in skills if s.role == "stacker"]
+    assert stacker_skills == []

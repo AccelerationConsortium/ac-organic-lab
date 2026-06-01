@@ -1,25 +1,25 @@
 """Skill catalog entries for ``kind=solid_doser``.
 
-Reference device: :mod:`dose_every_well` (PlateDoser). Not yet on
-STATUS_SPEC v1.x; current shape from
+Reference device: :mod:`dose_every_well` (PlateDoser). On STATUS_SPEC v1.1;
+all mutating control is under ``/control/*`` (claim-gated), per
 ``dose_every_well/src/dose_every_well/api/server.py``:
 
-* ``POST /startup?config_name=``        - initialise from named config
-* ``POST /shutdown``                    - safe shutdown + return to home
-* ``POST /plate/set``                   - configure plate definition + origin
-* ``POST /plate/load``                  - load plate onto balance
-* ``POST /plate/unload``                - unload plate from balance
-* ``POST /dose/well``                   - dose one well to a target mass
-* ``POST /dose/multiple``               - dose multiple wells
-* ``POST /dose/row``                    - dose an entire row
-* ``POST /dose/column``                 - dose an entire column
-* ``POST /control/home``                - return all components to home
-* ``POST /control/tare``                - tare the balance
-* ``POST /calibrate/flow-rate``         - calibrate solid-doser flow rate
+* ``POST /control/startup?config_name=``   - initialise from named config
+* ``POST /control/shutdown``               - safe shutdown + return to home
+* ``POST /control/plate/set``              - configure plate definition + origin
+* ``POST /control/plate/load``             - load plate onto balance
+* ``POST /control/plate/unload``           - unload plate from balance
+* ``POST /control/dose/well``              - dose one well to a target mass
+* ``POST /control/dose/multiple``          - dose multiple wells
+* ``POST /control/dose/row``               - dose an entire row
+* ``POST /control/dose/column``            - dose an entire column
+* ``POST /control/home``                   - return all components to home
+* ``POST /control/tare``                   - tare the balance
+* ``POST /control/calibrate/flow-rate``    - calibrate solid-doser flow rate
 
-Catalog records each as a separate :class:`SkillDef`. When the device
-migrates to STATUS_SPEC v1.x with ``/control/*`` endpoints, only this file
-changes; typed wrappers in v0.3 keep the same Python signatures.
+Catalog records each as a separate :class:`SkillDef`. ``Skill.name`` matches
+the device's ``allowed_actions``; the dashboard/SDK acquire a claim before
+POSTing (the device hard-enforces ``X-Claim-Token`` on ``/control/*``).
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ register(
             name="startup",
             kind="solid_doser",
             description="Initialize PlateDoser system from a named configuration.",
-            endpoint="/startup",
+            endpoint="/control/startup",
             args_schema=StartupArgs,
             requires_states=["requires_init", "ready", "dry_run"],
             estimated_duration_s=10.0,
@@ -117,7 +117,7 @@ register(
             name="shutdown",
             kind="solid_doser",
             description="Safely shut down PlateDoser; unload any plate and home all components.",
-            endpoint="/shutdown",
+            endpoint="/control/shutdown",
             args_schema=ShutdownArgs,
             requires_states=["ready", "busy", "degraded", "dry_run"],
             estimated_duration_s=5.0,
@@ -126,7 +126,7 @@ register(
             name="plate.set",
             kind="solid_doser",
             description="Set the current plate definition and origin coordinates.",
-            endpoint="/plate/set",
+            endpoint="/control/plate/set",
             args_schema=PlateSetArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=0.1,
@@ -135,7 +135,7 @@ register(
             name="plate.load",
             kind="solid_doser",
             description="Load a plate onto the balance.",
-            endpoint="/plate/load",
+            endpoint="/control/plate/load",
             args_schema=PlateLoadArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=8.0,
@@ -144,7 +144,7 @@ register(
             name="plate.unload",
             kind="solid_doser",
             description="Unload the current plate from the balance.",
-            endpoint="/plate/unload",
+            endpoint="/control/plate/unload",
             args_schema=PlateUnloadArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=8.0,
@@ -153,7 +153,7 @@ register(
             name="dose.well",
             kind="solid_doser",
             description="Dose one well to a target mass.",
-            endpoint="/dose/well",
+            endpoint="/control/dose/well",
             args_schema=DoseWellArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=15.0,
@@ -162,7 +162,7 @@ register(
             name="dose.multiple",
             kind="solid_doser",
             description="Dose multiple wells with explicit per-well target masses.",
-            endpoint="/dose/multiple",
+            endpoint="/control/dose/multiple",
             args_schema=DoseMultipleArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=None,
@@ -171,7 +171,7 @@ register(
             name="dose.row",
             kind="solid_doser",
             description="Dose an entire row to the same target mass per well.",
-            endpoint="/dose/row",
+            endpoint="/control/dose/row",
             args_schema=DoseRowArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=None,
@@ -180,7 +180,7 @@ register(
             name="dose.column",
             kind="solid_doser",
             description="Dose an entire column to the same target mass per well.",
-            endpoint="/dose/column",
+            endpoint="/control/dose/column",
             args_schema=DoseColumnArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=None,
@@ -207,7 +207,7 @@ register(
             name="calibrate.flow_rate",
             kind="solid_doser",
             description="Calibrate the solid doser's mass-per-second flow rate.",
-            endpoint="/calibrate/flow-rate",
+            endpoint="/control/calibrate/flow-rate",
             args_schema=CalibrateFlowRateArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=20.0,

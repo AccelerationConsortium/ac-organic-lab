@@ -399,6 +399,121 @@ def test_v11_claim_action_passes_through_without_wrapping() -> None:
     assert not release_route.called
 
 
+# ---------------------------------------------------------------------------
+# Audit trail — every control action writes one equipment_events row
+# ---------------------------------------------------------------------------
+
+
+class _FakeDB:
+    """Captures equipment_events writes so tests can assert the audit row."""
+
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def record_equipment_event(self, device_id, event_type, **kwargs):
+        self.events.append(
+            {"device_id": device_id, "event_type": event_type, **kwargs}
+        )
+
+
+def _make_app_with_db(entry: Any) -> tuple[FastAPI, _FakeDB]:
+    app = _make_app(entry)
+    db = _FakeDB()
+    app.state.db = db
+    return app, db
+
+
+@respx.mock
+def test_ok_action_writes_audit_row() -> None:
+    entry = _entry()
+    app, db = _make_app_with_db(entry)
+    respx.post(
+        "http://127.0.0.1:8002/cameras/cam_lab499_west/control/ptz",
+    ).mock(return_value=httpx.Response(200, json={"ok": True}))
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/cam_lab499_west/control/ptz",
+            json={"direction": "left"},
+        )
+
+    assert r.status_code == 200
+    assert len(db.events) == 1
+    ev = db.events[0]
+    assert ev["device_id"] == "cam_lab499_west"
+    assert ev["event_type"] == "control_action"
+    assert ev["payload"]["action"] == "ptz"
+    assert ev["payload"]["outcome"] == "ok"
+    assert ev["payload"]["status_code"] == 200
+    assert ev["payload"]["owner"] == "ac-organic-lab-dashboard"
+
+
+@respx.mock
+def test_device_refusal_writes_audit_row() -> None:
+    entry = _entry()
+    app, db = _make_app_with_db(entry)
+    respx.post(
+        "http://127.0.0.1:8002/cameras/cam_lab499_west/control/privacy",
+    ).mock(return_value=httpx.Response(503, json={"detail": "pytapo not configured"}))
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/cam_lab499_west/control/privacy",
+            json={"enabled": True},
+        )
+
+    assert r.status_code == 503
+    assert len(db.events) == 1
+    assert db.events[0]["payload"]["outcome"] == "refused"
+    assert db.events[0]["payload"]["status_code"] == 503
+
+
+@respx.mock
+def test_claim_denied_writes_audit_row() -> None:
+    entry = _v11_entry()
+    app, db = _make_app_with_db(entry)
+    respx.post("http://127.0.0.1:9999/control/claim").mock(
+        return_value=httpx.Response(
+            409,
+            json={
+                "detail": "already claimed",
+                "claimed_by": {
+                    "session_id": "f1f1",
+                    "owner": "workflow:solubility",
+                    "expires_at": "2026-05-23T16:01:00Z",
+                },
+            },
+        )
+    )
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/plateloc/control/seal/temperature",
+            json={"temperature_c": 50},
+        )
+
+    assert r.status_code == 409
+    assert len(db.events) == 1
+    assert db.events[0]["payload"]["outcome"] == "claim_denied"
+    assert db.events[0]["payload"]["action"] == "seal/temperature"
+
+
+def test_audit_is_noop_without_db() -> None:
+    """Control still works when the history DB is unavailable."""
+
+    entry = _entry()
+    app = _make_app(entry)  # no app.state.db
+    with respx.mock:
+        respx.post(
+            "http://127.0.0.1:8002/cameras/cam_lab499_west/control/ptz",
+        ).mock(return_value=httpx.Response(200, json={"ok": True}))
+        with TestClient(app) as client:
+            r = client.post(
+                "/api/equipment/cam_lab499_west/control/ptz", json={}
+            )
+    assert r.status_code == 200
+
+
 @respx.mock
 def test_v10_device_skips_claim_dance() -> None:
     """v1.0 / no-protocol devices POST directly with no claim overhead."""

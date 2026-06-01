@@ -1,24 +1,123 @@
 """Skill catalog entries for ``kind=robot_arm``.
 
-Reference device: :mod:`xarm_translocation` (UFactory xArm5). The
-``equipment.yaml`` entry for this device sets ``do_not_call_connect: true``
-because its REST surface is not yet stabilised for SDK-driven control. v0.2
-therefore registers an EMPTY :class:`SkillDef` list for this kind: status
-helpers (``status``, ``probe``, ``health``) inherited from
-:class:`EquipmentClient` work normally, but ``await session.skills()`` will
-not surface any control capabilities for the xArm role.
+Reference device: :mod:`xarm_translocation` (UFactory xArm5), now on
+STATUS_SPEC v1.1 with a claim-gated **graph** control surface. Motion is
+expressed as moves between named nodes in a motion graph rather than raw
+cartesian/joint targets; the device enforces ``X-Claim-Token`` on every
+``/control/*`` call (423 without a valid claim).
 
-When the xArm repo is migrated to STATUS_SPEC v1.x and the
-``do_not_call_connect`` flag is removed from ``equipment.yaml``, populate
-this module with the proper :class:`SkillDef` list (move, gripper, home,
-etc.) and the catalog will surface them automatically.
+Live control surface (``/control/graph/*``):
+
+* ``POST /control/graph/move_to``     - move to a named graph node
+* ``POST /control/graph/recover_to``  - declare the current node (recovery)
+* ``POST /control/graph/record``      - record the last transition as an edge
+* ``POST /control/graph/mode``        - set the graph interlock mode
+
+The device's ``equipment.yaml`` entry keeps ``do_not_call_connect: true``,
+so the SDK never auto-connects: control requires the arm to be connected
+first (the device returns 409/400 "connect first" otherwise), and
+``status.allowed_actions`` drives runtime availability once it is. The
+``requires_states`` below are the v1.0-style fallback.
 """
 
 from __future__ import annotations
 
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from .models import SkillDef
 from .registry import register
 
-register("robot_arm", [])
+
+class GraphMoveToArgs(BaseModel):
+    node_id: str = Field(description="Graph node id to move to.")
+    speed: float | None = Field(
+        default=None,
+        description="Movement speed; may be capped by the edge speed in STRICT mode.",
+    )
 
 
-__all__: list[str] = []
+class GraphRecoverToArgs(BaseModel):
+    node_id: str = Field(description="Graph node id the operator declares as current.")
+    force: bool = Field(
+        default=False,
+        description=(
+            "Skip the nearest-node sanity check. Use when position has been "
+            "verified by other means."
+        ),
+    )
+
+
+class GraphRecordArgs(BaseModel):
+    mode: Literal["linear", "joint"] | None = Field(
+        default=None,
+        description="'linear' or 'joint'; defaults to the mode the last move used.",
+    )
+    speed: float | None = Field(
+        default=None, description="Override edge speed; defaults to the speed used."
+    )
+    comment: str | None = Field(default=None, description="Free-text comment.")
+    preconditions: list[str] | None = Field(
+        default=None, description="List of named preconditions for the edge."
+    )
+
+
+class GraphModeArgs(BaseModel):
+    mode: Literal["off", "advisory", "strict"] = Field(
+        description="Graph interlock mode: off, advisory, or strict.",
+    )
+
+
+register(
+    "robot_arm",
+    [
+        SkillDef(
+            name="graph.move_to",
+            kind="robot_arm",
+            description="Move the arm to a named node in the motion graph.",
+            endpoint="/control/graph/move_to",
+            args_schema=GraphMoveToArgs,
+            requires_states=["ready"],
+            estimated_duration_s=10.0,
+        ),
+        SkillDef(
+            name="graph.recover_to",
+            kind="robot_arm",
+            description=(
+                "Declare the arm's current graph node (recovery), so subsequent "
+                "moves are planned from a known position."
+            ),
+            endpoint="/control/graph/recover_to",
+            args_schema=GraphRecoverToArgs,
+            requires_states=["ready"],
+            estimated_duration_s=2.0,
+        ),
+        SkillDef(
+            name="graph.record",
+            kind="robot_arm",
+            description="Record the last transition between nodes as a graph edge.",
+            endpoint="/control/graph/record",
+            args_schema=GraphRecordArgs,
+            requires_states=["ready"],
+            estimated_duration_s=1.0,
+        ),
+        SkillDef(
+            name="graph.mode",
+            kind="robot_arm",
+            description="Set the graph interlock mode (off / advisory / strict).",
+            endpoint="/control/graph/mode",
+            args_schema=GraphModeArgs,
+            requires_states=["ready"],
+            estimated_duration_s=0.5,
+        ),
+    ],
+)
+
+
+__all__ = [
+    "GraphModeArgs",
+    "GraphMoveToArgs",
+    "GraphRecordArgs",
+    "GraphRecoverToArgs",
+]

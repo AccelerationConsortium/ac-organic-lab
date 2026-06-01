@@ -50,14 +50,23 @@ def test_liquid_handler_catalog_registered() -> None:
     assert not lights.requires_components
 
 
-def test_robot_arm_kind_intentionally_empty() -> None:
-    """xArm is registered with an empty list because equipment.yaml sets
-    ``do_not_call_connect: true``. Keeping the key present makes the catalog
-    uniform across kinds and lets a future migration drop in SkillDefs without
-    touching session.skills().
+def test_robot_arm_graph_control_surface() -> None:
+    """xArm migrated to STATUS_SPEC v1.1 with a claim-gated motion-graph
+    control surface; the catalog mirrors the device's ``/control/graph/*``
+    endpoints. (``do_not_call_connect: true`` stays in equipment.yaml — the
+    SDK never auto-connects — but availability now comes from the device's
+    ``allowed_actions`` once connected.)
     """
 
-    assert SKILL_REGISTRY["robot_arm"] == []
+    defs = {d.name: d for d in SKILL_REGISTRY["robot_arm"]}
+    assert set(defs) == {"graph.move_to", "graph.recover_to", "graph.record", "graph.mode"}
+    for d in defs.values():
+        assert d.kind == "robot_arm"
+        assert d.endpoint == f"/control/{d.name.replace('.', '/')}"
+        assert d.method == "POST"
+    # move_to targets a named node; mode is constrained to the 3 interlock modes.
+    assert "node_id" in defs["graph.move_to"].args_schema.model_fields
+    assert defs["graph.mode"].args_schema.model_fields["mode"].is_required()
 
 
 def test_plate_sealer_skill_endpoints_match_spec() -> None:

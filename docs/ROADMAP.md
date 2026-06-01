@@ -43,9 +43,9 @@ each):
 | `plate_reader` | 11 | Mirrors `agilent-cytation-server` `/control/*` surface |
 | `plate_sealer` | 8 | Includes 412-precondition skills with `requires_components` (heater + stage) |
 | `press` | 6 | `init`, `stop`, `press.{up,down}`, `plate.{in,out}` |
-| `robot_arm` | 0 | xArm has no SkillDefs yet (gateway-PC shim deferred) |
+| `robot_arm` | 4 | `graph.{move_to,recover_to,record,mode}` — xArm motion-graph control surface (v1.1, claim-gated); added 2026-05-31 |
 | `shaker` | 6 | `startup`, `shutdown`, `shake.{start,stop,set_temperature,set_speed}` with motor/heater AND-gates so a heater-side `degraded` doesn't block shaking |
-| `solid_doser` | 12 | `dose.{well,multiple,row,column}` etc. |
+| `solid_doser` | 12 | `dose.{well,multiple,row,column}` etc.; all endpoints moved under `/control/*` for dose v1.1 (2026-05-31) |
 
 **Cross-repo changes since the last sweep.**
 
@@ -111,7 +111,7 @@ non-empty `allowed_actions`:
 | `filter_every_well` | `["stop", "press.up", "press.down", "plate.in", "plate.out"]` |
 | `fume_hood_actuator` | `["sash.move", "sash.stop"]` |
 | `torry_pines_shaker` | `["startup", "shutdown", "shake.start", "shake.set_temperature", "shake.set_speed"]` |
-| `xarm_translocation` | `["stop"]` (gateway-PC shim still deferred) |
+| `xarm_translocation` | `["graph.move_to", "graph.recover_to", "graph.record", "graph.mode"]` (claim-gated; live list empty until the arm is connected — `requires_init` otherwise) |
 | `pypoe_web` | `[]` (read-only web service) |
 
 The fleet is no longer the bottleneck for v0.4. **What is blocking
@@ -153,12 +153,12 @@ occasionally ahead of the device.
 | `cam_hte_tapo_c245` | `http` | 1.0 | ✅ `ready` | `kasa-tapo-services` gateway back up. Full PTZ / presets / privacy / streaming / snapshot / recording / rolling-recorder surface in `allowed_actions`. WebRTC opt-in now available in the gateway (see *Cross-repo changes*). |
 | `plug_hte_strip_right` / `plug_hte_strip_left` | `http` | 1.0 | ✅ `ready` | HS300 power strips. `on` / `off` / `toggle`. Per-outlet "safe vs destructive" decided client-side by `outletIsSafe()` against the gateway label. |
 | `fume_hood_actuator` | `http` | 1.1 | ✅ `ready`, `allowed_actions: ["sash.move", "sash.stop"]` | v1.1 FastAPI service deployed on the Pi at `100.64.254.100:5000`. Round-trip verified from the `FumeHoodTile`. |
-| `xarm_translocation` | `http` | 1.1 | ✅ `ready`, `allowed_actions: ["stop"]` | Device now serves v1.1; `equipment.yaml` reflects that. Dashboard renders the redesigned three-row `RobotArmTile`. `/control/*` surface beyond `stop` still deferred to the gateway-PC shim discussion. |
+| `xarm_translocation` | `http` | 1.1 | ✅ `requires_init` (controller not connected) | **Claim protocol + motion-graph control surface deployed (2026-05-31).** Exposes `/control/{claim,heartbeat,release}`, `/control/graph/{move_to,recover_to,record,mode}`, and a `/control/claim/enforce` toggle; `stop` retired. Claims are gated behind a connected controller (`POST /connect` first — `claim` returns 400 "connect first" while disconnected). `robot_arm` catalog populated with the 4 `graph.*` SkillDefs. Still pending: dashboard graph controls + `/web/` deep-link fate, and live claim-enforcement verification once connected. |
 | `ot2` | `http` | 1.1 | ✅ `ready`, `allowed_actions` includes protocol actions **+ `lights.set`** | `opentrons-server` exposes `/control/lights`; dashboard's `LiquidHandlerTile` consumes it. Gateway snapshot path (`details.snapshot`) populates real deck/pipette/labware JSON pulled from the live `protocol` over SSH — no `opentrons_server` install on the robot itself. Protocol-execution actions (setup/home/aspirate/…) advertised but no matching SkillDefs yet (typed protocol args still pending). |
-| `dose_every_well` | `http` | 1.0 (device) / 1.1 (registry mirror) | ✅ `requires_init`, `allowed_actions: []` | Live and answering on `sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`. Device still on the pre-v1.1 envelope (legacy `SystemStatus` lifted enough to validate as v1.0); v1.1 work tracked in its sub-task below. |
+| `dose_every_well` | `http` | 1.1 | ✅ `requires_init`, `allowed_actions: ["startup"]` | **v1.1 migration shipped + deployed (2026-05-31), verified live.** Claim protocol with **hard `X-Claim-Token` enforcement** on every mutating `/control/*` (423 without a claim); `details.claimed_by` surfaced; all control consolidated under `/control/*` (breaking — legacy top-level paths removed). `allowed_actions` state-driven (`requires_init` → `["startup"]`). 23 device tests pass on the Pi; tokenless→423 and the claim lifecycle confirmed end-to-end. |
 | `torry_pines_shaker` | `http` | 1.1 | ✅ `ready`, `allowed_actions: ["startup", "shutdown", "shake.start", "shake.set_temperature", "shake.set_speed"]` | The 2026-05-09 `cal3` degrade has been cleared. Service-lock contention partly mitigated by capping `poll_timeout_seconds` at 2.5 s so the shaker fails fast under contention rather than dragging the fleet — restore once the device-repo `_build_status` read-off-lock fix ships. |
 | `filter_every_well` | `http` | 1.1 | ✅ `ready`, `allowed_actions: ["stop", "press.up", "press.down", "plate.in", "plate.out"]` | v1.1 migration shipped + deployed on the Pi at `100.64.254.104`. PressTile, per-direction `hold_time` inputs, claim/release per request all verified. |
-| `plateloc` | `http` | 1.1 | ✅ `ready`, full sealer `/control/*` surface advertised | Hardware reached and operational since the COM-profile fix on the device PC. `seal.start` gated by stage-in + heater-stable interlocks (412 mirror with `requires_components` AND-gate). `_lock` → real claim/heartbeat/release deepening is still the only v1.1 carry-over in its sub-task below. |
+| `plateloc` | `http` | 1.1 | ✅ `ready`, full sealer `/control/*` surface advertised | **Real claim/heartbeat/release shipped (commit fa98ca8) and verified live 2026-05-31** — `_lock` placeholder replaced by a TTL `ClaimStore`; hard `X-Claim-Token` enforcement (423 *ahead of* the 412 interlocks, confirmed via tokenless `seal/time`), `details.claimed_by` populated. `seal.start` still gated by stage-in + heater-stable 412 interlocks. Only remaining gap is cosmetic (`equipment_version` null; CHANGELOG/`pyproject` still 1.3.1). |
 | `cytation_5` | `http` | 1.1 | ✅ `ready`, 13 actions allowed (`read.{absorbance,fluorescence,luminescence}`, `imaging.capture`, drawer / plate / well) | Phase 3 (v1.1 + `/control/*`) and Phase 4 (skill catalog in this monorepo) **shipped** since the last sweep. Phase 2 (per-well sample tracking surfaced under `details.loaded_plate`) is the remaining device-repo work. |
 | `agilent_uplc_ms` | `http` | 1.0 | ✅ `ready` | `agilent-hplcms-server` read-only sidecar. Polling latency ~1.5 s — borderline against the 5 s timeout if OpenLab WMI degrades; raise to 8 s if it ever errors. |
 | `agilent_biostack` | `http` | 1.0 | ✅ `ready` | Driver landed since the last sweep; entry flipped from `mock` to `http`. No `/control/*` surface yet (`allowed_actions: []`); read-only for now. |
@@ -167,23 +167,26 @@ occasionally ahead of the device.
 
 ### Remaining migration work (priority order)
 
-1. **`agilent-plateloc-server` (claim semantics depth)** — server is at
-   v1.1 but `_lock` is still the placeholder. Real claim/heartbeat/
-   release with TTL expiry is the highest-value carry-over from this
-   section and is what gives v0.4 something to validate against.
-2. **`dose_every_well` (solid_doser) v1.0 → v1.1** — service is live
-   on `sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000` but the device still
-   serves the legacy envelope. v1.0 conformance checklist below; v1.1
-   layer afterwards.
-3. **`agilent_biostack` (plate_stacker) `/control/*` surface** —
+> **Done since 2026-05-30 (verified live 2026-05-31):**
+> `agilent-plateloc-server` real claims (commit fa98ca8) and
+> `dose_every_well` full v1.1 (hard claims + `/control/*` consolidation).
+> The `robot_arm` skill catalog was populated with the xArm `graph.*`
+> control surface the device now exposes.
+
+1. **`agilent_biostack` (plate_stacker) `/control/*` surface** —
    driver landed and is on `adapter: http` v1.0 read-only. Until it
    grows control endpoints the xArm is the lab's only plate-mover,
    which makes it both a throughput bottleneck and a single point of
    failure for the solubility workflow.
-4. **`xarm_translocation` (graduating control ops)** — gateway-PC shim
-   discussion still open; defer per existing note. Device reaches
-   v1.1 on the envelope but only advertises `stop`.
-5. **`agilent-cytation-server` Phase 2** — per-well sample tracking
+2. **`xarm_translocation` (operationalising the graph surface)** — the
+   device now exposes claim + `/control/graph/*` and the catalog has the
+   matching SkillDefs, but: (a) control is gated behind `POST /connect`;
+   (b) the dashboard tile shows no graph controls yet (still the
+   read-only three-row tile + `/web/` deep-link); and (c) the `/web/`
+   side-door must become claim-aware or be fronted (see *Control-surface
+   exposure*). Live claim-enforcement is still to be verified once the
+   arm is connected.
+3. **`agilent-cytation-server` Phase 2** — per-well sample tracking
    under `details.loaded_plate`. Phases 3 and 4 (v1.1 +
    `/control/*`, skill catalog) already shipped.
 
@@ -252,11 +255,17 @@ A repo is considered v1.1 conformant when, on top of v1.0:
   - [✅] `seal.start` interlocks (heater-stable + stage-in,
     412-mirroring `allowed_actions`) wired across device + SDK +
     dashboard tile (`requires_components` AND-gate in the SkillDef).
-  - [ ] Replace `_lock` (currently in `service.py`) with a real
-    claim/heartbeat/release implementation.
-  - [ ] Add `claim_token` storage + TTL expiry.
-  - [ ] Populate `details.claimed_by` while a claim is held.
-  - [ ] Snapshot fixtures for the three claim states.
+  - [✅] Replace `_lock` with a real claim/heartbeat/release
+    implementation (`ClaimStore`, commit fa98ca8).
+  - [✅] `claim_token` storage + TTL expiry (`_MIN`/`_MAX_TTL_S` clamp,
+    `secrets.compare_digest`).
+  - [✅] Populate `details.claimed_by` while a claim is held
+    (`service.get_status()` reads it outside the COM lock).
+  - [✅] Hard `X-Claim-Token` enforcement on all 8 control endpoints,
+    423 ahead of the 412 interlocks; snapshot fixtures for the three
+    claim states. Verified live 2026-05-31.
+  - [ ] Cosmetic only: bump `equipment_version` / `pyproject` /
+    CHANGELOG off 1.3.1 to match the shipped state.
 
 #### `filter_every_well`
 
@@ -285,25 +294,30 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 
 #### `dose_every_well`
 
-- **Hostname resolved** (as of equipment.yaml rewrite): `base_url`
-  updated to `http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`;
-  `adapter` flipped from `legacy_http` to `http`, `protocol: "1.1"`.
-  DNS-failure regression is cleared. Live `/status` reachability should
-  be confirmed with a direct `curl` from the dashboard host.
-- Current driver state (per `dose_every_well/` repo, not directly
-  re-verified in this sweep): FastAPI, `/status` returns `SystemStatus`
-  (legacy), control endpoints are `/startup`, `/shutdown`, `/dose/well`,
-  `/dose/multiple`, `/dose/row`, `/dose/column`, `/calibrate/flow-rate`,
-  `/control/home`, `/control/tare`, `/control/read-balance`, plus plate
-  management.
-- v1.0 work:
-  - [ ] Add `models.py` with STATUS_SPEC types.
-  - [ ] Replace `SystemStatus` with `EquipmentStatus` on `/status`.
-  - [ ] Add `/` and `/health`.
-  - [ ] Move `/startup`, `/shutdown`, `/dose/*`, `/plate/*` under
-    `/control/*` (some are already there). Keep legacy paths for one
-    transition window.
-  - [ ] Update `equipment.yaml`.
+- **Full v1.1 migration: ✅ shipped + deployed + verified live
+  (2026-05-31)** on `sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000`. (The repo
+  had already done the v1.0 envelope — `models.py`, `EquipmentStatus` on
+  `/status`, `/`, `/health` — earlier than this doc tracked.)
+- What landed:
+  - [✅] `claims.py` — single-slot TTL `ClaimRegistry`
+    (acquire/heartbeat/release/validate/current), pure module.
+  - [✅] `POST /control/{claim,heartbeat,release}`; `PROTOCOL_VERSION`
+    → `"1.1"`; claim wire models.
+  - [✅] **Hard `X-Claim-Token` enforcement** on every mutating
+    `/control/*` via a `require_claim` dependency (423, flat body with
+    `claimed_by`).
+  - [✅] `details.claimed_by` on `/status`; `allowed_actions` derived
+    per state (matches the `solid_doser` catalog names).
+  - [✅] **All control consolidated under `/control/*`** — breaking:
+    legacy top-level `/startup`, `/dose/*`, `/plate/*`, `/calibrate/*`
+    were *removed* (no unprotected aliases — an alias would be the very
+    un-gated side-door being closed). Catalog `solid_doser.py` endpoints
+    updated in lockstep.
+  - [✅] Tests (`test_claims.py` portable + `test_api_claims.py` on the
+    Pi, 23 pass) + v1.1 status fixtures; README v1.1 note.
+- Branch `develop-modular`, commit `252d04e`. Cosmetic: `pyproject`
+  `version` still `0.8.0` (`__version__` is `0.9.0`); `fastapi`/`uvicorn`
+  not yet declared deps (present on the Pi).
 
 #### `fume_hood_actuator`
 
@@ -359,26 +373,29 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 - v1.0 read-only conformance: ✅ landed (`xarm-translocation` FastAPI
   service exposes `GET /`, `GET /health`, `GET /status` via
   `EquipmentStatus`).
-- v1.1 envelope: ✅ live. Device now reports `protocol_version: "1.1"`
-  with `allowed_actions: ["stop"]` and a populated
-  `components.{arm,gripper,track,force_torque}` block. `equipment.yaml`
-  flipped to `protocol: "1.1"`.
-- Dashboard: the dedicated `RobotArmTile` now renders three single-row
-  component summaries (Arm: status + TCP / Ang speed; Gripper: status
-  + stroke range + force; Track: status + position + rail preset
-  pill). The previous `EquipmentStatusCard` fallback was retired for
-  this kind.
-- Open work, not in this round:
-  - [ ] Resolve the gateway-PC shim architecture (xArm on a private
-    subnet behind a PC running a thin REST proxy) before exposing any
-    `/control/*` beyond `stop`.
-  - [ ] Promote one unit operation at a time to `/control/<op>` and
-    add a matching `SkillDef` in
-    `skills/src/lab_skills/skill_catalog/robot_arm.py` (currently
-    intentionally empty).
-  - [ ] Publish current gripper stroke as
-    `metrics.gripper_position` so the tile shows live position
-    instead of the static range pill (slot already wired client-side).
+- v1.1 envelope + control surface: ✅ deployed (2026-05-31, verified
+  via OpenAPI on the device). Device now exposes the **claim protocol**
+  (`/control/{claim,heartbeat,release}`), a `/control/claim/enforce`
+  toggle, and a **motion-graph control surface**
+  (`/control/graph/{move_to,recover_to,record,mode}`); the old `stop`
+  endpoint was retired. Claims are gated behind a connected controller
+  (`/control/claim` returns 400 "connect first" while `requires_init`).
+- Catalog: ✅ `skill_catalog/robot_arm.py` now registers the 4
+  `graph.*` SkillDefs (`graph.move_to`, `graph.recover_to`,
+  `graph.record`, `graph.mode`) matching the device endpoints.
+- Open work:
+  - [ ] **Verify claim enforcement live once the arm is connected**
+    (`POST /connect`): tokenless `/control/graph/*` → 423,
+    `details.claimed_by` populates, lifecycle. (Blocked today by the
+    arm being disconnected.)
+  - [ ] **`/web/` side-door**: make the native panel claim-aware or
+    front it; decide the dashboard "Open control panel ↗" deep-link's
+    fate. See *Control-surface exposure*.
+  - [ ] **Dashboard graph controls**: `RobotArmTile` still shows only
+    the read-only three-row summary + deep-link; surface the
+    `graph.*` actions through the audited passthrough.
+  - [ ] Publish current gripper stroke as `metrics.gripper_position`
+    so the tile shows live position instead of the static range pill.
 
 #### `agilent_uplc_ms` (newly shipped)
 
@@ -499,6 +516,97 @@ Active watch items (not regressions; behavioural notes):
   Restore to ~10 s once the device-repo `_build_status` read-off-
   lock fix ships.
 
+## Control-surface exposure (known security / safety risk)
+
+**Recorded 2026-05-31.** Surfaced while wiring the dashboard control
+audit trail (see below). This is a *known, partly-by-design* posture,
+not a regression — captured here so it's tracked rather than tribal.
+
+**The exposure.** Every spec device's `/control/*` surface is reachable
+**directly on the Tailnet**; the dashboard is only one client of it.
+Anyone on the Tailnet can `curl -X POST http://<device>/control/...` and
+move hardware, bypassing both the dashboard's `CONTROL_PASSWORD` gate and
+its audit trail. This is the documented v1 stance — STATUS_SPEC §11
+(*"Auth. None at the equipment-repo level for v1. Tailscale ACLs gate
+access"*) and the `CONTROL_PASSWORD` note in EQUIPMENT_INTEGRATION §6b
+(*"the device REST endpoints … remain reachable directly by anyone on
+the Tailnet"*). Auth was deliberately pushed to the network layer.
+
+**What the 2026-05-31 audit change does and doesn't cover.**
+`api/app/control.py` now writes one `equipment_events` row
+(`event_type: "control_action"`, with actor / action / outcome) per
+dashboard passthrough call. It captures **dashboard-mediated** control
+only; it structurally *cannot* see direct-to-device traffic because the
+dashboard isn't in that path.
+
+**Per-device exposure** (during a workflow: "can someone move it
+out-of-band, un-audited?"):
+
+| Device(s) | Tailnet-direct? | Claims enforced? | Out-of-band move risk |
+|---|---|---|---|
+| cameras, plugs | **No** — gateway is loopback (`127.0.0.1:8002`) | n/a | **Low** — dashboard is the only network path |
+| press, fume hood, ot2, cytation | Yes | **Yes** (X-Claim-Token → 423) | Rejected *if* a workflow holds the claim; cooperative + un-audited |
+| `plateloc` | Yes | **Yes** (real `ClaimStore`, X-Claim-Token → 423) — *was a stub; fixed 2026-05-31* | Rejected if a claim is held; cooperative + un-audited via direct `curl` |
+| `dose_every_well` | Yes | **Yes** (X-Claim-Token → 423) — *was v1.0 no-claim; fixed 2026-05-31* | Rejected if a claim is held; cooperative + un-audited via direct `curl` |
+| `xarm_translocation` | Yes | **Yes** on `/control/*` (claim protocol deployed 2026-05-31); native `/web/` claim-awareness **unverified** | `/control/*` now claim-gated; the `/web/` side-door is still *advertised* by the tile's "Open control panel ↗" deep-link and its claim-awareness is unconfirmed |
+| uplc, biostack, pypoe | Yes | read-only, no control surface | n/a (nothing to move) |
+
+**Key framing: claims are a concurrency guard, not a security guard.**
+STATUS_SPEC §5 is explicit that claims are *cooperative, not
+authenticated*. Where enforced, they stop a second *cooperating* client
+(another dashboard, a workflow) from racing — surfacing as 423 with
+`claimed_by`. They do not stop a determined human, a direct `curl`, or
+the xArm `/web/` panel. As of 2026-05-31 `plateloc` and `dose_every_well`
+now hard-enforce claims (so the *cooperating* race is closed there); the
+residual no-claim gaps are the xArm `/web/` native panel and any device
+whose control surface predates claims.
+
+**What closes it, in order:**
+
+1. **Finish claims where stubbed/absent** — ✅ done for `plateloc`
+   (real `ClaimStore`) and `dose_every_well` (full v1.1) as of
+   2026-05-31; remaining only on any future control surface that
+   predates claims. Gives enforceable mutual exclusion for the
+   cooperating case. Does *not* stop out-of-band humans or the xArm
+   `/web/` panel.
+2. **Front device control surfaces behind the auth/audit edge** — the
+   [`AUTH.md`](AUTH.md) sidecar, but note its Caddy `forward_auth` as
+   drafted covers only the *dashboard's* `/api/equipment/*/control/*`
+   routes. Closing the direct-device hole needs the devices themselves
+   behind that edge (AUTH.md Phase 5) or bound to loopback +
+   reverse-proxied like the camera/plug gateway already is.
+3. **xArm `/web/` panel specifically** — fold into the gateway-PC shim
+   work (see the `xarm_translocation` sub-task): replace the
+   "Open control panel ↗" deep-link with audited, claim-gated dashboard
+   controls, and/or front the native panel at the edge. Until then it is
+   the single most exposed control path in the lab.
+4. **Operational / physical** — for the genuinely un-closeable cases
+   (Tailnet + shell access), discipline and the hardware e-stop remain
+   the backstop, per INTERLOCKS ("not a real-time safety system").
+
+**Design decision: the claim *is* the mode — do not build per-device
+AUTOMATED/MANUAL switches.** A separate mode state machine is only needed
+where a device has a *second* control surface to coordinate (today: the
+xArm `/web/`), and even there the right fix is to make that surface honor
+the claim, not to add a parallel flag. For single-`/control/*` devices the
+claim already provides mutual exclusion. Treat "manual mode" as *a human
+holds the claim* (`owner: human@…`) and "automated mode" as *a workflow
+holds the claim* — one mechanism, already exclusive and audited. If an
+explicit AUTOMATED/MANUAL UX is ever wanted, implement it as a convention
+on top of claims (a long-lived operator-held claim), not a new field.
+
+The enforcement target is **one invariant, not a per-device feature**:
+*every path to the hardware goes through a hard-enforced claim.* That
+decomposes into (a) turn on STATUS_SPEC §5 hard enforcement
+(`X-Claim-Token` required → 423) on the stragglers — `plateloc` (stub) and
+`dose_every_well` (v1.0) — reusing shared claim code (the future
+`lab-status-contract`, LG5) rather than hand-rolling per repo; and (b)
+ensure each device has exactly one control path (the xArm `/web/`
+side-door fix). Auth can centralize at the edge; claim *exclusivity state*
+cannot (the device is the authority on its own state, ARCHITECTURE
+decision #2) — only the chokepoint can be consolidated, via the
+gateway-PC shim, where one proxy fronts several devices.
+
 ## Resumption criteria for v0.4
 
 The MCP milestone resumes when **all** of the following are true:
@@ -514,17 +622,17 @@ The MCP milestone resumes when **all** of the following are true:
 3. **`lab.skills()` returns a non-empty catalog with `available=True`
    entries against at least one v1.1 device.** ✅ **met** — every
    v1.1 device above reports a non-empty `allowed_actions` on live
-   `/status`, and the SkillDef registry now spans 8 kinds (52
-   SkillDefs total including `lights.set` on liquid_handler and the
-   shaker AND-gates).
+   `/status`, and the SkillDef registry now spans 8 kinds, **all
+   non-empty** (50 SkillDefs total — including the 4 `graph.*` skills
+   added for the xArm on 2026-05-31).
 4. **A workflow can run a five-step `Plan` against `agilent-plateloc-server`
    (dry-run is fine) using `validate_plan` + an executor.**
    🔴 **blocked** on the v0.3 carry-overs (`execute_plan`, async
-   interlocks, sync façades). Until those land there is no executor
-   to run the plan with. Also blocked on the `_lock` →
-   claim/heartbeat/release deepening listed under
-   `agilent-plateloc-server` above; until that ships, "claim semantics
-   intact" is not actually verifiable.
+   interlocks, sync façades) — there is still no executor to run the
+   plan with. The device-side blocker is **cleared**: `plateloc` now
+   ships real claim/heartbeat/release (verified live 2026-05-31), so
+   "claim semantics intact" is finally verifiable once the executor
+   lands.
 
 Once those are green, v0.4 PR-1 (`execute_plan` + async interlocks +
 sync façades) is the unblocking change, then PR-2 (`lab_skills.mcp` +

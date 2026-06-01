@@ -60,7 +60,7 @@ graph TB
 Three responsibilities, three layers:
 
 1. **Device layer** — each instrument runs its own REST service implementing `STATUS_SPEC`. Authoritative for that device's state.
-2. **Platform layer** (this repo) — the SDK aggregates device state, provides typed control, manages claims/leases, and exposes the runtime skill catalog. The dashboard's web server is a thin client of the SDK. The Next.js UI calls the dashboard server.
+2. **Platform layer** (this repo) — the SDK aggregates device state, provides typed control, manages claims/leases, and exposes the runtime skill catalog. The dashboard's web server is a thin SDK client for *reads*; for operator-initiated *writes* it proxies single `/control/*` actions to devices directly (per-request claim, bypassing the SDK — see design decision #1). The Next.js UI calls the dashboard server.
 3. **Application layer** — project workflows and agents consume the SDK to run experiments. Each project lives in its own repo with its own data model, recipes, and interlocks.
 
 ## Why a monorepo
@@ -170,11 +170,19 @@ Owns:
   `service_uptime` only on reachability *transitions* (not every poll)
 - **History API** (`history.py`): `GET /api/history/*` read endpoints for
   the dashboard; `POST /api/ingest/*` write endpoints for device services
+- **Operator control passthrough** (`control.py`): mirrors each device's
+  `/control/*` surface for operator-initiated writes, runs the per-request
+  claim → action → release dance for v1.1 devices, and writes one
+  `control_action` audit row to `equipment_events` per call (actor, action,
+  outcome). See design decision #1.
 
 Does **not** own:
 
 - Polling, adapters, or the registry model — all imported from `skills`
-- Any control logic — control calls are forwarded to device gateways verbatim
+- Any control *logic* or safety checks — the passthrough forwards actions
+  verbatim and lets the device adjudicate (412 precondition / 423 claim
+  conflict). Skill preconditions and plan interlocks live in `skills/`, not
+  here.
 
 ### `web/` — Next.js UI
 
@@ -240,11 +248,20 @@ The contract every per-device REST service implements. Combines the v1.0 baselin
 
 ## Key design decisions
 
-### 1. Skills SDK is the control authority
+### 1. Two writers, one authority: the device
 
-The dashboard polls. Workflows command. Both go through the same SDK code. The SDK owns the registry, the polling loop, the claim/lease state, and the skill catalog.
+There are **two** classes of writer, distinguished by privilege and lifetime — not by "who is allowed to write at all":
 
-The dashboard does **not** write to devices. Workflows do. This split keeps the dashboard simple and ensures only one piece of code can change device state.
+- **Workflows / agents** are the *programmatic* writers. They go through the `lab-skills` SDK, which owns the registry, the polling loop, the **skill catalog** (precondition checks), **plan validation / interlocks**, and **long-lived heartbeated claims**. A workflow holds a claim for the duration of a run and executes a validated multi-step `Plan`.
+- **The dashboard** is the *operator-initiated* writer. When a human clicks a control in a tile, `api/app/control.py` proxies that single action to the device over HTTP, acquiring a **short-lived per-request claim** (`owner: ac-organic-lab-dashboard`), attaching `X-Claim-Token`, and releasing in a `finally`. This passthrough is deliberately **thin**: it does *not* go through the SDK, run interlocks, or hold a claim across calls. It mirrors the device's `/control/*` surface verbatim and relies on the device as the authority (§2) to refuse anything unsafe (412 precondition / 423 claim conflict).
+
+> Earlier revisions of this doc said *"the dashboard does not write to devices."* That stopped being true when the control passthrough shipped. The invariant that actually holds is **the device is the single authority**: every writer — workflow or dashboard — competes for the same cooperative claim, and the device adjudicates. Two writers cannot both hold a claim, so a dashboard click while a workflow holds the sealer surfaces as a 423 with `claimed_by.owner` (and vice-versa).
+
+What this buys, and what it costs:
+
+- **Audit.** Because the dashboard is now a writer, every passthrough call is recorded to `equipment_events` (`event_type: "control_action"`, with the actor, action, and outcome) so "who moved the sash, when" is answerable. See [`OBSERVABILITY.md`](OBSERVABILITY.md).
+- **Auth.** Operator writes are gated by `CONTROL_PASSWORD` today; the [`AUTH.md`](AUTH.md) sidecar will replace the generic `ac-organic-lab-dashboard` owner with a per-user identity, stamped into both the claim and the audit row.
+- **No SDK safety net.** The passthrough skips skill-catalog preconditions and project interlocks — those run only in the workflow path. The dashboard tiles compensate client-side (disabling buttons when they can compute a precondition), and the device's 412/423 is the backstop. This is an accepted trade-off for keeping the operator path a one-hop proxy; destructive cross-device coordination must go through a workflow, not the dashboard.
 
 ### 2. Per-device REST services are authoritative for their own state
 

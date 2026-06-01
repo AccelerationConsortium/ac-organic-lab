@@ -20,6 +20,8 @@ control surface to a device repo therefore needs no code change here.
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
 from typing import Any
 
@@ -242,6 +244,65 @@ async def _release_claim_best_effort(
         )
 
 
+# Audit identity for dashboard-initiated control. The dashboard is a
+# legitimate low-privilege operator that takes a per-request claim; this
+# is the actor stamped into the audit row (and into device claims as
+# `details.claimed_by.owner`). The AUTH.md sidecar will replace this with
+# the authenticated `X-Auth-User` once it ships.
+async def _record_control_event(
+    request: Request,
+    equipment_id: str,
+    action: str,
+    method: str,
+    *,
+    owner: str,
+    status_code: int,
+    outcome: str,
+    detail: Any = None,
+) -> None:
+    """Append one audit row to ``equipment_events`` for a control action.
+
+    The dashboard now *writes* to devices (per-request claims), so every
+    mutating passthrough call is recorded with the actor (``owner``), the
+    action, and the outcome (``ok`` / ``refused`` / ``claim_denied`` /
+    ``timeout`` / ``transport_error``).
+
+    Best-effort and non-blocking: the synchronous sqlite write is pushed to
+    a worker thread so the event loop never blocks, and any failure is
+    logged then swallowed — auditing must never break a control call. A
+    no-op when the history DB is unavailable (e.g. test harness, or DB
+    failed to open at startup).
+    """
+
+    db = getattr(request.app.state, "db", None)
+    if db is None:
+        return
+    payload: dict[str, Any] = {
+        "action": action,
+        "method": method,
+        "status_code": status_code,
+        "outcome": outcome,
+        "owner": owner,
+    }
+    if detail is not None:
+        payload["detail"] = detail[:500] if isinstance(detail, str) else detail
+    message = f"{owner} {method} {action} → {outcome} ({status_code})"
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            functools.partial(
+                db.record_equipment_event,
+                equipment_id,
+                "control_action",
+                message=message,
+                payload=payload,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - auditing must never break control
+        logger.warning("audit write failed %s %s: %s", equipment_id, action, exc)
+
+
 async def _proxy(
     request: Request,
     equipment_id: str,
@@ -302,13 +363,33 @@ async def _proxy(
                 await _release_claim_best_effort(
                     client, entry.base_url, entry.status_path, token, equipment_id
                 )
-    except HTTPException:
+    except HTTPException as exc:
+        # The action never executed: claim acquisition was refused
+        # (409/423/503/422) or the method was unsupported. Audit the
+        # refusal, then re-raise so the frontend still sees the device's
+        # verbatim body (claimed_by / retry_after_s).
+        outcome = "claim_denied" if exc.status_code in (409, 423) else "refused"
+        await _record_control_event(
+            request, equipment_id, action, method,
+            owner=_DASHBOARD_CLAIM_OWNER, status_code=exc.status_code,
+            outcome=outcome, detail=exc.detail,
+        )
         raise
     except httpx.TimeoutException as exc:
         logger.warning("control timeout %s %s -> %s: %s", method, equipment_id, target, exc)
+        await _record_control_event(
+            request, equipment_id, action, method,
+            owner=_DASHBOARD_CLAIM_OWNER, status_code=504,
+            outcome="timeout", detail=str(exc),
+        )
         raise HTTPException(status_code=504, detail=f"Gateway timeout calling {target}") from exc
     except httpx.HTTPError as exc:
         logger.warning("control transport error %s %s -> %s: %s", method, equipment_id, target, exc)
+        await _record_control_event(
+            request, equipment_id, action, method,
+            owner=_DASHBOARD_CLAIM_OWNER, status_code=502,
+            outcome="transport_error", detail=str(exc),
+        )
         raise HTTPException(status_code=502, detail=f"Cannot reach gateway: {exc}") from exc
 
     # Forward the gateway's status code; many control endpoints return 4xx
@@ -320,8 +401,18 @@ async def _proxy(
             detail = payload.get("detail", payload)
         except ValueError:
             detail = response.text
+        await _record_control_event(
+            request, equipment_id, action, method,
+            owner=_DASHBOARD_CLAIM_OWNER, status_code=response.status_code,
+            outcome="refused", detail=detail,
+        )
         raise HTTPException(status_code=response.status_code, detail=detail)
 
+    await _record_control_event(
+        request, equipment_id, action, method,
+        owner=_DASHBOARD_CLAIM_OWNER, status_code=response.status_code,
+        outcome="ok",
+    )
     try:
         return response.json()
     except ValueError:

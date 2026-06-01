@@ -389,8 +389,8 @@ gate is enabled. The single source of truth for this rule is
 | Press up/down + plate in/out (`PressTile`)      | Yes           | Pneumatic + plate motion |
 | Sealer startup/shutdown, stage in/out, seal start/stop, set temperature/time (`PlateSealerTile`) | Yes | Heated cycle, mechanical motion |
 | Shake start/stop, set temperature/speed (`ShakerTile`) | Yes | Heated, mechanical motion |
-| xArm `stop` button + future control ops (`RobotArmTile`) | Yes (chip in header) | Will move hardware once `/control/*` graduates beyond `stop` |
-| Plate-reader, HPLC, solid-doser controls (when they land) | Yes | Same — destructive kinds carry the chip even before controls land |
+| xArm motion-graph control ops (`graph.move_to` / `recover_to` / …, `RobotArmTile`) | Yes (chip in header) | Will move hardware once the tile surfaces the `graph.*` controls (device surface + catalog already shipped) |
+| Plate-reader, HPLC controls (when they land); **solid-doser (dose) `/control/*`** now claim-gated on the device | Yes | Destructive kinds carry the chip even before tile controls land |
 | **OT-2 deck lights** (`LiquidHandlerTile`, `lights.set`) | **No** | Convenience lighting; bypassed per-action at the middleware (see below) |
 | OT-2 protocol-execution actions (setup, home, aspirate, dispense, etc.) when they land | Yes | Move pipettes / labware |
 | Power-strip outlet labelled *light* / *lamp*    | No (tile chip) / Yes (middleware) | Convenience lighting — see *Two layers* below |
@@ -777,11 +777,36 @@ table) when that happens.
 
 The UFactory xArm5 (`xarm_translocation`, STATUS_SPEC v1.1 on
 `sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000`) renders as the
-kind-specific `RobotArmTile`. Today the device's `/control/*` surface
-only exposes `stop`; the rest is read-only state introspection. The
-tile is information-dense: three single-line component summaries plus
+kind-specific `RobotArmTile`. As of **2026-05-31** the device exposes a
+**claim-gated motion-graph control surface** (see below); the *tile*,
+however, is still read-only — three single-line component summaries plus
 the lock chip and an "Open control panel ↗" deep-link to the device's
-own `/web/` UI.
+own `/web/` UI. Surfacing the graph controls in the tile is open work.
+
+### Device control surface (2026-05-31)
+
+The xArm gateway now implements the v1.1 claim protocol and a motion-graph
+control surface (confirmed via the device's `/openapi.json`):
+
+| Endpoint | Skill (`robot_arm` catalog) | Body |
+|---|---|---|
+| `POST /control/graph/move_to` | `graph.move_to` | `node_id`, `speed?` |
+| `POST /control/graph/recover_to` | `graph.recover_to` | `node_id`, `force=false` |
+| `POST /control/graph/record` | `graph.record` | `mode?`, `speed?`, `comment?`, `preconditions?` |
+| `POST /control/graph/mode` | `graph.mode` | `mode` (`off`/`advisory`/`strict`) |
+| `POST /control/{claim,heartbeat,release}` | — | claim protocol |
+| `POST /control/claim/enforce` | — | runtime enforce toggle |
+
+Notes:
+- The old `stop` endpoint was **retired**; motion is now expressed as moves
+  between named nodes in a motion graph.
+- Control is **connect-gated**: while the arm is disconnected (`requires_init`)
+  the device refuses `/control/claim` with `400 "connect first"`, so the full
+  claim/enforcement lifecycle can only be exercised after `POST /connect`.
+- The matching SkillDefs are registered in
+  `skills/src/lab_skills/skill_catalog/robot_arm.py`; `equipment.yaml` keeps
+  `do_not_call_connect: true`, so the SDK never auto-connects — availability
+  flows from the device's `allowed_actions` once connected.
 
 ### Tile layout
 
@@ -794,7 +819,7 @@ Three rows, each leading with a `w-14` caption pill:
 | **Track** | component state pill · `Pos <mm>` from `metrics.track_position` · `At <name>` in emerald when `details.motion_graph.rail_location_name` is non-null (track parked at a named rail location); otherwise `At —` muted |
 
 The lock chip lives in the header and is the visible promise that
-controls — when they graduate beyond `stop` — will be gated.
+controls — once the tile surfaces the `graph.*` actions — will be gated.
 
 ### Why not a generic `EquipmentStatusCard`?
 
@@ -807,14 +832,22 @@ state, track position).
 
 ### Open work
 
+- **Surface graph controls in the tile** — the device + catalog now
+  support `graph.move_to` / `recover_to` / `record` / `mode`, but
+  `RobotArmTile` still renders read-only. Add control affordances that
+  POST through the audited `/api/equipment/xarm_translocation/control/graph/*`
+  passthrough; the lock chip then becomes load-bearing.
+- **Verify claim enforcement live** — once the arm is connected
+  (`POST /connect`), confirm tokenless `/control/graph/*` → 423 and
+  `details.claimed_by` population.
+- **The `/web/` deep-link is the un-audited side-door** — driving the arm
+  from the device's own panel bypasses the dashboard's claim + audit path.
+  Make the native panel claim-aware or front it at the edge (see the
+  *Control-surface exposure* section of [`docs/ROADMAP.md`](ROADMAP.md)).
 - **Live `metrics.gripper_position`** — the device repo doesn't yet
   publish current stroke. The tile already prefers a live value over
   the static range; the slot lights up automatically once the device
   emits the metric.
-- **Promoting `/control/*` actions** — gated on the gateway-PC shim
-  discussion (see [`docs/ROADMAP.md`](ROADMAP.md)). When it lands,
-  add SkillDefs to `skill_catalog/robot_arm.py` and grow the tile's
-  control surface; the lock chip then becomes load-bearing.
 
 ## 11) Liquid handler (`kind: liquid_handler`) — OT-2 deck lights
 
