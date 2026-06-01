@@ -1,0 +1,27 @@
+[Unit]
+Description=AC Organic Lab - Auth sidecar (Tailscale identity, forward-auth)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+Requires=tailscaled.service
+
+[Service]
+Type=simple
+User=sdl2
+WorkingDirectory=/opt/ac-organic-lab/auth
+# Phase 1 = audit mode: resolve + log identity, never block. Flip to "true"
+# only together with the Caddy forward_auth wiring (Phase 2).
+Environment=AUTH_ENFORCE=false
+ExecStart=/opt/ac-organic-lab/.venv/bin/uvicorn ac_auth.main:app --host 127.0.0.1 --port 8009
+Restart=on-failure
+RestartSec=3
+SyslogIdentifier=ac-organic-lab-auth
+
+# Reads the tailscaled LocalAPI socket (/var/run/tailscale/tailscaled.sock).
+# Loopback-only; reached by Caddy, never exposed on the Tailnet directly.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

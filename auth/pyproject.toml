@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ac-organic-lab-auth"
+version = "0.1.0"
+description = "Auth sidecar for the AC Organic Self-driving Lab: resolves Tailscale identity (forward-auth) for the dashboard control plane."
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+# Package is `ac_auth` (NOT `app`) to avoid colliding with the api/ member,
+# which already installs a top-level `app` package into the shared venv.
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ac_auth*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

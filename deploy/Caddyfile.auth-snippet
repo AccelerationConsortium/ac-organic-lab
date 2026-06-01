@@ -1,0 +1,30 @@
+# Auth sidecar wiring for the dashboard's Caddy site block.
+#
+# PHASE 1 (audit mode) — NOT wired into request flow.
+#   Just run ac-organic-lab-auth.service (loopback :8009) with
+#   AUTH_ENFORCE=false and confirm identity extraction out-of-band:
+#
+#     curl -s -H 'X-Forwarded-For: <a-human-device-tailnet-ip>' \
+#       http://127.0.0.1:8009/auth/verify | python3 -m json.tool
+#     journalctl -u ac-organic-lab-auth -f      # watch resolved identities
+#
+#   Nothing is gated; this only proves `whois` resolves real users before we
+#   lean on it.
+#
+# PHASE 2 (enforce) — add the block below INSIDE the dashboard site block,
+# set AUTH_ENFORCE=true on the sidecar, and have control.py read X-Auth-User.
+# forward_auth only guards the mutating control routes; reads stay open. The
+# action-name + kind bypasses (lights, camera, env) still live in the app /
+# Next.js middleware — Caddy handles the broad surface here.
+#
+#   @control {
+#       path /api/equipment/*/control/*
+#       method POST PUT PATCH DELETE
+#   }
+#   forward_auth @control 127.0.0.1:8009 {
+#       uri /auth/verify
+#       copy_headers X-Auth-User X-Auth-Display X-Auth-Tagged
+#   }
+#
+# Caddy populates X-Forwarded-For with the client's Tailnet IP, which is what
+# the sidecar resolves. Pin trusted_proxies before relying on it for enforcement.

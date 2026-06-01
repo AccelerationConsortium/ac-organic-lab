@@ -12,7 +12,7 @@
 #   uv run pytest skills/tests api/tests     # all tests
 
 [tool.uv.workspace]
-members = ["skills", "api"]
+members = ["skills", "api", "auth"]
 
 # Workspace-level pytest config so `uv run pytest` (or `pytest skills/tests api/tests`)
 # from the repo root picks up the right asyncio mode and test paths. Each
@@ -20,4 +20,4 @@ members = ["skills", "api"]
 # package is run in isolation.
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["skills/tests", "api/tests"]
+testpaths = ["skills/tests", "api/tests", "auth/tests"]
