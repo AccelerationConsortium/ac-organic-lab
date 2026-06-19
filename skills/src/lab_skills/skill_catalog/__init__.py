@@ -27,6 +27,7 @@ from .registry import SKILL_REGISTRY, register, skills_for
 # SKILL_REGISTRY without having to know which kind modules exist. Each
 # module's top-level ``register(...)`` call runs at this point.
 from . import fume_hood as _fume_hood  # noqa: F401
+from . import hplc as _hplc  # noqa: F401
 from . import liquid_handler as _liquid_handler  # noqa: F401
 from . import plate_reader as _plate_reader  # noqa: F401
 from . import plate_sealer as _plate_sealer  # noqa: F401

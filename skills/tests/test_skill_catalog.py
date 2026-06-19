@@ -20,6 +20,7 @@ def test_registry_populated_for_active_kinds() -> None:
     assert "press" in SKILL_REGISTRY
     assert "solid_doser" in SKILL_REGISTRY
     assert "fume_hood" in SKILL_REGISTRY
+    assert "hplc" in SKILL_REGISTRY
 
 
 def test_plate_reader_catalog_registered() -> None:
@@ -67,6 +68,81 @@ def test_robot_arm_graph_control_surface() -> None:
     # move_to targets a named node; mode is constrained to the 3 interlock modes.
     assert "node_id" in defs["graph.move_to"].args_schema.model_fields
     assert defs["graph.mode"].args_schema.model_fields["mode"].is_required()
+
+
+def test_hplc_catalog_registered() -> None:
+    """Agilent UPLC-MS sidecar (STATUS_SPEC v1.1): claim-gated /control/* verbs."""
+
+    defs = {d.name: d for d in SKILL_REGISTRY["hplc"]}
+    assert set(defs) == {"run.submit", "run.abort", "queue.cancel", "instrument.standby"}
+    for d in defs.values():
+        assert d.kind == "hplc"
+
+    assert defs["run.submit"].endpoint == "/control/run"
+    assert defs["run.submit"].method == "POST"
+    assert defs["run.abort"].endpoint == "/control/abort"
+    # standby parks the instrument; a true shutdown is a manual procedure, not a skill.
+    assert defs["instrument.standby"].endpoint == "/control/standby"
+
+    # queue.cancel is a DELETE with the queue_id in the path.
+    cancel = defs["queue.cancel"]
+    assert cancel.method == "DELETE"
+    assert cancel.endpoint == "/control/queue/{queue_id}"
+    assert "queue_id" in cancel.args_schema.model_fields
+
+    # run.submit body mirrors the device's RunRequest (gradient + structured samples).
+    submit_fields = defs["run.submit"].args_schema.model_fields
+    assert "gradient" in submit_fields
+    assert "samples" in submit_fields
+    assert "output_dir" in submit_fields
+    assert "plate_format" in submit_fields
+    assert "submitter" in submit_fields  # robot-reserved-tray flag
+    from lab_skills.skill_catalog.hplc import SampleConfig
+    assert {"tray", "well"} <= set(SampleConfig.model_fields)
+
+
+def test_hplc_run_submit_args_validate_ranges() -> None:
+    from lab_skills.skill_catalog.hplc import GradientConfig, RunSubmitArgs, SampleConfig
+
+    grad = GradientConfig(
+        name="standard_10min",
+        solvent_a="H2O_0.1%FA",
+        solvent_b="ACN_0.1%FA",
+        run_time=10.0,
+        flow_rate=0.6,
+        gradient_table=[[0.0, 0.05], [9.9, 0.05]],
+    )
+    ok = RunSubmitArgs(
+        output_dir="C:/CDSProjects/Installation/Results/Batch",
+        gradient=grad,
+        samples=[SampleConfig(sample_name="cpd_01", tray="front", well="A1", injection_volume=2.0)],
+    )
+    assert ok.ms_mode == "positive_negative"
+    assert ok.plate_format == "96-well"
+    assert ok.submitter == "manual"
+
+    with pytest.raises(Exception):
+        SampleConfig(sample_name="has spaces", tray="front", well="A1", injection_volume=2.0)
+    with pytest.raises(Exception):
+        SampleConfig(sample_name="cpd", tray="front", well="A1", injection_volume=999.0)  # > 20 uL
+
+    # Well geometry is validated against plate_format (A13 / I1 are off a 96-well plate).
+    with pytest.raises(Exception):
+        RunSubmitArgs(
+            output_dir="x", gradient=grad,
+            samples=[SampleConfig(sample_name="c", tray="front", well="A13", injection_volume=2.0)],
+        )
+    # ...but a 384-well plate accepts P24.
+    RunSubmitArgs(
+        output_dir="x", gradient=grad, plate_format="384-well",
+        samples=[SampleConfig(sample_name="c", tray="rear", well="P24", injection_volume=2.0)],
+    )
+
+    with pytest.raises(Exception):
+        GradientConfig(
+            name="x", solvent_a="a", solvent_b="b",
+            run_time=999.0, flow_rate=0.6, gradient_table=[[0.0, 0.0]],  # > 120 min
+        )
 
 
 def test_plate_sealer_skill_endpoints_match_spec() -> None:

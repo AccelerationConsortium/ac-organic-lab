@@ -41,7 +41,10 @@ class SkillDef(BaseModel):
     ``filter_every_well``); the catalog records the path as the device
     currently ships it."""
 
-    method: Literal["GET", "POST"] = "POST"
+    method: Literal["GET", "POST", "DELETE"] = "POST"
+    """HTTP verb. ``DELETE`` is used by resource-removal skills whose endpoint
+    carries a path id (e.g. ``queue.cancel`` → ``DELETE /control/queue/{queue_id}``);
+    the dashboard control passthrough (``api/app/control.py``) already routes it."""
 
     args_schema: type[BaseModel]
     """Pydantic class for the request body. Use a no-field model for

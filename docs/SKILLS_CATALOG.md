@@ -25,7 +25,7 @@ class SkillDef(BaseModel):
     kind: EquipmentKind                      # which equipment kind exposes it
     description: str                         # human-readable
     endpoint: str                            # e.g. "/control/seal/start"
-    method: Literal["GET", "POST"] = "POST"
+    method: Literal["GET", "POST", "DELETE"] = "POST"  # DELETE for id-in-path removal skills (queue.cancel)
     args_schema: type[BaseModel]             # Pydantic class for the request body
     returns_schema: type[BaseModel] | None   # for skills that return values
     requires_states: list[EquipmentState]    # states that permit this skill
@@ -68,6 +68,7 @@ skills/src/lab_skills/
 │   ├── liquid_handler.py
 │   ├── plate_reader.py
 │   ├── plate_stacker.py
+│   ├── hplc.py            # skill defs for kind = hplc (Agilent UPLC-MS sidecar)
 │   ├── fume_hood.py
 │   └── env_sensor.py
 └── ...
@@ -170,6 +171,7 @@ The SDK uses these in priority order:
    - **`plate_sealer.seal.start`** — `requires_components={"heater": "stable", "stage": "in"}`. Mirrors plateloc v1.3+'s two-precondition HTTP 412 (heater band + stage interlock). The dashboard tile pre-checks both client-side; `lab.skills()` would also report `available=False` if either condition fails.
    - **`shaker.shake.start`** — `requires_components={"motor": "idle"}`. Motor-only AND-gate so a heater-side `degraded` (e.g. SC25XR `cal3` RTD fault) doesn't block shaking. The corresponding heater-side action `shaker.shake.set_temperature` carries the complementary `requires_components={"heater": "stable"}` so it stays unavailable when the heater is the failing subsystem.
    - **`liquid_handler.lights.set`** (OT-2 deck-light) — `requires_states=[]`, no `requires_components`. Convenience-class control; advertised in `allowed_actions` whenever the robot is reachable regardless of `equipment_status`.
+   - **`hplc.run.submit`** / **`hplc.instrument.standby`** (Agilent UPLC-MS) — enqueue verbs gated by the device's FIFO queue. The sidecar drops both from `allowed_actions` when the queue is full (it would return HTTP 412 `queue_full` with a `Retry-After`) or when OpenLab is down (409 `requires_init`). `instrument.standby` parks the instrument in low-flow standby — a true power-down is a deliberate manual procedure, deliberately not exposed as a skill. The non-enqueue verbs **`hplc.run.abort`** and **`hplc.queue.cancel`** (the latter a `DELETE /control/queue/{queue_id}`) carry no such precondition and stay listed whenever the instrument is operational.
 
 This means devices migrating to v1.1 progressively make the catalog more accurate without any SDK rebuild. The SDK never needs to "know" the precondition rules of a specific device — the device declares them. `requires_components` is a curated SDK-side hint for the cases where the device's coarse state (or `allowed_actions`) is too permissive for a specific action.
 
