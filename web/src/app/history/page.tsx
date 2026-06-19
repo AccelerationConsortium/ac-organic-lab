@@ -86,13 +86,27 @@ const STATE_META: Record<StateName, {
   dry_run:       { label: "Dry Run",      dot: "bg-violet-500",   badge: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300",     desc: "Simulating operations without physical actuation." },
   error:         { label: "Error",        dot: "bg-rose-500",     badge: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",             desc: "Device reported an internal error — check device logs." },
   e_stop:        { label: "E-Stop",       dot: "bg-red-700",      badge: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",                 desc: "Emergency stop active — physical inspection required." },
-  unknown:       { label: "Unknown",      dot: "bg-slate-400",    badge: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",            desc: "Reachable but no clear state reported (mock adapter, startup) — or unobserved time before the aggregator started polling. Counted as up for uptime %." },
-  unreachable:   { label: "Unreachable",  dot: "bg-rose-400",     badge: "bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-400",             desc: "Aggregator cannot reach the device — counted as down. This is what 'offline' means here, not Unknown." },
+  unknown:       { label: "Unknown",      dot: "bg-slate-400",    badge: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",            desc: "State genuinely undetermined — cold start before the first successful poll, or unobserved time before the aggregator began monitoring. NOT a failure on its own; counted as up for uptime %. (A device known to be offline shows as Unreachable instead.)" },
+  unreachable:   { label: "Unreachable",  dot: "bg-rose-400",     badge: "bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-400",             desc: "Device is offline — either the aggregator's /status poll failed at the transport layer (timeout / connection refused), or a gateway reports it cannot reach the backing hardware (camera / plug). This is what 'offline' means here, not Unknown. Counted as down." },
 };
+
+// Kinds reached over a secondary link behind a shared gateway
+// (kasa-tapo-services fronts cameras + Kasa plugs). When the backing hardware
+// is offline the gateway still answers /status (HTTP 200, so no transport
+// `fetch_error`) but reports `equipment_status: "unknown"`. We attribute that
+// `unknown` to a known reachability failure and render it as "unreachable" —
+// matching how a directly-polled device surfaces a transport timeout. A bare
+// `unknown` from a non-gateway device (cold start / not-yet-observed) stays
+// "unknown". See STATUS_SPEC §"`unknown` vs `error` vs unreachable".
+const GATEWAY_FRONTED_KINDS = new Set(["camera", "power_strip", "smart_plug"]);
 
 function effectiveState(snap: EquipmentSnapshot): StateName {
   if (snap.fetch_error) return "unreachable";
-  return (snap.status?.equipment_status as StateName) ?? "unknown";
+  const reported = (snap.status?.equipment_status as StateName) ?? "unknown";
+  if (reported === "unknown" && GATEWAY_FRONTED_KINDS.has(snap.kind)) {
+    return "unreachable";
+  }
+  return reported;
 }
 
 function StateDot({ snap }: { snap: EquipmentSnapshot }) {

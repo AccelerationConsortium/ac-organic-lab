@@ -328,7 +328,8 @@ Steps:
 
 | Symptom                                              | Likely cause                                                    | Fix                                                         |
 |------------------------------------------------------|------------------------------------------------------------------|-------------------------------------------------------------|
-| Tile is `error`, `details.onvif_reachable: false`    | Wrong ONVIF port, wrong account, or ONVIF disabled on camera    | Check Tapo app → Advanced → ONVIF; default port is 2020     |
+| Tile is `degraded`, `details.onvif_reachable: false` (but Tapo up) | Wrong ONVIF port, wrong account, or ONVIF disabled on camera    | Check Tapo app → Advanced → ONVIF; default port is 2020     |
+| Tile is `unknown` / "Unreachable", all of `onvif`/`tapo`/`go2rtc` false | Camera fully offline (LAN/power down) — neither ONVIF nor Tapo answered. NOT a fault (the gateway maps this to `unknown`, and the dashboard renders gateway-fronted `unknown` as "Unreachable"; see STATUS_SPEC §2.1) | Check camera power + LAN; `ffprobe rtsp://…` from the gateway host |
 | Tile is `degraded`, lens markers grey                | go2rtc is up but credentials are wrong - source not connecting  | Check `journalctl -u ac-go2rtc -n 50` for RTSP auth errors  |
 | MSE viewport shows "No stream"                       | Caddy `/streams/*` block missing                                | Add the snippet in `kasa_tapo_services/deploy/Caddyfile.snippet` |
 | PTZ buttons disabled                                 | ONVIF was unreachable on last poll                              | Same as the first row                                       |

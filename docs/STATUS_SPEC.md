@@ -70,9 +70,9 @@ EquipmentState = Literal[
     "requires_init",  # service up but hardware not initialized (e.g. needs POST /startup or /connect)
     "degraded",       # running but a sub-component is unhealthy
     "dry_run",        # simulation mode, no hardware connected
-    "error",          # hardware reported an error
+    "error",          # device is REACHABLE and reported a hardware/subsystem fault — NOT "couldn't reach it" (see §2.1)
     "e_stop",         # emergency stopped
-    "unknown",        # state cannot be determined
+    "unknown",        # state cannot be determined — honest fallback, NOT a failure signal on its own (see §2.1)
 ]
 
 
@@ -137,6 +137,22 @@ class EquipmentStatus(BaseModel):
     # Free-form per-equipment data; safe to display in a debug/details panel.
     details: dict[str, Any] = Field(default_factory=dict)
 ```
+
+### 2.1 `unknown` vs `error` vs "unreachable" (normative)
+
+These three are routinely confused. They are not interchangeable:
+
+- **`error`** — the device is **reachable** and a hardware/subsystem fault was **reported**. Reserve it for genuine faults the device can actually observe (driver error, over-temperature, a jam, a sub-component reporting failure). **Never** use `error` to mean "I couldn't reach something." If you didn't get an answer, you don't know there's a fault.
+- **`unknown`** — the device's state **cannot be determined**. This is the honest fallback when there is no better answer: a cold start before the first successful poll, an unobserved gap in history, or a state machine that genuinely cannot resolve its state. `unknown` is **not** a failure signal on its own, and for uptime accounting it is treated as *up* (you never established that the device was down — you just have no information).
+- **"unreachable"** is **not** an `EquipmentState` — there is deliberately no such enum value. It is a **reader-side (dashboard) presentation** concept: the aggregator's poll of `/status` failed at the transport layer (timeout / connection refused), which it records as a `fetch_error`. The dashboard renders any device carrying a `fetch_error` as **"unreachable"** (offline, counted as *down*), independent of the placeholder `equipment_status` in the synthetic envelope (which is `unknown`).
+
+**Gateway-fronted devices (normative).** A *gateway-fronted* device is one whose hardware is reached over a secondary link behind a shared gateway service (e.g. `kasa-tapo-services` fronting Tapo cameras and Kasa plugs; any future multi-device proxy). When the gateway process is healthy but **cannot reach the backing hardware**, two rules apply:
+
+1. **The gateway MUST report `equipment_status: "unknown"`** (with a `message` explaining why, e.g. `"No route to host"` / `"Camera unreachable: neither ONVIF nor Tapo API responded"`), **not** `error`. Nothing faulted — the device simply can't be reached, so its state cannot be determined. Per best-practice #2 the gateway still returns **HTTP 200** (its own process is alive), so the aggregator records **no** `fetch_error` for it. `error` remains reserved for a *reachable* backing device whose subsystem reports a fault (e.g. a camera answering ONVIF but with go2rtc down → `degraded`; a fault the hardware actually reports → `error`).
+
+2. **The dashboard treats a gateway-fronted kind reporting `unknown` as "unreachable"** for presentation and uptime. Because such a device is genuinely offline yet produces no transport-level `fetch_error`, the offline interpretation is applied at the presentation layer (keyed on `equipment_kind` ∈ {`camera`, `smart_plug`, `power_strip`}). The on-the-wire contract value stays `unknown` — a device must never invent an out-of-enum state — but the operator sees "unreachable", consistent with a directly-polled device that timed out.
+
+**Net rule:** an `unknown` the reader can attribute to a known reachability failure (a transport `fetch_error`, or a gateway-fronted kind reporting `unknown`) renders as **"unreachable"** and counts as *down*; a bare `unknown` with no such attribution (cold start, not-yet-observed) stays **"unknown"** and counts as *up*. Devices should drive toward a precise state whenever they can — `unknown` is the answer of last resort, not a routine one.
 
 ### v1.1 field semantics
 
