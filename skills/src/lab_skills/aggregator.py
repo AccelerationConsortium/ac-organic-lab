@@ -16,6 +16,14 @@ from .models import EquipmentList, EquipmentSnapshot
 from .registry import EquipmentEntry, Registry
 
 
+# No single device fetch may exceed this many seconds in the batched
+# ``/api/equipment`` path. This caps a device whose own ``poll_timeout_seconds``
+# is larger (e.g. the OT-2, whose ``/status`` builds a snapshot over SSH) so that
+# one slow or unreachable device cannot stall the whole dashboard. Per-device
+# timeouts smaller than this still apply unchanged.
+_MAX_FETCH_SECONDS = 8.0
+
+
 class EquipmentAggregator:
     """Holds adapters and shared HTTP client; serves dashboard requests."""
 
@@ -63,8 +71,7 @@ class EquipmentAggregator:
         assert self._client is not None
 
         tasks = [
-            self._adapters[entry.id].fetch(self._client)
-            for entry in self._registry.equipment
+            self._bounded_fetch(entry) for entry in self._registry.equipment
         ]
         results = await asyncio.gather(*tasks)
         snapshots = [
@@ -72,6 +79,30 @@ class EquipmentAggregator:
             for entry, result in zip(self._registry.equipment, results)
         ]
         return EquipmentList(equipment=snapshots, fetched_at=datetime.now(timezone.utc))
+
+    async def _bounded_fetch(self, entry: EquipmentEntry) -> AdapterResult:
+        """Fetch one device's status, capped so a single slow or unreachable
+        device cannot stall the whole batched dashboard fetch.
+
+        Each device still honours its own ``poll_timeout_seconds`` inside the
+        adapter, but no fetch is allowed to exceed ``_MAX_FETCH_SECONDS``, so
+        ``/api/equipment`` returns within roughly that bound even during a
+        full-fleet outage. A capped fetch renders as an ``unknown`` / ``timeout``
+        tile, exactly like any other unreachable device.
+        """
+
+        adapter = self._adapters[entry.id]
+        assert self._client is not None
+        cap = min(entry.poll_timeout_seconds, _MAX_FETCH_SECONDS)
+        try:
+            return await asyncio.wait_for(adapter.fetch(self._client), timeout=cap)
+        except (asyncio.TimeoutError, TimeoutError):
+            return adapter.fail(
+                f"Status fetch exceeded {cap:.0f}s cap (device unreachable?)",
+                kind="timeout",
+            )
+        except Exception as exc:  # adapters shouldn't raise; never let one kill the batch
+            return adapter.fail(f"Unexpected fetch error: {exc}", kind="unknown")
 
 
 def _snapshot(entry: EquipmentEntry, result: AdapterResult) -> EquipmentSnapshot:
