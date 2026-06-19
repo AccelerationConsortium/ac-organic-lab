@@ -207,11 +207,17 @@ equipment:
     name: Agilent UPLC-MS
     kind: hplc
     adapter: http
-    protocol: "1.0"
+    protocol: "1.1"
     base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8010
     status_path: /status
     poll_timeout_seconds: 5.0
-    do_not_call_connect: true
+    # protocol: "1.1" turns on the aggregator's per-request claim dance
+    # (api/app/control.py) — the agilent-hplcms-server sidecar hard-enforces
+    # X-Claim-Token on /control/*. do_not_call_connect was removed: the sidecar
+    # now exposes a claim-gated control surface (run.submit / run.abort /
+    # queue.cancel / instrument.standby — see lab_skills/skill_catalog/hplc.py).
+    # /control/startup is a read-only readiness check (it never starts OpenLab),
+    # so there is no auto-connect hazard to guard against.
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}

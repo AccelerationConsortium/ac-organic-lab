@@ -160,7 +160,7 @@ occasionally ahead of the device.
 | `filter_every_well` | `http` | 1.1 | ✅ `ready`, `allowed_actions: ["stop", "press.up", "press.down", "plate.in", "plate.out"]` | v1.1 migration shipped + deployed on the Pi at `100.64.254.104`. PressTile, per-direction `hold_time` inputs, claim/release per request all verified. |
 | `plateloc` | `http` | 1.1 | ✅ `ready`, full sealer `/control/*` surface advertised | **Real claim/heartbeat/release shipped (commit fa98ca8) and verified live 2026-05-31** — `_lock` placeholder replaced by a TTL `ClaimStore`; hard `X-Claim-Token` enforcement (423 *ahead of* the 412 interlocks, confirmed via tokenless `seal/time`), `details.claimed_by` populated. `seal.start` still gated by stage-in + heater-stable 412 interlocks. Only remaining gap is cosmetic (`equipment_version` null; CHANGELOG/`pyproject` still 1.3.1). |
 | `cytation_5` | `http` | 1.1 | ✅ `ready`, 13 actions allowed (`read.{absorbance,fluorescence,luminescence}`, `imaging.capture`, drawer / plate / well) | Phase 3 (v1.1 + `/control/*`) and Phase 4 (skill catalog in this monorepo) **shipped** since the last sweep. Phase 2 (per-well sample tracking surfaced under `details.loaded_plate`) is the remaining device-repo work. |
-| `agilent_uplc_ms` | `http` | 1.0 | ✅ `ready` | `agilent-hplcms-server` read-only sidecar. Polling latency ~1.5 s — borderline against the 5 s timeout if OpenLab WMI degrades; raise to 8 s if it ever errors. |
+| `agilent_uplc_ms` | `http` | 1.1 | ✅ `ready`, `allowed_actions: ["run.submit", "run.abort", "queue.cancel", "instrument.standby"]` | **v1.1 control migration shipped (`agilent-hplcms-server`, branch `feature-agent-control`).** Claim protocol with **hard `X-Claim-Token` enforcement** on mutating `/control/*` (423 without a claim); `details.claimed_by` surfaced; OLSS "Paused" mapped to `busy` (+`required_actions: ["resume_paused_sequence"]`). The FIFO-queue enqueue verbs (`run.submit` / `instrument.standby`) drop from `allowed_actions` on queue-full (412 + `Retry-After`) or OpenLab-down (409); `run.abort` / `queue.cancel` stay listed. `instrument.standby` is a low-flow park, not a full shutdown (power-down stays a manual procedure). `hplc` skill catalog populated. `do_not_call_connect` removed (control now allowed). Polling latency ~1.5 s — borderline against the 5 s timeout if OpenLab WMI degrades; raise to 8 s if it ever errors. |
 | `agilent_biostack` | `http` | 1.0 | ✅ `ready` | Driver landed since the last sweep; entry flipped from `mock` to `http`. No `/control/*` surface yet (`allowed_actions: []`); read-only for now. |
 | `pypoe_web` | `http` | 1.1 | ✅ `ready` | Internal web service. No control surface. |
 | `env_*` (4 sensors) | `http` (mock backend) | 1.0 | dry_run (synthesised) | Awaiting the `env_sensors` repo. Not on the v0.4 critical path. |
@@ -397,17 +397,33 @@ A repo is considered v1.1 conformant when, on top of v1.0:
   - [ ] Publish current gripper stroke as `metrics.gripper_position`
     so the tile shows live position instead of the static range pill.
 
-#### `agilent_uplc_ms` (newly shipped)
+#### `agilent_uplc_ms` (v1.1 control migration)
 
-- Repo: `agilent-hplcms-server` — read-only sidecar for the Agilent
-  UPLC-MS instrument (`SDL2_LC1290`).
-- Conformance: STATUS_SPEC v1.0 (read-only). Has no `/control/*`
-  surface and is not planning one — it observes `moses` + Agilent
-  OpenLab CDS and reports state; never opens its own session.
-- Live `/status`: `equipment_status: "ready"`, message
-  `"OpenLab supervisor up; no active acquisition"`. Fully populated
-  `components` dict (openlab_acquisition / instrument_service /
-  reverse_proxy / moses_controller / hplc / ms).
+- Repo: `agilent-hplcms-server` (branch `feature-agent-control`) — status +
+  control sidecar for the Agilent UPLC-MS instrument (`SDL2_LC1290`). It drives
+  `moses` as a subprocess and observes Agilent OpenLab CDS; it never imports or
+  shares an env with `moses`.
+- Conformance: STATUS_SPEC **v1.1**. `/status` carries `allowed_actions` and
+  `details.claimed_by`; the claim protocol (`/control/{claim,heartbeat,release}`)
+  is implemented with **hard `X-Claim-Token` enforcement** on mutating
+  `/control/*` (missing/stale token → 423 Locked). `GET /control/queue` and the
+  read-only `POST /control/startup` stay open.
+- Control surface (`hplc` skill catalog): `run.submit` (`POST /control/run`),
+  `run.abort` (`POST /control/abort`), `queue.cancel`
+  (`DELETE /control/queue/{queue_id}`), `instrument.standby`
+  (`POST /control/standby` — a low-flow park; a true power-down is a manual
+  operator procedure, deliberately not an API action). The two FIFO-queue
+  enqueue verbs drop from
+  `allowed_actions` when the queue is full (412 `queue_full` + `Retry-After`) or
+  OpenLab is down (409 `requires_init`); the single shared helper guarantees
+  `allowed_actions` never disagrees with the endpoints (§6.2).
+- State mapping: an OLSS "Paused" sequence is reported as `equipment_status:
+  "busy"` with `required_actions: ["resume_paused_sequence"]` (paused is not a
+  legal `EquipmentState`); the precise OLSS status survives in
+  `details.olss_software_status` and the `hplc`/`ms` component state.
+- Registry: `protocol: "1.1"` (turns on the aggregator's per-request claim
+  dance) and `do_not_call_connect` removed — `/control/startup` is a read-only
+  readiness probe, so there is no auto-connect hazard.
 - Open watch item: dashboard polling latency is ~1.5 s, against a
   5 s `poll_timeout_seconds`. The OpenLab WMI introspection is the
   cost. If this regresses, raise `poll_timeout_seconds` to 8 s
@@ -549,7 +565,8 @@ out-of-band, un-audited?"):
 | `plateloc` | Yes | **Yes** (real `ClaimStore`, X-Claim-Token → 423) — *was a stub; fixed 2026-05-31* | Rejected if a claim is held; cooperative + un-audited via direct `curl` |
 | `dose_every_well` | Yes | **Yes** (X-Claim-Token → 423) — *was v1.0 no-claim; fixed 2026-05-31* | Rejected if a claim is held; cooperative + un-audited via direct `curl` |
 | `xarm_translocation` | Yes | **Yes** on `/control/*` (claim protocol deployed 2026-05-31); native `/web/` claim-awareness **unverified** | `/control/*` now claim-gated; the `/web/` side-door is still *advertised* by the tile's "Open control panel ↗" deep-link and its claim-awareness is unconfirmed |
-| uplc, biostack, pypoe | Yes | read-only, no control surface | n/a (nothing to move) |
+| `agilent_uplc_ms` | Yes | **Yes** (X-Claim-Token → 423) — *v1.1 control migration* | Rejected if a claim is held; cooperative + un-audited via direct `curl`. Note: a run can still be started out-of-band directly in OpenLab CDS on the instrument PC — the sidecar surfaces that as `busy` but cannot prevent it. |
+| biostack, pypoe | Yes | read-only, no control surface | n/a (nothing to move) |
 
 **Key framing: claims are a concurrency guard, not a security guard.**
 STATUS_SPEC §5 is explicit that claims are *cooperative, not
