@@ -1,0 +1,8 @@
+# Local auth state — never commit
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+credentials.env
+.ac_auth/

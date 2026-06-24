@@ -587,10 +587,10 @@ whose control surface predates claims.
    cooperating case. Does *not* stop out-of-band humans or the xArm
    `/web/` panel.
 2. **Front device control surfaces behind the auth/audit edge** — the
-   [`AUTH.md`](AUTH.md) sidecar, but note its Caddy `forward_auth` as
-   drafted covers only the *dashboard's* `/api/equipment/*/control/*`
-   routes. Closing the direct-device hole needs the devices themselves
-   behind that edge (AUTH.md Phase 5) or bound to loopback +
+   [`AUTH_SERVICE_DESIGN.md`](AUTH_SERVICE_DESIGN.md) auth module, but note its
+   Caddy `forward_auth` covers only the *dashboard's*
+   `/api/equipment/*/control/*` routes. Closing the direct-device hole needs the
+   devices themselves behind that edge, or bound to loopback +
    reverse-proxied like the camera/plug gateway already is.
 3. **xArm `/web/` panel specifically** — fold into the gateway-PC shim
    work (see the `xarm_translocation` sub-task): replace the

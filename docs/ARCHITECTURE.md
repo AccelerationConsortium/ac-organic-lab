@@ -260,7 +260,7 @@ There are **two** classes of writer, distinguished by privilege and lifetime —
 What this buys, and what it costs:
 
 - **Audit.** Because the dashboard is now a writer, every passthrough call is recorded to `equipment_events` (`event_type: "control_action"`, with the actor, action, and outcome) so "who moved the sash, when" is answerable. See [`OBSERVABILITY.md`](OBSERVABILITY.md).
-- **Auth.** Operator writes are gated by `CONTROL_PASSWORD` today; the [`AUTH.md`](AUTH.md) sidecar will replace the generic `ac-organic-lab-dashboard` owner with a per-user identity, stamped into both the claim and the audit row.
+- **Auth.** Operator writes are gated by `CONTROL_PASSWORD` today; the [`AUTH_SERVICE_DESIGN.md`](AUTH_SERVICE_DESIGN.md) auth module (email one-time-code login, `ac_auth`) will replace the generic `ac-organic-lab-dashboard` owner with a per-user identity, stamped into both the claim and the audit row.
 - **No SDK safety net.** The passthrough skips skill-catalog preconditions and project interlocks — those run only in the workflow path. The dashboard tiles compensate client-side (disabling buttons when they can compute a precondition), and the device's 412/423 is the backstop. This is an accepted trade-off for keeping the operator path a one-hop proxy; destructive cross-device coordination must go through a workflow, not the dashboard.
 
 ### 2. Per-device REST services are authoritative for their own state

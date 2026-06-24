@@ -247,8 +247,8 @@ async def _release_claim_best_effort(
 # Audit identity for dashboard-initiated control. The dashboard is a
 # legitimate low-privilege operator that takes a per-request claim; this
 # is the actor stamped into the audit row (and into device claims as
-# `details.claimed_by.owner`). The AUTH.md sidecar will replace this with
-# the authenticated `X-Auth-User` once it ships.
+# `details.claimed_by.owner`). The ac_auth module (see AUTH_SERVICE_DESIGN.md)
+# will replace this with the authenticated `X-Auth-User` once edge wiring ships.
 async def _record_control_event(
     request: Request,
     equipment_id: str,
