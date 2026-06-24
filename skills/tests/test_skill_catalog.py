@@ -74,7 +74,10 @@ def test_hplc_catalog_registered() -> None:
     """Agilent UPLC-MS sidecar (STATUS_SPEC v1.1): claim-gated /control/* verbs."""
 
     defs = {d.name: d for d in SKILL_REGISTRY["hplc"]}
-    assert set(defs) == {"run.submit", "run.abort", "queue.cancel", "instrument.standby"}
+    assert set(defs) == {
+        "run.submit", "run.abort", "queue.cancel", "instrument.standby",
+        "workflow.start", "workflow.end",
+    }
     for d in defs.values():
         assert d.kind == "hplc"
 
@@ -83,6 +86,14 @@ def test_hplc_catalog_registered() -> None:
     assert defs["run.abort"].endpoint == "/control/abort"
     # standby parks the instrument; a true shutdown is a manual procedure, not a skill.
     assert defs["instrument.standby"].endpoint == "/control/standby"
+
+    # Workflow lock (queue-ownership precedence #2): an HTE campaign takes the
+    # equipment-blocking lock. service.start/end are operator-only, NOT skills.
+    assert defs["workflow.start"].endpoint == "/control/workflow/start"
+    assert defs["workflow.start"].method == "POST"
+    assert defs["workflow.end"].endpoint == "/control/workflow/end"
+    assert defs["workflow.end"].method == "POST"
+    assert "service.start" not in defs and "service.end" not in defs
 
     # queue.cancel is a DELETE with the queue_id in the path.
     cancel = defs["queue.cancel"]

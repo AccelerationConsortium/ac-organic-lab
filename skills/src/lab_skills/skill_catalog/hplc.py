@@ -7,7 +7,9 @@ claim dance handles that transparently). Endpoint paths and arg ranges mirror
 the device's Pydantic ``Field(gt=, le=)`` constraints in
 ``agilent_hplcms_server/control/models.py``.
 
-The sidecar drives a single acquisition pipeline fronted by a FIFO job queue:
+The sidecar OWNS the job queue: its MosesRunner is the sole FIFO queue for our
+runs (process-exit authoritative), while OpenLab CDS is reserved for technician
+servicing/maintenance. Control surface:
 
 * ``POST   /control/run``               - submit a batch run (starts if idle, else queues)
 * ``POST   /control/abort``             - abort the active run and clear the queue
@@ -15,11 +17,29 @@ The sidecar drives a single acquisition pipeline fronted by a FIFO job queue:
 * ``POST   /control/standby``           - park the instrument in low-flow standby
                                           (NOT a full shutdown — that is a manual
                                           operator procedure at the instrument)
+* ``POST   /control/workflow/start``    - take the equipment-blocking workflow lock
+                                          for a robot/agent campaign (HTE users only)
+* ``POST   /control/workflow/end``      - release the workflow lock (claim retained)
 
 ``Skill.name`` matches the device's ``allowed_actions`` (``run.submit`` /
-``run.abort`` / ``queue.cancel`` / ``instrument.standby``). The device drops
-the two enqueue verbs from ``allowed_actions`` whenever it would refuse them
-(queue full → 412, OpenLab down → 409), so availability stays truthful.
+``run.abort`` / ``queue.cancel`` / ``instrument.standby`` / ``workflow.start`` /
+``workflow.end``). The device drops the *enqueue* verbs (``run.submit``,
+``instrument.standby``, ``workflow.start``) from ``allowed_actions`` whenever it
+would refuse them — queue full → 412, OpenLab core down → 409 ``requires_init``,
+or a technician is servicing the instrument directly in OpenLab → 409
+``instrument_servicing`` — so availability stays truthful. ``workflow.start`` is
+additionally offered only while no workflow is active, and ``workflow.end`` exactly
+while one is.
+
+**Workflow lock (queue-ownership precedence #2):** an HTE platform user takes the
+equipment-blocking lock for a campaign — a series of runs — via ``workflow.start``;
+while held, the device refuses sample submits from anyone but the lock holder with
+``423 workflow_active``. The lock rides on the caller's claim, so it inherits the
+claim's TTL/heartbeat/auto-expiry (a crashed holder loses it). ``workflow.start``
+requires the claim owner's role to be ``hte`` (else ``403 role_forbidden``);
+``workflow.end`` is idempotent. (Operator/dashboard service-mode toggles —
+``/control/service/start|end`` — are deliberately NOT skills: they are technician
+controls, not agent actions.)
 
 Not modelled as skills: ``GET /control/queue`` (read-only status, surfaced via
 the aggregator) and ``POST /control/startup`` (a read-only readiness probe that
@@ -29,6 +49,7 @@ never starts hardware).
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -152,6 +173,36 @@ class StandbyArgs(BaseModel):
     """Body for ``POST /control/standby`` (no parameters)."""
 
 
+class WorkflowStartArgs(BaseModel):
+    """Body for ``POST /control/workflow/start`` (no parameters).
+
+    The lock owner is the claim owner — identity rides on ``X-Claim-Token``,
+    not the body.
+    """
+
+
+class WorkflowStartResult(BaseModel):
+    """Response body for ``workflow.start`` (mirrors the device's
+    ``WorkflowStartResponse``)."""
+
+    status: Literal["workflow_started"] = "workflow_started"
+    message: str
+    expires_at: datetime
+    heartbeat_interval_s: float
+
+
+class WorkflowEndArgs(BaseModel):
+    """Body for ``POST /control/workflow/end`` (no parameters)."""
+
+
+class WorkflowEndResult(BaseModel):
+    """Response body for ``workflow.end`` (mirrors the device's
+    ``WorkflowEndResponse``)."""
+
+    status: Literal["workflow_ended"] = "workflow_ended"
+    message: str
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -214,6 +265,41 @@ register(
             requires_states=["ready", "busy", "dry_run"],
             estimated_duration_s=60.0,
         ),
+        SkillDef(
+            name="workflow.start",
+            kind="hplc",
+            description=(
+                "Take the equipment-blocking workflow lock for a robot/agent "
+                "campaign (a series of runs). While held, the device refuses "
+                "sample submits from anyone but the lock holder (423 "
+                "workflow_active). Requires an HTE platform user (403 "
+                "role_forbidden otherwise)."
+            ),
+            endpoint="/control/workflow/start",
+            args_schema=WorkflowStartArgs,
+            returns_schema=WorkflowStartResult,
+            # Enqueue-gated like run.submit (refused on queue-full → 412,
+            # OpenLab-down → 409 requires_init, servicing → 409); the device
+            # also drops it from allowed_actions while a workflow is active.
+            requires_states=["ready", "busy", "dry_run"],
+            estimated_duration_s=0.5,
+        ),
+        SkillDef(
+            name="workflow.end",
+            kind="hplc",
+            description=(
+                "Release the equipment-blocking workflow lock; the underlying "
+                "claim is retained. Idempotent — ending when no workflow is "
+                "active still succeeds."
+            ),
+            endpoint="/control/workflow/end",
+            args_schema=WorkflowEndArgs,
+            returns_schema=WorkflowEndResult,
+            # No precondition (like run.abort): only ever releases the lock.
+            # The device offers it exactly while a workflow is active.
+            requires_states=["ready", "busy", "degraded", "error", "dry_run"],
+            estimated_duration_s=0.5,
+        ),
     ],
 )
 
@@ -226,4 +312,8 @@ __all__ = [
     "RunSubmitResult",
     "SampleConfig",
     "StandbyArgs",
+    "WorkflowEndArgs",
+    "WorkflowEndResult",
+    "WorkflowStartArgs",
+    "WorkflowStartResult",
 ]
