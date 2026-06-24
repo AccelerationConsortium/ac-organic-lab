@@ -31,6 +31,7 @@ from . import hplc as _hplc  # noqa: F401
 from . import liquid_handler as _liquid_handler  # noqa: F401
 from . import plate_reader as _plate_reader  # noqa: F401
 from . import plate_sealer as _plate_sealer  # noqa: F401
+from . import plate_stacker as _plate_stacker  # noqa: F401
 from . import press as _press  # noqa: F401
 from . import robot_arm as _robot_arm  # noqa: F401
 from . import shaker as _shaker  # noqa: F401

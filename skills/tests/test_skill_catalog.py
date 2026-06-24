@@ -145,6 +145,29 @@ def test_hplc_run_submit_args_validate_ranges() -> None:
         )
 
 
+def test_plate_stacker_catalog_registered() -> None:
+    """Agilent BioStack 4 (STATUS_SPEC v1.1): six parameterless control
+    actions; names/endpoints are the cross-repo contract and must match the
+    device exactly.
+    """
+
+    defs = {d.name: d for d in SKILL_REGISTRY["plate_stacker"]}
+    assert set(defs) == {
+        "startup", "shutdown", "home",
+        "stage_plate", "present_plate", "handoff",
+    }
+    for name, d in defs.items():
+        assert d.kind == "plate_stacker"
+        assert d.endpoint == f"/control/{name}"
+        assert d.method == "POST"
+        # All six take an empty body.
+        assert d.args_schema.model_fields == {}
+    # startup is the only init-state action; the rest run from ready.
+    assert "requires_init" in defs["startup"].requires_states
+    for name in ("home", "stage_plate", "present_plate", "handoff"):
+        assert "ready" in defs[name].requires_states
+
+
 def test_plate_sealer_skill_endpoints_match_spec() -> None:
     """Catalog endpoints mirror the STATUS_SPEC ``kind=plate_sealer`` ``/control/*``
     contract.

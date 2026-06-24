@@ -79,12 +79,14 @@ async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase, re
         for entry in dict(registry).get("equipment", [])
     }
 
-    # Give the aggregator a moment to complete its first poll cycle.
+    # Give the aggregator's background poll loop a moment to fill the cache.
     await asyncio.sleep(5)
 
     while True:
         try:
-            skill_list = await aggregator.fetch_all()
+            # Read the warm cache rather than fanning out again — the background
+            # poll loop already refreshes it far more often than this 60 s loop.
+            skill_list = await aggregator.get_snapshot()
             for snap in skill_list.equipment:
                 device_id = snap.id
                 reachable = snap.fetch_error is None
@@ -335,8 +337,15 @@ def _write_mock_sensor_readings(db: LabDatabase, sensor_id: str) -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Equipment registry + aggregator
     registry = load_registry()
-    aggregator = EquipmentAggregator(registry)
+    aggregator = EquipmentAggregator(
+        registry,
+        poll_interval_s=float(os.environ.get("AGGREGATOR_POLL_INTERVAL_S", "2.5")),
+    )
     await aggregator.startup()
+    # Start the background poll loop so /api/equipment serves a warm cache
+    # (memory read) instead of fanning out to every device per request. One
+    # loop feeds all viewers; a slow/dead device never stalls the dashboard.
+    await aggregator.start_polling()
     app.state.aggregator = aggregator
     app.state.registry = registry
     # Long-lived httpx client for the control passthrough. Sharing one
@@ -443,7 +452,7 @@ async def list_equipment() -> EquipmentList:
     """Return the latest status of every registered equipment in parallel."""
 
     aggregator = _aggregator()
-    skill_list = await aggregator.fetch_all()
+    skill_list = await aggregator.get_snapshot()
     return compose_equipment_list(
         skill_list,
         app.state.overrides,

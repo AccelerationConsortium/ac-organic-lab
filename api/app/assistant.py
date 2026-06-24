@@ -15,10 +15,16 @@ Configuration
   ``claude`` on PATH).
 * ``ASSISTANT_CLAUDE_MODEL`` -- model alias passed to ``claude --model``;
   default ``sonnet`` to keep cost off the Opus tier.
-* ``ASSISTANT_CLAUDE_CWD`` -- working directory for the subprocess. Must be
-  a directory where the ``lab-history`` MCP server is reachable (Local-scope
-  registrations only resolve from the project root). Defaults to the repo
-  root inferred from this file.
+* ``ASSISTANT_CLAUDE_CWD`` -- working directory for the subprocess. Defaults
+  to a minimal runtime dir *outside* the repo tree (``_runtime_dir()``) so
+  Claude Code does not auto-load the repo's large ``CLAUDE.md`` and its
+  ~50k-token doc imports on every turn -- that context was recreating the
+  prompt cache each request and burning the account's usage limit. The
+  ``lab-history`` MCP server no longer depends on cwd: it is passed
+  explicitly via ``--mcp-config`` (see below).
+* ``ASSISTANT_RUNTIME_DIR`` -- override the runtime dir that holds the
+  generated ``mcp.json`` and serves as the default cwd
+  (default ``~/.cache/lab-assistant``).
 * ``ASSISTANT_CLAUDE_TIMEOUT_S`` -- hard wallclock cap per turn
   (default 120).
 
@@ -27,6 +33,10 @@ Safety
 * ``--allowedTools mcp__lab-history__*`` restricts the subprocess to the
   lab MCP server. Bash, file ops, web search, etc. are not in the allowlist
   and will be denied if the model tries to call them.
+* ``--mcp-config <mcp.json> --strict-mcp-config`` injects *only* the
+  read-only ``lab-history`` server, ignoring any filesystem-discovered MCP
+  config. This decouples tool availability from cwd, so the minimal cwd
+  above keeps working.
 * ``--permission-mode default`` keeps Claude Code's normal permission
   prompts; with the empty allowlist for everything else, the model can't
   silently use forbidden tools.
@@ -41,6 +51,7 @@ import json
 import logging
 import os
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -95,11 +106,65 @@ def _claude_binary() -> str | None:
     return None
 
 
+def _runtime_dir() -> Path:
+    """Minimal scratch dir for the subprocess: holds the generated
+    ``mcp.json`` and doubles as the default cwd. Deliberately outside the
+    repo tree so Claude Code finds no project ``CLAUDE.md`` to load."""
+
+    d = Path(
+        os.environ.get(
+            "ASSISTANT_RUNTIME_DIR", str(Path.home() / ".cache" / "lab-assistant")
+        )
+    )
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _uv_binary() -> str:
+    """Resolve ``uv`` for the MCP server spawn, mirroring _claude_binary()'s
+    PATH caveat under systemd."""
+
+    found = shutil.which("uv")
+    if found:
+        return found
+    for c in (Path.home() / ".local" / "bin" / "uv", Path("/usr/local/bin/uv")):
+        if c.is_file() and os.access(c, os.X_OK):
+            return str(c)
+    return "uv"
+
+
+def _write_mcp_config() -> Path:
+    """Materialise the explicit ``lab-history`` MCP config and return its path.
+
+    Mirrors the Local-scope registration in ``~/.claude.json`` but with an
+    absolute ``--project``, so it resolves regardless of the subprocess cwd.
+    """
+
+    config = {
+        "mcpServers": {
+            "lab-history": {
+                "type": "stdio",
+                "command": _uv_binary(),
+                "args": [
+                    "run",
+                    "--project",
+                    str(_repo_root() / "api"),
+                    "lab-history-mcp",
+                ],
+                "env": {},
+            }
+        }
+    }
+    path = _runtime_dir() / "mcp.json"
+    path.write_text(json.dumps(config, indent=2))
+    return path
+
+
 def _claude_cwd() -> str:
     override = os.environ.get("ASSISTANT_CLAUDE_CWD")
     if override:
         return override
-    return str(_repo_root())
+    return str(_runtime_dir())
 
 
 SYSTEM_PROMPT = """You are the AC Organic Self-driving Lab assistant. You help
@@ -176,6 +241,44 @@ def _format_prompt(messages: list[ChatMessage]) -> str:
         lines.append(f"\n{marker}: {m.content}")
     lines.append("\n\nNew user message:\n" + messages[-1].content)
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit interpretation
+# ---------------------------------------------------------------------------
+
+
+def _format_reset(epoch: Any) -> str | None:
+    try:
+        return datetime.fromtimestamp(float(epoch), tz=timezone.utc).strftime(
+            "%H:%M UTC"
+        )
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _rate_limit_block_message(info: dict[str, Any] | None) -> str | None:
+    """Return a human-readable cause string when a ``rate_limit_event``
+    indicates the request was *blocked*.
+
+    A ``status`` of ``"allowed"`` is normal -- the success path also emits a
+    ``rate_limit_event`` (often with ``overageStatus: "rejected"`` when the
+    account has no overage budget) -- so only a non-allowed status counts as
+    the reason a turn failed.
+    """
+
+    if not isinstance(info, dict):
+        return None
+    status = info.get("status")
+    if status in (None, "allowed"):
+        return None
+    reset = _format_reset(info.get("resetsAt"))
+    if info.get("overageDisabledReason") == "out_of_credits":
+        base = "Claude is out of credits and overage is disabled"
+    else:
+        kind = info.get("rateLimitType") or "usage"
+        base = f"Claude {kind} limit reached"
+    return base + (f"; resets at {reset}." if reset else ".")
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +374,7 @@ async def _run_claude(messages: list[ChatMessage]) -> AsyncIterator[bytes]:
         return
 
     prompt = _format_prompt(messages)
+    mcp_config_path = _write_mcp_config()
     args = [
         binary,
         "--print",
@@ -281,6 +385,9 @@ async def _run_claude(messages: list[ChatMessage]) -> AsyncIterator[bytes]:
         "--no-session-persistence",
         "--append-system-prompt",
         SYSTEM_PROMPT,
+        "--mcp-config",
+        str(mcp_config_path),
+        "--strict-mcp-config",
         "--allowedTools",
         ALLOWED_TOOL_GLOB,
         "--model",
@@ -319,6 +426,9 @@ async def _run_claude(messages: list[ChatMessage]) -> AsyncIterator[bytes]:
     loop = asyncio.get_running_loop()
     timeout_handle = loop.call_later(DEFAULT_TIMEOUT_S, _on_timeout)
 
+    last_rate_limit: dict[str, Any] | None = None
+    saw_terminal = False  # did we already yield a done/error frame?
+
     try:
         while True:
             try:
@@ -336,7 +446,13 @@ async def _run_claude(messages: list[ChatMessage]) -> AsyncIterator[bytes]:
             except json.JSONDecodeError:
                 logger.debug("non-JSON line from claude: %s", line[:200])
                 continue
+            if event.get("type") == "rate_limit_event":
+                info = event.get("rate_limit_info")
+                if isinstance(info, dict):
+                    last_rate_limit = info
             for frame in _translate_event(event):
+                if frame.get("type") in ("done", "error"):
+                    saw_terminal = True
                 yield _sse(frame)
     finally:
         if timeout_handle is not None:
@@ -362,15 +478,27 @@ async def _run_claude(messages: list[ChatMessage]) -> AsyncIterator[bytes]:
             }
         )
         return
-    if proc.returncode and proc.returncode != 0:
-        stderr_text = stderr_bytes.decode("utf-8", errors="replace")[-2000:]
-        logger.warning("claude exited %s: %s", proc.returncode, stderr_text)
-        yield _sse(
-            {
-                "type": "error",
-                "message": f"claude exited {proc.returncode}: {stderr_text or 'no stderr'}",
-            }
+    # If a terminal frame already went out (normal done, or an error the model
+    # reported via the result event), don't double-report on exit code.
+    if not saw_terminal and proc.returncode and proc.returncode != 0:
+        stderr_text = stderr_bytes.decode("utf-8", errors="replace")[-2000:].strip()
+        rate_limit_msg = _rate_limit_block_message(last_rate_limit)
+        logger.warning(
+            "claude exited %s (rate_limit=%s): %s",
+            proc.returncode,
+            last_rate_limit,
+            stderr_text,
         )
+        if rate_limit_msg:
+            message = rate_limit_msg
+        elif stderr_text:
+            message = f"claude exited {proc.returncode}: {stderr_text}"
+        else:
+            message = (
+                f"claude exited {proc.returncode} with no error output — "
+                "check `journalctl -u ac-organic-lab-api` on the dashboard host."
+            )
+        yield _sse({"type": "error", "message": message})
 
 
 # ---------------------------------------------------------------------------

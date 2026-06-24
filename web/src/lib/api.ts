@@ -399,6 +399,94 @@ export async function postSashStop(equipmentId: string): Promise<unknown> {
   return controlPost(equipmentId, "sash/stop", {});
 }
 
+// -- Plate stacker (Agilent BioStack 4) control ----------------------------
+//
+// Endpoint shapes mirror skills/.../skill_catalog/plate_stacker.py. The
+// device is STATUS_SPEC v1.1 with hard X-Claim-Token enforcement; the
+// dashboard's generic /control/{action} passthrough does the per-request
+// claim acquire / release. All six actions take an empty body, and the
+// skill name is the control action segment verbatim (no dots).
+
+export async function postStackerStartup(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "startup", {});
+}
+
+export async function postStackerShutdown(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "shutdown", {});
+}
+
+export async function postStackerHome(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "home", {});
+}
+
+export async function postStackerStagePlate(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "stage_plate", {});
+}
+
+export async function postStackerPresentPlate(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "present_plate", {});
+}
+
+export async function postStackerHandoff(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "handoff", {});
+}
+
+// -- Solid doser (dose_every_well) control ---------------------------------
+//
+// Endpoint shapes mirror skills/.../skill_catalog/solid_doser.py. The device
+// is STATUS_SPEC v1.1 with hard X-Claim-Token enforcement on /control/*; the
+// dashboard's generic /control/{action} passthrough does the per-request
+// claim acquire / release.
+
+export async function postDoserStartup(
+  equipmentId: string,
+  config_name: string = "with_cnc_solid_doser",
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "startup", { config_name });
+}
+
+export async function postDoserShutdown(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "shutdown", {});
+}
+
+export async function postDoserHome(equipmentId: string): Promise<ControlAck> {
+  // Device endpoint is /control/home; the passthrough prepends /control/,
+  // so the action segment is just "home" (not "control/home", which would
+  // resolve to the non-existent /control/control/home).
+  return controlPost(equipmentId, "home", {});
+}
+
+export async function postDoserTare(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "tare", {});
+}
+
+export async function postDoserPlateLoad(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "plate/load", {});
+}
+
+export async function postDoserPlateUnload(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "plate/unload", {});
+}
+
+export async function postDoserDoseWell(
+  equipmentId: string,
+  well: string,
+  target_mg: number,
+  verify: boolean = true,
+  use_pid: boolean = false,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "dose/well", { well, target_mg, verify, use_pid });
+}
+
+export async function postDoserDoseAll(
+  equipmentId: string,
+  target_mg: number,
+  verify: boolean = true,
+  use_pid: boolean = false,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "dose/all", { target_mg, verify, use_pid });
+}
+
 export async function startRolling(
   equipmentId: string,
   body: RollingStartRequest = {},
