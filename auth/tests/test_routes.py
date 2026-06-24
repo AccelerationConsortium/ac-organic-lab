@@ -116,3 +116,36 @@ def test_logout_revokes_session(tmp_path):
         assert c.get("/auth/verify").status_code == 200
         c.post("/auth/logout")
         assert c.get("/auth/verify").status_code == 401
+
+
+def test_verify_with_api_key(tmp_path):
+    """A machine principal authenticates at the same forward-auth edge via X-Api-Key."""
+    app, db, _ = _ctx(tmp_path)
+    db.upsert_user("robot@lab.local", is_service_account=True)
+    token = db.create_api_key("robot@lab.local", label="robot")
+    with TestClient(app) as c:
+        v = c.get("/auth/verify", headers={"X-Api-Key": token})
+        assert v.status_code == 200
+        assert v.headers["X-Auth-User"] == "robot@lab.local"
+        # A bogus / revoked key is rejected.
+        assert c.get("/auth/verify", headers={"X-Api-Key": "ak_nope"}).status_code == 401
+
+
+def test_roster_projection_maps_roles(tmp_path):
+    """The device-plane roster maps every active account through the resolver."""
+    app, db, _ = _ctx(tmp_path, users=(("alice@utoronto.ca", "user"), ("boss@utoronto.ca", "admin")))
+    db.upsert_user("robot@lab.local", is_service_account=True)
+    db.upsert_user("gone@utoronto.ca", role="user")
+    db.set_status("gone@utoronto.ca", "disabled")
+    with TestClient(app) as c:
+        r = c.get("/equipment/agilent_uplc_ms/roster")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["equipment_key"] == "agilent_uplc_ms"
+    by_owner = {e["owner"]: e["role"] for e in body["entries"]}
+    assert by_owner == {
+        "alice@utoronto.ca": "hplcms_user",
+        "boss@utoronto.ca": "hplcms_admin",
+        "robot@lab.local": "hte",
+    }
+    assert "gone@utoronto.ca" not in by_owner  # disabled accounts are excluded

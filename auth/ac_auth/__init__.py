@@ -10,6 +10,10 @@ Setup: ``python -m ac_auth.setup_gmail`` (store the Gmail App Password locally),
 then ``python -m ac_auth.cli add-user EMAIL --role admin`` (allow-list the first
 admin). ``identity.py`` (Tailscale whois) is retained for the device-plane but
 is no longer the human-auth path.
+
+Authorization (``authz.py``) resolves each account to a device role and projects
+it via ``GET /equipment/{key}/roster``; machine principals (service accounts)
+authenticate by API key (``cli.py`` ``add-service-account`` / ``issue-key``).
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

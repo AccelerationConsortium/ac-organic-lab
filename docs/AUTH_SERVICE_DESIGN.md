@@ -288,16 +288,42 @@ sessions, WAL), Gmail mailer (`smtp_mailer.py`) + App-Password setup
 (`setup_gmail.py`), email-code auth routes (`main.py`: request-code/verify-code/
 verify/me/logout + sessions), allow-list CLI (`cli.py`). Tested.
 
+**DONE (roster-projection authZ layer — interim flat, hierarchy-shaped):**
+- **Service-account / API-key principals** — the machine-principal account type
+  (the robot/platform → device role `hte`). `db.py`: `users.is_service_account`
+  (+ additive migration for old DBs) and an `api_keys` table (hashed key,
+  optional expiry, revocable). `/auth/verify` now authenticates a session cookie
+  **or** `X-Api-Key`, so humans and machines share one forward-auth edge.
+- **Resolver seam** — `authz.py::effective_device_role(user, equipment_key)`:
+  service→`hte`, admin→`hplcms_admin`, user→`hplcms_user`. The **only** place
+  central accounts map to device roles. Flat today (`equipment_key` accepted but
+  unused); when the hierarchy lands, only this function's body changes.
+- **Roster projection** — `GET /equipment/{key}/roster` returns the active
+  accounts as `{owner, role}` entries through the resolver (device-plane,
+  Tailnet-only). The endpoint is already keyed by equipment so adding
+  per-equipment grants later needs no contract change.
+- **Edge ② owner-stamping** — `api/app/control.py::_claim_owner` stamps the
+  authenticated `X-Auth-User` (else the dashboard fallback) into the device claim
+  **and** the audit row, replacing the hardcoded constant.
+- **CLI** — `add-service-account`, `issue-key` (prints once), `list-keys`,
+  `revoke-key`. Tested (`test_authz.py`, plus DB/route/control additions).
+
 Remaining:
 1. Public-edge hardening for the routes: TLS (Caddy), `HttpOnly`/`Secure`/
    `SameSite` cookies (already set; flip `AUTH_COOKIE_SECURE` on in prod), CSRF,
    per-email/IP rate-limit (only the attempt cap exists today).
-2. Edge integration: Caddy `forward_auth` → session cookie → `/auth/verify` →
-   claim `owner` stamping; kind-based bypass stays in `api/app/control.py`.
-3. Authorization hierarchy: `platforms` / `equipment` / `authorizations` tables
-   + grant resolution (today's `users` table is a flat allow-list with a
-   user/admin role); API keys + auto-seeded service accounts.
-4. `GET /equipment/{key}/roster` so devices project central grants.
+2. Edge integration: Caddy `forward_auth` → `/auth/verify` (the owner-stamping
+   consumer in `control.py` is done; the Caddy config + X-Auth-* strip/re-inject
+   is the remaining infra). Kind-based bypass stays in `api/app/control.py`.
+3. **Device-side roster pull (other repo, `agilent-hplcms-server`):** the device
+   fetches `GET /equipment/{key}/roster` on a refresh interval and feeds it into
+   `control/roster.py` (which today reads static env lists), with a cached
+   last-good fallback when central is unreachable. This is what makes per-user
+   device roles live end-to-end.
+4. Authorization hierarchy (deferred — not needed for one platform/one device):
+   `platforms` / `equipment` / `authorizations` tables + top-down grant
+   resolution. Additive: treat today's `users.role` as a `global` grant and
+   flesh out `effective_device_role`; callers and the roster contract don't move.
 5. (Later) Postgres if write volume grows.
 6. **Optional, not planned:** "Sign in with Microsoft" (Entra OIDC) + Duo as an
    alternative front door — needs the UofT app registration we chose to avoid.

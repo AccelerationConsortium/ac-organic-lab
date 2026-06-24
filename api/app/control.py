@@ -172,10 +172,24 @@ def build_control_router() -> APIRouter:
 # would loop or shadow the user's intent).
 _CLAIM_PROTOCOL_ACTIONS: frozenset[str] = frozenset({"claim", "heartbeat", "release"})
 
-# Identity surfaced in `details.claimed_by` on devices that publish it.
-# Workflows reading /status will see the dashboard as the current owner
-# during in-flight control calls, which is the right read.
+# Fallback identity surfaced in `details.claimed_by` when no authenticated user
+# is present (local/dev, or before the Caddy forward_auth edge is wired). When
+# the public edge runs, it injects `X-Auth-User` (ac_auth `/auth/verify`); we
+# stamp that real owner into the claim + audit instead — see `_claim_owner`.
+# The device then resolves owner→role from its roster projection
+# (`GET /equipment/{key}/roster`), so per-user device roles work end-to-end.
 _DASHBOARD_CLAIM_OWNER = "ac-organic-lab-dashboard"
+
+
+def _claim_owner(request: Request) -> str:
+    """The actor to stamp into the device claim + audit row.
+
+    Prefer the authenticated user injected by the edge (`X-Auth-User`, set by
+    Caddy `forward_auth` → ac_auth). Fall back to the dashboard identity when
+    unauthenticated (local/dev or pre-edge). Trusting the header is safe only
+    because it arrives from the trusted edge, never from the public client
+    directly (Caddy strips inbound X-Auth-* and re-injects the verified value)."""
+    return request.headers.get("x-auth-user") or _DASHBOARD_CLAIM_OWNER
 
 # Claim TTL. Long enough to cover the slowest device action (PlateLoc's
 # seal cycle is ~8 s; press init is ~4 s) plus network slack. The device
@@ -189,16 +203,19 @@ async def _acquire_claim(
     base_url: str,
     status_path: str,
     equipment_id: str,
+    owner: str,
 ) -> str:
     """POST /control/claim and return the claim token.
 
-    Raises HTTPException on any non-200 (the device's status code and
-    body are forwarded so callers see ``claimed_by`` / ``retry_after_s``).
+    ``owner`` is the authenticated actor (or dashboard fallback); the device
+    records it in ``details.claimed_by.owner`` and resolves its role from the
+    roster projection. Raises HTTPException on any non-200 (the device's status
+    code and body are forwarded so callers see ``claimed_by`` / ``retry_after_s``).
     """
 
     claim_url = _control_url(base_url, status_path, "claim")
     body = {
-        "owner": _DASHBOARD_CLAIM_OWNER,
+        "owner": owner,
         "session_id": str(uuid.uuid4()),
         "ttl_s": _CLAIM_TTL_SECONDS,
     }
@@ -244,11 +261,10 @@ async def _release_claim_best_effort(
         )
 
 
-# Audit identity for dashboard-initiated control. The dashboard is a
-# legitimate low-privilege operator that takes a per-request claim; this
-# is the actor stamped into the audit row (and into device claims as
-# `details.claimed_by.owner`). The ac_auth module (see AUTH_SERVICE_DESIGN.md)
-# will replace this with the authenticated `X-Auth-User` once edge wiring ships.
+# Audit identity for control. ``owner`` is resolved by `_claim_owner` — the
+# authenticated `X-Auth-User` injected by the edge when present, else the
+# dashboard fallback — and is the actor stamped into both the audit row and the
+# device claim (`details.claimed_by.owner`). See AUTH_SERVICE_DESIGN.md.
 async def _record_control_event(
     request: Request,
     equipment_id: str,
@@ -343,12 +359,13 @@ async def _proxy(
     # is what unlocks HTTP/1.1 keep-alive — for v1.1 devices the three
     # round-trips (claim → action → release) share one warm socket
     # instead of paying TCP handshake × 3 per click.
+    owner = _claim_owner(request)
     client = _get_control_client(request)
     try:
         token: str | None = None
         if needs_claim:
             token = await _acquire_claim(
-                client, entry.base_url, entry.status_path, equipment_id
+                client, entry.base_url, entry.status_path, equipment_id, owner
             )
         try:
             headers = {"X-Claim-Token": token} if token else None
@@ -371,7 +388,7 @@ async def _proxy(
         outcome = "claim_denied" if exc.status_code in (409, 423) else "refused"
         await _record_control_event(
             request, equipment_id, action, method,
-            owner=_DASHBOARD_CLAIM_OWNER, status_code=exc.status_code,
+            owner=owner, status_code=exc.status_code,
             outcome=outcome, detail=exc.detail,
         )
         raise
@@ -379,7 +396,7 @@ async def _proxy(
         logger.warning("control timeout %s %s -> %s: %s", method, equipment_id, target, exc)
         await _record_control_event(
             request, equipment_id, action, method,
-            owner=_DASHBOARD_CLAIM_OWNER, status_code=504,
+            owner=owner, status_code=504,
             outcome="timeout", detail=str(exc),
         )
         raise HTTPException(status_code=504, detail=f"Gateway timeout calling {target}") from exc
@@ -387,7 +404,7 @@ async def _proxy(
         logger.warning("control transport error %s %s -> %s: %s", method, equipment_id, target, exc)
         await _record_control_event(
             request, equipment_id, action, method,
-            owner=_DASHBOARD_CLAIM_OWNER, status_code=502,
+            owner=owner, status_code=502,
             outcome="transport_error", detail=str(exc),
         )
         raise HTTPException(status_code=502, detail=f"Cannot reach gateway: {exc}") from exc
@@ -403,14 +420,14 @@ async def _proxy(
             detail = response.text
         await _record_control_event(
             request, equipment_id, action, method,
-            owner=_DASHBOARD_CLAIM_OWNER, status_code=response.status_code,
+            owner=owner, status_code=response.status_code,
             outcome="refused", detail=detail,
         )
         raise HTTPException(status_code=response.status_code, detail=detail)
 
     await _record_control_event(
         request, equipment_id, action, method,
-        owner=_DASHBOARD_CLAIM_OWNER, status_code=response.status_code,
+        owner=owner, status_code=response.status_code,
         outcome="ok",
     )
     try:

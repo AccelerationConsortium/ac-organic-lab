@@ -7,12 +7,15 @@ code and get an opaque **session cookie**. Caddy ``forward_auth`` then calls
 inject ``X-Auth-User`` / ``X-Auth-Role`` downstream.
 
 Endpoints:
-- ``GET  /health``            — liveness.
-- ``POST /auth/request-code`` — ``{email}`` → email a code (403 if not allow-listed).
-- ``POST /auth/verify-code``  — ``{email, code}`` → set session cookie.
-- ``GET  /auth/verify``       — forward-auth: validate cookie → 200 + headers / 401.
-- ``GET  /auth/me``           — identity for the frontend.
-- ``POST /auth/logout``       — revoke session + clear cookie.
+- ``GET  /health``                    — liveness.
+- ``POST /auth/request-code``         — ``{email}`` → email a code (403 if not allow-listed).
+- ``POST /auth/verify-code``          — ``{email, code}`` → set session cookie.
+- ``GET  /auth/verify``               — forward-auth: validate cookie **or** ``X-Api-Key``
+  (machine principals) → 200 + X-Auth-* headers / 401.
+- ``GET  /auth/me``                   — identity for the frontend.
+- ``POST /auth/logout``               — revoke session + clear cookie.
+- ``GET  /equipment/{key}/roster``    — owner→device-role projection a device pulls
+  (device-plane, Tailnet-only).
 
 Allow-list management + the first admin: ``python -m ac_auth.cli`` (see cli.py).
 Run: ``uvicorn ac_auth.main:app --host 127.0.0.1 --port 8009``.
@@ -29,6 +32,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .authz import effective_device_role
 from .config import Settings, build_mailer, load_settings
 from .db import Db
 from .smtp_mailer import MailSendError, new_code
@@ -75,7 +79,7 @@ def create_app(
             if m is not None and hasattr(m, "aclose"):
                 await m.aclose()
 
-    app = FastAPI(title="AC Organic Lab - Auth sidecar", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="AC Organic Lab - Auth sidecar", version="0.3.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.db = db
     app.state.mailer = mailer
@@ -93,6 +97,16 @@ def create_app(
         if not email:
             return None
         user = await asyncio.to_thread(db.get_user, email)
+        return user if (user and user.status == "active") else None
+
+    async def _api_key_user(request: Request):
+        """Machine principal authenticated by ``X-Api-Key`` (robot/platform
+        service accounts). Same forward-auth edge as humans, different credential."""
+        db = _db(request)
+        key = request.headers.get("x-api-key")
+        if not key:
+            return None
+        user = await asyncio.to_thread(db.verify_api_key, key)
         return user if (user and user.status == "active") else None
 
     @app.get("/health")
@@ -143,15 +157,35 @@ def create_app(
 
     @app.get("/auth/verify")
     async def verify(request: Request) -> JSONResponse:
-        """Forward-auth: 200 + identity headers when the session cookie is valid,
-        else 401. Caddy copies X-Auth-* downstream so control.py stamps the user."""
-        user = await _session_user(request)
+        """Forward-auth: 200 + identity headers when a session cookie (human) or
+        ``X-Api-Key`` (machine principal) is valid, else 401. Caddy copies
+        X-Auth-* downstream so control.py stamps the real owner into the claim."""
+        user = await _session_user(request) or await _api_key_user(request)
         if user is None:
             raise HTTPException(status_code=401, detail="not authenticated")
         return JSONResponse(
             {"ok": True, "email": user.email, "role": user.role},
             headers={"X-Auth-User": user.email, "X-Auth-Role": user.role},
         )
+
+    @app.get("/equipment/{equipment_key}/roster")
+    async def equipment_roster(equipment_key: str, request: Request) -> dict:
+        """Owner→device-role projection a device pulls to populate its local
+        roster (defense-in-depth; stays valid if central is briefly unreachable).
+
+        **Device-plane endpoint — Tailnet-only by deployment** (the device
+        sidecars sit behind the Tailscale ACL; this is not exposed at the public
+        Caddy edge). Returns every active account mapped through the single
+        :func:`effective_device_role` seam, so the projection always agrees with
+        what the platform would authorize. ``equipment_key`` is echoed and (today)
+        does not yet filter — see authz.py for the hierarchy-later note."""
+        db = _db(request)
+        users = await asyncio.to_thread(db.list_users, active_only=True)
+        entries = [
+            {"owner": u.email, "role": effective_device_role(u, equipment_key)}
+            for u in users
+        ]
+        return {"equipment_key": equipment_key, "entries": entries}
 
     @app.get("/auth/me")
     async def me(request: Request) -> dict:

@@ -67,3 +67,70 @@ def test_sessions(tmp_path):
     assert db.session_email(tok) is None
     assert db.session_email(db.create_session("b@x.com", -1)) is None  # expired
     db.close()
+
+
+def test_service_account_flag(tmp_path):
+    db = _db(tmp_path)
+    db.upsert_user("alice@x.com")                       # default human
+    db.upsert_user("robot@lab.local", is_service_account=True)
+    assert db.get_user("alice@x.com").is_service_account is False
+    assert db.get_user("robot@lab.local").is_service_account is True
+    db.close()
+
+
+def test_api_key_lifecycle(tmp_path):
+    db = _db(tmp_path)
+    db.upsert_user("robot@lab.local", is_service_account=True)
+    token = db.create_api_key("robot@lab.local", label="robot-2026")
+    assert token.startswith("ak_")
+    principal = db.verify_api_key(token)
+    assert principal is not None and principal.email == "robot@lab.local"
+    assert principal.is_service_account is True
+    assert db.verify_api_key("ak_bogus") is None
+
+    keys = db.list_api_keys("robot@lab.local")
+    assert len(keys) == 1 and keys[0].label == "robot-2026" and keys[0].revoked is False
+    db.revoke_api_key(keys[0].id)
+    assert db.verify_api_key(token) is None              # revoked → dead
+    assert db.list_api_keys("robot@lab.local")[0].revoked is True
+    db.close()
+
+
+def test_api_key_expiry(tmp_path):
+    db = _db(tmp_path)
+    db.upsert_user("robot@lab.local", is_service_account=True)
+    live = db.create_api_key("robot@lab.local", ttl_s=3600)
+    dead = db.create_api_key("robot@lab.local", ttl_s=-1)  # already expired
+    assert db.verify_api_key(live) is not None
+    assert db.verify_api_key(dead) is None
+    db.close()
+
+
+def test_list_users_active_only(tmp_path):
+    db = _db(tmp_path)
+    db.upsert_user("a@x.com")
+    db.upsert_user("b@x.com")
+    db.set_status("b@x.com", "disabled")
+    assert {u.email for u in db.list_users(active_only=True)} == {"a@x.com"}
+    assert {u.email for u in db.list_users()} == {"a@x.com", "b@x.com"}
+    db.close()
+
+
+def test_migration_adds_service_account_column(tmp_path):
+    """A DB created before is_service_account existed gains the column on open."""
+    import sqlite3
+
+    path = str(tmp_path / "legacy.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """CREATE TABLE users (email TEXT PRIMARY KEY, role TEXT NOT NULL DEFAULT 'user',
+                               status TEXT NOT NULL DEFAULT 'active', created_at REAL NOT NULL);
+           INSERT INTO users (email, role, status, created_at) VALUES ('old@x.com','admin','active',0);"""
+    )
+    conn.commit()
+    conn.close()
+
+    db = Db(path)  # opening runs _migrate
+    u = db.get_user("old@x.com")
+    assert u is not None and u.role == "admin" and u.is_service_account is False
+    db.close()

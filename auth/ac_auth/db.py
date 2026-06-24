@@ -21,14 +21,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+# Human account roles (authN gives one of these). The *device* role is derived
+# from this plus is_service_account by the resolver seam in authz.py — keep these
+# two in sync only through that function.
 VALID_ROLES = ("user", "admin")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
-    email      TEXT PRIMARY KEY,
-    role       TEXT NOT NULL DEFAULT 'user',
-    status     TEXT NOT NULL DEFAULT 'active',
-    created_at REAL NOT NULL
+    email              TEXT PRIMARY KEY,
+    role               TEXT NOT NULL DEFAULT 'user',
+    status             TEXT NOT NULL DEFAULT 'active',
+    is_service_account INTEGER NOT NULL DEFAULT 0,
+    created_at         REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS login_codes (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,6 +50,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at REAL NOT NULL,
     expires_at REAL NOT NULL
 );
+-- Machine principals (robot/platform service accounts) authenticate by key, not
+-- email code. A key belongs to a users row with is_service_account=1.
+CREATE TABLE IF NOT EXISTS api_keys (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    email      TEXT NOT NULL,
+    key_hash   TEXT NOT NULL UNIQUE,
+    label      TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    expires_at REAL,
+    revoked    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_email ON api_keys(email);
 """
 
 
@@ -66,6 +82,25 @@ class User:
     email: str
     role: str
     status: str
+    is_service_account: bool = False
+
+
+@dataclass(frozen=True)
+class ApiKeyInfo:
+    """A machine principal's key (metadata only — the secret is never stored)."""
+
+    id: int
+    email: str
+    label: str
+    created_at: float
+    expires_at: Optional[float]
+    revoked: bool
+
+
+def _row_to_user(row: sqlite3.Row) -> User:
+    return User(
+        row["email"], row["role"], row["status"], bool(row["is_service_account"])
+    )
 
 
 class Db:
@@ -81,37 +116,58 @@ class Db:
         self._conn.execute("PRAGMA busy_timeout=5000")
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            self._migrate()
             self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Additive migrations for DBs created before a column existed
+        (``CREATE TABLE IF NOT EXISTS`` never alters an existing table)."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(users)").fetchall()}
+        if "is_service_account" not in cols:
+            self._conn.execute(
+                "ALTER TABLE users ADD COLUMN is_service_account INTEGER NOT NULL DEFAULT 0"
+            )
 
     # ---- users (the allow-list) -------------------------------------------
 
-    def upsert_user(self, email: str, role: str = "user", status: str = "active") -> User:
+    def upsert_user(
+        self,
+        email: str,
+        role: str = "user",
+        status: str = "active",
+        is_service_account: bool = False,
+    ) -> User:
         if role not in VALID_ROLES:
             raise ValueError(f"role must be one of {VALID_ROLES}")
         email = norm_email(email)
         with self._lock:
             self._conn.execute(
-                """INSERT INTO users (email, role, status, created_at) VALUES (?, ?, ?, ?)
-                   ON CONFLICT(email) DO UPDATE SET role=excluded.role, status=excluded.status""",
-                (email, role, status, _now()),
+                """INSERT INTO users (email, role, status, is_service_account, created_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(email) DO UPDATE SET
+                       role=excluded.role, status=excluded.status,
+                       is_service_account=excluded.is_service_account""",
+                (email, role, status, int(is_service_account), _now()),
             )
             self._conn.commit()
-        return User(email, role, status)
+        return User(email, role, status, bool(is_service_account))
 
     def get_user(self, email: str) -> Optional[User]:
         email = norm_email(email)
         with self._lock:
             row = self._conn.execute(
-                "SELECT email, role, status FROM users WHERE email=?", (email,)
+                "SELECT email, role, status, is_service_account FROM users WHERE email=?", (email,)
             ).fetchone()
-        return User(row["email"], row["role"], row["status"]) if row else None
+        return _row_to_user(row) if row else None
 
-    def list_users(self) -> list[User]:
+    def list_users(self, *, active_only: bool = False) -> list[User]:
+        sql = "SELECT email, role, status, is_service_account FROM users"
+        if active_only:
+            sql += " WHERE status='active'"
+        sql += " ORDER BY email"
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT email, role, status FROM users ORDER BY email"
-            ).fetchall()
-        return [User(r["email"], r["role"], r["status"]) for r in rows]
+            rows = self._conn.execute(sql).fetchall()
+        return [_row_to_user(r) for r in rows]
 
     def set_status(self, email: str, status: str) -> None:
         with self._lock:
@@ -201,6 +257,56 @@ class Db:
             return
         with self._lock:
             self._conn.execute("DELETE FROM sessions WHERE token_hash=?", (_hash(token),))
+            self._conn.commit()
+
+    # ---- API keys (machine principals) ------------------------------------
+
+    def create_api_key(self, email: str, label: str = "", ttl_s: Optional[int] = None) -> str:
+        """Issue a key for a (service-account) user; return the plaintext token
+        once — only its hash is stored. ``ttl_s=None`` → no expiry."""
+        email = norm_email(email)
+        token = "ak_" + secrets.token_urlsafe(32)
+        now = _now()
+        expires_at = (now + ttl_s) if ttl_s else None
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO api_keys (email, key_hash, label, created_at, expires_at, revoked)"
+                " VALUES (?, ?, ?, ?, ?, 0)",
+                (email, _hash(token), label, now, expires_at),
+            )
+            self._conn.commit()
+        return token
+
+    def verify_api_key(self, token: str) -> Optional[User]:
+        """Return the principal :class:`User` for a live (un-revoked, unexpired)
+        key, else ``None``. The caller still checks ``status == 'active'``."""
+        if not token:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT email, expires_at, revoked FROM api_keys WHERE key_hash=?", (_hash(token),)
+            ).fetchone()
+        if row is None or row["revoked"]:
+            return None
+        if row["expires_at"] is not None and _now() > row["expires_at"]:
+            return None
+        return self.get_user(row["email"])
+
+    def list_api_keys(self, email: str) -> list[ApiKeyInfo]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, email, label, created_at, expires_at, revoked FROM api_keys"
+                " WHERE email=? ORDER BY id",
+                (norm_email(email),),
+            ).fetchall()
+        return [
+            ApiKeyInfo(r["id"], r["email"], r["label"], r["created_at"], r["expires_at"], bool(r["revoked"]))
+            for r in rows
+        ]
+
+    def revoke_api_key(self, key_id: int) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE api_keys SET revoked=1 WHERE id=?", (key_id,))
             self._conn.commit()
 
     def close(self) -> None:
