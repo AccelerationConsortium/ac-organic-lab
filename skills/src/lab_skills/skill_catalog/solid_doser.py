@@ -10,6 +10,7 @@ all mutating control is under ``/control/*`` (claim-gated), per
 * ``POST /control/plate/load``             - load plate onto balance
 * ``POST /control/plate/unload``           - unload plate from balance
 * ``POST /control/dose/well``              - dose one well to a target mass
+* ``POST /control/dose/all``               - dose all 96 wells in serpentine order
 * ``POST /control/dose/multiple``          - dose multiple wells
 * ``POST /control/dose/row``               - dose an entire row
 * ``POST /control/dose/column``            - dose an entire column
@@ -61,6 +62,12 @@ class DoseWellArgs(BaseModel):
     well: str = Field(description="Well identifier, e.g. 'A1'.")
     target_mg: float = Field(gt=0, description="Target mass in milligrams.")
     verify: bool = Field(default=True, description="Verify the dose with the balance.")
+    use_pid: bool = Field(default=False, description="Use PID feedback control.")
+
+
+class DoseAllArgs(BaseModel):
+    target_mg: float = Field(gt=0, description="Target mass per well in milligrams.")
+    verify: bool = Field(default=True, description="Verify each dose with the balance.")
     use_pid: bool = Field(default=False, description="Use PID feedback control.")
 
 
@@ -159,6 +166,15 @@ register(
             estimated_duration_s=15.0,
         ),
         SkillDef(
+            name="dose.all",
+            kind="solid_doser",
+            description="Dose all 96 wells A1→H12 in serpentine order at a uniform target mass per well.",
+            endpoint="/control/dose/all",
+            args_schema=DoseAllArgs,
+            requires_states=["ready", "dry_run"],
+            estimated_duration_s=None,
+        ),
+        SkillDef(
             name="dose.multiple",
             kind="solid_doser",
             description="Dose multiple wells with explicit per-well target masses.",
@@ -218,6 +234,7 @@ register(
 
 __all__ = [
     "CalibrateFlowRateArgs",
+    "DoseAllArgs",
     "DoseColumnArgs",
     "DoseMultipleArgs",
     "DoseRowArgs",

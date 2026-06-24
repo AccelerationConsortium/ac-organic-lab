@@ -115,7 +115,7 @@ equipment:
     # specific unit operations will graduate to /control/* in follow-up.
     do_not_call_connect: true
     tiles:
-      hte: { w: 2, h: 2 }
+      hte: { w: 2, h: 1 }
     pills: {}
 
   - id: ot2
@@ -125,7 +125,11 @@ equipment:
     protocol: "1.1"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020
     status_path: /status
-    poll_timeout_seconds: 30.0
+    # The OT-2 gateway builds /status from an SSH snapshot, so it is slower than
+    # other devices — but 8s is plenty and keeps one slow/dead device from
+    # stalling the dashboard. The aggregator also hard-caps every fetch at
+    # _MAX_FETCH_SECONDS as a backstop.
+    poll_timeout_seconds: 8.0
     do_not_call_connect: true
     tiles:
       hte: { w: 2, h: 2}
@@ -140,7 +144,7 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 2.0
     tiles:
-      hte: { w: 2, h: 1 }
+      hte: { w: 2, h: 2 }
     pills: {}
 
   - id: torry_pines_shaker
@@ -172,7 +176,8 @@ equipment:
     base_url: http://100.64.254.104:8000
     status_path: /status
     poll_timeout_seconds: 2.0
-    tiles: {}
+    tiles:
+      hte: { w: 2, h: 1 }
     pills: {}
 
   - id: plateloc
@@ -219,14 +224,14 @@ equipment:
     # /control/startup is a read-only readiness check (it never starts OpenLab),
     # so there is no auto-connect hazard to guard against.
     tiles:
-      hte: { w: 2, h: 1 }
+      hte: { w: 2, h: 3 }
     pills: {}
 
   - id: agilent_biostack
     name: Agilent BioStack
     kind: plate_stacker
     adapter: http
-    protocol: "1.0"
+    protocol: "1.1"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8050
     status_path: /status
     poll_timeout_seconds: 2.0

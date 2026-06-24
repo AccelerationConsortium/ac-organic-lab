@@ -483,22 +483,23 @@ async def test_skills_unbound_session_returns_empty_list() -> None:
 
 @pytest.mark.asyncio
 async def test_skills_kind_with_no_registered_defs_returns_no_entries() -> None:
-    """A role bound to ``kind=plate_stacker`` (no registered defs)
-    contributes nothing to the catalog. The role still works for ``status()``
-    via ``role()``; it just has no invokable capabilities surfaced.
+    """A role bound to ``kind=camera`` (no registered defs — cameras are a
+    read-only gateway-fronted kind) contributes nothing to the catalog. The
+    role still works for ``status()`` via ``role()``; it just has no invokable
+    capabilities surfaced.
     """
 
-    stacker = _entry("biostack", kind="plate_stacker", base_url="http://biostack.test:8000")
-    registry = Registry(equipment=[stacker])
+    camera = _entry("cam_west", kind="camera", base_url="http://cam.test:8000")
+    registry = Registry(equipment=[camera])
 
-    with respx.mock(base_url=stacker.base_url) as router:
+    with respx.mock(base_url=camera.base_url) as router:
         # No /status request expected because there are no SkillDefs to
         # evaluate; respx would raise on an unexpected request.
         router  # noqa: B018 - keep the context manager alive
         async with Lab.connect(
-            registry=registry, binding={"stacker": stacker.id}
+            registry=registry, binding={"viewer": camera.id}
         ) as lab:
             skills = await lab.skills()
 
-    stacker_skills = [s for s in skills if s.role == "stacker"]
-    assert stacker_skills == []
+    viewer_skills = [s for s in skills if s.role == "viewer"]
+    assert viewer_skills == []

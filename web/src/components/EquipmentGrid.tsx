@@ -2,12 +2,15 @@ import type { EquipmentSnapshot } from "@/types/api";
 import { CameraTile } from "./CameraTile";
 import { EquipmentStatusCard } from "./EquipmentStatusCard";
 import { FumeHoodTile } from "./FumeHoodTile";
+import { HplcTile } from "./HplcTile";
 import { LiquidHandlerTile } from "./LiquidHandlerTile";
 import { PlateSealerTile } from "./PlateSealerTile";
+import { PlateStackerTile } from "./PlateStackerTile";
 import { PowerStripTile } from "./PowerStripTile";
 import { PressTile } from "./PressTile";
 import { RobotArmTile } from "./RobotArmTile";
 import { ShakerTile } from "./ShakerTile";
+import { SolidDoserTile } from "./SolidDoserTile";
 
 /**
  * Renders equipment cards on a 4-column CSS grid driven by `tile.{w,h}` in
@@ -62,6 +65,8 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
               <FumeHoodTile snapshot={snapshot} />
             ) : snapshot.kind === "plate_sealer" ? (
               <PlateSealerTile snapshot={snapshot} />
+            ) : snapshot.kind === "plate_stacker" ? (
+              <PlateStackerTile snapshot={snapshot} />
             ) : snapshot.kind === "press" ? (
               <PressTile snapshot={snapshot} />
             ) : snapshot.kind === "shaker" ? (
@@ -70,6 +75,10 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
               <RobotArmTile snapshot={snapshot} />
             ) : snapshot.kind === "liquid_handler" ? (
               <LiquidHandlerTile snapshot={snapshot} />
+            ) : snapshot.kind === "hplc" ? (
+              <HplcTile snapshot={snapshot} />
+            ) : snapshot.kind === "solid_doser" ? (
+              <SolidDoserTile snapshot={snapshot} />
             ) : (
               <EquipmentStatusCard snapshot={snapshot} />
             )}

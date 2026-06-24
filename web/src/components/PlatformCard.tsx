@@ -81,6 +81,15 @@ function PlatformCameraPreview({ camera }: { camera: EquipmentSnapshot }) {
   );
 }
 
+function EquipmentRowSkeleton() {
+  return (
+    <li className="flex items-center justify-between gap-2 rounded-md border border-slate-100 bg-white/60 px-2.5 py-1.5 dark:border-slate-800 dark:bg-slate-950/40">
+      <div className="h-3.5 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+      <div className="h-3.5 w-12 animate-pulse rounded-full bg-slate-200 dark:bg-slate-800" />
+    </li>
+  );
+}
+
 function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const showOpen = snapshot.pill?.open === true && !!snapshot.base_url;
   return (
@@ -114,17 +123,27 @@ export function PlatformCard({
   description,
   href,
   snapshots,
+  pending = false,
+  expectedCount,
 }: {
   id: string;
   title: string;
   description?: string;
   href?: string;
   snapshots: EquipmentSnapshot[];
+  // When the equipment list hasn't loaded yet, render skeleton rows instead of
+  // blocking the whole page. ``expectedCount`` (the section's id count from
+  // platforms.yaml) sizes the skeleton so the card doesn't reflow on arrival.
+  pending?: boolean;
+  expectedCount?: number;
 }) {
   // The platform's camera (if any) drives the preview region and also remains
   // in the equipment list so its status is visible alongside the other modules.
   const camera = snapshots.find((s) => s.kind === "camera") ?? null;
   const [streamVisible, setStreamVisible] = useState(false);
+
+  const showSkeleton = pending && snapshots.length === 0;
+  const count = snapshots.length > 0 ? snapshots.length : (expectedCount ?? 0);
 
   return (
     <article className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-surface-raised p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -169,9 +188,15 @@ export function PlatformCard({
 
       <div>
         <h4 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-500">
-          Equipment ({snapshots.length})
+          Equipment ({count})
         </h4>
-        {snapshots.length === 0 ? (
+        {showSkeleton ? (
+          <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {Array.from({ length: Math.max(count, 1) }).map((_, i) => (
+              <EquipmentRowSkeleton key={i} />
+            ))}
+          </ul>
+        ) : snapshots.length === 0 ? (
           <p className="text-sm text-ink-subtle dark:text-slate-500">
             No equipment registered for this platform.
           </p>
