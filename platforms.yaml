@@ -29,4 +29,4 @@ sections:
     title: Web Services
     description: Lab web UIs and dashboards
     kind: platform
-    equipment: [pypoe_web]
+    equipment: [pypoe_web, ac_organic_lab_api, ac_organic_lab_auth]

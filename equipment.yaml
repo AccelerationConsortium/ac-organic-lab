@@ -257,6 +257,37 @@ equipment:
     pills:
       open: true
 
+  # The dashboard's own backing services, self-reported via a minimal
+  # STATUS_SPEC /status envelope each app serves. The aggregator reaches the
+  # api over loopback; the auth sidecar binds the Tailnet IP (it also fronts
+  # the device plane), so its base_url is the tailscale0 address — see below.
+  # No "Open ↗" pill (they're not browsable UIs).
+  - id: ac_organic_lab_api
+    name: Dashboard API
+    kind: other
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8001
+    status_path: /status
+    poll_timeout_seconds: 3.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
+  - id: ac_organic_lab_auth
+    name: Auth Sidecar
+    kind: other
+    adapter: http
+    protocol: "1.0"
+    # Tailnet-bound (the unit binds tailscale0 100.64.254.6, not loopback, so
+    # the device plane can reach the roster endpoint); loopback would be refused.
+    base_url: http://100.64.254.6:8009
+    status_path: /status
+    poll_timeout_seconds: 3.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
   # Environmental sensor stations. Add one entry per physical sensor unit.
   # The lab map is rotated 90° clockwise from the building plan, so on screen
   # north is up and south is down. Zones (in % of map width × height):

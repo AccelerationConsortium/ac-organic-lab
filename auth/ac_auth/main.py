@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -113,6 +115,31 @@ def create_app(
     @app.get("/health")
     async def health() -> dict:
         return {"status": "healthy"}
+
+    @app.get("/status")
+    async def equipment_status(request: Request) -> dict:
+        """STATUS_SPEC v1.0 envelope so the auth sidecar can appear as a tile
+        under the dashboard's "Web Services" section. Side-effect-free: a single
+        read of the allow-list for the active-user count."""
+        db = _db(request)
+        try:
+            n_users = len(await asyncio.to_thread(db.list_users, active_only=True))
+        except Exception:
+            n_users = 0
+        return {
+            "protocol_version": "1.0",
+            "equipment_id": "ac_organic_lab_auth",
+            "equipment_name": "Auth Sidecar",
+            "equipment_kind": "other",
+            "equipment_version": request.app.version,
+            "host": socket.gethostname(),
+            "equipment_status": "ready",
+            "device_time": datetime.now(timezone.utc).isoformat(),
+            "metrics": {
+                "active_users": {"value": n_users, "unit": "users"},
+            },
+            "details": {},
+        }
 
     @app.post("/auth/request-code", status_code=202)
     async def request_code(body: EmailIn, request: Request) -> dict:
