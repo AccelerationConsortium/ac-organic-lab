@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { QueryProvider } from "@/lib/query-client";
-import { ControlAuthProvider } from "@/lib/control-auth";
+import { UserAuthProvider } from "@/lib/user-auth";
 import { AssistantBubble } from "@/components/AssistantBubble";
+import { LoginBar } from "@/components/LoginBar";
 import { Nav } from "@/components/Nav";
 
 export const metadata: Metadata = {
@@ -15,7 +16,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="min-h-screen">
         <QueryProvider>
-         <ControlAuthProvider>
+         <UserAuthProvider>
+          {/* Sticky sign-in bar pinned to the top of the viewport — stays put
+              as the page scrolls so controlling the lab is always one click
+              away. */}
+          <div className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur dark:border-slate-800 dark:bg-slate-950/85">
+            <div className="mx-auto max-w-7xl px-4 py-2 sm:px-6 lg:px-8">
+              <LoginBar />
+            </div>
+          </div>
           <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
             <header className="flex flex-col gap-4">
               <div className="flex items-center justify-between gap-4">
@@ -38,11 +47,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </header>
             <main>{children}</main>
             <footer className="pt-6 text-xs text-ink-subtle dark:text-slate-500">
-              Read-only dashboard · v1
+              Live dashboard · sign in to control · v1
             </footer>
           </div>
           <AssistantBubble />
-         </ControlAuthProvider>
+         </UserAuthProvider>
         </QueryProvider>
       </body>
     </html>

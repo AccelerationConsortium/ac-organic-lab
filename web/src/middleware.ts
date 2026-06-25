@@ -1,8 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  actionBypassesControlGate,
-  kindBypassesControlGate,
-} from "@/lib/tile-policy";
 
 // -- /api-reference page gate (pre-existing) --------------------------------
 
@@ -10,56 +6,52 @@ const API_REF_COOKIE = "api_ref_auth";
 const API_REF_PREFIX = "/api-reference";
 const API_REF_UNLOCK = "/api-reference/unlock";
 
-// -- /api/equipment/*/{control,sash}/* gate (new) ---------------------------
+// -- /api/equipment/*/{control,sash}/* gate (view-only until signed in) -----
 //
-// Guards POST/DELETE on the dashboard's control passthrough routes. If
-// CONTROL_PASSWORD is set, requests without the `control_auth` cookie are
-// rejected with 401 (JSON, since these are XHR endpoints). If the env var
-// is unset, the dashboard stays fully open - useful for dev or labs that
-// rely solely on Tailscale ACLs.
+// The dashboard is view-only until a user signs in. Every POST/PUT/PATCH/
+// DELETE on the control passthrough must carry a valid ac_auth session (the
+// `ac_auth_session` cookie) — or an X-Api-Key for machine principals — which
+// we validate against the sidecar's GET /auth/verify. On success we inject
+// the verified X-Auth-User / X-Auth-Role into the forwarded request so the
+// FastAPI passthrough (control.py) audits the real operator; on failure we
+// reject with 401 (JSON, since these are XHR endpoints).
 //
-// Per-kind bypass: kindBypassesControlGate() lets cameras + env sensors
-// through without the cookie (their controls are convenience-only — see
-// lib/tile-policy.ts). The id→kind map is fetched from the FastAPI
-// backend and cached in-process so the lookup adds ~0ms after the first
-// request. On lookup failure we fail closed (require the cookie).
+// Every control is gated — including cameras, env sensors and the OT-2 deck
+// lights (there is no convenience bypass). Reads (GET) are never gated.
+//
+// Escape hatch: set DASHBOARD_CONTROL_OPEN=true to disable the gate entirely
+// (local dev without the auth sidecar running). Default is closed.
 
-const CONTROL_COOKIE = "control_auth";
-// Capture both the equipment id and the trailing action segment so per-action
-// bypasses (e.g. OT-2 deck lights) can be evaluated without re-parsing.
-const CONTROL_PATH_RE =
-  /^\/api\/equipment\/([^/]+)\/(?:control|sash)(?:\/(.*))?$/;
+const CONTROL_PATH_RE = /^\/api\/equipment\/[^/]+\/(?:control|sash)(?:\/.*)?$/;
 const CONTROL_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-const DASHBOARD_API_BASE =
-  process.env.DASHBOARD_API_BASE ?? "http://127.0.0.1:8001";
-const KIND_CACHE_TTL_MS = 60_000;
+const AUTH_SERVICE_BASE =
+  process.env.AUTH_SERVICE_BASE ?? "http://127.0.0.1:8009";
+const CONTROL_OPEN = process.env.DASHBOARD_CONTROL_OPEN === "true";
 
-let kindCache: { byId: Map<string, string>; at: number } | null = null;
-
-async function lookupKind(equipmentId: string): Promise<string | null> {
-  const now = Date.now();
-  if (!kindCache || now - kindCache.at > KIND_CACHE_TTL_MS) {
-    try {
-      const res = await fetch(`${DASHBOARD_API_BASE}/api/equipment`, {
-        // Bypass any internal caching layer; the API call is cheap.
-        cache: "no-store",
-      });
-      if (res.ok) {
-        const data = (await res.json()) as {
-          equipment?: Array<{ id?: string; kind?: string }>;
-        };
-        const byId = new Map<string, string>();
-        for (const e of data.equipment ?? []) {
-          if (e.id && e.kind) byId.set(e.id, e.kind);
-        }
-        kindCache = { byId, at: now };
-      }
-    } catch {
-      // Keep stale cache (if any); fall through to null below otherwise.
-    }
+// Validate the caller's session (cookie) or machine principal (X-Api-Key)
+// against the auth sidecar. Returns the resolved identity on success.
+// Fails closed (ok: false) when the sidecar is unreachable.
+async function verifySession(
+  request: NextRequest,
+): Promise<{ ok: boolean; user?: string; role?: string }> {
+  try {
+    const res = await fetch(`${AUTH_SERVICE_BASE}/auth/verify`, {
+      headers: {
+        cookie: request.headers.get("cookie") ?? "",
+        "x-api-key": request.headers.get("x-api-key") ?? "",
+      },
+      cache: "no-store",
+    });
+    if (!res.ok) return { ok: false };
+    return {
+      ok: true,
+      user: res.headers.get("x-auth-user") ?? undefined,
+      role: res.headers.get("x-auth-role") ?? undefined,
+    };
+  } catch {
+    return { ok: false };
   }
-  return kindCache?.byId.get(equipmentId) ?? null;
 }
 
 export async function middleware(request: NextRequest) {
@@ -83,36 +75,32 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // ---- Control-surface guard --------------------------------------------
-  if (CONTROL_METHODS.has(request.method)) {
-    const match = CONTROL_PATH_RE.exec(pathname);
-    if (match) {
-      const expected = process.env.CONTROL_PASSWORD;
-      if (expected) {
-        const equipmentId = decodeURIComponent(match[1]);
-        const action = match[2] ? decodeURIComponent(match[2]) : null;
-        const kind = await lookupKind(equipmentId);
-        const bypass =
-          kindBypassesControlGate(kind) || actionBypassesControlGate(action);
-        if (!bypass) {
-          const cookie = request.cookies.get(CONTROL_COOKIE)?.value;
-          if (cookie !== expected) {
-            return NextResponse.json(
-              { detail: "Control password required" },
-              { status: 401 },
-            );
-          }
-        }
+  // ---- Control-surface guard (view-only until signed in) ----------------
+  if (CONTROL_METHODS.has(request.method) && CONTROL_PATH_RE.test(pathname)) {
+    // Never trust a client-supplied identity header; we set it only after
+    // verifying a session, so control.py's audit owner can't be forged.
+    const headers = new Headers(request.headers);
+    headers.delete("x-auth-user");
+    headers.delete("x-auth-role");
+
+    if (!CONTROL_OPEN) {
+      const v = await verifySession(request);
+      if (!v.ok) {
+        return NextResponse.json(
+          { detail: "Sign in to control equipment." },
+          { status: 401 },
+        );
       }
+      if (v.user) headers.set("x-auth-user", v.user);
+      if (v.role) headers.set("x-auth-role", v.role);
     }
+
+    return NextResponse.next({ request: { headers } });
   }
 
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: [
-    "/api-reference/:path*",
-    "/api/equipment/:path*",
-  ],
+  matcher: ["/api-reference/:path*", "/api/equipment/:path*"],
 };

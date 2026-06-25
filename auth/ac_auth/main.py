@@ -12,6 +12,7 @@ Endpoints:
 - ``POST /auth/verify-code``          — ``{email, code}`` → set session cookie.
 - ``GET  /auth/verify``               — forward-auth: validate cookie **or** ``X-Api-Key``
   (machine principals) → 200 + X-Auth-* headers / 401.
+- ``GET  /auth/users``                — active human accounts for the login dropdown.
 - ``GET  /auth/me``                   — identity for the frontend.
 - ``POST /auth/logout``               — revoke session + clear cookie.
 - ``GET  /equipment/{key}/roster``    — owner→device-role projection a device pulls
@@ -186,6 +187,22 @@ def create_app(
             for u in users
         ]
         return {"equipment_key": equipment_key, "entries": entries}
+
+    @app.get("/auth/users")
+    async def users(request: Request) -> dict:
+        """Active human accounts for the dashboard's login dropdown. Automation
+        accounts (machine principals) are excluded — they authenticate by API
+        key, not email code. Tailnet-gated like the rest of the sidecar; the
+        list of allow-listed emails is not a secret in this internal tool."""
+        db = _db(request)
+        rows = await asyncio.to_thread(db.list_users, active_only=True)
+        return {
+            "users": [
+                {"email": u.email, "role": u.role}
+                for u in rows
+                if not u.is_automation
+            ]
+        }
 
     @app.get("/auth/me")
     async def me(request: Request) -> dict:

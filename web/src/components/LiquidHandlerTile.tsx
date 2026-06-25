@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { ApiError, postSetLights } from "@/lib/api";
 import type { EquipmentSnapshot } from "@/types/api";
 import { useControlLock } from "@/lib/use-control-lock";
+import { useUserAuth } from "@/lib/user-auth";
 
 import { ComponentList } from "./ComponentList";
 import { LockButton } from "./ControlLock";
@@ -32,6 +33,7 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
 
   const lights = parseLights(snapshot);
   const { locked, countdown, toggle } = useControlLock();
+  const { authenticated } = useUserAuth();
   const [, startTransition] = useTransition();
   const [pending, setPending] = useState<boolean>(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -66,8 +68,9 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
         <>
           {/* Lock chip is for the protocol-execution actions (home, setup,
               aspirate, dispense, ...) which will land in a follow-up tile.
-              The Lights toggle below is convenience-class and stays unlocked
-              — same rule as camera PTZ. See tile-policy.ts. */}
+              The Lights toggle below is convenience-class: no lock chip, but
+              it still requires a signed-in session (disabled when logged
+              out), like every control write. */}
           <LockButton
             locked={locked}
             countdown={countdown}
@@ -78,7 +81,7 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
         </>
       }
     >
-      {/* Lights row — always interactable. */}
+      {/* Lights row — enabled when signed in (no lock chip). */}
       <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-800/40">
         <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
           Lights
@@ -105,10 +108,16 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
           {lightsKnown ? (isOn ? "ON" : "OFF") : "—"}
         </span>
         <div className="ml-auto flex items-center gap-1">
+          {!authenticated && (
+            <span className="mr-1 text-[10px] text-ink-subtle dark:text-slate-500">
+              sign in to control
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setLights(true)}
-            disabled={pending || isOn}
+            title={!authenticated ? "Sign in to control" : undefined}
+            disabled={!authenticated || pending || isOn}
             className={[
               "h-7 rounded-md border px-2 text-xs font-semibold transition-colors",
               "disabled:cursor-not-allowed disabled:opacity-50",
@@ -122,7 +131,8 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
           <button
             type="button"
             onClick={() => setLights(false)}
-            disabled={pending || (lightsKnown && !isOn)}
+            title={!authenticated ? "Sign in to control" : undefined}
+            disabled={!authenticated || pending || (lightsKnown && !isOn)}
             className={[
               "h-7 rounded-md border px-2 text-xs font-semibold transition-colors",
               "disabled:cursor-not-allowed disabled:opacity-50",

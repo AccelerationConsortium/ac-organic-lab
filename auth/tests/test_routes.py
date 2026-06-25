@@ -118,6 +118,19 @@ def test_logout_revokes_session(tmp_path):
         assert c.get("/auth/verify").status_code == 401
 
 
+def test_users_lists_active_humans_only(tmp_path):
+    """The login dropdown sees active humans, not automation accounts or disabled users."""
+    app, db, _ = _ctx(tmp_path, users=(("alice@utoronto.ca", "user"), ("boss@utoronto.ca", "admin")))
+    db.upsert_user("robot@lab.local", is_automation=True)
+    db.upsert_user("gone@utoronto.ca", role="user")
+    db.set_status("gone@utoronto.ca", "disabled")
+    with TestClient(app) as c:
+        r = c.get("/auth/users")
+    assert r.status_code == 200
+    by_email = {u["email"]: u["role"] for u in r.json()["users"]}
+    assert by_email == {"alice@utoronto.ca": "user", "boss@utoronto.ca": "admin"}
+
+
 def test_verify_with_api_key(tmp_path):
     """A machine principal authenticates at the same forward-auth edge via X-Api-Key."""
     app, db, _ = _ctx(tmp_path)
