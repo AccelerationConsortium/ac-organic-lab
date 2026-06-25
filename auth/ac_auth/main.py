@@ -100,8 +100,8 @@ def create_app(
         return user if (user and user.status == "active") else None
 
     async def _api_key_user(request: Request):
-        """Machine principal authenticated by ``X-Api-Key`` (robot/platform
-        service accounts). Same forward-auth edge as humans, different credential."""
+        """Machine principal authenticated by ``X-Api-Key`` (automation accounts —
+        robot/platform). Same forward-auth edge as humans, different credential."""
         db = _db(request)
         key = request.headers.get("x-api-key")
         if not key:

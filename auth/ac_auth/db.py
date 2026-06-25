@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 # Human account roles (authN gives one of these). The *device* role is derived
-# from this plus is_service_account by the resolver seam in authz.py — keep these
+# from this plus is_automation by the resolver seam in authz.py — keep these
 # two in sync only through that function.
 VALID_ROLES = ("user", "admin")
 
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
     email              TEXT PRIMARY KEY,
     role               TEXT NOT NULL DEFAULT 'user',
     status             TEXT NOT NULL DEFAULT 'active',
-    is_service_account INTEGER NOT NULL DEFAULT 0,
+    is_automation INTEGER NOT NULL DEFAULT 0,
     created_at         REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS login_codes (
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at REAL NOT NULL
 );
 -- Machine principals (robot/platform service accounts) authenticate by key, not
--- email code. A key belongs to a users row with is_service_account=1.
+-- email code. A key belongs to a users row with is_automation=1.
 CREATE TABLE IF NOT EXISTS api_keys (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     email      TEXT NOT NULL,
@@ -82,7 +82,7 @@ class User:
     email: str
     role: str
     status: str
-    is_service_account: bool = False
+    is_automation: bool = False
 
 
 @dataclass(frozen=True)
@@ -99,7 +99,7 @@ class ApiKeyInfo:
 
 def _row_to_user(row: sqlite3.Row) -> User:
     return User(
-        row["email"], row["role"], row["status"], bool(row["is_service_account"])
+        row["email"], row["role"], row["status"], bool(row["is_automation"])
     )
 
 
@@ -123,10 +123,17 @@ class Db:
         """Additive migrations for DBs created before a column existed
         (``CREATE TABLE IF NOT EXISTS`` never alters an existing table)."""
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(users)").fetchall()}
-        if "is_service_account" not in cols:
-            self._conn.execute(
-                "ALTER TABLE users ADD COLUMN is_service_account INTEGER NOT NULL DEFAULT 0"
-            )
+        if "is_automation" not in cols:
+            if "is_service_account" in cols:
+                # Historical column name (pre-rename). Rename in place — preserves
+                # the stored values; no automation accounts existed at rename time.
+                self._conn.execute(
+                    "ALTER TABLE users RENAME COLUMN is_service_account TO is_automation"
+                )
+            else:
+                self._conn.execute(
+                    "ALTER TABLE users ADD COLUMN is_automation INTEGER NOT NULL DEFAULT 0"
+                )
 
     # ---- users (the allow-list) -------------------------------------------
 
@@ -135,33 +142,33 @@ class Db:
         email: str,
         role: str = "user",
         status: str = "active",
-        is_service_account: bool = False,
+        is_automation: bool = False,
     ) -> User:
         if role not in VALID_ROLES:
             raise ValueError(f"role must be one of {VALID_ROLES}")
         email = norm_email(email)
         with self._lock:
             self._conn.execute(
-                """INSERT INTO users (email, role, status, is_service_account, created_at)
+                """INSERT INTO users (email, role, status, is_automation, created_at)
                    VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(email) DO UPDATE SET
                        role=excluded.role, status=excluded.status,
-                       is_service_account=excluded.is_service_account""",
-                (email, role, status, int(is_service_account), _now()),
+                       is_automation=excluded.is_automation""",
+                (email, role, status, int(is_automation), _now()),
             )
             self._conn.commit()
-        return User(email, role, status, bool(is_service_account))
+        return User(email, role, status, bool(is_automation))
 
     def get_user(self, email: str) -> Optional[User]:
         email = norm_email(email)
         with self._lock:
             row = self._conn.execute(
-                "SELECT email, role, status, is_service_account FROM users WHERE email=?", (email,)
+                "SELECT email, role, status, is_automation FROM users WHERE email=?", (email,)
             ).fetchone()
         return _row_to_user(row) if row else None
 
     def list_users(self, *, active_only: bool = False) -> list[User]:
-        sql = "SELECT email, role, status, is_service_account FROM users"
+        sql = "SELECT email, role, status, is_automation FROM users"
         if active_only:
             sql += " WHERE status='active'"
         sql += " ORDER BY email"

@@ -121,7 +121,7 @@ def test_logout_revokes_session(tmp_path):
 def test_verify_with_api_key(tmp_path):
     """A machine principal authenticates at the same forward-auth edge via X-Api-Key."""
     app, db, _ = _ctx(tmp_path)
-    db.upsert_user("robot@lab.local", is_service_account=True)
+    db.upsert_user("robot@lab.local", is_automation=True)
     token = db.create_api_key("robot@lab.local", label="robot")
     with TestClient(app) as c:
         v = c.get("/auth/verify", headers={"X-Api-Key": token})
@@ -134,7 +134,7 @@ def test_verify_with_api_key(tmp_path):
 def test_roster_projection_maps_roles(tmp_path):
     """The device-plane roster maps every active account through the resolver."""
     app, db, _ = _ctx(tmp_path, users=(("alice@utoronto.ca", "user"), ("boss@utoronto.ca", "admin")))
-    db.upsert_user("robot@lab.local", is_service_account=True)
+    db.upsert_user("robot@lab.local", is_automation=True)
     db.upsert_user("gone@utoronto.ca", role="user")
     db.set_status("gone@utoronto.ca", "disabled")
     with TestClient(app) as c:
@@ -144,8 +144,8 @@ def test_roster_projection_maps_roles(tmp_path):
     assert body["equipment_key"] == "agilent_uplc_ms"
     by_owner = {e["owner"]: e["role"] for e in body["entries"]}
     assert by_owner == {
-        "alice@utoronto.ca": "hplcms_user",
-        "boss@utoronto.ca": "hplcms_admin",
-        "robot@lab.local": "hte",
+        "alice@utoronto.ca": "user",
+        "boss@utoronto.ca": "service",
+        "robot@lab.local": "automation",
     }
     assert "gone@utoronto.ca" not in by_owner  # disabled accounts are excluded

@@ -36,7 +36,7 @@ equipment-blocking lock for a campaign — a series of runs — via ``workflow.s
 while held, the device refuses sample submits from anyone but the lock holder with
 ``423 workflow_active``. The lock rides on the caller's claim, so it inherits the
 claim's TTL/heartbeat/auto-expiry (a crashed holder loses it). ``workflow.start``
-requires the claim owner's role to be ``hte`` (else ``403 role_forbidden``);
+requires the claim owner's role to be ``automation`` (else ``403 role_forbidden``);
 ``workflow.end`` is idempotent. (Operator/dashboard service-mode toggles —
 ``/control/service/start|end`` — are deliberately NOT skills: they are technician
 controls, not agent actions.)

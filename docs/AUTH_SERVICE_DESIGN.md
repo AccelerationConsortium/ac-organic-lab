@@ -106,15 +106,15 @@ Two planes: a **public human-facing plane** (account auth at the edge) and a
 | `equipment` | id, key (`agilent_uplc_ms`), name, kind, **platform_id→platforms** | each device under one platform |
 | `users` | id, email (unique), display_name, **idp_subject NULLABLE** (target/OIDC), password_hash NULLABLE (reserved/unused), status (`active`/`disabled`/`pending`), email_verified, is_service_account, last_login_at, created_at | v1 identifies users by **email**; idp_subject filled in target/OIDC mode. |
 | `authorizations` | id, user_id→users, **scope_type** (`global`/`platform`/`equipment`), **scope_id** (null for global), **role** (`user`/`admin`), granted_by, granted_at, revoked_at | the normalized grant = the allow-list. One user, many grants. |
-| `api_keys` | id, user_id, key_hash, label, expires_at, revoked_at | machine principals (service accounts, robot/platform) — keys, not passwords |
+| `api_keys` | id, user_id, key_hash, label, expires_at, revoked_at | machine principals (automation accounts, robot/platform) — keys, not passwords |
 | `sessions` | id, user_id, **token_hash**, issued_at, expires_at, idle_expires_at, revoked_at | opaque tokens stored hashed → revocable |
 | `login_codes` | id, user_id (or email), **code_hash**, expires_at, attempts, used_at, requested_ip | v1 email one-time codes: single-use, short TTL, attempt-capped, rate-limited |
 | `audit_log` | id, ts, actor_user_id, action, scope_type, scope_id, target, detail (json), ip | meaningful actions + denials only (login, claim, submit, service_start/stop, grant, revoke, reset, denied authz) — **not** routine `/auth/verify`; see Audit policy |
 
-Service accounts are `users` rows with `is_service_account=true`, authenticated by
+Automation accounts are `users` rows with `is_automation=true`, authenticated by
 an `api_key`. They are **auto-seeded on registration**: one per platform (the
-robot/platform principal) and one per equipment (the equipment service account),
-so "the admin group always has a service account" holds by construction.
+robot/platform principal) and one per equipment (the equipment automation account),
+so "every platform always has an automation account" holds by construction.
 
 ## Role model & resolution (hierarchy-aware)
 
@@ -131,14 +131,14 @@ This maps onto the device roles already shipped on the sidecars:
 
 | central grant (effective on a device) | → device role | device capabilities |
 |---|---|---|
-| `*.user` | `hplcms_user` | submit to non-reserved trays |
-| platform **robot/service principal** | `hte` | submit (incl. reserved trays) + `workflow.*` |
-| `*.admin` (equipment or inherited platform/global) | `hplcms_admin` | submit + `service.*` |
+| `*.user` | `user` | submit to non-reserved trays |
+| platform **automation principal** | `automation` | submit (incl. reserved trays) + `workflow.*` |
+| `*.admin` (equipment or inherited platform/global) | `service` | submit + `service.*` |
 
 - A **platform admin** is admin on all that platform's devices (inheritance);
   a **global admin** is admin everywhere.
-- The **robot/platform service principal** is what grants the device `hte` role —
-  i.e. the right to take the equipment-blocking workflow lock on its own
+- The **automation principal** (robot/platform) is what grants the device
+  `automation` role — i.e. the right to take the equipment-blocking workflow lock on its own
   platform's devices. This also replaces the self-declared `submitter="robot"`
   field on the device: *manual vs robot is derived from the authenticated
   principal's group*, and reserved-tray access is the robot/platform group only.
@@ -167,7 +167,7 @@ cap**, and deliverable mail. Deliverability note: gmail→utoronto usually inbox
 (Google reputation) but a new recipient can hit first-send quarantine — if it
 bites at rollout, ask UofT IT to allow-list the Gmail sender.
 
-**Machine principals** (service accounts, robot/platform): API keys, unchanged.
+**Machine principals** (automation accounts, robot/platform): API keys, unchanged.
 
 The login resolves to: verified email → effective role → session cookie.
 **Tailscale is not in this path** (public users; tagged nodes give no user).
@@ -218,7 +218,7 @@ python -m ac_auth.cli add-user you@utoronto.ca --role admin
 
 After bootstrap, the admin grants the remaining users/admins via the CLI (and,
 once the platform/equipment hierarchy below is built, registers those + their
-auto-seeded service accounts).
+auto-seeded automation accounts).
 
 ## Service / API surface
 
@@ -289,13 +289,14 @@ sessions, WAL), Gmail mailer (`smtp_mailer.py`) + App-Password setup
 verify/me/logout + sessions), allow-list CLI (`cli.py`). Tested.
 
 **DONE (roster-projection authZ layer — interim flat, hierarchy-shaped):**
-- **Service-account / API-key principals** — the machine-principal account type
-  (the robot/platform → device role `hte`). `db.py`: `users.is_service_account`
-  (+ additive migration for old DBs) and an `api_keys` table (hashed key,
-  optional expiry, revocable). `/auth/verify` now authenticates a session cookie
-  **or** `X-Api-Key`, so humans and machines share one forward-auth edge.
+- **Automation-account / API-key principals** — the machine-principal account type
+  (robot/platform → device role `automation`). `db.py`: `users.is_automation`
+  (+ additive migration for old DBs; renames the legacy `is_service_account`
+  column in place) and an `api_keys` table (hashed key, optional expiry,
+  revocable). `/auth/verify` now authenticates a session cookie **or** `X-Api-Key`,
+  so humans and machines share one forward-auth edge.
 - **Resolver seam** — `authz.py::effective_device_role(user, equipment_key)`:
-  service→`hte`, admin→`hplcms_admin`, user→`hplcms_user`. The **only** place
+  automation→`automation`, admin→`service`, user→`user`. The **only** place
   central accounts map to device roles. Flat today (`equipment_key` accepted but
   unused); when the hierarchy lands, only this function's body changes.
 - **Roster projection** — `GET /equipment/{key}/roster` returns the active
@@ -364,6 +365,6 @@ Remaining:
 - `api/app/control.py` — claim/heartbeat/release passthrough that gains the real
   `owner`.
 - Device side (`agilent-hplcms-server`): the roster + role gates
-  (`hplcms_user` / `hte` / `hplcms_admin`) this service feeds; service-mode and
-  workflow-lock are the device capabilities `admin` / robot principals unlock.
+  (`user` / `automation` / `service`) this service feeds; service-mode and
+  workflow-lock are the device capabilities the `service` / `automation` roles unlock.
 ```

@@ -12,8 +12,8 @@ admin). ``identity.py`` (Tailscale whois) is retained for the device-plane but
 is no longer the human-auth path.
 
 Authorization (``authz.py``) resolves each account to a device role and projects
-it via ``GET /equipment/{key}/roster``; machine principals (service accounts)
-authenticate by API key (``cli.py`` ``add-service-account`` / ``issue-key``).
+it via ``GET /equipment/{key}/roster``; machine principals (automation accounts)
+authenticate by API key (``cli.py`` ``add-automation-account`` / ``issue-key``).
 """
 
 __version__ = "0.3.0"
