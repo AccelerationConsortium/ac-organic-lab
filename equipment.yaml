@@ -249,7 +249,7 @@ equipment:
     kind: other
     adapter: http
     protocol: "1.1"
-    base_url: http://100.64.254.6:8000
+    base_url: http://100.64.254.6:8006
     status_path: /status
     poll_timeout_seconds: 3.0
     tiles:
