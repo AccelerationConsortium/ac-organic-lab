@@ -103,7 +103,7 @@ sudo systemctl status ac-organic-lab-api.service --no-pager
 `jq` is optional; this Python one-liner is dependency-free:
 
 ```bash
-curl -fsS http://localhost:3000/api/equipment | python3 -c 'import sys,json;o=json.load(sys.stdin);e=[x for x in o["equipment"] if x["id"]=="xarm_translocation"][0];print(json.dumps({"id":e["id"],"base_url":e.get("base_url"),"fetch_error":e.get("fetch_error"),"status":(e.get("status") or {}).get("equipment_status"),"message":(e.get("status") or {}).get("message")},indent=2))'
+curl -fsS http://sdl2-server-gaia.tail6a1dd7.ts.net:8000/api/equipment | python3 -c 'import sys,json;o=json.load(sys.stdin);e=[x for x in o["equipment"] if x["id"]=="xarm_translocation"][0];print(json.dumps({"id":e["id"],"base_url":e.get("base_url"),"fetch_error":e.get("fetch_error"),"status":(e.get("status") or {}).get("equipment_status"),"message":(e.get("status") or {}).get("message")},indent=2))'
 ```
 
 Expected for healthy integration:
@@ -181,7 +181,7 @@ flows from proceeding against that equipment.
 ## 4) Post-change checklist
 
 - `uv run pytest skills/tests/test_registry.py -q` passes.
-- `curl http://localhost:3000/api/equipment` shows expected `base_url`.
+- `curl http://sdl2-server-gaia.tail6a1dd7.ts.net:8000/api/equipment` shows expected `base_url`.
 - `fetch_error` matches expectation (`null` when online; explicit error if offline).
 - Dashboard tile state matches gateway `/status` (or expected offline behavior).
 

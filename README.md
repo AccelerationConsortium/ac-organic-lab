@@ -11,7 +11,7 @@ The dashboard runs on a single Tailscale-attached server and aggregates status f
 ## Architecture
 
 ```
-Browser  ->  Next.js (web/, port 3000)  ->  FastAPI (api/, port 8001)  ->  lab-skills (skills/)  ->  Equipment APIs over Tailscale
+Browser  ->  Next.js (web/, port 8000)  ->  FastAPI (api/, port 8001)  ->  lab-skills (skills/)  ->  Equipment APIs over Tailscale
                                                                                        ^
                                                        Workflow scripts ----------------+
 ```
@@ -65,7 +65,7 @@ npm install
 npm run dev
 ```
 
-The dev server runs on `http://localhost:3000` and proxies `/api/*` to `http://localhost:8001`.
+The dev server runs on `http://sdl2-server-gaia.tail6a1dd7.ts.net:8000` and proxies `/api/*` to `http://localhost:8001`.
 
 The `dev` script sets `WATCHPACK_POLLING=true` so Next.js's file watcher uses polling instead of FSEvents. This avoids the `EMFILE: too many open files` errors that happen on macOS because `launchctl limit maxfiles` defaults to 256 (way below what Next.js watches). Polling adds ~1-2% CPU and no dev-experience downside.
 

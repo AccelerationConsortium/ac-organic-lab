@@ -44,7 +44,7 @@ logger = logging.getLogger("ac_dashboard.api")
 
 
 def _cors_origins() -> list[str]:
-    raw = os.environ.get("DASHBOARD_CORS_ORIGINS", "http://localhost:3000")
+    raw = os.environ.get("DASHBOARD_CORS_ORIGINS", "http://100.64.254.6:8000,http://sdl2-server-gaia.tail6a1dd7.ts.net:8000")
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
