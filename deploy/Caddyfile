@@ -28,5 +28,5 @@ lab-dashboard.tail-XXXX.ts.net {
     }
 
     # Next.js handles both / and /api/* (the latter via its rewrite to FastAPI).
-    reverse_proxy 127.0.0.1:3000
+    reverse_proxy 100.64.254.6:8000
 }

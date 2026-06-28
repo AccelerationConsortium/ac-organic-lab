@@ -62,7 +62,7 @@ sudo systemctl enable --now ac-organic-lab-api ac-organic-lab-web
 # 8. Verify
 sudo systemctl status ac-organic-lab-api ac-organic-lab-web
 curl -s http://127.0.0.1:8001/api/health
-curl -s http://127.0.0.1:3000/
+curl -s http://sdl2-server-gaia.tail6a1dd7.ts.net:8000/
 ```
 
 ## Day-to-day operations
@@ -114,7 +114,7 @@ sudo cp deploy/Caddyfile /etc/caddy/Caddyfile   # edit the hostname first
 sudo systemctl reload caddy
 ```
 
-The default web unit binds to `127.0.0.1:3000` - leave it that way when
+The default web unit binds to `100.64.254.6:8000` - leave it that way when
 using Caddy.
 
 ### Option B: Bind web directly to the Tailnet
@@ -184,7 +184,7 @@ GET  /api/equipment/<id>/media                      ->  GET  :8002/cameras/<id>/
 GET  /api/equipment/<id>/media/{rest}               ->  streamed GET  :8002/cameras/<id>/media/{rest}
 ```
 
-Caddy already covers this via the existing `reverse_proxy 127.0.0.1:3000`
+Caddy already covers this via the existing `reverse_proxy 100.64.254.6:8000`
 block (everything `/api/*` flows through the API). The optional
 `/streams/*` block in [`Caddyfile`](Caddyfile) is what gives the browser
 WebSocket access to go2rtc.

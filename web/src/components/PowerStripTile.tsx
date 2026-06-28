@@ -1,13 +1,17 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import { postPlugSwitch } from "@/lib/api";
-import { useControlLock } from "@/lib/use-control-lock";
-import { outletIsSafe } from "@/lib/tile-policy";
-import { LockButton } from "./ControlLock";
+import { useUserAuth } from "@/lib/user-auth";
 import { StatusPill } from "./StatusPill";
 import { TileShell } from "./TileShell";
+
+// Outlets carry live equipment (hotplates, stirrers); a stray click can kill a
+// running experiment. So on top of the dashboard-wide sign-in gate, the strip
+// has its own lock: outlets sit under a cover that must be deliberately
+// unlocked, and it auto-relocks after this many seconds.
+const UNLOCK_SECONDS = 10;
 
 interface OutletData {
   index: number;
@@ -39,33 +43,46 @@ function parseOutlets(snapshot: EquipmentSnapshot): OutletData[] {
 }
 
 function fmt(value: number | null, unit: string, decimals: number): string {
-  if (value === null || value === undefined) return `—\u2009${unit}`;
-  return `${value.toFixed(decimals)}\u2009${unit}`;
+  if (value === null || value === undefined) return `— ${unit}`;
+  return `${value.toFixed(decimals)} ${unit}`;
+}
+
+function LockIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <path d="M11 7V5a3 3 0 1 0-6 0v2H4a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1h-1Zm-5-2a2 2 0 1 1 4 0v2H6V5Zm2 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z" />
+    </svg>
+  );
+}
+
+function UnlockIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <path d="M11 7H5V5a3 3 0 0 1 5.83-1H12a1 1 0 0 0 0-2h-1.35A5 5 0 0 0 3 5v2H2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1Zm-4 5a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" />
+    </svg>
+  );
 }
 
 interface OutletPillProps {
   outlet: OutletData;
   optimisticOn: boolean | null;
-  busy: boolean;
-  locked: boolean;
+  disabled: boolean;
   onToggle: () => void;
 }
 
-function OutletPill({ outlet, optimisticOn, busy, locked, onToggle }: OutletPillProps) {
+function OutletPill({ outlet, optimisticOn, disabled, onToggle }: OutletPillProps) {
   const isOn = optimisticOn !== null ? optimisticOn : outlet.isOn;
   const hasLoad = outlet.powerW !== null && outlet.powerW > 0.5;
-  const disabled = busy || locked;
 
   return (
     <button
       onClick={onToggle}
       disabled={disabled}
-      title={locked ? "Unlock controls to toggle this outlet" : undefined}
       aria-label={`${isOn ? "Turn off" : "Turn on"} ${outlet.label}`}
       className={[
         "flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md border px-2 text-left text-xs font-semibold transition-colors",
         "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500",
-        locked ? "cursor-not-allowed opacity-40" : "disabled:opacity-50",
+        "disabled:opacity-50",
         isOn
           ? "border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40"
           : "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/40",
@@ -96,18 +113,99 @@ function OutletPill({ outlet, optimisticOn, busy, locked, onToggle }: OutletPill
   );
 }
 
+// Header chip mirroring the lock state. Locked → rose "Locked" (click to
+// unlock); unlocked → amber "Unlocked · Ns" (click to re-lock now).
+function LockToggle({
+  locked,
+  countdown,
+  onToggle,
+}: {
+  locked: boolean;
+  countdown: number;
+  onToggle: () => void;
+}) {
+  const base =
+    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset transition-colors";
+  if (locked) {
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label="Unlock outlet controls"
+        className={`${base} bg-rose-50 text-rose-700 ring-rose-300 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300 dark:ring-rose-800 dark:hover:bg-rose-900/60`}
+      >
+        <LockIcon className="h-3 w-3 shrink-0" />
+        Locked
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={`Lock outlet controls (auto-locks in ${countdown}s)`}
+      className={`${base} bg-amber-50 text-amber-700 ring-amber-300 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-700 dark:hover:bg-amber-900/60`}
+    >
+      <UnlockIcon className="h-3 w-3 shrink-0" />
+      {`Unlocked · ${countdown}s`}
+    </button>
+  );
+}
+
 export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const outlets = parseOutlets(snapshot);
 
   const [optimistic, setOptimistic] = useState<Record<number, boolean>>({});
   const [, startTransition] = useTransition();
 
-  const { locked, countdown, toggle } = useControlLock();
+  const { authenticated, requestLogin } = useUserAuth();
+
+  // Local auto-relocking lock (the accidental-toggle guard). Unlocking requires
+  // a signed-in session; it then re-locks after UNLOCK_SECONDS.
+  const [unlocked, setUnlocked] = useState(false);
+  const [countdown, setCountdown] = useState(UNLOCK_SECONDS);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function clearTimer() {
+    if (timerRef.current !== null) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  function lock() {
+    clearTimer();
+    setUnlocked(false);
+    setCountdown(UNLOCK_SECONDS);
+  }
+
+  function unlock() {
+    if (!authenticated) {
+      requestLogin();
+      return;
+    }
+    clearTimer();
+    setUnlocked(true);
+    setCountdown(UNLOCK_SECONDS);
+    let remaining = UNLOCK_SECONDS;
+    timerRef.current = setInterval(() => {
+      remaining -= 1;
+      setCountdown(remaining);
+      if (remaining <= 0) lock();
+    }, 1000);
+  }
+
+  // Clean up on unmount; re-lock immediately if the session ends mid-window.
+  useEffect(() => () => clearTimer(), []);
+  useEffect(() => {
+    if (!authenticated && unlocked) lock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, unlocked]);
+
+  const locked = !unlocked;
 
   function handleToggle(outlet: OutletData) {
-    // Light/lamp outlets are convenience controls (see tile-policy.ts);
-    // the lock does not apply to them.
-    if (locked && !outletIsSafe(outlet.label)) return;
+    if (locked) return;
 
     const nextOn = !(optimistic[outlet.index] !== undefined
       ? optimistic[outlet.index]
@@ -134,24 +232,42 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       subtitleExtra={totalW > 0 ? `${totalW.toFixed(1)} W` : undefined}
       headerRight={
         <>
-          <LockButton locked={locked} countdown={countdown} onToggle={toggle} noun="outlet" />
+          <LockToggle
+            locked={locked}
+            countdown={countdown}
+            onToggle={locked ? unlock : lock}
+          />
           <StatusPill state={snapshot.status.equipment_status} />
         </>
       }
     >
-      {/* 2-col × 3-row outlet grid. Light/lamp outlets bypass the lock
-          (convenience controls per lib/tile-policy.outletIsSafe). */}
-      <div className="grid flex-1 grid-cols-2 gap-1.5 content-start">
-        {outlets.map((outlet) => (
-          <OutletPill
-            key={outlet.index}
-            outlet={outlet}
-            optimisticOn={optimistic[outlet.index] !== undefined ? optimistic[outlet.index] : null}
-            busy={false}
-            locked={locked && !outletIsSafe(outlet.label)}
-            onToggle={() => handleToggle(outlet)}
-          />
-        ))}
+      {/* 2-col × 3-row outlet grid under a cover. While locked, the cover sits
+          over the outlets so a stray click can't flip equipment; click it to
+          unlock (requires sign-in) for a UNLOCK_SECONDS window. */}
+      <div className="relative flex-1">
+        <div className="grid grid-cols-2 gap-1.5 content-start">
+          {outlets.map((outlet) => (
+            <OutletPill
+              key={outlet.index}
+              outlet={outlet}
+              optimisticOn={optimistic[outlet.index] !== undefined ? optimistic[outlet.index] : null}
+              disabled={locked}
+              onToggle={() => handleToggle(outlet)}
+            />
+          ))}
+        </div>
+
+        {locked && (
+          <button
+            type="button"
+            onClick={unlock}
+            aria-label={authenticated ? "Unlock outlet controls" : "Sign in to control"}
+            className="absolute inset-0 z-10 flex items-center justify-center gap-1.5 rounded-md border border-slate-200/80 bg-slate-50/60 text-xs font-semibold text-ink-muted backdrop-blur-[1px] transition-colors hover:bg-slate-100/70 dark:border-slate-700/80 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:bg-slate-800/60"
+          >
+            <LockIcon className="h-3.5 w-3.5 shrink-0" />
+            {authenticated ? "Unlock to control" : "Sign in to control"}
+          </button>
+        )}
       </div>
     </TileShell>
   );

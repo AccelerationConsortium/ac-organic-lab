@@ -55,3 +55,6 @@ pnpm-debug.log*
 .claude/settings.local.json
 CLAUDE.local.md
 CLAUDE.md
+
+# pytest --basetemp scratch dir
+.tmp_pytest/

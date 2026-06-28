@@ -12,8 +12,6 @@ sections:
     kind: platform
     equipment:
       - cam_hte_tapo_c245
-      - plug_hte_strip_right
-      - plug_hte_strip_left
       - fume_hood_actuator
       - xarm_translocation
       - ot2
@@ -24,9 +22,12 @@ sections:
       - cytation_5
       - agilent_uplc_ms
       - agilent_biostack
+      # Power strips last — pinned to the bottom of the HTE grid.
+      - plug_hte_strip_right
+      - plug_hte_strip_left
 
   - id: web_services
     title: Web Services
     description: Lab web UIs and dashboards
     kind: platform
-    equipment: [pypoe_web]
+    equipment: [pypoe_web, ac_organic_lab_api, ac_organic_lab_auth]

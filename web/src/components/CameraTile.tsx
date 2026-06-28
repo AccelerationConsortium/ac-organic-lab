@@ -28,6 +28,8 @@ import type {
   SnapshotResponse,
 } from "@/types/api";
 
+import { useUserAuth } from "@/lib/user-auth";
+
 import { CameraPlayer } from "./CameraPlayer";
 import { PtzPad } from "./PtzPad";
 import { StalenessIndicator } from "./StalenessIndicator";
@@ -52,6 +54,7 @@ type CameraStatusDetails = CameraDetails & Record<string, unknown>;
  */
 export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const queryClient = useQueryClient();
+  const { authenticated } = useUserAuth();
 
   const details = (snapshot.status.details ?? {}) as CameraStatusDetails;
   const lenses: LensStatusEntry[] = Array.isArray(details.lenses) ? details.lenses : [];
@@ -246,9 +249,18 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         Capture column is pinned shrink-0 so the buttons keep the same
         width regardless of how cramped the preset row gets.
       */}
+      {!authenticated && (
+        <p className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-ink-muted dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+          View-only — sign in to control this camera.
+        </p>
+      )}
+      {/* All camera controls require a signed-in session. A disabled
+          <fieldset> (display:contents → no layout change) natively disables
+          every nested button / select / toggle when logged out. */}
+      <fieldset disabled={!authenticated} className="contents">
       <div className="flex items-start gap-3">
         <PtzPad
-          disabled={!ptzCapable}
+          disabled={!ptzCapable || !authenticated}
           onMove={(direction) => ptzMutation.mutate(direction)}
           onStop={() => stopMutation.mutate()}
         />
@@ -397,6 +409,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           <StalenessIndicator fetchedAt={snapshot.fetched_at} />
         </span>
       </div>
+      </fieldset>
 
       {lastSnapshot && (
         <a

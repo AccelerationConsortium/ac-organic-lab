@@ -14,8 +14,10 @@ import hashlib
 import logging
 import math
 import os
+import socket
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import AsyncIterator
 
 import httpx
@@ -42,7 +44,7 @@ logger = logging.getLogger("ac_dashboard.api")
 
 
 def _cors_origins() -> list[str]:
-    raw = os.environ.get("DASHBOARD_CORS_ORIGINS", "http://localhost:3000")
+    raw = os.environ.get("DASHBOARD_CORS_ORIGINS", "http://100.64.254.6:8000,http://sdl2-server-gaia.tail6a1dd7.ts.net:8000")
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
@@ -445,6 +447,34 @@ async def health() -> AggregatorHealth:
         version=__version__,
         equipment_count=aggregator.equipment_count,
     )
+
+
+@app.get("/status", tags=["meta"])
+async def equipment_status() -> dict:
+    """STATUS_SPEC v1.0 envelope for the dashboard API service *itself*, so it
+    can appear as a tile under the dashboard's own "Web Services" section.
+
+    Side-effect-free (best-practice #1): only reads already-warm in-process
+    state. The aggregator polls this on loopback like any other device.
+    """
+    aggregator: EquipmentAggregator | None = getattr(app.state, "aggregator", None)
+    return {
+        "protocol_version": "1.0",
+        "equipment_id": "ac_organic_lab_api",
+        "equipment_name": "Dashboard API",
+        "equipment_kind": "other",
+        "equipment_version": __version__,
+        "host": socket.gethostname(),
+        "equipment_status": "ready" if aggregator is not None else "requires_init",
+        "device_time": datetime.now(timezone.utc).isoformat(),
+        "metrics": {
+            "equipment_count": {
+                "value": aggregator.equipment_count if aggregator is not None else 0,
+                "unit": "devices",
+            },
+        },
+        "details": {},
+    }
 
 
 @app.get("/api/equipment", response_model=EquipmentList, tags=["equipment"])

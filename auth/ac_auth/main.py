@@ -1,135 +1,253 @@
-"""Auth sidecar FastAPI app (Phase 1 — audit mode).
+"""Auth sidecar FastAPI app — passwordless email one-time-code login.
+
+A human enters their email; if it's on the allow-list (``users`` table) we email
+a single-use code (via Gmail, see :mod:`ac_auth.smtp_mailer`); they submit the
+code and get an opaque **session cookie**. Caddy ``forward_auth`` then calls
+``GET /auth/verify`` on every protected request to validate that cookie and
+inject ``X-Auth-User`` / ``X-Auth-Role`` downstream.
 
 Endpoints:
-- ``GET /health``      — liveness; reports whether enforcement is on.
-- ``GET /auth/verify`` — the forward-auth endpoint. Resolves the caller's
-  Tailscale identity and **logs** it. In audit mode (default) it ALWAYS
-  returns 200 so nothing is gated yet; it sets ``X-Auth-*`` response headers
-  that a later phase's Caddy ``forward_auth`` can copy downstream.
-- ``GET /auth/me``     — identity for the frontend lock chip.
+- ``GET  /health``                    — liveness.
+- ``POST /auth/request-code``         — ``{email}`` → email a code (403 if not allow-listed).
+- ``POST /auth/verify-code``          — ``{email, code}`` → set session cookie.
+- ``GET  /auth/verify``               — forward-auth: validate cookie **or** ``X-Api-Key``
+  (machine principals) → 200 + X-Auth-* headers / 401.
+- ``GET  /auth/users``                — active human accounts for the login dropdown.
+- ``GET  /auth/me``                   — identity for the frontend.
+- ``POST /auth/logout``               — revoke session + clear cookie.
+- ``GET  /equipment/{key}/roster``    — owner→device-role projection a device pulls
+  (device-plane, Tailnet-only).
 
-Run: ``uvicorn ac_auth.main:app --host 127.0.0.1 --port 8009``
-
-Enforcement is gated behind ``AUTH_ENFORCE`` (default off). Phase 1 keeps it
-off everywhere; flipping it on is Phase 2 and also requires the Caddy
-``forward_auth`` wiring (see ``docs/AUTH.md`` and
-``deploy/Caddyfile.auth-snippet``).
+Allow-list management + the first admin: ``python -m ac_auth.cli`` (see cli.py).
+Run: ``uvicorn ac_auth.main:app --host 127.0.0.1 --port 8009``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import os
+import socket
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
-from .identity import Identity, TailscaleIdentityResolver
+from .authz import effective_device_role
+from .config import Settings, build_mailer, load_settings
+from .db import Db
+from .smtp_mailer import MailSendError, new_code
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("ac_auth")
 
 
-def _enforce_enabled() -> bool:
-    return os.environ.get("AUTH_ENFORCE", "false").strip().lower() in ("1", "true", "yes", "on")
+class EmailIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Tests may pre-seed app.state.resolver with a fake; don't clobber it.
-    if not getattr(app.state, "resolver", None):
-        app.state.resolver = TailscaleIdentityResolver()
-    logger.info("auth sidecar up (enforce=%s)", _enforce_enabled())
-    try:
-        yield
-    finally:
-        await app.state.resolver.aclose()
+class VerifyIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    code: str = Field(min_length=4, max_length=12)
 
 
-app = FastAPI(title="AC Organic Lab — Auth sidecar", version="0.1.0", lifespan=lifespan)
+def create_app(
+    *,
+    settings: Optional[Settings] = None,
+    db: Optional[Db] = None,
+    mailer=None,
+) -> FastAPI:
+    """Build the app. Tests inject ``settings``/``db``/``mailer``; in production
+    the lifespan creates the real ones."""
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if getattr(app.state, "settings", None) is None:
+            app.state.settings = load_settings()
+        if getattr(app.state, "db", None) is None:
+            app.state.db = Db(app.state.settings.db_path)
+        if getattr(app.state, "mailer", None) is None:
+            app.state.mailer = build_mailer()
+        logger.info("auth sidecar up (db=%s)", app.state.settings.db_path)
+        try:
+            yield
+        finally:
+            if getattr(app.state, "db", None) is not None:
+                app.state.db.close()
+            m = getattr(app.state, "mailer", None)
+            if m is not None and hasattr(m, "aclose"):
+                await m.aclose()
+
+    app = FastAPI(title="AC Organic Lab - Auth sidecar", version="0.3.0", lifespan=lifespan)
+    app.state.settings = settings
+    app.state.db = db
+    app.state.mailer = mailer
+
+    def _s(request: Request) -> Settings:
+        return request.app.state.settings
+
+    def _db(request: Request) -> Db:
+        return request.app.state.db
+
+    async def _session_user(request: Request):
+        s, db = _s(request), _db(request)
+        token = request.cookies.get(s.cookie_name)
+        email = await asyncio.to_thread(db.session_email, token) if token else None
+        if not email:
+            return None
+        user = await asyncio.to_thread(db.get_user, email)
+        return user if (user and user.status == "active") else None
+
+    async def _api_key_user(request: Request):
+        """Machine principal authenticated by ``X-Api-Key`` (automation accounts —
+        robot/platform). Same forward-auth edge as humans, different credential."""
+        db = _db(request)
+        key = request.headers.get("x-api-key")
+        if not key:
+            return None
+        user = await asyncio.to_thread(db.verify_api_key, key)
+        return user if (user and user.status == "active") else None
+
+    @app.get("/health")
+    async def health() -> dict:
+        return {"status": "healthy"}
+
+    @app.get("/status")
+    async def equipment_status(request: Request) -> dict:
+        """STATUS_SPEC v1.0 envelope so the auth sidecar can appear as a tile
+        under the dashboard's "Web Services" section. Side-effect-free: a single
+        read of the allow-list for the active-user count."""
+        db = _db(request)
+        try:
+            n_users = len(await asyncio.to_thread(db.list_users, active_only=True))
+        except Exception:
+            n_users = 0
+        return {
+            "protocol_version": "1.0",
+            "equipment_id": "ac_organic_lab_auth",
+            "equipment_name": "Auth Sidecar",
+            "equipment_kind": "other",
+            "equipment_version": request.app.version,
+            "host": socket.gethostname(),
+            "equipment_status": "ready",
+            "device_time": datetime.now(timezone.utc).isoformat(),
+            "metrics": {
+                "active_users": {"value": n_users, "unit": "users"},
+            },
+            "details": {},
+        }
+
+    @app.post("/auth/request-code", status_code=202)
+    async def request_code(body: EmailIn, request: Request) -> dict:
+        s, db = _s(request), _db(request)
+        email = body.email.strip().lower()
+        if "@" not in email:
+            raise HTTPException(status_code=422, detail="invalid email")
+        user = await asyncio.to_thread(db.get_user, email)
+        # Clear 403 for an unknown email (internal tool, small allow-list). For a
+        # fully public deployment, return a generic 202 here to avoid enumeration.
+        if user is None or user.status != "active":
+            raise HTTPException(
+                status_code=403,
+                detail="This email is not authorized. Ask an admin to add you.",
+            )
+        code = new_code()
+        await asyncio.to_thread(db.create_login_code, email, code, s.code_ttl_s)
+        try:
+            await request.app.state.mailer.send_login_code(
+                email, code, ttl_minutes=max(1, s.code_ttl_s // 60)
+            )
+        except MailSendError as exc:
+            logger.error("send_login_code failed for %s: %s", email, exc)
+            raise HTTPException(status_code=502, detail="Could not send the code email; try again.")
+        return {"sent": True, "message": f"A sign-in code was emailed to {email}."}
+
+    @app.post("/auth/verify-code")
+    async def verify_code(body: VerifyIn, request: Request, response: Response) -> dict:
+        s, db = _s(request), _db(request)
+        email = body.email.strip().lower()
+        ok = await asyncio.to_thread(db.verify_login_code, email, body.code.strip(), s.code_max_attempts)
+        if not ok:
+            raise HTTPException(status_code=401, detail="Invalid or expired code.")
+        user = await asyncio.to_thread(db.get_user, email)
+        if user is None or user.status != "active":
+            raise HTTPException(status_code=403, detail="This email is not authorized.")
+        token = await asyncio.to_thread(db.create_session, email, s.session_ttl_s)
+        response.set_cookie(
+            s.cookie_name, token, max_age=s.session_ttl_s, httponly=True,
+            secure=s.cookie_secure, samesite="lax", path="/",
+        )
+        return {"ok": True, "email": email, "role": user.role}
+
+    @app.get("/auth/verify")
+    async def verify(request: Request) -> JSONResponse:
+        """Forward-auth: 200 + identity headers when a session cookie (human) or
+        ``X-Api-Key`` (machine principal) is valid, else 401. Caddy copies
+        X-Auth-* downstream so control.py stamps the real owner into the claim."""
+        user = await _session_user(request) or await _api_key_user(request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="not authenticated")
+        return JSONResponse(
+            {"ok": True, "email": user.email, "role": user.role},
+            headers={"X-Auth-User": user.email, "X-Auth-Role": user.role},
+        )
+
+    @app.get("/equipment/{equipment_key}/roster")
+    async def equipment_roster(equipment_key: str, request: Request) -> dict:
+        """Owner→device-role projection a device pulls to populate its local
+        roster (defense-in-depth; stays valid if central is briefly unreachable).
+
+        **Device-plane endpoint — Tailnet-only by deployment** (the device
+        sidecars sit behind the Tailscale ACL; this is not exposed at the public
+        Caddy edge). Returns every active account mapped through the single
+        :func:`effective_device_role` seam, so the projection always agrees with
+        what the platform would authorize. ``equipment_key`` is echoed and (today)
+        does not yet filter — see authz.py for the hierarchy-later note."""
+        db = _db(request)
+        users = await asyncio.to_thread(db.list_users, active_only=True)
+        entries = [
+            {"owner": u.email, "role": effective_device_role(u, equipment_key)}
+            for u in users
+        ]
+        return {"equipment_key": equipment_key, "entries": entries}
+
+    @app.get("/auth/users")
+    async def users(request: Request) -> dict:
+        """Active human accounts for the dashboard's login dropdown. Automation
+        accounts (machine principals) are excluded — they authenticate by API
+        key, not email code. Tailnet-gated like the rest of the sidecar; the
+        list of allow-listed emails is not a secret in this internal tool."""
+        db = _db(request)
+        rows = await asyncio.to_thread(db.list_users, active_only=True)
+        return {
+            "users": [
+                {"email": u.email, "role": u.role}
+                for u in rows
+                if not u.is_automation
+            ]
+        }
+
+    @app.get("/auth/me")
+    async def me(request: Request) -> dict:
+        user = await _session_user(request)
+        if user is None:
+            return {"authenticated": False, "identity": None}
+        return {"authenticated": True, "identity": {"email": user.email, "role": user.role}}
+
+    @app.post("/auth/logout")
+    async def logout(request: Request, response: Response) -> dict:
+        s, db = _s(request), _db(request)
+        token = request.cookies.get(s.cookie_name)
+        if token:
+            await asyncio.to_thread(db.revoke_session, token)
+        response.delete_cookie(s.cookie_name, path="/")
+        return {"ok": True}
+
+    return app
 
 
-def _client_ip(request: Request, x_forwarded_for: Optional[str]) -> str:
-    """The caller's Tailnet source IP.
-
-    Behind Caddy ``forward_auth`` the original client IP arrives as the first
-    hop of ``X-Forwarded-For``; when the sidecar is hit directly we fall back
-    to the socket peer. (Phase 2 should pin a trusted-proxy allowlist before
-    enforcement leans on XFF.)
-    """
-    if x_forwarded_for:
-        return x_forwarded_for.split(",")[0].strip()
-    return request.client.host if request.client else ""
-
-
-async def _resolve(request: Request, xff: Optional[str]) -> tuple[str, Optional[Identity]]:
-    ip = _client_ip(request, xff)
-    ident = await request.app.state.resolver.whois(ip) if ip else None
-    return ip, ident
-
-
-def _identity_payload(ident: Optional[Identity]) -> Optional[dict]:
-    if ident is None:
-        return None
-    return {
-        "login": ident.login,
-        "display": ident.display,
-        "node": ident.node,
-        "tags": list(ident.tags),
-        "tagged": ident.is_tagged,
-    }
-
-
-@app.get("/health")
-async def health() -> dict:
-    return {"status": "healthy", "enforce": _enforce_enabled()}
-
-
-@app.get("/auth/verify")
-async def verify(
-    request: Request,
-    x_forwarded_for: Optional[str] = Header(default=None),
-) -> JSONResponse:
-    """Forward-auth endpoint. Audit mode: log identity, always allow."""
-    ip, ident = await _resolve(request, x_forwarded_for)
-    enforce = _enforce_enabled()
-
-    if ident is None:
-        logger.info("verify addr=%s -> NO IDENTITY (enforce=%s)", ip, enforce)
-        if enforce:
-            raise HTTPException(status_code=401, detail="no Tailscale identity for caller")
-        return _allow(None)
-
-    who = f"TAGGED[{','.join(ident.tags)}]" if ident.is_tagged else ident.login
-    logger.info("verify addr=%s -> %s (tagged=%s, enforce=%s)", ip, who, ident.is_tagged, enforce)
-    if enforce and ident.is_tagged:
-        # A tagged infra node is not a human operator; Phase 2 policy decision.
-        raise HTTPException(status_code=403, detail="caller is a tagged node, not a user")
-    return _allow(ident)
-
-
-def _allow(ident: Optional[Identity]) -> JSONResponse:
-    headers: dict[str, str] = {}
-    if ident is not None:
-        # Phase 2's Caddy forward_auth `copy_headers` will forward these to the
-        # dashboard so control.py can stamp the real user into claims/audit.
-        headers["X-Auth-User"] = ident.login
-        headers["X-Auth-Display"] = ident.display
-        headers["X-Auth-Tagged"] = "1" if ident.is_tagged else "0"
-    return JSONResponse({"ok": True, "identity": _identity_payload(ident)}, headers=headers)
-
-
-@app.get("/auth/me")
-async def me(
-    request: Request,
-    x_forwarded_for: Optional[str] = Header(default=None),
-) -> dict:
-    _ip, ident = await _resolve(request, x_forwarded_for)
-    if ident is None:
-        return {"authenticated": False, "identity": None}
-    return {"authenticated": True, "identity": _identity_payload(ident)}
+app = create_app()

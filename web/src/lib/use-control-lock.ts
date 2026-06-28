@@ -1,83 +1,39 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useControlAuth } from "@/lib/control-auth";
-
-const DEFAULT_UNLOCK_SECONDS = 10;
+import { useCallback } from "react";
+import { useUserAuth } from "@/lib/user-auth";
 
 export interface UseControlLockResult {
-  /** True when controls are locked; tiles should disable destructive UI. */
+  /** True when controls should be disabled — i.e. the user is not signed in. */
   locked: boolean;
-  /** Seconds remaining before auto-relock; meaningless while locked. */
+  /** Vestigial (no auto-relock countdown anymore); always 0. */
   countdown: number;
-  /**
-   * Unlock controls and start the auto-relock countdown. When the dashboard
-   * has CONTROL_PASSWORD enabled and the user is not yet authenticated,
-   * this first pops the shared password modal; the unlock only proceeds on
-   * successful auth.
-   */
+  /** When signed out, nudge the login bar into view; otherwise a no-op. */
   unlock: () => Promise<void>;
-  /** Lock controls immediately and clear any running countdown. */
+  /** No-op, kept for call-site compatibility. */
   lock: () => void;
-  /** Convenience: toggle between locked and unlocked. */
+  /** Alias of unlock(). */
   toggle: () => Promise<void>;
 }
 
 /**
- * Shared lock state for control tiles.
+ * Control-gate state for tiles.
  *
- * When unlocked, a `unlockSeconds`-long countdown begins; on reaching zero
- * the controls auto-relock. Calling `lock()` or `unlock()` directly always
- * supersedes the countdown.
- *
- * One hook instance per tile - state is intentionally local (each tile has
- * its own lock chip). For a single dashboard-wide lock that would change.
+ * The dashboard is view-only until sign-in, so a tile's destructive controls
+ * are simply enabled when the user is authenticated. There is no per-tile
+ * password or 10 s auto-relock anymore — that was the old CONTROL_PASSWORD
+ * model; the single login bar is now the only gate. `locked` mirrors "not
+ * signed in"; `unlock()` / `toggle()` flash the login bar when signed out.
  */
-export function useControlLock(
-  opts: { unlockSeconds?: number } = {},
-): UseControlLockResult {
-  const unlockSeconds = opts.unlockSeconds ?? DEFAULT_UNLOCK_SECONDS;
-  const { ensureAuth } = useControlAuth();
+export function useControlLock(): UseControlLockResult {
+  const { authenticated, requestLogin } = useUserAuth();
+  const locked = !authenticated;
 
-  const [locked, setLocked] = useState(true);
-  const [countdown, setCountdown] = useState(unlockSeconds);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const unlock = useCallback(async () => {
+    if (!authenticated) requestLogin();
+  }, [authenticated, requestLogin]);
 
-  function clearTimer() {
-    if (timerRef.current !== null) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  }
+  const lock = useCallback(() => {}, []);
 
-  function lock() {
-    clearTimer();
-    setLocked(true);
-    setCountdown(unlockSeconds);
-  }
-
-  async function unlock() {
-    const ok = await ensureAuth();
-    if (!ok) return;
-
-    clearTimer();
-    setCountdown(unlockSeconds);
-    setLocked(false);
-
-    let remaining = unlockSeconds;
-    timerRef.current = setInterval(() => {
-      remaining -= 1;
-      setCountdown(remaining);
-      if (remaining <= 0) lock();
-    }, 1000);
-  }
-
-  async function toggle() {
-    if (locked) await unlock();
-    else lock();
-  }
-
-  useEffect(() => () => clearTimer(), []);
-
-  return { locked, countdown, unlock, lock, toggle };
+  return { locked, countdown: 0, unlock, lock, toggle: unlock };
 }

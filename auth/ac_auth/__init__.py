@@ -1,12 +1,19 @@
 """Auth sidecar for the AC Organic Self-driving Lab.
 
-A tiny FastAPI service that resolves *who* is making a control request by
-asking the local ``tailscaled`` daemon (Tailscale identity), so the dashboard
-control plane can attribute and (later) gate writes per user.
+A small FastAPI service that authenticates dashboard users by **passwordless
+email one-time code** (codes sent via Gmail), issues an opaque session cookie,
+and exposes ``GET /auth/verify`` for Caddy ``forward_auth`` to gate + attribute
+control writes per user. See :mod:`ac_auth.main` and
+``docs/AUTH_SERVICE_DESIGN.md``.
 
-Phase 1 (audit mode): ``/auth/verify`` resolves and **logs** the identity but
-never blocks — see :mod:`ac_auth.main`. Enforcement + edge wiring land in
-later phases (see ``docs/AUTH.md``).
+Setup: ``python -m ac_auth.setup_gmail`` (store the Gmail App Password locally),
+then ``python -m ac_auth.cli add-user EMAIL --role admin`` (allow-list the first
+admin). ``identity.py`` (Tailscale whois) is retained for the device-plane but
+is no longer the human-auth path.
+
+Authorization (``authz.py``) resolves each account to a device role and projects
+it via ``GET /equipment/{key}/roster``; machine principals (automation accounts)
+authenticate by API key (``cli.py`` ``add-automation-account`` / ``issue-key``).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"

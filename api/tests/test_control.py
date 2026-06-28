@@ -7,6 +7,7 @@ that the right gateway URL is hit with the right body.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -298,6 +299,44 @@ def test_v11_control_acquires_claim_attaches_token_releases() -> None:
     # response; the release call must carry the same token.
     assert action_route.calls.last.request.headers["x-claim-token"] == "tok-abc"
     assert release_route.calls.last.request.headers["x-claim-token"] == "tok-abc"
+
+
+@respx.mock
+def test_authenticated_user_is_stamped_as_claim_owner() -> None:
+    """When the edge injects X-Auth-User, that real owner (not the dashboard
+    fallback) is sent in the device claim and recorded in the audit row."""
+    entry = _v11_entry()
+    app, db = _make_app_with_db(entry)
+
+    claim_route = respx.post("http://127.0.0.1:9999/control/claim").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "claim_token": "tok-abc",
+                "heartbeat_interval_s": 10.0,
+                "expires_at": "2026-05-23T16:00:00Z",
+            },
+        )
+    )
+    respx.post("http://127.0.0.1:9999/control/seal/temperature").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    respx.post("http://127.0.0.1:9999/control/release").mock(
+        return_value=httpx.Response(204)
+    )
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/plateloc/control/seal/temperature",
+            json={"temperature_c": 50},
+            headers={"X-Auth-User": "alice@utoronto.ca"},
+        )
+
+    assert r.status_code == 200
+    # The claim body carried the authenticated owner...
+    assert json.loads(claim_route.calls.last.request.content)["owner"] == "alice@utoronto.ca"
+    # ...and the audit row recorded it too.
+    assert db.events[0]["payload"]["owner"] == "alice@utoronto.ca"
 
 
 @respx.mock

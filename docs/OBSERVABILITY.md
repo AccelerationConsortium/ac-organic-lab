@@ -203,7 +203,7 @@ Revisit when `env_sensors` is live and you want sub-minute trend plots.
 ## 5. Data flow to the dashboard
 
 ```
-Device service                Dashboard aggregator (FastAPI :8001)        Dashboard (Next.js :3000)
+Device service                Dashboard aggregator (FastAPI :8001)        Dashboard (Next.js :8000)
 ─────────────────             ────────────────────────────────────        ─────────────────────────
 GET /status every 2s  ──────► Poll loop writes to service_uptime          GET /api/history/uptime/{id}
                               when state changes (up→down, down→up)       ──► uptime % over last 7 days

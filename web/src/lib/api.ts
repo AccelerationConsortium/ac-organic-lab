@@ -372,8 +372,8 @@ export async function postShakerSetSpeed(
 //
 // The OT-2 gateway exposes `/control/lights` as a claim-gated convenience
 // control (the dashboard's generic passthrough handles claim acquire /
-// release per request). The lights toggle is intentionally NOT behind the
-// CONTROL_PASSWORD middleware (see tile-policy.ts → actionBypassesControlGate).
+// release per request). Like every control write it requires a signed-in
+// session; the tile disables the toggle when logged out.
 
 export async function postSetLights(
   equipmentId: string,
