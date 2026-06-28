@@ -70,9 +70,13 @@ class VerifyIn(BaseModel):
 
 
 def _human_user(u: RosterUser) -> User:
+    # preserve "none" (no global access) and "admin"; everything else is operator
+    # (the wire/legacy value "user"). authz resolves the effective role from this
+    # plus grants.
+    flat = "admin" if u.role == "admin" else ("none" if u.role == "none" else "user")
     return User(
         email=u.email,
-        role="admin" if u.role == "admin" else "user",
+        role=flat,
         status=u.status,
         is_automation=False,
         grants=list(u.grants),
@@ -349,10 +353,11 @@ def create_app(
         what the platform would authorize. ``equipment_key`` is echoed and (today)
         does not yet filter — see authz.py for the hierarchy-later note."""
         membership = _membership(request)
-        entries = [
-            {"owner": u.email, "role": effective_device_role(u, equipment_key, membership)}
-            for u in _active_principals(_roster(request))
-        ]
+        entries = []
+        for u in _active_principals(_roster(request)):
+            role = effective_device_role(u, equipment_key, membership)
+            if role is not None:  # exclude accounts with no access to this device
+                entries.append({"owner": u.email, "role": role})
         return {"equipment_key": equipment_key, "entries": entries}
 
     @app.get("/authz/check")
@@ -377,7 +382,16 @@ def create_app(
                 "role": None,
                 "reason": "not on the allow-list or inactive/expired",
             }
-        role = effective_device_role(principal, equipment, _membership(request))
+        membership = _membership(request)
+        role = effective_device_role(principal, equipment, membership)
+        if role is None:
+            return {
+                "user": principal.email,
+                "equipment": equipment,
+                "allowed": False,
+                "role": None,
+                "reason": "no grant for this equipment",
+            }
         return {
             "user": principal.email,
             "equipment": equipment,
@@ -385,7 +399,7 @@ def create_app(
             "role": role,
             "central_role": "automation"
             if principal.is_automation
-            else effective_central_role(principal, equipment, _membership(request)),
+            else effective_central_role(principal, equipment, membership),
         }
 
     @app.get("/auth/users")

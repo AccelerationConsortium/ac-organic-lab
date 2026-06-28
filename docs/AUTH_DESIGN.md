@@ -429,11 +429,20 @@ device). `operator` may be granted at any scope; `admin` only at `global`/
 someone `operator` on just the devices they should touch.
 
 **Grants are additive (highest wins), not deny rules.** Effective role on a
-device = the highest of the global ∪ containing-platform ∪ equipment grants. To
-*limit* someone to specific equipment, grant **only** at the equipment scope —
-don't give a broad grant and subtract. There is deliberately no "deny one device
-out of a platform" primitive (negative grants would be a future, explicit
-addition).
+device = the highest of the flat global role + applicable global/platform/equipment
+grants. The flat `role` is itself an implicit *global* grant, so to **restrict**
+someone to specific equipment set **`role: none`** (no global access) and grant
+only the scopes they should reach — e.g. `role: none` + `{scope: equipment, id:
+ot2, role: operator}` = "may operate only the OT-2." A `none` account can still
+sign in (it's on the allow-list) but is **excluded from the roster of any device
+it has no grant for**, and `/authz/check` returns `allowed: false` there. There
+is deliberately no "deny one device out of a platform" primitive (negative grants
+would be a future, explicit addition); use narrow grants instead.
+
+**Lockout protection counts global admins only.** At least one active account must
+be a global admin — a flat `role: admin` **or** a `{scope: global, role: admin}`
+grant. A platform/equipment admin grant does *not* satisfy it (only a global admin
+governs the allow-list). `load_roster` refuses a roster that would leave none.
 
 **Adding a new platform or per-equipment grant is fully additive:** add/extend a
 section in `platforms.yaml` (the normal dashboard process) and grant people in
@@ -669,18 +678,21 @@ membership (fail-soft → `{}`); `authz.effective_central_role` /
 role + grants (global / platform-via-membership / equipment), so a
 `platform`-scoped `admin` grant elevates `operator`→`service` on that platform's
 devices only. New `GET /authz/check?user&equipment` probe. Backward-compatible:
-with no grants it reduces exactly to the flat role (verified live). 64 auth tests.
-**Deferred to Phase 1b (needs review — security-boundary + lockout-invariant
-change):** a `role: none` (no global grant) so equipment/platform grants can
-*restrict* access to specific devices, plus excluding non-granted accounts from a
-device's roster. Phase 1a only *elevates*; everyone still keeps ≥ their flat
-global role.
+with no grants it reduces exactly to the flat role (verified live).
+
+**DONE (Phase 1b — per-equipment restriction; committed 2026-06-28, not yet deployed):**
+`role: none` (no global access) lets grants *restrict* — a `none` account reaches
+only granted equipment/platforms, is excluded from the roster of any device it
+has no grant for, and `/authz/check` denies it there. `effective_*_role` return
+`None` for no-access; the lockout invariant now counts **global** admins (flat
+`role: admin` or a `{scope: global, role: admin}` grant), not platform/equipment
+admins. 72 auth tests. Opt-in: only accounts that set `role: none` are affected.
 
 | Phase | Delivers | Behavior change |
 |---|---|---|
 | **0 ✅** | **Allow-list → `roster.yaml`** (source of truth); SQLite is runtime-only; `last_login_at`/verified derived; `roster.py` loader with **schema validation + fail-closed-startup + keep-last-good-reload + invariant guards (≥1 admin, mass-change)**; CLI `validate`/`export`; git pre-commit hook + systemd `ExecStartPre`/`ExecReload` | **shipped + deployed** — allow-list edits are file-based; auth behavior for users unchanged |
 | **1a ✅** | Per-scope **grant resolution** (global/platform/equipment) via `platforms.yaml` membership; `admin` grants **elevate** (e.g. platform-admin); `GET /authz/check` | **committed (not deployed)** — none until grants are added (compat) |
-| **1b** | `role: none` + roster exclusion → per-equipment **restriction** (deferred: security-boundary + lockout-invariant change, wants review) | non-granted accounts drop off device rosters |
+| **1b ✅** | `role: none` (no global access) + grants-only → per-equipment **restriction**; non-granted accounts excluded from a device's roster + `/authz/check` denies them; lockout invariant counts **global** admins (flat or global-grant) | **committed (not deployed)** — only affects accounts that opt into `role: none` |
 | **2** | Scope-filter the roster; admin **access-matrix** view; **gate `/api/assistant/*` behind login** | reads scoped; control unchanged; chat needs auth |
 | **3** | Finish hard claim enforcement everywhere; device authorizes the claim against its roster (`operator`+) | control needs grant **and** claim |
 | **4** | **Close the direct-device side-door** (edge / loopback+proxy); claim owner provably = identity | the linchpin |

@@ -254,6 +254,36 @@ def test_authz_check_resolves_grants(tmp_path):
         assert unk["allowed"] is False and unk["role"] is None
 
 
+def test_role_none_restricted_to_granted_equipment(tmp_path):
+    """A role:none user appears on a device roster only where a grant reaches it,
+    and /authz/check denies the rest."""
+    from ac_auth.roster import Grant, Roster, RosterUser
+
+    app, _, _ = _ctx(tmp_path)  # alice operator (keeps the lockout admin elsewhere)
+    app.state.roster = Roster(
+        users=[
+            RosterUser(email="boss@utoronto.ca", role="admin"),
+            RosterUser(
+                email="felix@utoronto.ca",
+                role="none",
+                grants=[Grant(scope="equipment", id="ot2", role="operator")],
+            ),
+        ]
+    )
+    app.state.membership = {}
+    with TestClient(app) as c:
+        # felix is on the ot2 roster (operator→user)...
+        ot2 = {e["owner"]: e["role"] for e in c.get("/equipment/ot2/roster").json()["entries"]}
+        assert ot2 == {"boss@utoronto.ca": "service", "felix@utoronto.ca": "user"}
+        # ...but NOT on a device he wasn't granted
+        other = {e["owner"]: e["role"] for e in c.get("/equipment/cytation_5/roster").json()["entries"]}
+        assert other == {"boss@utoronto.ca": "service"}  # felix excluded
+        # /authz/check agrees
+        assert c.get("/authz/check", params={"user": "felix@utoronto.ca", "equipment": "ot2"}).json()["allowed"] is True
+        denied = c.get("/authz/check", params={"user": "felix@utoronto.ca", "equipment": "cytation_5"}).json()
+        assert denied["allowed"] is False and denied["role"] is None
+
+
 def test_roster_projection_maps_roles(tmp_path):
     """The device-plane roster maps every active account through the resolver."""
     app, _, _ = _ctx(

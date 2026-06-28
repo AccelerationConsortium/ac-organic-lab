@@ -63,3 +63,32 @@ def test_effective_central_role():
     u = _user(role="user", grants=[Grant(scope="platform", id="hte", role="admin")])
     assert effective_central_role(u, "ot2", {"ot2": {"hte"}}) == "admin"
     assert effective_central_role(u, "ot2") == "operator"  # membership absent
+
+
+# ---- Phase 1b: role:none restriction (no access except where granted) -----
+
+
+def test_role_none_has_no_access_without_grants():
+    u = _user(role="none")
+    assert effective_central_role(u, "ot2") is None
+    assert effective_device_role(u, "ot2") is None
+
+
+def test_role_none_with_equipment_grant_only_reaches_that_device():
+    u = _user(role="none", grants=[Grant(scope="equipment", id="ot2", role="operator")])
+    assert effective_device_role(u, "ot2") == "user"
+    assert effective_device_role(u, "cytation_5") is None  # not granted → no access
+
+
+def test_role_none_with_platform_grant_scoped_by_membership():
+    u = _user(role="none", grants=[Grant(scope="platform", id="hte", role="operator")])
+    membership = {"ot2": {"hte"}}
+    assert effective_device_role(u, "ot2", membership) == "user"
+    assert effective_device_role(u, "pypoe_web", membership) is None
+    assert effective_device_role(u, "ot2") is None  # membership absent → grant doesn't resolve
+
+
+def test_role_none_with_global_admin_grant_reaches_everything():
+    u = _user(role="none", grants=[Grant(scope="global", role="admin")])
+    assert effective_device_role(u, "ot2") == "service"
+    assert effective_device_role(u, "anything") == "service"

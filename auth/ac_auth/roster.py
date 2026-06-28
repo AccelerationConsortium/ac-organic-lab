@@ -35,7 +35,11 @@ from typing import Literal, Optional
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
-Role = Literal["operator", "admin"]
+Role = Literal["operator", "admin"]  # grant roles
+# A user's flat global role. "none" = no global access at all — the account can
+# sign in but only reaches equipment via explicit grants (per-equipment
+# restriction; Phase 1b). Default "operator" keeps existing entries unchanged.
+UserRole = Literal["none", "operator", "admin"]
 GrantScope = Literal["global", "platform", "equipment"]
 
 # Default cap on how many active accounts a single reload may remove/disable
@@ -101,7 +105,7 @@ class RosterUser(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     email: str
-    role: Role = "operator"
+    role: UserRole = "operator"
     name: str = ""
     lab_account: str = ""
     notes: str = ""
@@ -168,6 +172,13 @@ class RosterAutomation(BaseModel):
         return self.approved and not self.is_expired
 
 
+def _is_global_admin(u: RosterUser) -> bool:
+    """A flat ``role: admin`` or an explicit ``{scope: global, role: admin}`` grant."""
+    if u.role == "admin":
+        return True
+    return any(g.scope == "global" and g.role == "admin" for g in u.grants)
+
+
 class Roster(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -188,7 +199,11 @@ class Roster(BaseModel):
         return self
 
     def has_active_admin(self) -> bool:
-        return any(u.role == "admin" and u.is_active for u in self.users)
+        """Lockout protection: at least one active *global* admin must remain — a
+        flat ``role: admin`` or a ``{scope: global, role: admin}`` grant. (A
+        platform/equipment admin grant does NOT count: only a global admin governs
+        the allow-list.)"""
+        return any(u.is_active and _is_global_admin(u) for u in self.users)
 
     # ---- helpers ----------------------------------------------------------
 

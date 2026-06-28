@@ -47,16 +47,24 @@ users:
     disabled_reason: left the lab
 
   # --- per-platform / per-equipment access (Phase 1) ----------------------
-  # Grants are ADDITIVE (highest wins); there are no deny rules. To limit
-  # someone to specific equipment, give ONLY narrow grants (no global role).
+  # Grants are ADDITIVE (highest wins); there are no deny rules.
   # `scope: equipment|platform|global`; `id` is the platforms.yaml /
   # equipment.yaml key (omit for global). admin is not allowed at equipment.
+  #
+  # ELEVATION (role + grants): a base global role, raised on specific scopes.
   - email: bob.operator@example.edu
-    role: operator                      # base global role (omit to grant nothing globally)
+    role: operator                      # base: operator everywhere
     name: Bob Operator
     grants:
-      - { scope: platform,  id: hte,             role: admin }     # admin of the HTE platform
-      - { scope: equipment, id: agilent_uplc_ms, role: operator }  # operate this one device elsewhere
+      - { scope: platform, id: hte, role: admin }     # ...but admin of the HTE platform
+
+  # RESTRICTION (role: none + grants): NO global access — reaches ONLY granted
+  # equipment/platforms. Use this to limit someone to specific devices.
+  - email: carol.intern@example.edu
+    role: none
+    name: Carol Intern
+    grants:
+      - { scope: equipment, id: ot2, role: operator }   # may operate ONLY the OT-2
 
 # --- automation accounts (machine principals) -----------------------------
 # Authenticate by API key (not email code). Created here, but a key only works

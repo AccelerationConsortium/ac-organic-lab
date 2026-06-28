@@ -56,6 +56,46 @@ def test_no_active_admin_rejected(tmp_path):
         load_roster(_write(tmp_path, text))
 
 
+def test_role_none_loads_and_restricts(tmp_path):
+    text = (
+        "users:\n"
+        "  - {email: admin@x.com, role: admin}\n"
+        "  - email: felix@x.com\n"
+        "    role: none\n"
+        "    grants:\n"
+        "      - {scope: equipment, id: ot2, role: operator}\n"
+    )
+    r = load_roster(_write(tmp_path, text))
+    felix = next(u for u in r.users if u.email == "felix@x.com")
+    assert felix.role == "none" and felix.grants[0].id == "ot2"
+
+
+def test_global_admin_grant_satisfies_lockout(tmp_path):
+    # the only admin is a role:none user holding a global admin grant — still valid
+    text = (
+        "users:\n"
+        "  - email: boss@x.com\n"
+        "    role: none\n"
+        "    grants:\n"
+        "      - {scope: global, role: admin}\n"
+    )
+    r = load_roster(_write(tmp_path, text))
+    assert r.has_active_admin() is True
+
+
+def test_platform_admin_grant_does_not_satisfy_lockout(tmp_path):
+    # a platform admin is NOT a global admin → still a lockout
+    text = (
+        "users:\n"
+        "  - email: p@x.com\n"
+        "    role: none\n"
+        "    grants:\n"
+        "      - {scope: platform, id: hte, role: admin}\n"
+    )
+    with pytest.raises(RosterError, match="no active admin"):
+        load_roster(_write(tmp_path, text))
+
+
 def test_disabled_admin_does_not_count(tmp_path):
     text = (
         "users:\n"

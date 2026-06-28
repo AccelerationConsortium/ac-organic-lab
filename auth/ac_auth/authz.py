@@ -42,9 +42,14 @@ CentralRole = Literal["operator", "admin"]
 _RANK: dict[str, int] = {"operator": 1, "admin": 2}
 
 
-def _norm_central(role: str) -> CentralRole:
-    # the flat row stores the legacy "user"; treat it as "operator"
-    return "admin" if role == "admin" else "operator"
+def _flat_central(role: str) -> Optional[CentralRole]:
+    """The flat global role as a central role: ``admin``, ``operator`` (incl. the
+    legacy ``user``), or ``None`` for ``role: none`` (no global access)."""
+    if role == "admin":
+        return "admin"
+    if role == "none":
+        return None
+    return "operator"
 
 
 def _grant_applies(grant, equipment_key: str, membership: Mapping[str, Iterable[str]]) -> bool:
@@ -63,16 +68,18 @@ def effective_central_role(
     user: User,
     equipment_key: str,
     membership: Optional[Mapping[str, Iterable[str]]] = None,
-) -> CentralRole:
-    """Highest central role (``operator``/``admin``) this human holds on
-    ``equipment_key``, across the flat global role + applicable grants."""
+) -> Optional[CentralRole]:
+    """Highest central role this human holds on ``equipment_key``, across the flat
+    global role + applicable grants. ``None`` means **no access** (a ``role: none``
+    user with no grant applying to this equipment)."""
     membership = membership or {}
-    best = _norm_central(user.role)  # flat role = an implicit global grant
+    best = _flat_central(user.role)  # flat role = an implicit global grant (or None)
+    best_rank = _RANK.get(best or "", 0)
     for grant in getattr(user, "grants", ()) or ():
-        if _RANK.get(getattr(grant, "role", ""), 0) > _RANK[best] and _grant_applies(
-            grant, equipment_key, membership
-        ):
+        rank = _RANK.get(getattr(grant, "role", ""), 0)
+        if rank > best_rank and _grant_applies(grant, equipment_key, membership):
             best = grant.role  # type: ignore[assignment]
+            best_rank = rank
     return best
 
 
@@ -80,8 +87,10 @@ def effective_device_role(
     user: User,
     equipment_key: str,
     membership: Optional[Mapping[str, Iterable[str]]] = None,
-) -> DeviceRole:
-    """Resolve the device role this account holds on ``equipment_key``.
+) -> Optional[DeviceRole]:
+    """Resolve the device role this account holds on ``equipment_key``, or
+    ``None`` if it has **no access** there (so callers can exclude it from that
+    device's roster).
 
     ``membership`` is the ``equipment_key -> {platform_id}`` map (from
     `platforms.yaml`, via :func:`ac_auth.platforms.load_membership`); omit it and
@@ -89,7 +98,10 @@ def effective_device_role(
     """
     if user.is_automation:
         return "automation"
-    return "service" if effective_central_role(user, equipment_key, membership) == "admin" else "user"
+    central = effective_central_role(user, equipment_key, membership)
+    if central is None:
+        return None
+    return "service" if central == "admin" else "user"
 
 
 __all__ = ["DeviceRole", "CentralRole", "effective_central_role", "effective_device_role"]
