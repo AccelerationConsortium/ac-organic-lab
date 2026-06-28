@@ -6,3 +6,7 @@
 *.db-shm
 credentials.env
 .ac_auth/
+
+# The real allow-list holds real emails — keep it out of git.
+# Commit roster.yaml.example instead; copy it to roster.yaml to start.
+roster.yaml

@@ -1,0 +1,35 @@
+#!/bin/sh
+# Pre-commit guard for the auth roster.
+#
+# Validates the committed template (roster.yaml.example) so it never rots, and
+# any *staged* roster file (in case someone force-adds one despite .gitignore).
+# The live roster.yaml is gitignored, so its real gate is the systemd
+# ExecStartPre validate — this hook just protects what actually lands in git.
+#
+# Enable for this repo:
+#     git config core.hooksPath auth/hooks
+#
+# (DB-free: `validate` never touches the auth database.)
+set -eu
+
+ROOT="$(git rev-parse --show-toplevel)"
+PY="$ROOT/.venv/bin/python"
+[ -x "$PY" ] || PY="python3"
+
+check() {
+    [ -f "$1" ] || return 0
+    if ! "$PY" -m ac_auth.cli validate "$1" >/dev/null 2>&1; then
+        echo "pre-commit: $1 failed roster validation:" >&2
+        "$PY" -m ac_auth.cli validate "$1" >&2 || true
+        exit 1
+    fi
+}
+
+check "$ROOT/auth/roster.yaml.example"
+# any staged roster*.yaml (excluding the example, already checked)
+git diff --cached --name-only --diff-filter=ACM \
+    | grep -E '(^|/)roster[^/]*\.yaml$' \
+    | grep -v 'roster\.yaml\.example$' \
+    | while read -r f; do check "$ROOT/$f"; done
+
+exit 0

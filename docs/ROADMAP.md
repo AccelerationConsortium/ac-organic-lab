@@ -593,7 +593,7 @@ whose control surface predates claims.
    cooperating case. Does *not* stop out-of-band humans or the xArm
    `/web/` panel.
 2. **Front device control surfaces behind the auth/audit edge** — the
-   [`AUTH_SERVICE_DESIGN.md`](AUTH_SERVICE_DESIGN.md) auth module, but note its
+   [`AUTH_DESIGN.md`](AUTH_DESIGN.md) auth module, but note its
    Caddy `forward_auth` covers only the *dashboard's*
    `/api/equipment/*/control/*` routes. Closing the direct-device hole needs the
    devices themselves behind that edge, or bound to loopback +

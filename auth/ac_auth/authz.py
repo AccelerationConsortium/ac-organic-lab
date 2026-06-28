@@ -17,7 +17,7 @@ their effective role everywhere, and an automation account is the platform/robot
 principal. ``equipment_key`` is already in the signature (and the roster
 endpoint is already keyed by it) but is not yet consulted.
 
-**Later (per AUTH_SERVICE_DESIGN.md §3):** when ``platforms`` / ``equipment`` /
+**Later (per AUTH_DESIGN.md):** when ``platforms`` / ``equipment`` /
 ``authorizations`` land, only this function changes — it will resolve the
 *highest applicable* grant for ``equipment_key`` (global > platform > equipment)
 instead of reading the flat ``users.role``. Callers stay identical.

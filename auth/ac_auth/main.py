@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 import socket
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
@@ -37,7 +39,8 @@ from pydantic import BaseModel, Field
 
 from .authz import effective_device_role
 from .config import Settings, build_mailer, load_settings
-from .db import Db
+from .db import Db, User, norm_email
+from .roster import Roster, RosterAutomation, RosterUser, load_roster, reload_roster
 from .smtp_mailer import MailSendError, new_code
 
 logging.basicConfig(
@@ -55,14 +58,71 @@ class VerifyIn(BaseModel):
     code: str = Field(min_length=4, max_length=12)
 
 
+# ---------------------------------------------------------------------------
+# Identity resolution from the roster (Phase 0)
+#
+# The allow-list now lives in roster.yaml; SQLite holds only sessions / codes /
+# keys. These map a roster entry to the in-memory :class:`User` principal the
+# routes + authz already understand. The roster role ``operator`` maps to the
+# wire/device value ``user`` (operator == user); ``admin`` is unchanged.
+# ---------------------------------------------------------------------------
+
+
+def _human_user(u: RosterUser) -> User:
+    return User(
+        email=u.email,
+        role="admin" if u.role == "admin" else "user",
+        status=u.status,
+        is_automation=False,
+        name=u.name,
+        lab_account=u.lab_account,
+        notes=u.notes,
+        expires_at=u.expires_at,
+    )
+
+
+def _automation_user(a: RosterAutomation) -> User:
+    # an un-approved automation account is treated as disabled (its keys never authenticate)
+    return User(
+        email=a.email,
+        role="user",
+        status="active" if a.approved else "disabled",
+        is_automation=True,
+        name=a.name,
+        expires_at=a.expires_at,
+    )
+
+
+def _lookup_principal(roster: Roster, email: Optional[str]) -> Optional[User]:
+    """Resolve an email to its principal from the roster, or None if not listed."""
+    if not email:
+        return None
+    email = norm_email(email)
+    for u in roster.users:
+        if u.email == email:
+            return _human_user(u)
+    for a in roster.automation:
+        if a.email == email:
+            return _automation_user(a)
+    return None
+
+
+def _active_principals(roster: Roster) -> list[User]:
+    """Every account currently allowed to authenticate (active, non-expired)."""
+    out = [_human_user(u) for u in roster.users]
+    out += [_automation_user(a) for a in roster.automation]
+    return [p for p in out if p.status == "active" and not p.is_expired()]
+
+
 def create_app(
     *,
     settings: Optional[Settings] = None,
     db: Optional[Db] = None,
     mailer=None,
+    roster: Optional[Roster] = None,
 ) -> FastAPI:
-    """Build the app. Tests inject ``settings``/``db``/``mailer``; in production
-    the lifespan creates the real ones."""
+    """Build the app. Tests inject ``settings``/``db``/``mailer``/``roster``; in
+    production the lifespan creates the real ones (and loads roster.yaml)."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -72,10 +132,46 @@ def create_app(
             app.state.db = Db(app.state.settings.db_path)
         if getattr(app.state, "mailer", None) is None:
             app.state.mailer = build_mailer()
-        logger.info("auth sidecar up (db=%s)", app.state.settings.db_path)
+        if getattr(app.state, "roster", None) is None:
+            # Fail closed: a missing/invalid roster aborts startup rather than
+            # coming up with an empty (or worse, permissive) allow-list.
+            app.state.roster = load_roster()
+
+        # SIGHUP → hot-reload the roster, keeping the last-good copy on any
+        # validation failure or mass-change breach (never drops to a broken list).
+        loop = asyncio.get_running_loop()
+
+        def _reload_roster() -> None:
+            result = reload_roster(None, app.state.roster)
+            if result.applied:
+                app.state.roster = result.roster
+                logger.info("roster reloaded (%d users)", len(result.roster.users))
+            else:
+                logger.error("roster reload REJECTED, keeping last-good: %s", "; ".join(result.errors))
+
+        try:
+            loop.add_signal_handler(signal.SIGHUP, _reload_roster)
+        except (NotImplementedError, ValueError, RuntimeError):
+            # no event-loop signal support here (Windows, or a loop not on the
+            # main thread as under TestClient) — reload-on-SIGHUP is best-effort;
+            # a full restart always picks up roster changes.
+            _signal_registered = False
+        else:
+            _signal_registered = True
+
+        logger.info(
+            "auth sidecar up (db=%s, roster=%d users)",
+            app.state.settings.db_path,
+            len(app.state.roster.users),
+        )
         try:
             yield
         finally:
+            if _signal_registered:
+                try:
+                    loop.remove_signal_handler(signal.SIGHUP)
+                except (NotImplementedError, ValueError, RuntimeError):
+                    pass
             if getattr(app.state, "db", None) is not None:
                 app.state.db.close()
             m = getattr(app.state, "mailer", None)
@@ -86,6 +182,7 @@ def create_app(
     app.state.settings = settings
     app.state.db = db
     app.state.mailer = mailer
+    app.state.roster = roster
 
     def _s(request: Request) -> Settings:
         return request.app.state.settings
@@ -93,24 +190,27 @@ def create_app(
     def _db(request: Request) -> Db:
         return request.app.state.db
 
+    def _roster(request: Request) -> Roster:
+        return request.app.state.roster
+
     async def _session_user(request: Request):
         s, db = _s(request), _db(request)
         token = request.cookies.get(s.cookie_name)
         email = await asyncio.to_thread(db.session_email, token) if token else None
-        if not email:
-            return None
-        user = await asyncio.to_thread(db.get_user, email)
-        return user if (user and user.status == "active") else None
+        user = _lookup_principal(_roster(request), email)
+        return user if (user and user.status == "active" and not user.is_expired()) else None
 
     async def _api_key_user(request: Request):
         """Machine principal authenticated by ``X-Api-Key`` (automation accounts —
-        robot/platform). Same forward-auth edge as humans, different credential."""
+        robot/platform). The api_keys table only proves possession of a live key;
+        the principal's identity + approval is resolved from the roster."""
         db = _db(request)
         key = request.headers.get("x-api-key")
         if not key:
             return None
-        user = await asyncio.to_thread(db.verify_api_key, key)
-        return user if (user and user.status == "active") else None
+        email = await asyncio.to_thread(db.verify_api_key, key)
+        user = _lookup_principal(_roster(request), email)
+        return user if (user and user.status == "active" and not user.is_expired()) else None
 
     @app.get("/health")
     async def health() -> dict:
@@ -121,9 +221,8 @@ def create_app(
         """STATUS_SPEC v1.0 envelope so the auth sidecar can appear as a tile
         under the dashboard's "Web Services" section. Side-effect-free: a single
         read of the allow-list for the active-user count."""
-        db = _db(request)
         try:
-            n_users = len(await asyncio.to_thread(db.list_users, active_only=True))
+            n_users = len(_active_principals(_roster(request)))
         except Exception:
             n_users = 0
         return {
@@ -147,13 +246,39 @@ def create_app(
         email = body.email.strip().lower()
         if "@" not in email:
             raise HTTPException(status_code=422, detail="invalid email")
-        user = await asyncio.to_thread(db.get_user, email)
+        user = _lookup_principal(_roster(request), email)
         # Clear 403 for an unknown email (internal tool, small allow-list). For a
         # fully public deployment, return a generic 202 here to avoid enumeration.
         if user is None or user.status != "active":
             raise HTTPException(
                 status_code=403,
                 detail="This email is not authorized. Ask an admin to add you.",
+            )
+        if user.is_expired():
+            raise HTTPException(
+                status_code=403,
+                detail="This account has expired. Ask an admin to extend it.",
+            )
+        # Anti-spam: throttle code emails per address so nobody can flood a real
+        # user's inbox via /auth/request-code. Two limits — a short cooldown
+        # between sends and a rolling-hour cap — both keyed on the target email,
+        # computed from the login_codes send history. 429 + Retry-After.
+        _WINDOW_S = 3600.0
+        count, oldest, latest = await asyncio.to_thread(db.login_code_rate, email, _WINDOW_S)
+        now = time.time()
+        if latest is not None and (now - latest) < s.code_resend_cooldown_s:
+            retry = int(s.code_resend_cooldown_s - (now - latest)) + 1
+            raise HTTPException(
+                status_code=429,
+                detail=f"A sign-in code was just sent. Try again in {retry}s.",
+                headers={"Retry-After": str(retry)},
+            )
+        if count >= s.code_max_per_hour:
+            retry = int(_WINDOW_S - (now - oldest)) + 1 if oldest else int(_WINDOW_S)
+            raise HTTPException(
+                status_code=429,
+                detail="Too many sign-in codes requested for this address. Try again later.",
+                headers={"Retry-After": str(retry)},
             )
         code = new_code()
         await asyncio.to_thread(db.create_login_code, email, code, s.code_ttl_s)
@@ -173,9 +298,11 @@ def create_app(
         ok = await asyncio.to_thread(db.verify_login_code, email, body.code.strip(), s.code_max_attempts)
         if not ok:
             raise HTTPException(status_code=401, detail="Invalid or expired code.")
-        user = await asyncio.to_thread(db.get_user, email)
-        if user is None or user.status != "active":
+        user = _lookup_principal(_roster(request), email)
+        if user is None or user.status != "active" or user.is_expired():
             raise HTTPException(status_code=403, detail="This email is not authorized.")
+        # The session row IS the login record — last-login derives from it; no
+        # separate touch_login write (the users table is retired in Phase 0).
         token = await asyncio.to_thread(db.create_session, email, s.session_ttl_s)
         response.set_cookie(
             s.cookie_name, token, max_age=s.session_ttl_s, httponly=True,
@@ -207,11 +334,9 @@ def create_app(
         :func:`effective_device_role` seam, so the projection always agrees with
         what the platform would authorize. ``equipment_key`` is echoed and (today)
         does not yet filter — see authz.py for the hierarchy-later note."""
-        db = _db(request)
-        users = await asyncio.to_thread(db.list_users, active_only=True)
         entries = [
             {"owner": u.email, "role": effective_device_role(u, equipment_key)}
-            for u in users
+            for u in _active_principals(_roster(request))
         ]
         return {"equipment_key": equipment_key, "entries": entries}
 
@@ -221,12 +346,10 @@ def create_app(
         accounts (machine principals) are excluded — they authenticate by API
         key, not email code. Tailnet-gated like the rest of the sidecar; the
         list of allow-listed emails is not a secret in this internal tool."""
-        db = _db(request)
-        rows = await asyncio.to_thread(db.list_users, active_only=True)
         return {
             "users": [
                 {"email": u.email, "role": u.role}
-                for u in rows
+                for u in _active_principals(_roster(request))
                 if not u.is_automation
             ]
         }

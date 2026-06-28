@@ -1,0 +1,70 @@
+# roster.yaml — the authoritative allow-list for the auth sidecar.
+#
+# THIS IS AN EXAMPLE. Copy it to `roster.yaml` (same directory) and edit:
+#     cp roster.yaml.example roster.yaml
+# The real `roster.yaml` is gitignored (it holds real emails); only this
+# example is committed. Generate one from a live DB instead with:
+#     python -m ac_auth.cli export -o roster.yaml
+#
+# Workflow:  edit → validate → reload
+#     python -m ac_auth.cli validate roster.yaml   # schema + invariants
+#     sudo systemctl reload ac-organic-lab-auth     # (or restart) — keep-last-good on failure
+#
+# Path override: set AUTH_ROSTER_PATH to keep the file outside the repo.
+# SQLite holds only runtime state (sessions / login codes / API keys);
+# API-key SECRETS are NEVER in this file (issue them with `issue-key`).
+
+users:
+  # --- roles -------------------------------------------------------------
+  #   admin    : full control everywhere + (global) governance; admin grants
+  #              are global or platform scope only. At least ONE active admin
+  #              must always exist (validation refuses a roster without one).
+  #   operator : submit/run control (must claim); grantable at global /
+  #              platform / equipment scope.
+  - email: lab.manager@example.edu
+    role: admin
+    name: Lab Manager
+
+  - email: alice.researcher@example.edu
+    role: operator
+    name: Alice Researcher
+    lab_account: Example Group          # group / PI affiliation (free text)
+
+  # A visiting student who should auto-lapse — `expires` is enforced at login
+  # (valid through 23:59:59 UTC of that day), same effect as disabling.
+  - email: sam.intern@example.edu
+    role: operator
+    name: Sam Intern
+    expires: 2026-08-31
+    notes: summer student
+
+  # A turned-off account. `status: disabled` blocks login; the reason is shown
+  # in `list`/audit. (Re-enable by removing these two lines.)
+  - email: former.member@example.edu
+    role: operator
+    name: Former Member
+    status: disabled
+    disabled_reason: left the lab
+
+  # --- per-platform / per-equipment access (Phase 1) ----------------------
+  # Grants are ADDITIVE (highest wins); there are no deny rules. To limit
+  # someone to specific equipment, give ONLY narrow grants (no global role).
+  # `scope: equipment|platform|global`; `id` is the platforms.yaml /
+  # equipment.yaml key (omit for global). admin is not allowed at equipment.
+  - email: bob.operator@example.edu
+    role: operator                      # base global role (omit to grant nothing globally)
+    name: Bob Operator
+    grants:
+      - { scope: platform,  id: hte,             role: admin }     # admin of the HTE platform
+      - { scope: equipment, id: agilent_uplc_ms, role: operator }  # operate this one device elsewhere
+
+# --- automation accounts (machine principals) -----------------------------
+# Authenticate by API key (not email code). Created here, but a key only works
+# after a global admin sets `approved: true` (requirement 5). The key SECRET is
+# issued separately and stored hashed in SQLite — never written here.
+automation:
+  - email: hte-orchestrator@lab.local
+    name: HTE platform principal
+    approved: true
+    platform: hte                        # Phase 1 scope
+    # expires: 2026-12-31                 # time-box campaign principals

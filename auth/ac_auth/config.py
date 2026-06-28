@@ -63,6 +63,8 @@ class Settings:
     db_path: str
     code_ttl_s: int          # one-time code lifetime
     code_max_attempts: int   # verify attempts before a code is burned
+    code_resend_cooldown_s: int  # min gap between code emails to one address (anti-spam)
+    code_max_per_hour: int       # max code emails per address per rolling hour
     session_ttl_s: int       # session cookie lifetime
     cookie_name: str
     cookie_secure: bool      # set False only for local http testing
@@ -74,6 +76,8 @@ def load_settings() -> Settings:
         db_path=str(default_db_path()),
         code_ttl_s=_int("AUTH_CODE_TTL_S", 600),          # 10 min
         code_max_attempts=_int("AUTH_CODE_MAX_ATTEMPTS", 5),
+        code_resend_cooldown_s=_int("AUTH_CODE_RESEND_COOLDOWN_S", 60),  # 1 min between sends
+        code_max_per_hour=_int("AUTH_CODE_MAX_PER_HOUR", 5),
         session_ttl_s=_int("AUTH_SESSION_TTL_S", 43200),  # 12 h
         cookie_name=os.environ.get("AUTH_COOKIE_NAME", "ac_auth_session"),
         cookie_secure=_bool("AUTH_COOKIE_SECURE", True),

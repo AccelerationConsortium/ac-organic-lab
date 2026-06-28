@@ -264,7 +264,7 @@ async def _release_claim_best_effort(
 # Audit identity for control. ``owner`` is resolved by `_claim_owner` — the
 # authenticated `X-Auth-User` injected by the edge when present, else the
 # dashboard fallback — and is the actor stamped into both the audit row and the
-# device claim (`details.claimed_by.owner`). See AUTH_SERVICE_DESIGN.md.
+# device claim (`details.claimed_by.owner`). See AUTH_DESIGN.md.
 async def _record_control_event(
     request: Request,
     equipment_id: str,

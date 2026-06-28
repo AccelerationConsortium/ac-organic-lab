@@ -11,7 +11,11 @@ WorkingDirectory=/opt/ac-organic-lab/auth
 # Phase 1 = audit mode: resolve + log identity, never block. Flip to "true"
 # only together with the Caddy forward_auth wiring (Phase 2).
 Environment=AUTH_ENFORCE=false
+# Fail closed: validate roster.yaml before (re)starting (exit non-zero blocks ExecStart).
+ExecStartPre=/opt/ac-organic-lab/.venv/bin/python -m ac_auth.cli validate
 ExecStart=/opt/ac-organic-lab/.venv/bin/uvicorn ac_auth.main:app --host 127.0.0.1 --port 8009
+# `systemctl reload` → SIGHUP → keep-last-good roster hot-reload.
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=3
 SyslogIdentifier=ac-organic-lab-auth

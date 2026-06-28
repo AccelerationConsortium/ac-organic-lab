@@ -83,9 +83,9 @@ def test_api_key_lifecycle(tmp_path):
     db.upsert_user("robot@lab.local", is_automation=True)
     token = db.create_api_key("robot@lab.local", label="robot-2026")
     assert token.startswith("ak_")
-    principal = db.verify_api_key(token)
-    assert principal is not None and principal.email == "robot@lab.local"
-    assert principal.is_automation is True
+    # verify_api_key returns the principal's EMAIL (identity/approval resolves via
+    # the roster); the api_keys table only proves possession of a live key.
+    assert db.verify_api_key(token) == "robot@lab.local"
     assert db.verify_api_key("ak_bogus") is None
 
     keys = db.list_api_keys("robot@lab.local")
@@ -113,6 +113,51 @@ def test_list_users_active_only(tmp_path):
     db.set_status("b@x.com", "disabled")
     assert {u.email for u in db.list_users(active_only=True)} == {"a@x.com"}
     assert {u.email for u in db.list_users()} == {"a@x.com", "b@x.com"}
+    db.close()
+
+
+def test_profile_fields_and_upsert_preserves_them(tmp_path):
+    db = _db(tmp_path)
+    db.upsert_user("p@x.com", role="user")
+    db.update_user("p@x.com", name="Pat Lee", lab_account="AG group", notes="intern",
+                   expires_at=2_000_000_000.0)
+    u = db.get_user("p@x.com")
+    assert u.name == "Pat Lee" and u.lab_account == "AG group" and u.notes == "intern"
+    assert u.expires_at == 2_000_000_000.0 and u.created_at is not None
+    # re-adding (upsert) the same user must NOT wipe the profile columns
+    db.upsert_user("p@x.com", role="admin")
+    u2 = db.get_user("p@x.com")
+    assert u2.role == "admin" and u2.name == "Pat Lee" and u2.lab_account == "AG group"
+    # clearing expiry
+    db.update_user("p@x.com", expires_at=None)
+    assert db.get_user("p@x.com").expires_at is None
+    db.close()
+
+
+def test_expiry_and_disable_reason(tmp_path):
+    db = _db(tmp_path)
+    db.upsert_user("e@x.com")
+    db.update_user("e@x.com", expires_at=1.0)              # long past
+    assert db.get_user("e@x.com").is_expired() is True
+    db.update_user("e@x.com", expires_at=9_999_999_999.0)  # far future
+    assert db.get_user("e@x.com").is_expired() is False
+    db.set_status("e@x.com", "disabled", reason="left the lab")
+    u = db.get_user("e@x.com")
+    assert u.status == "disabled" and u.disabled_reason == "left the lab" and u.disabled_at is not None
+    db.set_status("e@x.com", "active")                     # re-enable clears reason
+    u2 = db.get_user("e@x.com")
+    assert u2.disabled_reason == "" and u2.disabled_at is None
+    db.close()
+
+
+def test_touch_login_stamps_and_verifies(tmp_path):
+    db = _db(tmp_path)
+    db.upsert_user("l@x.com")
+    assert db.get_user("l@x.com").last_login_at is None
+    assert db.get_user("l@x.com").email_verified is False
+    db.touch_login("l@x.com")
+    u = db.get_user("l@x.com")
+    assert u.last_login_at is not None and u.email_verified is True
     db.close()
 
 
