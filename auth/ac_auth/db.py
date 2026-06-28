@@ -17,7 +17,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -120,6 +120,10 @@ class User:
     role: str
     status: str
     is_automation: bool = False
+    # per-scope authorization grants (Phase 1) — a list of roster Grant objects
+    # (duck-typed .scope/.id/.role); consulted by authz.effective_*_role. Kept as
+    # a bare list here so db.py stays free of a roster import.
+    grants: list = field(default_factory=list)
     # account-management metadata (defaulted so positional User(email, role,
     # status, is_automation) construction in tests/authz keeps working)
     name: str = ""

@@ -37,9 +37,10 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .authz import effective_device_role
+from .authz import effective_central_role, effective_device_role
 from .config import Settings, build_mailer, load_settings
 from .db import Db, User, norm_email
+from .platforms import load_membership
 from .roster import Roster, RosterAutomation, RosterUser, load_roster, reload_roster
 from .smtp_mailer import MailSendError, new_code
 
@@ -74,6 +75,7 @@ def _human_user(u: RosterUser) -> User:
         role="admin" if u.role == "admin" else "user",
         status=u.status,
         is_automation=False,
+        grants=list(u.grants),
         name=u.name,
         lab_account=u.lab_account,
         notes=u.notes,
@@ -120,9 +122,11 @@ def create_app(
     db: Optional[Db] = None,
     mailer=None,
     roster: Optional[Roster] = None,
+    membership: Optional[dict] = None,
 ) -> FastAPI:
-    """Build the app. Tests inject ``settings``/``db``/``mailer``/``roster``; in
-    production the lifespan creates the real ones (and loads roster.yaml)."""
+    """Build the app. Tests inject ``settings``/``db``/``mailer``/``roster``/
+    ``membership``; in production the lifespan creates the real ones (and loads
+    roster.yaml + platforms.yaml)."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -136,15 +140,21 @@ def create_app(
             # Fail closed: a missing/invalid roster aborts startup rather than
             # coming up with an empty (or worse, permissive) allow-list.
             app.state.roster = load_roster()
+        if getattr(app.state, "membership", None) is None:
+            # platform↔equipment membership (fail-soft → {} → platform grants
+            # simply don't resolve; global/equipment grants still do).
+            app.state.membership = load_membership()
 
-        # SIGHUP → hot-reload the roster, keeping the last-good copy on any
-        # validation failure or mass-change breach (never drops to a broken list).
+        # SIGHUP → hot-reload the roster + membership, keeping the last-good copy
+        # on any validation failure or mass-change breach (never drops to a broken
+        # list).
         loop = asyncio.get_running_loop()
 
         def _reload_roster() -> None:
             result = reload_roster(None, app.state.roster)
             if result.applied:
                 app.state.roster = result.roster
+                app.state.membership = load_membership()
                 logger.info("roster reloaded (%d users)", len(result.roster.users))
             else:
                 logger.error("roster reload REJECTED, keeping last-good: %s", "; ".join(result.errors))
@@ -183,6 +193,7 @@ def create_app(
     app.state.db = db
     app.state.mailer = mailer
     app.state.roster = roster
+    app.state.membership = membership
 
     def _s(request: Request) -> Settings:
         return request.app.state.settings
@@ -192,6 +203,9 @@ def create_app(
 
     def _roster(request: Request) -> Roster:
         return request.app.state.roster
+
+    def _membership(request: Request) -> dict:
+        return request.app.state.membership or {}
 
     async def _session_user(request: Request):
         s, db = _s(request), _db(request)
@@ -334,11 +348,45 @@ def create_app(
         :func:`effective_device_role` seam, so the projection always agrees with
         what the platform would authorize. ``equipment_key`` is echoed and (today)
         does not yet filter — see authz.py for the hierarchy-later note."""
+        membership = _membership(request)
         entries = [
-            {"owner": u.email, "role": effective_device_role(u, equipment_key)}
+            {"owner": u.email, "role": effective_device_role(u, equipment_key, membership)}
             for u in _active_principals(_roster(request))
         ]
         return {"equipment_key": equipment_key, "entries": entries}
+
+    @app.get("/authz/check")
+    async def authz_check(equipment: str, request: Request, user: str = "") -> dict:
+        """Authorization probe (Phase 2): the effective device role a principal
+        holds on an equipment, resolving per-scope grants. Device-plane /
+        peer-platform endpoint (Tailnet-only), same single resolver as the roster
+        projection. ``user`` defaults to the authenticated caller when omitted."""
+        email = user or ""
+        if not email:
+            caller = await _session_user(request) or await _api_key_user(request)
+            if caller is None:
+                raise HTTPException(status_code=401, detail="not authenticated")
+            email = caller.email
+        principal = _lookup_principal(_roster(request), email)
+        active = bool(principal and principal.status == "active" and not principal.is_expired())
+        if not active:
+            return {
+                "user": norm_email(email),
+                "equipment": equipment,
+                "allowed": False,
+                "role": None,
+                "reason": "not on the allow-list or inactive/expired",
+            }
+        role = effective_device_role(principal, equipment, _membership(request))
+        return {
+            "user": principal.email,
+            "equipment": equipment,
+            "allowed": True,
+            "role": role,
+            "central_role": "automation"
+            if principal.is_automation
+            else effective_central_role(principal, equipment, _membership(request)),
+        }
 
     @app.get("/auth/users")
     async def users(request: Request) -> dict:

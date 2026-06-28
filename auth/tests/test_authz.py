@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from ac_auth.authz import effective_device_role
+from ac_auth.authz import effective_central_role, effective_device_role
 from ac_auth.db import User
+from ac_auth.roster import Grant
 
 
-def _user(role="user", is_automation=False) -> User:
-    return User("x@lab.local", role, "active", is_automation)
+def _user(role="user", is_automation=False, grants=()) -> User:
+    return User("x@lab.local", role, "active", is_automation, grants=list(grants))
 
 
 def test_human_user_maps_to_user():
@@ -24,6 +25,41 @@ def test_automation_account_maps_to_automation():
     assert effective_device_role(_user(role="admin", is_automation=True), "x") == "automation"
 
 
-def test_flat_today_equipment_key_does_not_change_result():
+def test_no_grants_equipment_key_does_not_change_result():
     u = _user(role="admin")
     assert effective_device_role(u, "agilent_uplc_ms") == effective_device_role(u, "some_other_device")
+
+
+# ---- Phase 1: per-scope grants (elevation) -------------------------------
+
+
+def test_global_admin_grant_elevates_everywhere():
+    u = _user(role="user", grants=[Grant(scope="global", role="admin")])
+    assert effective_device_role(u, "ot2") == "service"
+    assert effective_device_role(u, "anything_else") == "service"
+
+
+def test_platform_admin_grant_resolves_via_membership():
+    u = _user(role="user", grants=[Grant(scope="platform", id="hte", role="admin")])
+    membership = {"ot2": {"hte"}, "cytation_5": {"hte"}, "pypoe_web": {"web_services"}}
+    # admin on devices in the hte platform...
+    assert effective_device_role(u, "ot2", membership) == "service"
+    # ...but only operator (flat) on a device outside it
+    assert effective_device_role(u, "pypoe_web", membership) == "user"
+    # and with no membership map, the platform grant simply doesn't resolve
+    assert effective_device_role(u, "ot2") == "user"
+
+
+def test_equipment_operator_grant_does_not_demote_flat_admin():
+    # grants only elevate; a flat admin stays service even with a narrower grant
+    u = _user(role="admin", grants=[Grant(scope="equipment", id="ot2", role="operator")])
+    assert effective_device_role(u, "ot2") == "service"
+    assert effective_device_role(u, "other") == "service"
+
+
+def test_effective_central_role():
+    assert effective_central_role(_user(role="user"), "x") == "operator"
+    assert effective_central_role(_user(role="admin"), "x") == "admin"
+    u = _user(role="user", grants=[Grant(scope="platform", id="hte", role="admin")])
+    assert effective_central_role(u, "ot2", {"ot2": {"hte"}}) == "admin"
+    assert effective_central_role(u, "ot2") == "operator"  # membership absent

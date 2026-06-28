@@ -588,7 +588,8 @@ Human endpoints at the **public edge** (Caddy); device-plane endpoints
 - `GET  /auth/verify` — forward-auth (session cookie or `X-Api-Key`).
 - `POST /auth/request-code`, `POST /auth/verify-code`, `POST /auth/logout`,
   `GET /auth/me`, `GET /auth/users`.
-- `GET  /authz/check` — peer/device authorization probe.
+- `GET  /authz/check` — peer/device authorization probe (**implemented**, Phase 1a):
+  `?user&equipment` → `{allowed, role, central_role}` via the grant resolver.
 - `GET  /equipment/{key}/roster` — **scope-filtered** owner→role projection a
   device pulls (+ a `/platform/{key}/roster` for a multi-device gateway).
 - Admin: users CRUD, **grants CRUD** (scope+role), API-key issue/revoke,
@@ -660,19 +661,36 @@ systemd units carry `ExecStartPre` validate + `ExecReload` (SIGHUP); committed
 The SQLite `users` table/methods remain in `db.py` but are **vestigial** (used
 only by `export`); drop in a later cleanup.
 
+**DONE (Phase 1a — per-scope grant *resolution* + elevation; committed 2026-06-28, not yet deployed):**
+`Grant` model (`scope` global/platform/equipment, `id`, `role`) on roster users;
+`ac_auth/platforms.py` loads `platforms.yaml` → `equipment_key → {platform_id}`
+membership (fail-soft → `{}`); `authz.effective_central_role` /
+`effective_device_role` now resolve the **highest applicable** of the flat global
+role + grants (global / platform-via-membership / equipment), so a
+`platform`-scoped `admin` grant elevates `operator`→`service` on that platform's
+devices only. New `GET /authz/check?user&equipment` probe. Backward-compatible:
+with no grants it reduces exactly to the flat role (verified live). 64 auth tests.
+**Deferred to Phase 1b (needs review — security-boundary + lockout-invariant
+change):** a `role: none` (no global grant) so equipment/platform grants can
+*restrict* access to specific devices, plus excluding non-granted accounts from a
+device's roster. Phase 1a only *elevates*; everyone still keeps ≥ their flat
+global role.
+
 | Phase | Delivers | Behavior change |
 |---|---|---|
-| **0 ✅** | **Allow-list → `roster.yaml`** (source of truth); SQLite is runtime-only; `last_login_at`/verified derived; `roster.py` loader with **schema validation + fail-closed-startup + keep-last-good-reload + invariant guards (≥1 admin, mass-change)**; CLI `validate`/`export`; git pre-commit hook + systemd `ExecStartPre`/`ExecReload` | **shipped** — allow-list edits are file-based; auth behavior for users unchanged |
-| **1** | Grants + platform↔equipment membership added to `roster.yaml` (config, **not** relational tables); seed each current user a `global` grant = their flat role; `effective_device_role` consults them (flat fallback) | none (compat) |
-| **2** | Scope-filter the roster; `/authz/check`; admin **access-matrix** view; **gate `/api/assistant/*` behind login** | reads scoped; control unchanged; chat needs auth |
+| **0 ✅** | **Allow-list → `roster.yaml`** (source of truth); SQLite is runtime-only; `last_login_at`/verified derived; `roster.py` loader with **schema validation + fail-closed-startup + keep-last-good-reload + invariant guards (≥1 admin, mass-change)**; CLI `validate`/`export`; git pre-commit hook + systemd `ExecStartPre`/`ExecReload` | **shipped + deployed** — allow-list edits are file-based; auth behavior for users unchanged |
+| **1a ✅** | Per-scope **grant resolution** (global/platform/equipment) via `platforms.yaml` membership; `admin` grants **elevate** (e.g. platform-admin); `GET /authz/check` | **committed (not deployed)** — none until grants are added (compat) |
+| **1b** | `role: none` + roster exclusion → per-equipment **restriction** (deferred: security-boundary + lockout-invariant change, wants review) | non-granted accounts drop off device rosters |
+| **2** | Scope-filter the roster; admin **access-matrix** view; **gate `/api/assistant/*` behind login** | reads scoped; control unchanged; chat needs auth |
 | **3** | Finish hard claim enforcement everywhere; device authorizes the claim against its roster (`operator`+) | control needs grant **and** claim |
 | **4** | **Close the direct-device side-door** (edge / loopback+proxy); claim owner provably = identity | the linchpin |
 | **5** | `owner` stamping in `lab.db` + identity-aware history reads + `can_read` seam (**incl. the assistant's MCP reads**) | experiment data becomes private |
 | **6** | Automation approval workflow (`pending`→approve, platform-scoped + time-boxed grants; `launched_by` audited) | automation gated |
 
-**Phase 0** (the storage refactor) is **shipped** — see the DONE block above. The
-keep-last-good reload means a bad roster never downs auth. The next phase (1) adds
-per-scope grants to the same `roster.yaml`. Remaining cross-cutting infra (Phases 2–4): Caddy `forward_auth` → `/auth/verify`
+**Phase 0** (storage refactor) is **shipped + deployed**; **Phase 1a** (grant
+resolution + elevation + `/authz/check`) is **committed** on `auth-roster` (inert
+until grants are added to `roster.yaml` and the service is restarted). Next:
+Phase 1b (restriction, wants review), then the cross-cutting infra (Phases 2–4): Caddy `forward_auth` → `/auth/verify` Caddy `forward_auth` → `/auth/verify`
 (+ X-Auth-* strip/re-inject), edge TLS + per-IP rate-limit, and the device-side
 roster pull in each device repo (e.g. `agilent-hplcms-server`'s
 `control/roster.py`, today static env lists).

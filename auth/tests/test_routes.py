@@ -223,6 +223,37 @@ def test_unapproved_automation_key_rejected(tmp_path):
         assert c.get("/auth/verify", headers={"X-Api-Key": token}).status_code == 401
 
 
+def test_authz_check_resolves_grants(tmp_path):
+    """/authz/check returns the effective device role, honoring platform grants."""
+    from ac_auth.roster import Grant
+
+    app, _, _ = _ctx(
+        tmp_path,
+        users=(("alice@utoronto.ca", "operator"), ("boss@utoronto.ca", "admin")),
+    )
+    # give alice a platform-admin grant on hte, and wire ot2 into hte membership
+    app.state.roster.users[0].grants.append(Grant(scope="platform", id="hte", role="admin"))
+    app.state.membership = {"ot2": {"hte"}}
+    with TestClient(app) as c:
+        # alice is admin→service on ot2 (via the hte platform grant)...
+        r = c.get("/authz/check", params={"user": "alice@utoronto.ca", "equipment": "ot2"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body == {
+            "user": "alice@utoronto.ca",
+            "equipment": "ot2",
+            "allowed": True,
+            "role": "service",
+            "central_role": "admin",
+        }
+        # ...but only operator→user on a device outside hte
+        out = c.get("/authz/check", params={"user": "alice@utoronto.ca", "equipment": "elsewhere"}).json()
+        assert out["role"] == "user" and out["central_role"] == "operator"
+        # an unknown user is not allowed
+        unk = c.get("/authz/check", params={"user": "stranger@x.com", "equipment": "ot2"}).json()
+        assert unk["allowed"] is False and unk["role"] is None
+
+
 def test_roster_projection_maps_roles(tmp_path):
     """The device-plane roster maps every active account through the resolver."""
     app, _, _ = _ctx(
