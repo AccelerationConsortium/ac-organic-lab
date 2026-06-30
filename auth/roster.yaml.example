@@ -76,3 +76,22 @@ automation:
     approved: true
     platform: hte                        # Phase 1 scope
     # expires: 2026-12-31                 # time-box campaign principals
+
+# --- projects (Phase 2 — data ownership, NOT hardware) --------------------
+# A project is the unit of data ownership. `pis` (one or more) OWN the project's
+# data and get the bill; `members` are the team who may READ it while the project
+# is `active`. A user may be a member of MANY projects (no "leaving a group"). A
+# PI need not have hardware access (give them `role: none`). Access to a datum =
+# active account AND active member of its (active) project — plus the project's
+# PIs (owners, any status) and global admins. `status: closed` keeps the data
+# (owners/admin still read) but stops members. Every PI/member must be a user
+# defined above. This drives data visibility only — hardware stays on role/grants.
+projects:
+  - id: pdb-solubility
+    name: PDB solubility screen
+    status: active                 # `closed` retains data but revokes member reads
+    pis:
+      - lab.manager@example.edu    # one or more PIs; own the data regardless of status
+    members:
+      - alice.researcher@example.edu
+      - bob.operator@example.edu   # the same user may also be a member of other projects

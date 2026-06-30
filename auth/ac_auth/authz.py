@@ -30,6 +30,7 @@ the old flat behavior, so the change is backward-compatible. The mapping:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Iterable, Literal, Mapping, Optional
 
 from .db import User
@@ -102,6 +103,53 @@ def effective_device_role(
     if central is None:
         return None
     return "service" if central == "admin" else "user"
+
+
+# ---------------------------------------------------------------------------
+# Data-access scope (data plane — distinct from device-role resolution above)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DataScope:
+    """A caller's project-based data-access scope, consumed by the data plane's
+    ``can_read`` (the dashboard's lab.db reads and the AnaliticaDB catalog).
+
+    ``member_projects`` = projects the caller may consume as a team member (an
+    active member of an active project); ``pi_projects`` = projects they are a PI
+    of (owner — readable regardless of project status); ``is_admin`` = global
+    admin (governance read over all data). This is about **data ownership**, not
+    hardware control — a PI may own data on a platform they cannot operate, and a
+    user can be in many projects at once.
+    """
+
+    member_projects: frozenset[str]
+    pi_projects: frozenset[str]
+    is_admin: bool
+
+
+def data_scope(
+    user: User,
+    *,
+    member_projects: Iterable[str],
+    pi_projects: Iterable[str],
+) -> DataScope:
+    """Project a principal to its data scope. ``member_projects`` / ``pi_projects``
+    are supplied by the caller (from ``Roster.member_projects`` / ``pi_projects``)
+    so this seam stays decoupled from the roster-file model — mirroring how the
+    role resolver takes ``membership`` rather than importing ``platforms.yaml``.
+    The activeness gates (account / membership / project) are already applied when
+    those sets are computed."""
+    # is_admin mirrors roster._is_global_admin (flat admin or a global admin grant).
+    is_admin = user.role == "admin" or any(
+        getattr(g, "scope", None) == "global" and getattr(g, "role", None) == "admin"
+        for g in (getattr(user, "grants", ()) or ())
+    )
+    return DataScope(
+        member_projects=frozenset(member_projects),
+        pi_projects=frozenset(pi_projects),
+        is_admin=is_admin,
+    )
 
 
 __all__ = ["DeviceRole", "CentralRole", "effective_central_role", "effective_device_role"]

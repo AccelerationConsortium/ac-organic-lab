@@ -5,11 +5,84 @@ from __future__ import annotations
 import pytest
 
 from ac_auth.roster import (
+    Roster,
     RosterError,
+    RosterProject,
+    RosterUser,
     dump_roster,
     load_roster,
     reload_roster,
 )
+
+
+# --- projects, PIs & membership (Phase 2) ----------------------------------
+
+
+def test_project_helpers_and_pi_vs_member():
+    r = Roster(
+        users=[
+            RosterUser(email="alice@lab.edu"),
+            RosterUser(email="pi@lab.edu", role="none"),
+        ],
+        projects=[RosterProject(id="proj1", pis=["pi@lab.edu"], members=["alice@lab.edu"])],
+    )
+    assert r.pi_projects("pi@lab.edu") == {"proj1"}
+    assert r.pi_projects("alice@lab.edu") == set()       # member, not owner
+    assert r.member_projects("alice@lab.edu") == {"proj1"}
+    assert r.member_projects("pi@lab.edu") == set()       # owner, not listed member
+    assert r.project("proj1").pis == ["pi@lab.edu"]
+
+
+def test_user_can_be_in_multiple_projects():
+    r = Roster(
+        users=[RosterUser(email="alice@lab.edu"), RosterUser(email="pi@lab.edu", role="admin")],
+        projects=[
+            RosterProject(id="p1", pis=["pi@lab.edu"], members=["alice@lab.edu"]),
+            RosterProject(id="p2", pis=["pi@lab.edu"], members=["alice@lab.edu"]),
+        ],
+    )
+    assert r.member_projects("alice@lab.edu") == {"p1", "p2"}  # no "leaving" needed
+
+
+def test_closed_project_drops_members_but_keeps_owners():
+    r = Roster(
+        users=[RosterUser(email="alice@lab.edu"), RosterUser(email="pi@lab.edu", role="admin")],
+        projects=[
+            RosterProject(id="p1", status="closed", pis=["pi@lab.edu"], members=["alice@lab.edu"]),
+        ],
+    )
+    assert r.member_projects("alice@lab.edu") == set()  # project closed → no member read
+    assert r.pi_projects("pi@lab.edu") == {"p1"}         # owner still owns it
+
+
+def test_multiple_pis_per_project():
+    r = Roster(
+        users=[RosterUser(email="p1@lab.edu", role="admin"), RosterUser(email="p2@lab.edu", role="none")],
+        projects=[RosterProject(id="proj", pis=["p1@lab.edu", "p2@lab.edu"])],
+    )
+    assert r.pi_projects("p1@lab.edu") == {"proj"}
+    assert r.pi_projects("p2@lab.edu") == {"proj"}
+
+
+def test_project_requires_at_least_one_pi():
+    with pytest.raises(ValueError):
+        RosterProject(id="proj", members=["a@lab.edu"])
+
+
+def test_project_references_must_be_known_users():
+    with pytest.raises(ValueError):
+        Roster(
+            users=[RosterUser(email="a@lab.edu", role="admin")],
+            projects=[RosterProject(id="proj", pis=["a@lab.edu"], members=["ghost@lab.edu"])],
+        )
+
+
+def test_duplicate_project_id_rejected():
+    with pytest.raises(ValueError):
+        Roster(
+            users=[RosterUser(email="a@lab.edu", role="admin")],
+            projects=[RosterProject(id="p", pis=["a@lab.edu"]), RosterProject(id="p", pis=["a@lab.edu"])],
+        )
 
 
 def _write(tmp_path, text: str):

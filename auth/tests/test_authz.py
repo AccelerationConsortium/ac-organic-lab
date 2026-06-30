@@ -2,13 +2,42 @@
 
 from __future__ import annotations
 
-from ac_auth.authz import effective_central_role, effective_device_role
+from ac_auth.authz import (
+    data_scope,
+    effective_central_role,
+    effective_device_role,
+)
 from ac_auth.db import User
 from ac_auth.roster import Grant
 
 
 def _user(role="user", is_automation=False, grants=()) -> User:
     return User("x@lab.local", role, "active", is_automation, grants=list(grants))
+
+
+# --- data-access scope (Phase 3) ------------------------------------------
+
+
+def test_data_scope_passes_through_projects():
+    s = data_scope(_user(role="operator"), member_projects=["p1", "p2"], pi_projects=["p3"])
+    assert s.member_projects == frozenset({"p1", "p2"})
+    assert s.pi_projects == frozenset({"p3"})
+    assert s.is_admin is False
+
+
+def test_data_scope_is_admin_from_flat_role():
+    s = data_scope(_user(role="admin"), member_projects=(), pi_projects=())
+    assert s.is_admin is True
+
+
+def test_data_scope_is_admin_from_global_grant():
+    u = _user(role="operator", grants=[Grant(scope="global", role="admin")])
+    assert data_scope(u, member_projects=(), pi_projects=()).is_admin is True
+
+
+def test_data_scope_plain_operator_is_not_admin():
+    s = data_scope(_user(role="operator"), member_projects=(), pi_projects=())
+    assert s.is_admin is False
 
 
 def test_human_user_maps_to_user():

@@ -172,6 +172,42 @@ class RosterAutomation(BaseModel):
         return self.approved and not self.is_expired
 
 
+class RosterProject(BaseModel):
+    """A project — the unit of data ownership. ``pis`` (one or more) **own** the
+    project's data (and get the bill); ``members`` are the team who may consume it
+    while the project is active. A user may belong to **many** projects, so no one
+    has to "leave" a group to join another. Used for data access only — never for
+    hardware grants. ``status: closed`` keeps the data (owners/admin still read)
+    but stops members from reading it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str = ""
+    status: Literal["active", "closed"] = "active"
+    pis: list[str] = []
+    members: list[str] = []
+
+    @field_validator("id")
+    @classmethod
+    def _norm_id(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("project id must be non-empty")
+        return v
+
+    @field_validator("pis", "members")
+    @classmethod
+    def _norm_emails(cls, v: list[str]) -> list[str]:
+        return [_validate_email(e) for e in v]
+
+    @model_validator(mode="after")
+    def _require_pi(self) -> "RosterProject":
+        if not self.pis:
+            raise ValueError(f"project {self.id!r} must have at least one PI")
+        return self
+
+
 def _is_global_admin(u: RosterUser) -> bool:
     """A flat ``role: admin`` or an explicit ``{scope: global, role: admin}`` grant."""
     if u.role == "admin":
@@ -184,6 +220,7 @@ class Roster(BaseModel):
 
     users: list[RosterUser] = []
     automation: list[RosterAutomation] = []
+    projects: list[RosterProject] = []
 
     @model_validator(mode="after")
     def _unique_emails(self) -> "Roster":
@@ -196,6 +233,22 @@ class Roster(BaseModel):
             seen.add(entry.email)
         if dupes:
             raise ValueError("duplicate email: " + ", ".join(dupes))
+        return self
+
+    @model_validator(mode="after")
+    def _validate_projects(self) -> "Roster":
+        # Project ids unique; every PI and member must be a known account.
+        # Additive: a roster with no projects is unaffected.
+        ids: set[str] = set()
+        for p in self.projects:
+            if p.id in ids:
+                raise ValueError(f"duplicate project id: {p.id}")
+            ids.add(p.id)
+        known = {u.email for u in self.users}
+        for p in self.projects:
+            for who in (*p.pis, *p.members):
+                if who not in known:
+                    raise ValueError(f"project {p.id!r} references unknown user: {who}")
         return self
 
     def has_active_admin(self) -> bool:
@@ -213,6 +266,26 @@ class Roster(BaseModel):
         emails = {u.email for u in self.users if u.is_active}
         emails |= {a.email for a in self.automation if a.is_active}
         return emails
+
+    def user(self, email: str) -> Optional[RosterUser]:
+        e = _norm_email(email)
+        return next((u for u in self.users if u.email == e), None)
+
+    def project(self, project_id: str) -> Optional[RosterProject]:
+        return next((p for p in self.projects if p.id == project_id), None)
+
+    def pi_projects(self, email: str) -> set[str]:
+        """Project ids for which ``email`` is a PI (data owner). Owners read their
+        projects' data regardless of project status."""
+        e = _norm_email(email)
+        return {p.id for p in self.projects if e in p.pis}
+
+    def member_projects(self, email: str) -> set[str]:
+        """Project ids ``email`` may consume as a team member: an **active** member
+        of an **active** project. (The caller's account must also be active — that
+        is the principal's own status, checked at the auth layer.)"""
+        e = _norm_email(email)
+        return {p.id for p in self.projects if p.status == "active" and e in p.members}
 
 
 # ---------------------------------------------------------------------------

@@ -37,7 +37,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .authz import effective_central_role, effective_device_role
+from .authz import data_scope, effective_central_role, effective_device_role
 from .config import Settings, build_mailer, load_settings
 from .db import Db, User, norm_email
 from .platforms import load_membership
@@ -336,9 +336,22 @@ def create_app(
         user = await _session_user(request) or await _api_key_user(request)
         if user is None:
             raise HTTPException(status_code=401, detail="not authenticated")
+        # Also propagate the project-based data scope so forward_auth-fronted
+        # services (lab.db reads, AnaliticaDB) can authorize without a second call.
+        roster = _roster(request)
+        scope = data_scope(
+            user,
+            member_projects=roster.member_projects(user.email),
+            pi_projects=roster.pi_projects(user.email),
+        )
         return JSONResponse(
             {"ok": True, "email": user.email, "role": user.role},
-            headers={"X-Auth-User": user.email, "X-Auth-Role": user.role},
+            headers={
+                "X-Auth-User": user.email,
+                "X-Auth-Role": user.role,
+                "X-Auth-Projects": ",".join(sorted(scope.member_projects)),
+                "X-Auth-Pi-Projects": ",".join(sorted(scope.pi_projects)),
+            },
         )
 
     @app.get("/equipment/{equipment_key}/roster")
@@ -400,6 +413,39 @@ def create_app(
             "central_role": "automation"
             if principal.is_automation
             else effective_central_role(principal, equipment, membership),
+        }
+
+    @app.get("/authz/scope")
+    async def authz_scope(request: Request, user: str = "") -> dict:
+        """Project-based data scope (member_projects / pi_projects / is_admin) for
+        a principal — consumed by the data plane's ``can_read`` (lab.db reads,
+        AnaliticaDB catalog). Tailnet-only, same roster source as the role
+        resolver. ``user`` defaults to the authenticated caller. An unknown or
+        inactive principal → empty scope (no access), never an error."""
+        email = user or ""
+        if not email:
+            caller = await _session_user(request) or await _api_key_user(request)
+            if caller is None:
+                raise HTTPException(status_code=401, detail="not authenticated")
+            email = caller.email
+        roster = _roster(request)
+        principal = _lookup_principal(roster, email)
+        empty = {"user": norm_email(email), "member_projects": [], "pi_projects": [], "is_admin": False}
+        if principal is None:
+            return empty
+        # An inactive/expired account has no data access (member or owner).
+        if principal.status != "active" or principal.is_expired():
+            return {**empty, "user": principal.email}
+        scope = data_scope(
+            principal,
+            member_projects=roster.member_projects(principal.email),
+            pi_projects=roster.pi_projects(principal.email),
+        )
+        return {
+            "user": principal.email,
+            "member_projects": sorted(scope.member_projects),
+            "pi_projects": sorted(scope.pi_projects),
+            "is_admin": scope.is_admin,
         }
 
     @app.get("/auth/users")
