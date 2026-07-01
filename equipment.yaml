@@ -257,6 +257,25 @@ equipment:
     pills:
       open: true
 
+  # AnaliticaDB — the analytical-chemistry results catalog (FastAPI) on the
+  # dashboard host. The tile polls a minimal STATUS_SPEC /status envelope; the
+  # catalog's data API lives under /experiments, /samples, /measurements,
+  # /files with Swagger at /docs. No "Open ↗" pill (it is an API, not a
+  # browsable UI — its base_url root is not a page). NOTE: AnaliticaDB must
+  # serve /status for this tile to read `ready`; until it does the aggregator
+  # records a fetch_error and the tile shows "unreachable".
+  - id: analytica_db
+    name: AnaliticaDB
+    kind: other
+    adapter: http
+    protocol: "1.0"
+    base_url: http://100.64.254.6:8010
+    status_path: /status
+    poll_timeout_seconds: 3.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
   # The dashboard's own backing services, self-reported via a minimal
   # STATUS_SPEC /status envelope each app serves. The aggregator reaches the
   # api over loopback; the auth sidecar binds the Tailnet IP (it also fronts
