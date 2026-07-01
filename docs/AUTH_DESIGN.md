@@ -282,7 +282,7 @@ by the individual creator — a user *generates* data, the project's PIs *own* i
 (Revised 2026-06-30 from an owner=creator + platform-admin model to this
 project model, to match the AnaliticaDB catalog; the two share one policy.)
 
-- **Stamp at creation.** Each experiment-data record stamps `author` (the
+- **Stamp at creation.** Each experiment-data record stamps `creator` (the
   authenticated principal that produced it, from `X-Auth-User`) and `project`
   (the project it belongs to). A project has one or more PIs (owners), declared in
   `roster.yaml`; a user may be a member of **many** projects.
@@ -721,7 +721,7 @@ AnaliticaDB catalog — one scope, two enforcement points). 83 auth tests.
 | **2** | Scope-filter the roster; admin **access-matrix** view; **gate `/api/assistant/*` behind login** | reads scoped; control unchanged; chat needs auth |
 | **3** | Finish hard claim enforcement everywhere; device authorizes the claim against its roster (`operator`+) | control needs grant **and** claim |
 | **4** | **Close the direct-device side-door** (edge / loopback+proxy); claim owner provably = identity | the linchpin |
-| **5** | `author`+`project` stamping + identity-aware reads + `can_read(project, caller)` (**incl. the assistant's MCP reads**); operational telemetry stays public — the project-scoped store is **AnaliticaDB** | experiment data becomes project-scoped |
+| **5** | `creator`+`project` stamping + identity-aware reads + `can_read(project, caller)` (**incl. the assistant's MCP reads**); operational telemetry stays public — the project-scoped store is **AnaliticaDB** | experiment data becomes project-scoped |
 | **6** | Automation approval workflow (`pending`→approve, platform-scoped + time-boxed grants; `launched_by` audited) | automation gated |
 
 **Phase 0** (storage refactor) is **shipped + deployed**; **Phase 1a** (grant
