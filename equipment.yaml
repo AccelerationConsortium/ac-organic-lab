@@ -258,12 +258,11 @@ equipment:
       open: true
 
   # AnaliticaDB — the analytical-chemistry results catalog (FastAPI) on the
-  # dashboard host. The tile polls a minimal STATUS_SPEC /status envelope; the
+  # dashboard host. Serves a minimal STATUS_SPEC v1.0 /status envelope
+  # (equipment_status `ready`, or `degraded` if its DB is unreachable); the
   # catalog's data API lives under /experiments, /samples, /measurements,
   # /files with Swagger at /docs. No "Open ↗" pill (it is an API, not a
-  # browsable UI — its base_url root is not a page). NOTE: AnaliticaDB must
-  # serve /status for this tile to read `ready`; until it does the aggregator
-  # records a fetch_error and the tile shows "unreachable".
+  # browsable UI — its base_url root is not a page).
   - id: analytica_db
     name: AnaliticaDB
     kind: other

@@ -29,10 +29,9 @@ repo.
 **New web-service tile: `analytica_db`.** AnaliticaDB (the analytical-chemistry
 results catalog, FastAPI on the dashboard host at `100.64.254.6:8010`) is
 registered under the **Web Services** section (`kind: other`, `adapter: http`,
-`protocol: "1.0"`, no `open` pill). It currently serves only `/health`, so until
-it adds a minimal STATUS_SPEC `/status` envelope the tile reads **unreachable** —
-that `/status` endpoint (in the AnaliticaDB repo) is the one remaining step to
-turn the tile `ready`.
+`protocol: "1.0"`, no `open` pill). Its repo now serves a minimal STATUS_SPEC
+`/status` envelope (`ready`, or `degraded` if its Postgres is unreachable), so the
+tile reads `ready` once the `analytica-db.service` restart lands.
 
 **Protocol mix.** Eight devices reach `protocol_version: "1.1"` on
 their live `/status` envelope (`fume_hood_actuator`,
@@ -171,7 +170,7 @@ occasionally ahead of the device.
 | `agilent_uplc_ms` | `http` | 1.1 | ✅ `ready`, `allowed_actions: ["run.submit", "run.abort", "queue.cancel", "instrument.standby", "workflow.start"]` | **v1.1 control migration shipped (`agilent-hplcms-server`, branch `feature-agent-control`).** Claim protocol with **hard `X-Claim-Token` enforcement** on mutating `/control/*` (423 without a claim); `details.claimed_by` surfaced; OLSS "Paused" mapped to `busy` (+`required_actions: ["resume_paused_sequence"]`). The sidecar OWNS the queue (OpenLab reserved for technician servicing). The enqueue verbs (`run.submit` / `instrument.standby` / `workflow.start`) drop from `allowed_actions` on queue-full (412 + `Retry-After`), OpenLab-down (409 `requires_init`), or servicing (409 `instrument_servicing`); `run.abort` / `queue.cancel` stay listed, as does `workflow.end` while a workflow is active. The `workflow.start`/`workflow.end` pair is the equipment-blocking lock for an automation-role robot/agent campaign (non-holder submits → 423 `workflow_active`); operator service-mode toggles are not agent skills. `instrument.standby` is a low-flow park, not a full shutdown (power-down stays a manual procedure). `hplc` skill catalog populated. `do_not_call_connect` removed (control now allowed). Polling latency ~1.5 s — borderline against the 5 s timeout if OpenLab WMI degrades; raise to 8 s if it ever errors. |
 | `agilent_biostack` | `http` | 1.0 | ✅ `ready` | Driver landed since the last sweep; entry flipped from `mock` to `http`. No `/control/*` surface yet (`allowed_actions: []`); read-only for now. |
 | `pypoe_web` | `http` | 1.1 | ✅ `ready` | Internal web service. No control surface. |
-| `analytica_db` | `http` | 1.0 | ⚠️ `unreachable` (no `/status` yet) | Newly registered Web-Services tile — AnaliticaDB catalog on `100.64.254.6:8010`. Serves `/health` + the data API (`/experiments`, `/samples`, `/measurements`, `/files`, `/docs`) but not a STATUS_SPEC `/status`, so the aggregator records a fetch_error. Add a minimal `/status` envelope in the AnaliticaDB repo to turn it `ready`. No control surface. |
+| `analytica_db` | `http` | 1.0 | ✅ `ready` (after service restart) | Newly registered Web-Services tile — AnaliticaDB catalog on `100.64.254.6:8010`. Now serves a STATUS_SPEC v1.0 `/status` envelope (`ready`; `degraded` if its Postgres is unreachable) alongside `/health` and the data API (`/experiments`, `/samples`, `/measurements`, `/files`, `/docs`). No control surface. |
 | `env_*` (4 sensors) | `http` (mock backend) | 1.0 | dry_run (synthesised) | Awaiting the `env_sensors` repo. Not on the v0.4 critical path. |
 
 ### Remaining migration work (priority order)
