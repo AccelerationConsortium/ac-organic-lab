@@ -276,21 +276,36 @@ An invariant, with the claim doubling as the per-user gate:
 
 ## Data isolation (requirement 4)
 
-Experiment data becomes owner-private; lab telemetry stays public.
+Experiment data becomes **project-scoped**; lab telemetry stays public. Data is
+owned by the **project** it was produced under (and thus the project's PIs), not
+by the individual creator — a user *generates* data, the project's PIs *own* it.
+(Revised 2026-06-30 from an owner=creator + platform-admin model to this
+project model, to match the AnaliticaDB catalog; the two share one policy.)
 
-- **Stamp ownership at creation.** Every run / well-result / artifact records
-  `owner` = the authenticated principal that created it (from `X-Auth-User`). Add
-  `owner` to `runs` (results inherit via `run_id`) and any file/artifact tables in
-  the history DB (`data/lab.db`, owned by `api/`).
-- **Identity-aware reads.** `api/app/history.py` read endpoints require
-  `X-Auth-User` and filter to: `owner == requester` **OR** requester is a
-  platform-admin of the owning equipment's platform **OR** requester is a global
-  admin.
-- **One policy seam.** `can_read(requester, record, scope) -> bool`, centralized
-  and unit-tested (same discipline as `effective_device_role`).
-- **Scope is experiment data only.** Uptime, env sensors, and equipment-event
-  telemetry are lab-wide and not owner-scoped.
-- Owner retains export/delete rights to their own data; deletions are audited.
+- **Stamp at creation.** Each experiment-data record stamps `generator` (the
+  authenticated principal that produced it, from `X-Auth-User`) and `project`
+  (the project it belongs to). A project has one or more PIs (owners), declared in
+  `roster.yaml`; a user may be a member of **many** projects.
+- **Identity-aware reads.** Read endpoints require identity and filter via the
+  seam below: a caller reads a record iff they are a **global admin**, a **PI of
+  the record's project** (owner), or an **active member of the record's active
+  project**. Platform-admin is a hardware/operational role — **not** a data
+  reader; data scoping is by project, not platform.
+- **No per-datum sharing.** To grant access, add the person to the project (a
+  PI/admin edits `roster.yaml`). No `shared_with` list or share-approval workflow.
+- **One policy seam.** `can_read(project, caller) -> bool`, centralized and
+  unit-tested (same discipline as `effective_device_role`). The caller scope
+  (`member_projects` / `pi_projects` / `is_admin`) comes from `ac_auth`'s
+  `data_scope` — surfaced by `GET /authz/scope` and the `X-Auth-Projects` /
+  `X-Auth-Pi-Projects` headers on `/auth/verify`.
+- **Scope is experiment data only.** Uptime, equipment state / errors / events,
+  and environmental sensors are lab-wide situational awareness and **stay public**
+  — that is the dashboard's purpose. Only scientific results are project-scoped;
+  the project-scoped store is **AnaliticaDB**. In `lab.db` that means at most the
+  per-well/result *values* if those count as experiment data — otherwise `lab.db`
+  needs no gate.
+- PIs (owners) retain export/delete rights to their projects' data; deletions
+  are audited.
 
 ## Assistant chat (read surface — inherits auth + data scope)
 
@@ -688,6 +703,16 @@ has no grant for, and `/authz/check` denies it there. `effective_*_role` return
 `role: admin` or a `{scope: global, role: admin}` grant), not platform/equipment
 admins. 72 auth tests. Opt-in: only accounts that set `role: none` are affected.
 
+**DONE (data-ownership projects + scope projection; committed 2026-06-30, not yet deployed):**
+`RosterProject` (`id`, `name`, `status` active/closed, `pis` ≥1, `members`) on the
+roster — the unit of **data** ownership, distinct from hardware grants: the PIs own
+a project's data, members may read it while the project is active, and a user may
+belong to **many** projects. `authz.data_scope(user) -> {member_projects,
+pi_projects, is_admin}`, surfaced by `GET /authz/scope` and the `X-Auth-Projects` /
+`X-Auth-Pi-Projects` headers on `/auth/verify`. This is the identity/scope source
+the data-isolation `can_read` consumes (this service's `lab.db` reads **and** the
+AnaliticaDB catalog — one scope, two enforcement points). 83 auth tests.
+
 | Phase | Delivers | Behavior change |
 |---|---|---|
 | **0 ✅** | **Allow-list → `roster.yaml`** (source of truth); SQLite is runtime-only; `last_login_at`/verified derived; `roster.py` loader with **schema validation + fail-closed-startup + keep-last-good-reload + invariant guards (≥1 admin, mass-change)**; CLI `validate`/`export`; git pre-commit hook + systemd `ExecStartPre`/`ExecReload` | **shipped + deployed** — allow-list edits are file-based; auth behavior for users unchanged |
@@ -696,7 +721,7 @@ admins. 72 auth tests. Opt-in: only accounts that set `role: none` are affected.
 | **2** | Scope-filter the roster; admin **access-matrix** view; **gate `/api/assistant/*` behind login** | reads scoped; control unchanged; chat needs auth |
 | **3** | Finish hard claim enforcement everywhere; device authorizes the claim against its roster (`operator`+) | control needs grant **and** claim |
 | **4** | **Close the direct-device side-door** (edge / loopback+proxy); claim owner provably = identity | the linchpin |
-| **5** | `owner` stamping in `lab.db` + identity-aware history reads + `can_read` seam (**incl. the assistant's MCP reads**) | experiment data becomes private |
+| **5** | `generator`+`project` stamping + identity-aware reads + `can_read(project, caller)` (**incl. the assistant's MCP reads**); operational telemetry stays public — the project-scoped store is **AnaliticaDB** | experiment data becomes project-scoped |
 | **6** | Automation approval workflow (`pending`→approve, platform-scoped + time-boxed grants; `launched_by` audited) | automation gated |
 
 **Phase 0** (storage refactor) is **shipped + deployed**; **Phase 1a** (grant
