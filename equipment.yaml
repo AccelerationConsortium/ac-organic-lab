@@ -245,7 +245,7 @@ equipment:
   # ---------------------------------------------------------------------
 
   - id: pypoe_web
-    name: PyPoe Web UI
+    name: PyPoe Web
     kind: other
     adapter: http
     protocol: "1.1"
@@ -293,7 +293,7 @@ equipment:
     pills: {}
 
   - id: ac_organic_lab_auth
-    name: Auth Sidecar
+    name: SDL2 Auth
     kind: other
     adapter: http
     protocol: "1.0"
