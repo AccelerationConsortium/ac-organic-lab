@@ -38,6 +38,9 @@ All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](doc
 | [`docs/DEVICE_PC_SETUP.md`](docs/DEVICE_PC_SETUP.md) | Canonical install recipe for a Windows device PC (uv + NSSM + Tailscale). Linked from every device repo's README rather than duplicated per-repo. |
 | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Logging tiers (journald → events.jsonl → central SQLite), the history DB schema, dashboard history endpoints, retention guidance. |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Per-device migration status (`legacy_http` → v1.0 → v1.1), SDK milestones (v0.1 → v0.5), and live operational regressions. |
+| [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md) | **Canonical auth doc.** Email-code login (`ac_auth`), roster allow-list, per-scope grants, claim-before-control, data isolation, and the phased rollout (Phase 0 shipped). |
+| [`docs/AGENT_RULES.md`](docs/AGENT_RULES.md) | Lab-wide rules for agents operating on lab infrastructure (safety, records, change control, escalation). Project repos link here from their own `AGENT_RULES.md`. |
+| [`docs/ANALITICADB_ELN_LIMS_DESIGN.md`](docs/ANALITICADB_ELN_LIMS_DESIGN.md) | Design for generalizing AnaliticaDB into the lab's ELN+LIMS record layer (mirror — the canonical copy lives in the AnaliticaDB repo). |
 | [`deploy/README.md`](deploy/README.md) | Linux server deployment, systemd units, Caddy + Tailscale TLS, day-to-day operations. |
 
 ## Local development
@@ -112,7 +115,7 @@ npm run build
 
 ## Deployment (Linux server with systemd)
 
-Both processes run as separate systemd services on one Tailscale-attached Linux server. There is no per-equipment authentication in v1 - access is gated by Tailscale ACLs.
+Both processes run as separate systemd services on one Tailscale-attached Linux server. Access is gated by Tailscale ACLs at the network layer; dashboard login (email-code via `ac_auth`) is rolling out per [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md) — device REST APIs themselves carry no per-equipment authentication yet (see the *Control-surface exposure* section of [`docs/ROADMAP.md`](docs/ROADMAP.md)).
 
 See [`deploy/README.md`](deploy/README.md) for:
 
@@ -160,12 +163,14 @@ for the production wiring.
 
 ## Status
 
-**v1 (current scope):** read-only monitoring of plate readers, sealers,
-sensors, etc., plus full control of cameras (PTZ, presets, snapshot,
-recording) and Kasa plugs through `kasa-tapo-services`. Overview page
-(`/`) is driven by `platforms.yaml`; per-platform detail pages (e.g.
-`/platforms/hte`) are also section-order-driven. Polling every 2-3
-seconds.
+**Current:** live monitoring of the full fleet plus control through the
+audited dashboard passthrough (claim-gated on v1.1 devices), full camera
+control (PTZ, presets, snapshot, recording) and Kasa plugs through
+`kasa-tapo-services`, and persistent history (`lab.db` + the
+`/api/history/*` endpoints). Overview page (`/`) is driven by
+`platforms.yaml`; per-platform detail pages (e.g. `/platforms/hte`) are
+also section-order-driven. Polling every 2-3 seconds.
 
-**Future:** WebSocket-based real-time pages, control endpoints with
-explicit confirmations on the slow lab equipment, persistent history.
+**Future:** WebSocket-based real-time pages, the MCP agent surface
+(SDK v0.4, see [`docs/ROADMAP.md`](docs/ROADMAP.md)), and the remaining
+auth rollout phases ([`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md)).

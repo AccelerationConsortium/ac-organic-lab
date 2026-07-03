@@ -1,6 +1,6 @@
 # Skill Catalog Design
 
-**Status:** design. Implementation lands in `skills/` v0.2 (static catalog) and v0.3 (runtime availability via STATUS_SPEC v1.1 `allowed_actions`).
+**Status:** shipped — the static catalog landed in `skills/` v0.2 and runtime availability (via STATUS_SPEC v1.1 `allowed_actions`) in v0.3; the registry now spans 8 kinds / 50 `SkillDef`s (see `ROADMAP.md` for the live inventory). Auto-derivation from OpenAPI and the MCP server remain future work (v0.4).
 
 This document specifies how the SDK describes "what the lab can do right now" — the `Skill` data model, where the catalog lives, how availability is computed, and how it evolves from a hard-coded table to a self-describing protocol.
 
