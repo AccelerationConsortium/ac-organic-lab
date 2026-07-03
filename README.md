@@ -1,6 +1,6 @@
 # ac-organic-lab
 
-Monorepo for the Acceleration Consortium (AC) Organic Self-driving Lab platform stack: the equipment-status contract, the inventory, the Python SDK that workflows and the dashboard share, and the dashboard's web server and Next.js UI.
+Monorepo for the Acceleration Consortium (AC) Organic Self-driving Lab platform stack: the equipment-status contract, the inventory, the Python SDK that workflows and the dashboard share, the dashboard's web server and Next.js UI, the lab's login service, and the read-only lab assistant.
 
 The dashboard runs on a single Tailscale-attached server and aggregates status from each lab equipment's REST API into one normalized contract. The browser only ever talks to the dashboard server; the dashboard server is the only client that calls the equipment APIs over the lab Tailnet. Workflow code uses the same SDK directly without going through the dashboard.
 
@@ -21,8 +21,27 @@ Browser  ->  Next.js (web/, port 8000)  ->  FastAPI (api/, port 8001)  ->  lab-s
 - **`web/`** — Next.js 14 (App Router) + TypeScript + TanStack Query.
 - **`equipment.yaml`** — equipment inventory (committed). Hardware identity, adapter, URLs, tile sizing, and pill config. Edit when hardware physically changes.
 - **`platforms.yaml`** — Overview layout config (committed). Defines sections, display order, and which equipment ids belong to each section. Edit when the dashboard layout changes.
-- **`deploy/`** — systemd units for the two services.
+- **`auth/`** — `ac_auth`, the lab's email-code login service + `roster.yaml` allow-list (see [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md)).
+- **`deploy/`** — systemd units for the three services + the Caddy edge config.
 - **`docs/`** — architectural docs, device contract, runbooks, roadmap. See [Documentation](#documentation) below.
+
+## Services
+
+Everything below runs on the one Tailscale-attached dashboard host:
+
+| Service | Unit / source | Port | What it provides |
+|---|---|---|---|
+| Dashboard UI | `ac-organic-lab-web.service` (`web/`) | 8000 | Next.js frontend — the only thing browsers talk to. |
+| Dashboard API | `ac-organic-lab-api.service` (`api/`) | 8001 | FastAPI aggregator over `lab-skills`: normalized equipment status, the audited control passthrough (claim-gated on v1.1 devices), the history endpoints (`/api/history/*`, backed by `lab.db`), and the read-only **lab assistant** (`claude` CLI subprocess + the `lab-history` MCP tools). |
+| Auth service | `ac-organic-lab-auth.service` (`auth/`) | `127.0.0.1:8009` | `ac_auth` email-code login and roster/grant checks; loopback-only, consumed at the edge via Caddy `forward_auth` as the [`AUTH_DESIGN.md`](docs/AUTH_DESIGN.md) rollout lands. |
+| Edge (Caddy) | [`deploy/Caddyfile`](deploy/Caddyfile) | 443/80 | TLS over Tailscale (`tailscale cert`), fronting the UI and the camera streams; the auth snippet wires `forward_auth`. |
+
+Companion services on the same host from sibling repos:
+[`kasa-tapo-services`](https://github.com/cyrilcaoyang/kasa_tapo_services)
+(camera + smart-plug gateway, deliberately loopback-only on
+`127.0.0.1:8002`) and its `ac-go2rtc` streaming service (MSE/WebRTC).
+The AnaliticaDB record service is separate infrastructure on the data
+server (`100.64.254.6:8010`, own repo).
 
 ## Documentation
 
@@ -115,7 +134,7 @@ npm run build
 
 ## Deployment (Linux server with systemd)
 
-Both processes run as separate systemd services on one Tailscale-attached Linux server. Access is gated by Tailscale ACLs at the network layer; dashboard login (email-code via `ac_auth`) is rolling out per [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md) — device REST APIs themselves carry no per-equipment authentication yet (see the *Control-surface exposure* section of [`docs/ROADMAP.md`](docs/ROADMAP.md)).
+The services (see [Services](#services)) run as separate systemd units on one Tailscale-attached Linux server. Access is gated by Tailscale ACLs at the network layer; dashboard login (email-code via `ac_auth`) is rolling out per [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md) — device REST APIs themselves carry no per-equipment authentication yet (see the *Control-surface exposure* section of [`docs/ROADMAP.md`](docs/ROADMAP.md)).
 
 See [`deploy/README.md`](deploy/README.md) for:
 
