@@ -685,7 +685,7 @@ systemd units carry `ExecStartPre` validate + `ExecReload` (SIGHUP); committed
 The SQLite `users` table/methods remain in `db.py` but are **vestigial** (used
 only by `export`); drop in a later cleanup.
 
-**DONE (Phase 1a — per-scope grant *resolution* + elevation; committed 2026-06-28, not yet deployed):**
+**DONE (Phase 1a — per-scope grant *resolution* + elevation; committed 2026-06-28, deployed 2026-07-03):**
 `Grant` model (`scope` global/platform/equipment, `id`, `role`) on roster users;
 `ac_auth/platforms.py` loads `platforms.yaml` → `equipment_key → {platform_id}`
 membership (fail-soft → `{}`); `authz.effective_central_role` /
@@ -695,7 +695,7 @@ role + grants (global / platform-via-membership / equipment), so a
 devices only. New `GET /authz/check?user&equipment` probe. Backward-compatible:
 with no grants it reduces exactly to the flat role (verified live).
 
-**DONE (Phase 1b — per-equipment restriction; committed 2026-06-28, not yet deployed):**
+**DONE (Phase 1b — per-equipment restriction; committed 2026-06-28, deployed 2026-07-03):**
 `role: none` (no global access) lets grants *restrict* — a `none` account reaches
 only granted equipment/platforms, is excluded from the roster of any device it
 has no grant for, and `/authz/check` denies it there. `effective_*_role` return
@@ -703,7 +703,7 @@ has no grant for, and `/authz/check` denies it there. `effective_*_role` return
 `role: admin` or a `{scope: global, role: admin}` grant), not platform/equipment
 admins. 72 auth tests. Opt-in: only accounts that set `role: none` are affected.
 
-**DONE (data-ownership projects + scope projection; committed 2026-06-30, not yet deployed):**
+**DONE (data-ownership projects + scope projection; committed 2026-06-30, deployed 2026-07-03):**
 `RosterProject` (`id`, `name`, `status` active/closed, `pis` ≥1, `members`) on the
 roster — the unit of **data** ownership, distinct from hardware grants: the PIs own
 a project's data, members may read it while the project is active, and a user may
@@ -716,8 +716,8 @@ AnaliticaDB catalog — one scope, two enforcement points). 83 auth tests.
 | Phase | Delivers | Behavior change |
 |---|---|---|
 | **0 ✅** | **Allow-list → `roster.yaml`** (source of truth); SQLite is runtime-only; `last_login_at`/verified derived; `roster.py` loader with **schema validation + fail-closed-startup + keep-last-good-reload + invariant guards (≥1 admin, mass-change)**; CLI `validate`/`export`; git pre-commit hook + systemd `ExecStartPre`/`ExecReload` | **shipped + deployed** — allow-list edits are file-based; auth behavior for users unchanged |
-| **1a ✅** | Per-scope **grant resolution** (global/platform/equipment) via `platforms.yaml` membership; `admin` grants **elevate** (e.g. platform-admin); `GET /authz/check` | **committed (not deployed)** — none until grants are added (compat) |
-| **1b ✅** | `role: none` (no global access) + grants-only → per-equipment **restriction**; non-granted accounts excluded from a device's roster + `/authz/check` denies them; lockout invariant counts **global** admins (flat or global-grant) | **committed (not deployed)** — only affects accounts that opt into `role: none` |
+| **1a ✅** | Per-scope **grant resolution** (global/platform/equipment) via `platforms.yaml` membership; `admin` grants **elevate** (e.g. platform-admin); `GET /authz/check` | **deployed 2026-07-03** — none until grants are added (compat) |
+| **1b ✅** | `role: none` (no global access) + grants-only → per-equipment **restriction**; non-granted accounts excluded from a device's roster + `/authz/check` denies them; lockout invariant counts **global** admins (flat or global-grant) | **deployed 2026-07-03** — only affects accounts that opt into `role: none` |
 | **2** | Scope-filter the roster; admin **access-matrix** view; **gate `/api/assistant/*` behind login** | reads scoped; control unchanged; chat needs auth |
 | **3** | Finish hard claim enforcement everywhere; device authorizes the claim against its roster (`operator`+) | control needs grant **and** claim |
 | **4** | **Close the direct-device side-door** (edge / loopback+proxy); claim owner provably = identity | the linchpin |
@@ -725,13 +725,14 @@ AnaliticaDB catalog — one scope, two enforcement points). 83 auth tests.
 | **6** | Automation approval workflow (`pending`→approve, platform-scoped + time-boxed grants; `launched_by` audited) | automation gated |
 
 **Phase 0** (storage refactor) is **shipped + deployed**. **Phases 1a, 1b, and
-the data-ownership projects layer** are **committed** on `auth-roster` but not
-yet deployed — all three are inert until grants/projects are added to
-`roster.yaml` and the service is restarted. Next: deploy the committed layers,
-then the cross-cutting infra (Phases 2–4): Caddy `forward_auth` → `/auth/verify`
-(+ X-Auth-* strip/re-inject), edge TLS + per-IP rate-limit, and the device-side
-roster pull in each device repo (e.g. `agilent-hplcms-server`'s
-`control/roster.py`, today static env lists).
+the data-ownership projects layer** are **deployed 2026-07-03** (service
+restarted on the new code; `/authz/check` + `/authz/scope` answering) but
+**dormant** — all three change nothing until grants/projects are added to
+`roster.yaml` (`systemctl reload` hot-loads them). Next: populate roster
+grants + the first project, then the cross-cutting infra (Phases 2–4): Caddy
+`forward_auth` → `/auth/verify` (+ X-Auth-* strip/re-inject), edge TLS +
+per-IP rate-limit, and the device-side roster pull in each device repo (e.g.
+`agilent-hplcms-server`'s `control/roster.py`, today static env lists).
 
 ## Risks / arguments against (recorded)
 
