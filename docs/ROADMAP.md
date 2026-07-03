@@ -179,17 +179,46 @@ is the remaining work per device.
 
 #### `xarm_translocation`
 
-- [ ] **Verify claim enforcement live once the arm is connected**
-  (`POST /connect`): tokenless `/control/graph/*` → 423,
-  `details.claimed_by` populates, lifecycle.
-- [ ] **`/web/` side-door**: make the native panel claim-aware or front
-  it; decide the dashboard "Open control panel ↗" deep-link's fate. See
-  *Control-surface exposure*.
+Shipped 2026-07-03 (device repo + this monorepo):
+
+- **Events exporter** (plan Step 3c): `src/core/events_exporter.py`
+  pushes fine-grained `state_transition` / `error` / `startup` /
+  `shutdown` rows from the SDK callbacks to `POST /api/ingest/events`
+  (best-effort, stdlib-only, disabled unless `XARM_INGEST_URL` is set).
+  Conventions documented in OBSERVABILITY.md §4 event_type registry.
+  **Deploy step pending:** set `XARM_INGEST_URL` in the `xarm` NSSM
+  service env on the device PC, pull + restart.
+- **`equipment_version`** populated on `/status` (was null).
+- **Registry flipped to `protocol: "1.1"`** — the dashboard passthrough
+  now runs the per-request claim dance the device's hard enforcement
+  requires (tokenless → 423 verified live 2026-07-03, arm connected).
+  `do_not_call_connect` stays: claims are deliberately gated behind
+  `POST /connect` and the SDK must never auto-connect a robot arm.
+- Claim-gating turned out broader than recorded: the legacy `/move/*`,
+  `/gripper/*`, `/track/*`, `/robot/*`, `/velocity/*` surfaces all carry
+  `require_claim` (423 even when *no* claim is held), so the `/web/`
+  panel moves through the same gate. Exempt safety floor: `/move/stop`,
+  `/clear/errors`, `/connect`, `/disconnect`.
+
+Open:
+
+- [ ] **Full claim lifecycle verification** with the arm connected:
+  claim → move → heartbeat → release, `details.claimed_by` populates.
+  (Tokenless-423 half already verified live.)
+- [ ] **Skill-name reconciliation**: the device advertises
+  `allowed_actions` as `connect`/`stop`/`clear_errors`/`move.<node_id>`
+  (graph-derived, STRICT mode only) while the catalog registers
+  `graph.{move_to,recover_to,record,mode}` — so `lab.skills()` reports
+  every `graph.*` skill unavailable. Rename one side or map in the SDK.
 - [ ] **Dashboard graph controls**: `RobotArmTile` still shows only the
   read-only three-row summary + deep-link; surface the `graph.*` actions
   through the audited passthrough.
-- [ ] Publish current gripper stroke as `metrics.gripper_position` so
-  the tile shows live position instead of the static range pill.
+- [ ] Gripper stroke: the device now publishes
+  `details.gripper.position_mm` (cached read-back) rather than
+  `metrics.gripper_position`; reconcile with the tile's expectation.
+- [ ] Run the device repo's Phase 6 hardware verification checklist
+  (`src/docs/PHASE6_HARDWARE_VERIFICATION.md`) — needs a human at the
+  machine.
 
 #### `agilent_uplc_ms` (sidecar: `agilent-hplcms-server`, branch `feature-agent-control`)
 

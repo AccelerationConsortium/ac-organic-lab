@@ -105,14 +105,17 @@ equipment:
     name: UFactory xArm5
     kind: robot_arm
     adapter: http
-    protocol: "1.0"
+    protocol: "1.1"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000
     status_path: /status
     poll_timeout_seconds: 2.0
-    # The repo conforms to STATUS_SPEC v1.0 (read-only). It does not yet
-    # expose `/control/*` or claim/heartbeat/release. The SDK keeps the
-    # device read-only by leaving `do_not_call_connect: true` in place;
-    # specific unit operations will graduate to /control/* in follow-up.
+    # STATUS_SPEC v1.1: claim/heartbeat/release + claim-gated control
+    # (motion-graph /control/graph/* plus the legacy /move|/gripper|/track
+    # surfaces, all behind require_claim). protocol "1.1" turns on the
+    # dashboard passthrough's per-request claim dance, which the device's
+    # hard enforcement (tokenless -> 423) requires. Claims are only
+    # issuable while the controller is connected; the SDK must never
+    # auto-connect a robot arm, hence do_not_call_connect stays.
     do_not_call_connect: true
     tiles:
       hte: { w: 2, h: 1 }

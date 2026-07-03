@@ -190,6 +190,43 @@ CREATE TABLE IF NOT EXISTS well_results (
 CREATE INDEX IF NOT EXISTS idx_wr_run ON well_results(run_id);
 ```
 
+### The `event_type` registry
+
+`event_type` is TEXT with no CHECK constraint — any string is accepted on
+the wire. This registry records what is actually emitted (and by whom) so
+readers don't have to reverse-engineer it from the table:
+
+| `event_type` | Emitted by | Notes |
+|---|---|---|
+| `state_transition` | **Aggregator** 60 s poll (`api/app/main.py`) on an observed `equipment_status` change; **device-pushed** by exporters (xArm) for fine-grained transitions | The poll path misses any transition that begins and ends inside one 60 s window; device-pushed rows close that gap. Both use `from_state` / `to_state`. |
+| `control_action` | Dashboard control passthrough (`api/app/control.py`) | One audit row per operator write: `payload: {action, method, status_code, outcome, owner}`. |
+| `agent_observation` | PyPoe read-only journaling | Free-form agent notes via `/api/ingest/events`. |
+| `error` | **Device-pushed** (xArm exporter, from the SDK error/warn callbacks) | `payload.extra: {severity: "error"\|"warning", error_code, warn_code, xarm_state, graph_node}`. |
+| `startup` / `shutdown` | **Device-pushed** (xArm exporter, on connect / disconnect) | Marks controller lifecycle, not process lifecycle (that's `service_uptime`). |
+| `calibration`, `claim_acquired` | *reserved — not yet emitted* | Kept in the vocabulary for future device exporters. |
+
+#### Device-pushed events (reference implementation: xArm)
+
+The `xarm-translocation` repo ships the first device-side exporter
+(`src/core/events_exporter.py`): a stdlib-only, bounded-queue,
+daemon-thread forwarder that POSTs batches to `POST /api/ingest/events`
+straight from the xArm SDK's `state_changed` / `error_warn_changed`
+callbacks. Conventions any future exporter should copy:
+
+- **Best-effort by contract.** `emit()` never blocks or raises; a full
+  queue or unreachable dashboard drops the row. The aggregator's 60 s
+  poll remains the coarse backstop, so a dropped row costs timing
+  fidelity, never truth.
+- **Disabled unless configured** — the xArm reads `XARM_INGEST_URL`
+  (full ingest endpoint URL) and `XARM_INGEST_DEVICE_ID` (defaults to
+  the `equipment.yaml` id); unset means no-op, so dev machines and CI
+  emit nothing.
+- **Standard context keys** ride in `extra` on every record:
+  `xarm_state` (raw SDK state int), `error_code`, `warn_code`,
+  `graph_node` (current motion-graph node or null). The ingest handler
+  folds `extra` into the persisted JSON `payload` verbatim, so new keys
+  need no `api/` change.
+
 ### Why not InfluxDB or TimescaleDB?
 
 Use SQLite until you have > 1 sensor per zone reading at > 1 Hz, or until you need

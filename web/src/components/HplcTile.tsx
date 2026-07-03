@@ -226,7 +226,7 @@ function CompPill({ label, state }: { label?: string; state: string | null }) {
 
 export function HplcTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const h = parseHplc(snapshot);
-  const { locked, countdown, toggle } = useControlLock();
+  const { locked, countdown, toggle } = useControlLock(snapshot.id);
 
   const status = snapshot.status.equipment_status;
   const requiredActions = snapshot.status.required_actions ?? [];

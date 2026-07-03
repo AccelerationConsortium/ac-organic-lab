@@ -54,7 +54,8 @@ type CameraStatusDetails = CameraDetails & Record<string, unknown>;
  */
 export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const queryClient = useQueryClient();
-  const { authenticated } = useUserAuth();
+  const { authenticated, canControl } = useUserAuth();
+  const authorized = authenticated && canControl(snapshot.id);
 
   const details = (snapshot.status.details ?? {}) as CameraStatusDetails;
   const lenses: LensStatusEntry[] = Array.isArray(details.lenses) ? details.lenses : [];
@@ -249,18 +250,20 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         Capture column is pinned shrink-0 so the buttons keep the same
         width regardless of how cramped the preset row gets.
       */}
-      {!authenticated && (
+      {!authorized && (
         <p className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-ink-muted dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
-          View-only — sign in to control this camera.
+          {authenticated
+            ? "View-only — no access to this camera."
+            : "View-only — sign in to control this camera."}
         </p>
       )}
-      {/* All camera controls require a signed-in session. A disabled
-          <fieldset> (display:contents → no layout change) natively disables
-          every nested button / select / toggle when logged out. */}
-      <fieldset disabled={!authenticated} className="contents">
+      {/* All camera controls require a signed-in session with a role on this
+          equipment. A disabled <fieldset> (display:contents → no layout
+          change) natively disables every nested button / select / toggle. */}
+      <fieldset disabled={!authorized} className="contents">
       <div className="flex items-start gap-3">
         <PtzPad
-          disabled={!ptzCapable || !authenticated}
+          disabled={!ptzCapable || !authorized}
           onMove={(direction) => ptzMutation.mutate(direction)}
           onStop={() => stopMutation.mutate()}
         />

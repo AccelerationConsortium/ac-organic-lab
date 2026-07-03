@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import os
 from typing import Any
 
 import uuid
@@ -198,6 +199,85 @@ def _claim_owner(request: Request) -> str:
 _CLAIM_TTL_SECONDS = 30.0
 
 
+def _authz_base() -> str:
+    """Auth sidecar base URL (same env the Next.js middleware uses)."""
+    return os.environ.get("AUTH_SERVICE_BASE", "http://127.0.0.1:8009")
+
+
+def _authz_enforced() -> bool:
+    """Escape hatch mirroring DASHBOARD_CONTROL_OPEN's spirit: set
+    CONTROL_AUTHZ_ENFORCE=false for local dev without the auth sidecar."""
+    return os.environ.get("CONTROL_AUTHZ_ENFORCE", "true").lower() != "false"
+
+
+async def _fetch_authz_verdict(
+    client: httpx.AsyncClient, user: str, equipment_id: str
+) -> dict:
+    """One GET /authz/check against the sidecar. Seam kept separate so tests
+    can monkeypatch it without a live sidecar."""
+    resp = await client.get(
+        f"{_authz_base()}/authz/check",
+        params={"user": user, "equipment": equipment_id},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def _authorize_control(
+    request: Request,
+    client: httpx.AsyncClient,
+    equipment_id: str,
+    action: str,
+    method: str,
+    owner: str,
+) -> None:
+    """Per-equipment authorization at the gateway (pre-Phase-3 enforcement).
+
+    When the request carries an authenticated identity (``X-Auth-User``,
+    injected by the Next.js middleware / Caddy edge after verifying the
+    session — never client-supplied), ask the auth sidecar whether that
+    principal holds a role on this equipment and refuse with 403 if not.
+    Unauthenticated requests skip the check: in production the middleware
+    already rejects unauthenticated control, so no header here means a
+    deliberately open deployment (dev) or the pre-edge fallback identity.
+
+    Fail-closed when the sidecar is unreachable — control without
+    authorization is worse than a stalled click. The denial/outage is
+    audited like every other control outcome.
+    """
+    if not _authz_enforced():
+        return
+    user = request.headers.get("x-auth-user")
+    if not user:
+        return
+    try:
+        verdict = await _fetch_authz_verdict(client, user, equipment_id)
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning(
+            "authz check unavailable for %s on %s: %s", user, equipment_id, exc
+        )
+        await _record_control_event(
+            request, equipment_id, action, method,
+            owner=owner, status_code=503,
+            outcome="authz_unavailable", detail=str(exc),
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Authorization service unavailable; control refused (fail-closed).",
+        ) from exc
+    if not verdict.get("allowed"):
+        reason = str(verdict.get("reason") or "no role on this equipment")
+        await _record_control_event(
+            request, equipment_id, action, method,
+            owner=owner, status_code=403,
+            outcome="forbidden", detail=reason,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"{user} is not authorized to control {equipment_id}: {reason}",
+        )
+
+
 async def _acquire_claim(
     client: httpx.AsyncClient,
     base_url: str,
@@ -361,6 +441,9 @@ async def _proxy(
     # instead of paying TCP handshake × 3 per click.
     owner = _claim_owner(request)
     client = _get_control_client(request)
+    # Authorization precedes the claim dance: an unauthorized caller must
+    # never even acquire a claim (claiming is itself control).
+    await _authorize_control(request, client, equipment_id, action, method, owner)
     try:
         token: str | None = None
         if needs_claim:

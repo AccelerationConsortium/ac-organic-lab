@@ -158,10 +158,12 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const [optimistic, setOptimistic] = useState<Record<number, boolean>>({});
   const [, startTransition] = useTransition();
 
-  const { authenticated, requestLogin } = useUserAuth();
+  const { authenticated, canControl, requestLogin } = useUserAuth();
+  const authorized = authenticated && canControl(snapshot.id);
 
   // Local auto-relocking lock (the accidental-toggle guard). Unlocking requires
-  // a signed-in session; it then re-locks after UNLOCK_SECONDS.
+  // a signed-in session with a role on this equipment; it then re-locks after
+  // UNLOCK_SECONDS.
   const [unlocked, setUnlocked] = useState(false);
   const [countdown, setCountdown] = useState(UNLOCK_SECONDS);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -184,6 +186,7 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       requestLogin();
       return;
     }
+    if (!authorized) return; // signed in but no role on this equipment
     clearTimer();
     setUnlocked(true);
     setCountdown(UNLOCK_SECONDS);
@@ -198,9 +201,9 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   // Clean up on unmount; re-lock immediately if the session ends mid-window.
   useEffect(() => () => clearTimer(), []);
   useEffect(() => {
-    if (!authenticated && unlocked) lock();
+    if (!authorized && unlocked) lock();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, unlocked]);
+  }, [authorized, unlocked]);
 
   const locked = !unlocked;
 
@@ -261,11 +264,21 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           <button
             type="button"
             onClick={unlock}
-            aria-label={authenticated ? "Unlock outlet controls" : "Sign in to control"}
+            aria-label={
+              !authenticated
+                ? "Sign in to control"
+                : authorized
+                  ? "Unlock outlet controls"
+                  : "No access to this equipment"
+            }
             className="absolute inset-0 z-10 flex items-center justify-center gap-1.5 rounded-md border border-slate-200/80 bg-slate-50/60 text-xs font-semibold text-ink-muted backdrop-blur-[1px] transition-colors hover:bg-slate-100/70 dark:border-slate-700/80 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:bg-slate-800/60"
           >
             <LockIcon className="h-3.5 w-3.5 shrink-0" />
-            {authenticated ? "Unlock to control" : "Sign in to control"}
+            {!authenticated
+              ? "Sign in to control"
+              : authorized
+                ? "Unlock to control"
+                : "No access"}
           </button>
         )}
       </div>

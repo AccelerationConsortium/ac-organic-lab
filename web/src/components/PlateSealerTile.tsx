@@ -395,7 +395,7 @@ function EditablePill({
 export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const sealer = parseSealer(snapshot);
   const [, startTransition] = useTransition();
-  const { locked, countdown, toggle } = useControlLock();
+  const { locked, countdown, toggle } = useControlLock(snapshot.id);
   const [actionError, setActionError] = useState<ActionError | null>(null);
 
   const status = snapshot.status.equipment_status;

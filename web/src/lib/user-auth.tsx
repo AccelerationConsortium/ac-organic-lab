@@ -43,6 +43,13 @@ export interface UserAuthValue {
   logout: () => Promise<void>;
 
   /**
+   * Per-equipment authorization for the UI: true when the signed-in user
+   * holds a role on this equipment (from the sidecar's /authz/mine map).
+   * UX only — the control passthrough enforces the same answer server-side.
+   */
+  canControl: (equipmentId: string) => boolean;
+
+  /**
    * Gate used by control tiles (`useControlLock`). Resolves true when the user
    * is signed in; otherwise nudges the login bar into view and resolves false.
    * This is what makes the dashboard view-only until login.
@@ -63,6 +70,7 @@ const UserAuthContext = createContext<UserAuthValue>({
   requestCode: async () => ({ ok: false }),
   verifyCode: async () => ({ ok: false }),
   logout: async () => {},
+  canControl: () => false,
   ensureAuth: async () => false,
   requestLogin: () => {},
   registerLoginHint: () => {},
@@ -74,6 +82,12 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
+  // equipment_id -> device role ("user"/"service"/"automation") or null for
+  // no access; null map = not loaded (fall back to flat-role behavior).
+  const [equipmentRoles, setEquipmentRoles] = useState<Record<
+    string,
+    string | null
+  > | null>(null);
 
   const loginHintRef = useRef<(() => void) | null>(null);
 
@@ -106,6 +120,39 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  // Fetch the per-equipment role map whenever a session becomes active.
+  useEffect(() => {
+    if (!authenticated) {
+      setEquipmentRoles(null);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/auth/mine", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { equipment?: Record<string, string | null> } | null) => {
+        if (!cancelled) setEquipmentRoles(d?.equipment ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [authenticated]);
+
+  const canControl = useCallback(
+    (equipmentId: string): boolean => {
+      if (!authenticated) return false;
+      if (equipmentRoles && equipmentId in equipmentRoles) {
+        return equipmentRoles[equipmentId] != null;
+      }
+      // Equipment not in the map (not in platforms.yaml) or the map hasn't
+      // loaded: a flat global role (operator/admin) reaches everything; a
+      // role:none account reaches only its granted equipment, which the map
+      // always lists. The server-side gate is authoritative either way.
+      return identity?.role !== "none";
+    },
+    [authenticated, equipmentRoles, identity],
+  );
 
   const requestCode = useCallback(async (email: string) => {
     try {
@@ -179,6 +226,7 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
       requestCode,
       verifyCode,
       logout,
+      canControl,
       ensureAuth,
       requestLogin,
       registerLoginHint,
@@ -192,6 +240,7 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
       requestCode,
       verifyCode,
       logout,
+      canControl,
       ensureAuth,
       requestLogin,
       registerLoginHint,

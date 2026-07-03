@@ -33,7 +33,7 @@ export function FumeHoodTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const [optimisticTarget, setOptimisticTarget] = useState<number | null>(null);
   const [, startTransition] = useTransition();
 
-  const { locked, countdown, toggle } = useControlLock();
+  const { locked, countdown, toggle } = useControlLock(snapshot.id);
 
   // Once the device reports we've arrived at the optimistic target (or the
   // move ends with a different position), clear the optimistic state so the

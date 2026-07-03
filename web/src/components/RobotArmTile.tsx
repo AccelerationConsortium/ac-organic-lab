@@ -73,7 +73,7 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const { status } = snapshot;
   const components = status.components ?? {};
   const details = (status.details ?? {}) as Record<string, unknown>;
-  const { locked, countdown, toggle } = useControlLock();
+  const { locked, countdown, toggle } = useControlLock(snapshot.id);
 
   const arm = components["arm"];
   const gripper = components["gripper"];

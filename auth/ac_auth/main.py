@@ -19,6 +19,7 @@ Endpoints:
   (device-plane, Tailnet-only).
 - ``GET  /authz/check``               — effective-role probe for one (user, equipment).
 - ``GET  /authz/scope``               — project-based data scope for a principal.
+- ``GET  /authz/mine``                — the caller's own equipment→role map (for the UI).
 - ``GET  /authz/matrix``              — admin-only users × equipment → role matrix.
 
 Allow-list management + the first admin: ``python -m ac_auth.cli`` (see cli.py).
@@ -450,6 +451,33 @@ def create_app(
             "member_projects": sorted(scope.member_projects),
             "pi_projects": sorted(scope.pi_projects),
             "is_admin": scope.is_admin,
+        }
+
+    @app.get("/authz/mine")
+    async def authz_mine(request: Request) -> dict:
+        """The authenticated caller's own equipment→role projection (Phase 2
+        UI support): the dashboard fetches this after login to disable the
+        control surfaces the user holds no role on. Same single resolver as
+        ``/authz/check``. The equipment universe is `platforms.yaml`
+        membership plus any equipment the caller reaches via an
+        equipment-scoped grant (which resolves regardless of membership), so
+        a restricted account still sees its granted devices listed."""
+        caller = await _session_user(request) or await _api_key_user(request)
+        if caller is None:
+            raise HTTPException(status_code=401, detail="not authenticated")
+        membership = _membership(request)
+        keys = set(membership) | {
+            g.id
+            for g in (getattr(caller, "grants", ()) or ())
+            if getattr(g, "scope", None) == "equipment" and getattr(g, "id", None)
+        }
+        return {
+            "user": caller.email,
+            "role": caller.role,
+            "equipment": {
+                key: effective_device_role(caller, key, membership)
+                for key in sorted(keys)
+            },
         }
 
     @app.get("/authz/matrix")

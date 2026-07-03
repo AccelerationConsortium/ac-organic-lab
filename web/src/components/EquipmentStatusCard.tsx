@@ -23,7 +23,7 @@ export function EquipmentStatusCard({ snapshot }: { snapshot: EquipmentSnapshot 
   // See lib/tile-policy.ts for the policy and EQUIPMENT_INTEGRATION
   // §6b for the operator-facing explanation.
   const showsLock = kindHasDestructiveControls(snapshot.kind);
-  const { locked, countdown, toggle } = useControlLock();
+  const { locked, countdown, toggle } = useControlLock(snapshot.id);
 
   return (
     <TileShell

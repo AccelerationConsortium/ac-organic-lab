@@ -175,7 +175,7 @@ const ACTIONS: {
 
 export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const stacker = parseStacker(snapshot);
-  const { locked, countdown, toggle } = useControlLock();
+  const { locked, countdown, toggle } = useControlLock(snapshot.id);
   const [, startTransition] = useTransition();
   const [actionError, setActionError] = useState<ActionError | null>(null);
 

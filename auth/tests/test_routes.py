@@ -357,3 +357,28 @@ def test_authz_matrix_resolves_roles_for_admin(tmp_path):
         assert rows["boss@utoronto.ca"]["roles"] == {"cytation_5": "service", "ot2": "service"}
         assert rows["robot@lab.local"]["kind"] == "automation"
         assert rows["robot@lab.local"]["roles"] == {"cytation_5": "automation", "ot2": "automation"}
+
+
+def test_authz_mine_lists_own_equipment_roles(tmp_path):
+    """A restricted user sees their granted equipment (even off-membership)
+    with role, and membership equipment they cannot reach as null."""
+    from ac_auth.roster import Grant, Roster, RosterUser
+
+    app, _, mailer = _ctx(tmp_path)
+    app.state.roster = Roster(
+        users=[
+            RosterUser(email="boss@utoronto.ca", role="admin"),
+            RosterUser(
+                email="larry@utoronto.ca",
+                role="none",
+                grants=[Grant(scope="equipment", id="xarm_translocation", role="operator")],
+            ),
+        ]
+    )
+    app.state.membership = {"ot2": {"hte"}}  # xarm deliberately NOT in membership
+    with TestClient(app) as c:
+        assert c.get("/authz/mine").status_code == 401
+        _login(c, mailer, "larry@utoronto.ca")
+        body = c.get("/authz/mine").json()
+        assert body["user"] == "larry@utoronto.ca" and body["role"] == "none"
+        assert body["equipment"] == {"ot2": None, "xarm_translocation": "user"}
