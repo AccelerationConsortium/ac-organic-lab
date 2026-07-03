@@ -724,10 +724,11 @@ AnaliticaDB catalog — one scope, two enforcement points). 83 auth tests.
 | **5** | `creator`+`project` stamping + identity-aware reads + `can_read(project, caller)` (**incl. the assistant's MCP reads**); operational telemetry stays public — the project-scoped store is **AnaliticaDB** | experiment data becomes project-scoped |
 | **6** | Automation approval workflow (`pending`→approve, platform-scoped + time-boxed grants; `launched_by` audited) | automation gated |
 
-**Phase 0** (storage refactor) is **shipped + deployed**; **Phase 1a** (grant
-resolution + elevation + `/authz/check`) is **committed** on `auth-roster` (inert
-until grants are added to `roster.yaml` and the service is restarted). Next:
-Phase 1b (restriction, wants review), then the cross-cutting infra (Phases 2–4): Caddy `forward_auth` → `/auth/verify`
+**Phase 0** (storage refactor) is **shipped + deployed**. **Phases 1a, 1b, and
+the data-ownership projects layer** are **committed** on `auth-roster` but not
+yet deployed — all three are inert until grants/projects are added to
+`roster.yaml` and the service is restarted. Next: deploy the committed layers,
+then the cross-cutting infra (Phases 2–4): Caddy `forward_auth` → `/auth/verify`
 (+ X-Auth-* strip/re-inject), edge TLS + per-IP rate-limit, and the device-side
 roster pull in each device repo (e.g. `agilent-hplcms-server`'s
 `control/roster.py`, today static env lists).
