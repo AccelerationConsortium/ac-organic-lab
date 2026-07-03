@@ -17,6 +17,9 @@ Endpoints:
 - ``POST /auth/logout``               — revoke session + clear cookie.
 - ``GET  /equipment/{key}/roster``    — owner→device-role projection a device pulls
   (device-plane, Tailnet-only).
+- ``GET  /authz/check``               — effective-role probe for one (user, equipment).
+- ``GET  /authz/scope``               — project-based data scope for a principal.
+- ``GET  /authz/matrix``              — admin-only users × equipment → role matrix.
 
 Allow-list management + the first admin: ``python -m ac_auth.cli`` (see cli.py).
 Run: ``uvicorn ac_auth.main:app --host 127.0.0.1 --port 8009``.
@@ -363,8 +366,9 @@ def create_app(
         sidecars sit behind the Tailscale ACL; this is not exposed at the public
         Caddy edge). Returns every active account mapped through the single
         :func:`effective_device_role` seam, so the projection always agrees with
-        what the platform would authorize. ``equipment_key`` is echoed and (today)
-        does not yet filter — see authz.py for the hierarchy-later note."""
+        what the platform would authorize. Scope-filtered since Phase 1b:
+        accounts whose effective role on this equipment resolves to ``None``
+        (e.g. ``role: none`` with no applicable grant) are excluded."""
         membership = _membership(request)
         entries = []
         for u in _active_principals(_roster(request)):
@@ -447,6 +451,35 @@ def create_app(
             "pi_projects": sorted(scope.pi_projects),
             "is_admin": scope.is_admin,
         }
+
+    @app.get("/authz/matrix")
+    async def authz_matrix(request: Request) -> dict:
+        """Access matrix (Phase 2): every active principal × every known
+        equipment → effective device role, through the same single resolver as
+        the roster projection and ``/authz/check`` — the human-readable "clear
+        definition of who may do what" (requirement 1). **Admin-only**: it
+        enumerates the entire allow-list. Equipment columns come from
+        `platforms.yaml` membership — the same universe platform grants resolve
+        against; equipment absent from any platform section is still reachable
+        via ``/authz/check``, it just has no column here."""
+        caller = await _session_user(request) or await _api_key_user(request)
+        if caller is None:
+            raise HTTPException(status_code=401, detail="not authenticated")
+        if not data_scope(caller, member_projects=(), pi_projects=()).is_admin:
+            raise HTTPException(status_code=403, detail="admin only")
+        membership = _membership(request)
+        equipment = sorted(membership.keys())
+        rows = []
+        for u in _active_principals(_roster(request)):
+            rows.append(
+                {
+                    "email": u.email,
+                    "kind": "automation" if u.is_automation else "human",
+                    "role": u.role,
+                    "roles": {key: effective_device_role(u, key, membership) for key in equipment},
+                }
+            )
+        return {"equipment": equipment, "users": rows}
 
     @app.get("/auth/users")
     async def users(request: Request) -> dict:

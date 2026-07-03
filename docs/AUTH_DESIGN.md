@@ -310,19 +310,21 @@ project model, to match the AnaliticaDB catalog; the two share one policy.)
 ## Assistant chat (read surface — inherits auth + data scope)
 
 The dashboard's chat bubble (`api/app/assistant.py`) shells out to the `claude`
-CLI with the read-only `lab-history` MCP tools. Today it is **stateless and
-unauthenticated**: `--no-session-persistence`, a fresh agent loop per request,
-the transcript held in the **browser** and re-sent each turn (max 40 messages);
-the server stores nothing and doesn't know who is asking, and it runs under **one
-shared** Claude Code OAuth login (not per-user). It cannot actuate hardware
-(`--allowedTools mcp__lab-history__*`) but it **can read all lab history**.
+CLI with the read-only `lab-history` MCP tools. It is **stateless**:
+`--no-session-persistence`, a fresh agent loop per request, the transcript held
+in the **browser** and re-sent each turn (max 40 messages); the server stores no
+conversation, and it runs under **one shared** Claude Code OAuth login (not
+per-user). It cannot actuate hardware (`--allowedTools mcp__lab-history__*`) but
+it **can read all lab history**.
 
 Two requirements follow:
 
-1. **Gate the chat behind auth.** `/api/assistant/*` joins the authenticated
-   routes (same edge as control) — only a logged-in user may chat. The
-   authenticated `X-Auth-User` is recorded for audit (the backend Claude account
-   is shared, so attribution lives at the dashboard, not the model).
+1. **Gate the chat behind auth.** ✅ *(Phase 2, 2026-07-03)* `/api/assistant/*`
+   joins the authenticated routes via the same Next.js middleware as control
+   (every method, `/health` liveness exempt; `DASHBOARD_CONTROL_OPEN` dev
+   escape hatch applies). The verified `X-Auth-User` is injected and logged per
+   chat request (the backend Claude account is shared, so attribution lives at
+   the dashboard, not the model).
 2. **It must inherit the data-isolation policy, not bypass it.** The assistant
    reads the **same** history DB as the REST endpoints via the MCP tools. Once
    *Data isolation* lands, those tools **must apply `can_read` for the
@@ -718,7 +720,7 @@ AnaliticaDB catalog — one scope, two enforcement points). 83 auth tests.
 | **0 ✅** | **Allow-list → `roster.yaml`** (source of truth); SQLite is runtime-only; `last_login_at`/verified derived; `roster.py` loader with **schema validation + fail-closed-startup + keep-last-good-reload + invariant guards (≥1 admin, mass-change)**; CLI `validate`/`export`; git pre-commit hook + systemd `ExecStartPre`/`ExecReload` | **shipped + deployed** — allow-list edits are file-based; auth behavior for users unchanged |
 | **1a ✅** | Per-scope **grant resolution** (global/platform/equipment) via `platforms.yaml` membership; `admin` grants **elevate** (e.g. platform-admin); `GET /authz/check` | **deployed 2026-07-03** — none until grants are added (compat) |
 | **1b ✅** | `role: none` (no global access) + grants-only → per-equipment **restriction**; non-granted accounts excluded from a device's roster + `/authz/check` denies them; lockout invariant counts **global** admins (flat or global-grant) | **deployed 2026-07-03** — only affects accounts that opt into `role: none` |
-| **2** | Scope-filter the roster; admin **access-matrix** view; **gate `/api/assistant/*` behind login** | reads scoped; control unchanged; chat needs auth |
+| **2 ✅** | Scope-filter the roster (landed with 1b); admin **access-matrix** view (`GET /authz/matrix`); **gate `/api/assistant/*` behind login** (Next.js middleware, `/health` exempt; `X-Auth-User` logged per chat) | **committed 2026-07-03** (needs api+web restart) — chat needs auth; reads scoped; control unchanged |
 | **3** | Finish hard claim enforcement everywhere; device authorizes the claim against its roster (`operator`+) | control needs grant **and** claim |
 | **4** | **Close the direct-device side-door** (edge / loopback+proxy); claim owner provably = identity | the linchpin |
 | **5** | `creator`+`project` stamping + identity-aware reads + `can_read(project, caller)` (**incl. the assistant's MCP reads**); operational telemetry stays public — the project-scoped store is **AnaliticaDB** | experiment data becomes project-scoped |

@@ -307,3 +307,53 @@ def test_roster_projection_maps_roles(tmp_path):
         "robot@lab.local": "automation",
     }
     assert "gone@utoronto.ca" not in by_owner  # disabled accounts are excluded
+
+
+def _login(c, mailer, email):
+    """Drive the email-code flow; TestClient keeps the session cookie."""
+    assert c.post("/auth/request-code", json={"email": email}).status_code == 202
+    code = mailer.sent[-1][1]
+    assert c.post("/auth/verify-code", json={"email": email, "code": code}).status_code == 200
+
+
+def test_authz_matrix_requires_global_admin(tmp_path):
+    """/authz/matrix: 401 anonymous; 403 for a non-admin — including a
+    platform-scoped admin (platform-admin is a hardware role, not governance)."""
+    from ac_auth.roster import Grant
+
+    app, _, mailer = _ctx(
+        tmp_path,
+        users=(("alice@utoronto.ca", "operator"), ("boss@utoronto.ca", "admin")),
+    )
+    app.state.roster.users[0].grants.append(Grant(scope="platform", id="hte", role="admin"))
+    app.state.membership = {"ot2": {"hte"}}
+    with TestClient(app) as c:
+        assert c.get("/authz/matrix").status_code == 401
+        _login(c, mailer, "alice@utoronto.ca")
+        assert c.get("/authz/matrix").status_code == 403
+
+
+def test_authz_matrix_resolves_roles_for_admin(tmp_path):
+    """An admin gets users × equipment with the same resolution as /authz/check."""
+    from ac_auth.roster import Grant
+
+    app, _, mailer = _ctx(
+        tmp_path,
+        users=(("alice@utoronto.ca", "operator"), ("boss@utoronto.ca", "admin")),
+        automation=(("robot@lab.local", True),),
+    )
+    app.state.roster.users[0].grants.append(Grant(scope="platform", id="hte", role="admin"))
+    app.state.membership = {"ot2": {"hte"}, "cytation_5": set()}
+    with TestClient(app) as c:
+        _login(c, mailer, "boss@utoronto.ca")
+        r = c.get("/authz/matrix")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["equipment"] == ["cytation_5", "ot2"]
+        rows = {u["email"]: u for u in body["users"]}
+        # alice: platform-admin on hte -> service on ot2, plain user elsewhere
+        assert rows["alice@utoronto.ca"]["kind"] == "human"
+        assert rows["alice@utoronto.ca"]["roles"] == {"cytation_5": "user", "ot2": "service"}
+        assert rows["boss@utoronto.ca"]["roles"] == {"cytation_5": "service", "ot2": "service"}
+        assert rows["robot@lab.local"]["kind"] == "automation"
+        assert rows["robot@lab.local"]["roles"] == {"cytation_5": "automation", "ot2": "automation"}

@@ -528,6 +528,14 @@ def build_assistant_router() -> APIRouter:
                 status_code=503,
                 detail="claude CLI is not installed on the dashboard host",
             )
+        # Attribution (Phase 2): X-Auth-User is set by the Next.js middleware
+        # after verifying the session — never client-supplied. The backend
+        # Claude account is shared, so who-asked lives in this log line.
+        logger.info(
+            "assistant chat: user=%s messages=%d",
+            request.headers.get("x-auth-user") or "unauthenticated(dev-open)",
+            len(body.messages),
+        )
 
         async def gen() -> AsyncIterator[bytes]:
             try:
