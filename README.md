@@ -1,4 +1,4 @@
-# ac-organic-lab
+# AC Organic Lab
 
 Monorepo for the Acceleration Consortium (AC) Organic Self-driving Lab platform stack: the equipment-status contract, the inventory, the Python SDK that workflows and the dashboard share, the dashboard's web server and Next.js UI, the lab's login service, and the read-only lab assistant.
 
@@ -33,7 +33,7 @@ Everything below runs on the one Tailscale-attached dashboard host:
 |---|---|---|---|
 | Dashboard UI | `ac-organic-lab-web.service` (`web/`) | 8000 | Next.js frontend — the only thing browsers talk to. |
 | Dashboard API | `ac-organic-lab-api.service` (`api/`) | 8001 | FastAPI aggregator over `lab-skills`: normalized equipment status, the audited control passthrough (claim-gated on v1.1 devices), the history endpoints (`/api/history/*`, backed by `lab.db`), and the read-only **lab assistant** (`claude` CLI subprocess + the `lab-history` MCP tools). |
-| Auth service | `ac-organic-lab-auth.service` (`auth/`) | `127.0.0.1:8009` | `ac_auth` email-code login and roster/grant checks; loopback-only, consumed at the edge via Caddy `forward_auth` as the [`AUTH_DESIGN.md`](docs/AUTH_DESIGN.md) rollout lands. |
+| Auth service | `ac-organic-lab-auth.service` (`auth/`) | `<tailscale-ip>:8009` | `ac_auth` email-code login and roster/grant checks. Control-route enforcement lives in the Next.js middleware calling `GET /auth/verify`; Caddy `forward_auth` ([`deploy/Caddyfile.auth-snippet`](deploy/Caddyfile.auth-snippet)) is the edge alternative. See [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md). |
 | Edge (Caddy) | [`deploy/Caddyfile`](deploy/Caddyfile) | 443/80 | TLS over Tailscale (`tailscale cert`), fronting the UI and the camera streams; the auth snippet wires `forward_auth`. |
 
 Companion services on the same host from sibling repos:

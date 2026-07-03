@@ -1,30 +1,37 @@
-# Auth sidecar wiring for the dashboard's Caddy site block.
+# Caddy `forward_auth` wiring for the ac_auth sidecar.
 #
-# PHASE 1 (audit mode) — NOT wired into request flow.
-#   Just run ac-organic-lab-auth.service (loopback :8009) with
-#   AUTH_ENFORCE=false and confirm identity extraction out-of-band:
+# CURRENT REALITY: enforcement for the dashboard's own control routes lives in
+# the Next.js middleware (web/src/middleware.ts), which calls the sidecar's
+# GET /auth/verify itself. This Caddy block is the *edge* alternative — use it
+# when a separate Caddy reverse proxy (e.g. on another host) needs to gate
+# mutating routes before they reach an upstream that doesn't do its own check.
 #
-#     curl -s -H 'X-Forwarded-For: <a-human-device-tailnet-ip>' \
-#       http://127.0.0.1:8009/auth/verify | python3 -m json.tool
-#     journalctl -u ac-organic-lab-auth -f      # watch resolved identities
+# The sidecar (ac-organic-lab-auth.service) listens on the Tailnet interface at
+#   100.64.254.6:8009        <-- NOT loopback; 127.0.0.1:8009 is refused.
+# A remote Caddy reaches it over the Tailnet at that address.
 #
-#   Nothing is gated; this only proves `whois` resolves real users before we
-#   lean on it.
+# GET /auth/verify returns:
+#   200 + headers  X-Auth-User: <email>   X-Auth-Role: <role>   when authenticated
+#   401                                                          otherwise
+# Identity is resolved from EITHER the session cookie `ac_auth_session`
+# (humans; overridable via AUTH_COOKIE_NAME) OR the `X-Api-Key` request header
+# (machine principals). It does NOT use X-Forwarded-For. Caddy's forward_auth
+# forwards the inbound request headers (incl. Cookie) to the sub-request by
+# default, so both credentials reach the sidecar without extra config.
 #
-# PHASE 2 (enforce) — add the block below INSIDE the dashboard site block,
-# set AUTH_ENFORCE=true on the sidecar, and have control.py read X-Auth-User.
-# forward_auth only guards the mutating control routes; reads stay open. The
-# action-name + kind bypasses (lights, camera, env) still live in the app /
-# Next.js middleware — Caddy handles the broad surface here.
+# Add the block below INSIDE the site block whose upstream you want to guard.
+# forward_auth treats 2xx as allow and returns anything else (the 401) to the
+# client; copy_headers injects the verified identity into the proxied request.
 #
 #   @control {
 #       path /api/equipment/*/control/*
 #       method POST PUT PATCH DELETE
 #   }
-#   forward_auth @control 127.0.0.1:8009 {
+#   forward_auth @control 100.64.254.6:8009 {
 #       uri /auth/verify
-#       copy_headers X-Auth-User X-Auth-Display X-Auth-Tagged
+#       copy_headers X-Auth-User X-Auth-Role
 #   }
 #
-# Caddy populates X-Forwarded-For with the client's Tailnet IP, which is what
-# the sidecar resolves. Pin trusted_proxies before relying on it for enforcement.
+# forward_auth only guards the matched mutating routes; reads stay open. The
+# action-name + kind bypasses (lights, camera, env) live in the app / Next.js
+# middleware, not here — Caddy handles the broad path/method surface only.

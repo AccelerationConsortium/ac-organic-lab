@@ -1,5 +1,6 @@
 [Unit]
-Description=AC Organic Lab - Auth sidecar (Tailscale identity, forward-auth)
+Description=AC Organic Lab - Auth sidecar (ac_auth: email-code login + roster authz)
+# Binds the host's Tailscale IP, so the IP must exist before bind.
 After=network-online.target tailscaled.service
 Wants=network-online.target
 Requires=tailscaled.service
@@ -8,20 +9,27 @@ Requires=tailscaled.service
 Type=simple
 User=sdl2
 WorkingDirectory=/opt/ac-organic-lab/auth
-# Phase 1 = audit mode: resolve + log identity, never block. Flip to "true"
-# only together with the Caddy forward_auth wiring (Phase 2).
-Environment=AUTH_ENFORCE=false
-# Fail closed: validate roster.yaml before (re)starting (exit non-zero blocks ExecStart).
+EnvironmentFile=-/opt/ac-organic-lab/.env
+# Dashboard is plain http over the Tailnet; flip to true once real TLS fronts it.
+Environment=AUTH_COOKIE_SECURE=false
+# Fail closed: validate roster.yaml before (re)starting. A broken allow-list
+# aborts the start (the running instance keeps serving) rather than booting
+# with a bad/empty list.
 ExecStartPre=/opt/ac-organic-lab/.venv/bin/python -m ac_auth.cli validate
-ExecStart=/opt/ac-organic-lab/.venv/bin/uvicorn ac_auth.main:app --host 127.0.0.1 --port 8009
+# Bind the host's Tailscale IP, NOT loopback: the Next.js middleware calls
+# /auth/verify on it, and a remote Caddy forward_auth must reach it over the
+# Tailnet (see deploy/Caddyfile.auth-snippet). Adjust the IP per host.
+ExecStart=/opt/ac-organic-lab/.venv/bin/uvicorn ac_auth.main:app \
+    --host 100.64.254.6 \
+    --port 8009 \
+    --no-server-header \
+    --log-level info
 # `systemctl reload` → SIGHUP → keep-last-good roster hot-reload.
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=3
 SyslogIdentifier=ac-organic-lab-auth
 
-# Reads the tailscaled LocalAPI socket (/var/run/tailscale/tailscaled.sock).
-# Loopback-only; reached by Caddy, never exposed on the Tailnet directly.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
