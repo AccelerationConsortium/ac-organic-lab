@@ -522,7 +522,11 @@ the mapping above.
 1. **Phase 1 — complete the DMTA loop (ELN core):** `Analysis` (per the DMTA
    note), `Plan` + experiment lifecycle, `Note`. One contract bump. This is
    also the phase that resolves the `result_summary` question blocking the
-   `develop-sdl2-hh` merge. The `source_commit`/`protocol_path` pins from the
+   `develop-sdl2-hh` merge. **Shipped 2026-07-03 (contract 0.4.0,
+   DB + API only)** — deferred: `note_files` (template = the hh branch's
+   `experiment_files`), typed result blocks, the experiment `status`/
+   `plan_id` columns, and all cross-repo wiring (plan registration from
+   protocols, note capture, analysis pipelines). The `source_commit`/`protocol_path` pins from the
    project-repo blueprint land here (nullable columns on `Plan`/`Analysis`);
    the git side (repo restructure, CI, branch protection) needs no DB work.
 2. **Phase 2 — LIMS core:** `Container` (+ positional children), `Location`
