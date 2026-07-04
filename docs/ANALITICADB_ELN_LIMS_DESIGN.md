@@ -125,7 +125,7 @@ so instrument data is step-correlated the same way notes are.
 
 ## 4. Analysis and reports — already settled
 
-Per [`dmta-analysis-layering.md`](dmta-analysis-layering.md): `Analysis` as a
+Per [`dmta-analysis-research.md`](dmta-analysis-research.md): `Analysis` as a
 first-class entity (M2M to measurements, typed results, `supersedes`,
 insert-not-update), reports as experiment-level artifacts (`role="report"`)
 generated from analyses. `Analysis` additionally carries an optional
