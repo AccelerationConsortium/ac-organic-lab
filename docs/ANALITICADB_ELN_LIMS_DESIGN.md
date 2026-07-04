@@ -539,6 +539,27 @@ the mapping above.
    campaign-repo ingestion (`organic-solubility` events flowing into the
    record layer alongside `lab.db`).
 
+## Recorded follow-ups — schema tightenings (2026-07-04)
+
+Critique accepted after the hh merge; filed here so they don't evaporate:
+
+1. **Provenance stamps on derived artifacts.** `experiment_files` and
+   `experiment_tables` carry no link to the analyses that produced them —
+   a `role="report"` file cannot say *which* analyses it renders. Add an
+   optional `generated_by` (analysis FK or small link table) to both, per
+   the DMTA note's explicit-cache rule ("stamped with the analysis that
+   produced it").
+2. **`experiment_tables` mutability.** The entity is a display cache, yet
+   it is PATCHable — a hand-editable, unstamped summary is exactly the
+   `result_summary` failure mode in a new shape. Either drop its PATCH or
+   make edits versioned/audited; socially, keep steering claims into
+   `Analysis` rows (the upload conversion already does).
+3. **`analysis_inputs` (analysis → analysis).** Analyses can only cite
+   measurements, but second-order work (a plate-level correlation computed
+   from 96 per-well yield analyses) derives from *analyses*. Add an
+   `analysis_inputs` M2M so the derivation chain is recorded at the level
+   it actually happened.
+
 ## Open questions (deliberately not settled here)
 
 - Units handling for the ledger (free string + convention vs a `unit` enum vs
