@@ -522,8 +522,9 @@ the mapping above.
 1. **Phase 1 — complete the DMTA loop (ELN core):** `Analysis` (per the DMTA
    note), `Plan` + experiment lifecycle, `Note`. One contract bump. This is
    also the phase that resolves the `result_summary` question blocking the
-   `develop-sdl2-hh` merge. **Shipped 2026-07-03 (contract 0.4.0,
-   DB + API only)** — deferred: `note_files` (template = the hh branch's
+   `develop-sdl2-hh` merge. **Shipped 2026-07-03 (contract 0.4.0→0.6.0,
+   DB + API only; the `develop-sdl2-hh` merge landed the same day —
+   `result_summary` materialises as `Analysis` rows at upload)** — deferred: `note_files` (template = the hh branch's
    `experiment_files`), typed result blocks, the experiment `status`/
    `plan_id` columns, and all cross-repo wiring (plan registration from
    protocols, note capture, analysis pipelines). The `source_commit`/`protocol_path` pins from the
