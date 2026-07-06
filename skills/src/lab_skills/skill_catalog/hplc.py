@@ -62,9 +62,17 @@ from .registry import register
 # Autosampler tray + plate geometry. Mirrors agilent_hplcms_server's
 # control/models.py: the device composes the Agilent "{drawer}-{well}" position
 # string from {tray, well} and validates wells against plate_format.
+#
+# ``_BUILTIN_PLATE_GEOMETRY`` covers the canonical formats a caller may declare;
+# this is a friendly client-side pre-check. The device is authoritative and can
+# additionally enforce the ACTUAL labware loaded per tray (its LABWARE_CONFIG_PATH),
+# so a plate_format outside this set is a custom type validated only on the device.
 TrayName = Literal["front", "rear"]
-PlateFormat = Literal["96-well", "384-well"]
-_PLATE_GEOMETRY: dict[str, tuple[int, int]] = {"96-well": (8, 12), "384-well": (16, 24)}
+_BUILTIN_PLATE_GEOMETRY: dict[str, tuple[int, int]] = {
+    "96-well": (8, 12),
+    "384-well": (16, 24),
+    "54-vial": (6, 9),
+}
 _WELL_RE = re.compile(r"^([A-Za-z])(\d{1,2})$")
 
 
@@ -111,8 +119,14 @@ class RunSubmitArgs(BaseModel):
     )
     gradient: GradientConfig
     samples: list[SampleConfig] = Field(min_length=1, description="At least one sample required.")
-    plate_format: PlateFormat = Field(
-        default="96-well", description="Plate format for all samples in this run."
+    plate_format: str | None = Field(
+        default=None,
+        description=(
+            "Declared plate type for all samples, asserted by the device against the "
+            "tray's configured labware. None trusts the device's configured labware; "
+            "when unset it assumes '96-well' for this client-side well-range pre-check. "
+            "Canonical types: '96-well', '384-well', '54-vial'."
+        ),
     )
     submitter: Literal["manual", "robot"] = Field(
         default="manual",
@@ -134,7 +148,13 @@ class RunSubmitArgs(BaseModel):
 
     @model_validator(mode="after")
     def _validate_wells(self) -> "RunSubmitArgs":
-        rows, cols = _PLATE_GEOMETRY[self.plate_format]
+        # A plate_format outside the built-in set is a custom type: geometry is
+        # validated on the device against the configured labware, so skip here.
+        fmt = self.plate_format or "96-well"
+        geometry = _BUILTIN_PLATE_GEOMETRY.get(fmt)
+        if geometry is None:
+            return self
+        rows, cols = geometry
         for s in self.samples:
             m = _WELL_RE.match(s.well)
             if m is None:
@@ -143,7 +163,7 @@ class RunSubmitArgs(BaseModel):
             col = int(m.group(2))
             if not (0 <= row_idx < rows) or not (1 <= col <= cols):
                 raise ValueError(
-                    f"Well {s.well!r} is out of range for a {self.plate_format} plate."
+                    f"Well {s.well!r} is out of range for a {fmt} plate."
                 )
         return self
 

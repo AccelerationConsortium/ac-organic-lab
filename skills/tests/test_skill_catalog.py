@@ -129,7 +129,9 @@ def test_hplc_run_submit_args_validate_ranges() -> None:
         samples=[SampleConfig(sample_name="cpd_01", tray="front", well="A1", injection_volume=2.0)],
     )
     assert ok.ms_mode == "positive_negative"
-    assert ok.plate_format == "96-well"
+    # plate_format defaults to None (trust the device's configured labware); the
+    # client-side pre-check assumes 96-well when unset.
+    assert ok.plate_format is None
     assert ok.submitter == "manual"
 
     with pytest.raises(Exception):
@@ -147,6 +149,21 @@ def test_hplc_run_submit_args_validate_ranges() -> None:
     RunSubmitArgs(
         output_dir="x", gradient=grad, plate_format="384-well",
         samples=[SampleConfig(sample_name="c", tray="rear", well="P24", injection_volume=2.0)],
+    )
+    # A 6x9 54-vial plate accepts F9 but rejects G1 (off the plate).
+    RunSubmitArgs(
+        output_dir="x", gradient=grad, plate_format="54-vial",
+        samples=[SampleConfig(sample_name="c", tray="rear", well="F9", injection_volume=2.0)],
+    )
+    with pytest.raises(Exception):
+        RunSubmitArgs(
+            output_dir="x", gradient=grad, plate_format="54-vial",
+            samples=[SampleConfig(sample_name="c", tray="rear", well="G1", injection_volume=2.0)],
+        )
+    # A custom/unknown plate type is deferred to the device (no client-side raise).
+    RunSubmitArgs(
+        output_dir="x", gradient=grad, plate_format="custom-24",
+        samples=[SampleConfig(sample_name="c", tray="rear", well="Z9", injection_volume=2.0)],
     )
 
     with pytest.raises(Exception):
