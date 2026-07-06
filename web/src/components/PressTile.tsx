@@ -54,7 +54,7 @@ function clampHold(raw: number): number {
 export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const press = parsePress(snapshot);
   const [, startTransition] = useTransition();
-  const { locked, countdown, toggle } = useControlLock();
+  const { locked, countdown, toggle } = useControlLock(snapshot.id);
   const [upHold, setUpHold] = useState<number>(UP_HOLD_DEFAULT);
   const [downHold, setDownHold] = useState<number>(DOWN_HOLD_DEFAULT);
 

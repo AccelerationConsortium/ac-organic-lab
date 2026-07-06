@@ -3,53 +3,153 @@
 This is the **single** place that resolves a user/principal to the role a device
 enforces (``user`` / ``automation`` / ``service`` — capability-named; see the
 device's ``control/roster.py``). Edge wiring (the ``/equipment/{key}/roster``
-projection, ``api/app/control.py``) calls only :func:`effective_device_role`,
-never the role strings directly, so the flat-today / hierarchy-later split lives
-here alone.
+projection, ``/authz/check``, ``api/app/control.py``) calls only
+:func:`effective_device_role` / :func:`effective_central_role`, never the role
+strings directly, so the resolution rule lives here alone.
 
 Note the device roles are named by *capability* and are deliberately decoupled
-from the central *org* roles (``user`` / ``admin``): the equipment binding (admin
-here, user there) belongs to the grant scope, not the role label. ``admin`` is an
-org privilege that maps to the ``service`` capability on a device.
+from the central *org* roles (``operator`` / ``admin``): ``admin`` is an org
+privilege that maps to the ``service`` capability on a device.
 
-**Today (interim flat):** every grant is global — a human's ``users.role`` *is*
-their effective role everywhere, and an automation account is the platform/robot
-principal. ``equipment_key`` is already in the signature (and the roster
-endpoint is already keyed by it) but is not yet consulted.
+**Phase 1 (per-scope grants).** A principal's effective central role on an
+equipment is the **highest applicable** of:
 
-**Later (per AUTH_SERVICE_DESIGN.md §3):** when ``platforms`` / ``equipment`` /
-``authorizations`` land, only this function changes — it will resolve the
-*highest applicable* grant for ``equipment_key`` (global > platform > equipment)
-instead of reading the flat ``users.role``. Callers stay identical.
+* the flat global role on the row (``user``/``operator`` or ``admin``), treated
+  as a ``global`` grant, **plus**
+* any ``grants`` entry that applies to this equipment — ``global`` (always),
+  ``platform`` (when the equipment belongs to that platform, per
+  `platforms.yaml` membership), or ``equipment`` (exact key match).
 
-The mapping (doc §"Role model & resolution"):
+``operator < admin``. With no grants and no membership this reduces exactly to
+the old flat behavior, so the change is backward-compatible. The mapping:
 
-* automation account (robot/platform principal) → ``automation`` (submit + ``workflow.*``)
-* human ``admin``                               → ``service``    (submit + ``service.*``)
-* human ``user``                                → ``user``       (submit only)
+* automation account (robot/platform principal) → ``automation``
+* effective central ``admin``                    → ``service``
+* effective central ``operator``                 → ``user``
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from dataclasses import dataclass
+from typing import Iterable, Literal, Mapping, Optional
 
 from .db import User
 
 # Mirrors agilent_hplcms_server/control/roster.py :: Role.
 DeviceRole = Literal["user", "automation", "service"]
+CentralRole = Literal["operator", "admin"]
+
+# Higher wins.
+_RANK: dict[str, int] = {"operator": 1, "admin": 2}
 
 
-def effective_device_role(user: User, equipment_key: str) -> DeviceRole:
-    """Resolve the device role this account holds on ``equipment_key``.
+def _flat_central(role: str) -> Optional[CentralRole]:
+    """The flat global role as a central role: ``admin``, ``operator`` (incl. the
+    legacy ``user``), or ``None`` for ``role: none`` (no global access)."""
+    if role == "admin":
+        return "admin"
+    if role == "none":
+        return None
+    return "operator"
 
-    ``equipment_key`` is reserved for the future per-equipment grant hierarchy;
-    today resolution is flat/global (see module docstring).
+
+def _grant_applies(grant, equipment_key: str, membership: Mapping[str, Iterable[str]]) -> bool:
+    """Does a single grant (duck-typed: .scope/.id/.role) apply to this equipment?"""
+    scope = getattr(grant, "scope", None)
+    if scope == "global":
+        return True
+    if scope == "platform":
+        return grant.id in set(membership.get(equipment_key, ()))
+    if scope == "equipment":
+        return grant.id == equipment_key
+    return False
+
+
+def effective_central_role(
+    user: User,
+    equipment_key: str,
+    membership: Optional[Mapping[str, Iterable[str]]] = None,
+) -> Optional[CentralRole]:
+    """Highest central role this human holds on ``equipment_key``, across the flat
+    global role + applicable grants. ``None`` means **no access** (a ``role: none``
+    user with no grant applying to this equipment)."""
+    membership = membership or {}
+    best = _flat_central(user.role)  # flat role = an implicit global grant (or None)
+    best_rank = _RANK.get(best or "", 0)
+    for grant in getattr(user, "grants", ()) or ():
+        rank = _RANK.get(getattr(grant, "role", ""), 0)
+        if rank > best_rank and _grant_applies(grant, equipment_key, membership):
+            best = grant.role  # type: ignore[assignment]
+            best_rank = rank
+    return best
+
+
+def effective_device_role(
+    user: User,
+    equipment_key: str,
+    membership: Optional[Mapping[str, Iterable[str]]] = None,
+) -> Optional[DeviceRole]:
+    """Resolve the device role this account holds on ``equipment_key``, or
+    ``None`` if it has **no access** there (so callers can exclude it from that
+    device's roster).
+
+    ``membership`` is the ``equipment_key -> {platform_id}`` map (from
+    `platforms.yaml`, via :func:`ac_auth.platforms.load_membership`); omit it and
+    platform-scoped grants simply don't resolve (global/equipment still do).
     """
     if user.is_automation:
         return "automation"
-    if user.role == "admin":
-        return "service"
-    return "user"
+    central = effective_central_role(user, equipment_key, membership)
+    if central is None:
+        return None
+    return "service" if central == "admin" else "user"
 
 
-__all__ = ["DeviceRole", "effective_device_role"]
+# ---------------------------------------------------------------------------
+# Data-access scope (data plane — distinct from device-role resolution above)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DataScope:
+    """A caller's project-based data-access scope, consumed by the data plane's
+    ``can_read`` (the dashboard's lab.db reads and the AnaliticaDB catalog).
+
+    ``member_projects`` = projects the caller may consume as a team member (an
+    active member of an active project); ``pi_projects`` = projects they are a PI
+    of (owner — readable regardless of project status); ``is_admin`` = global
+    admin (governance read over all data). This is about **data ownership**, not
+    hardware control — a PI may own data on a platform they cannot operate, and a
+    user can be in many projects at once.
+    """
+
+    member_projects: frozenset[str]
+    pi_projects: frozenset[str]
+    is_admin: bool
+
+
+def data_scope(
+    user: User,
+    *,
+    member_projects: Iterable[str],
+    pi_projects: Iterable[str],
+) -> DataScope:
+    """Project a principal to its data scope. ``member_projects`` / ``pi_projects``
+    are supplied by the caller (from ``Roster.member_projects`` / ``pi_projects``)
+    so this seam stays decoupled from the roster-file model — mirroring how the
+    role resolver takes ``membership`` rather than importing ``platforms.yaml``.
+    The activeness gates (account / membership / project) are already applied when
+    those sets are computed."""
+    # is_admin mirrors roster._is_global_admin (flat admin or a global admin grant).
+    is_admin = user.role == "admin" or any(
+        getattr(g, "scope", None) == "global" and getattr(g, "role", None) == "admin"
+        for g in (getattr(user, "grants", ()) or ())
+    )
+    return DataScope(
+        member_projects=frozenset(member_projects),
+        pi_projects=frozenset(pi_projects),
+        is_admin=is_admin,
+    )
+
+
+__all__ = ["DeviceRole", "CentralRole", "effective_central_role", "effective_device_role"]

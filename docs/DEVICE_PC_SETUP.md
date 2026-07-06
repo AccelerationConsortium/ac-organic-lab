@@ -191,13 +191,18 @@ The lab account also needs the "Log on as a service" right. NSSM grants this aut
 | `agilent-cytation-server` | `cytation`     | 9333 | `run agilent-cytation-serve`              | `sdl2-pc-03-cytation.<tailnet>` |
 | `opentrons-server`        | `ot2-gateway`  | 8020 | `run uvicorn opentrons_server.gateway.api:app --host 0.0.0.0 --port 8020` | `sdl2-pc-03-cytation.<tailnet>` |
 | `torry-pines-shaker-server` | `torry-pines-shaker` | 8030 | `run --extra api torry-pines-shaker-serve` | `sdl2-pc-03-cytation.<tailnet>` |
-| `agilent-biostack4-standalone` | `biostack4`     | 8050 | `run --extra api agilent-biostack4-serve --dry-run` (set `[service].port = 8050` in `config.toml` to override the 8030 default) | `sdl2-pc-03-cytation.<tailnet>` |
+| `agilent-biostack4-standalone` | `biostack4`     | 8050 | `run --extra api agilent-biostack4-serve --dry-run` (set `[service].port = 8050` in `config.toml`: the 8030 default is taken by `torry-pines-shaker` on this shared PC) | `sdl2-pc-03-cytation.<tailnet>` |
 | `ac-organic-lab`          | `ac-organic-lab-api` | 8001 | `run uvicorn app.main:app --host 0.0.0.0 --port 8001` (AppDirectory=`api/`) | `sdl2-pc-03-cytation.<tailnet>` |
-| `bmg_platereader` (TBD)   | `platereader`  | 8001 | `run platereader-serve`                   | `platereader-pc.<tailnet>` |
-| `agilent_platestacker` (TBD) | `platestacker` | 8002 | `run platestacker-serve`               | `platestacker-pc.<tailnet>` |
 | `fume_hood_actuator`      | `fume-hood`    | 5000 | —                                         | `fume-hood-pc.<tailnet>` |
 | `filter_every_well`       | `press`        | 8000 | —                                         | `press-pc.<tailnet>` |
 | `dose_every_well`         | `solid-doser`  | 8000 | —                                         | `solid-doser-pc.<tailnet>` |
+
+Planned, not yet deployed (placeholder names/ports — confirm at install time):
+
+| Repo                      | Service name   | Port | Tailnet host        |
+|---------------------------|----------------|------|---------------------|
+| `bmg_platereader`         | `platereader`  | 8001 | `platereader-pc.<tailnet>` |
+| `agilent_platestacker`    | `platestacker` | 8002 | `platestacker-pc.<tailnet>` |
 
 > **Windows quirk:** after every `nssm start <svc>`, run `sc resume <svc>` to clear
 > the unexpected `SERVICE_PAUSED` state. This is an NSSM quirk; the service otherwise works correctly.

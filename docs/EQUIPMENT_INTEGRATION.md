@@ -248,7 +248,7 @@ The four zones:
 
 ## 6) Cameras (`kind: camera`) and plugs (`smart_plug`, `power_strip`)
 
-Tapo cameras and Kasa plugs are not first-class HTTP devices - they speak proprietary lab-LAN protocols. They are bridged into the dashboard by the [`kasa-tapo-services`](https://github.com/your-org/kasa_tapo_services) gateway running on the dashboard host.
+Tapo cameras and Kasa plugs are not first-class HTTP devices - they speak proprietary lab-LAN protocols. They are bridged into the dashboard by the [`kasa-tapo-services`](https://github.com/cyrilcaoyang/kasa_tapo_services) gateway running on the dashboard host.
 
 ### Onboarding a Tapo camera
 
@@ -336,6 +336,12 @@ Steps:
 | Privacy toggle disabled                              | pytapo creds missing or wrong                                   | Set `<ID>_USER` / `<ID>_PASS` to the **Camera Account**     |
 
 ## 6b) Password-gating the control surfaces (`CONTROL_PASSWORD`)
+
+> **Deprecation path:** this shared-password gate is superseded by the
+> per-user login in [`AUTH_DESIGN.md`](AUTH_DESIGN.md) (`ac_auth`,
+> email-code + roster). It remains documented here because it is what is
+> deployed until the auth rollout replaces it; do not build new features
+> on it.
 
 Tiles with destructive actions (`PowerStripTile`, `FumeHoodTile`, future
 ones via `useControlLock`) share a single password gate. Set

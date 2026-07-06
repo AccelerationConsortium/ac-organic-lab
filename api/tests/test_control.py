@@ -308,6 +308,9 @@ def test_authenticated_user_is_stamped_as_claim_owner() -> None:
     entry = _v11_entry()
     app, db = _make_app_with_db(entry)
 
+    respx.get("http://127.0.0.1:8009/authz/check").mock(
+        return_value=httpx.Response(200, json={"allowed": True, "role": "user"})
+    )
     claim_route = respx.post("http://127.0.0.1:9999/control/claim").mock(
         return_value=httpx.Response(
             200,
@@ -575,3 +578,87 @@ def test_v10_device_skips_claim_dance() -> None:
     assert not claim_route.called
     assert action_route.called
     assert "x-claim-token" not in action_route.calls.last.request.headers
+
+
+# ---------------------------------------------------------------------------
+# Per-equipment authorization at the gateway (Phase 2 pre-enforcement)
+# ---------------------------------------------------------------------------
+
+_AUTHZ_URL = "http://127.0.0.1:8009/authz/check"
+
+
+@respx.mock
+def test_authz_forbidden_user_gets_403_and_no_gateway_call() -> None:
+    """An authenticated user with no role on the equipment is refused before
+    any claim/action reaches the device."""
+    respx.get(_AUTHZ_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={"allowed": False, "role": None, "reason": "no grant for this equipment"},
+        )
+    )
+    action = respx.post(
+        "http://127.0.0.1:8002/cameras/cam_lab499_west/control/ptz"
+    ).mock(return_value=httpx.Response(200, json={"ok": True}))
+    with TestClient(_make_app(_entry())) as client:
+        resp = client.post(
+            "/api/equipment/cam_lab499_west/control/ptz",
+            json={"direction": "up"},
+            headers={"X-Auth-User": "larry.aung@mail.utoronto.ca"},
+        )
+    assert resp.status_code == 403
+    assert "not authorized" in resp.json()["detail"]
+    assert action.called is False
+
+
+@respx.mock
+def test_authz_allowed_user_proxies_normally() -> None:
+    respx.get(_AUTHZ_URL).mock(
+        return_value=httpx.Response(200, json={"allowed": True, "role": "user"})
+    )
+    action = respx.post(
+        "http://127.0.0.1:8002/cameras/cam_lab499_west/control/ptz"
+    ).mock(return_value=httpx.Response(200, json={"ok": True}))
+    with TestClient(_make_app(_entry())) as client:
+        resp = client.post(
+            "/api/equipment/cam_lab499_west/control/ptz",
+            json={"direction": "up"},
+            headers={"X-Auth-User": "yangcyril.cao@utoronto.ca"},
+        )
+    assert resp.status_code == 200
+    assert action.called is True
+
+
+@respx.mock
+def test_authz_skipped_without_identity_header() -> None:
+    """No X-Auth-User (dev-open / pre-edge) → no sidecar call, current
+    behavior preserved. The middleware rejects unauthenticated control in
+    production before it ever reaches here."""
+    authz = respx.get(_AUTHZ_URL).mock(
+        return_value=httpx.Response(200, json={"allowed": False})
+    )
+    respx.post(
+        "http://127.0.0.1:8002/cameras/cam_lab499_west/control/ptz"
+    ).mock(return_value=httpx.Response(200, json={"ok": True}))
+    with TestClient(_make_app(_entry())) as client:
+        resp = client.post(
+            "/api/equipment/cam_lab499_west/control/ptz", json={"direction": "up"}
+        )
+    assert resp.status_code == 200
+    assert authz.called is False
+
+
+@respx.mock
+def test_authz_sidecar_down_fails_closed() -> None:
+    respx.get(_AUTHZ_URL).mock(side_effect=httpx.ConnectError("refused"))
+    action = respx.post(
+        "http://127.0.0.1:8002/cameras/cam_lab499_west/control/ptz"
+    ).mock(return_value=httpx.Response(200, json={"ok": True}))
+    with TestClient(_make_app(_entry())) as client:
+        resp = client.post(
+            "/api/equipment/cam_lab499_west/control/ptz",
+            json={"direction": "up"},
+            headers={"X-Auth-User": "yangcyril.cao@utoronto.ca"},
+        )
+    assert resp.status_code == 503
+    assert action.called is False

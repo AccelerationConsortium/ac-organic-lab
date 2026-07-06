@@ -4,8 +4,12 @@ import { useCallback } from "react";
 import { useUserAuth } from "@/lib/user-auth";
 
 export interface UseControlLockResult {
-  /** True when controls should be disabled — i.e. the user is not signed in. */
+  /** True when controls should be disabled — signed out, or signed in
+   *  without a role on this equipment. */
   locked: boolean;
+  /** True when signed in but not authorized on this equipment (so tiles can
+   *  say "no access" instead of "sign in"). */
+  noAccess: boolean;
   /** Vestigial (no auto-relock countdown anymore); always 0. */
   countdown: number;
   /** When signed out, nudge the login bar into view; otherwise a no-op. */
@@ -19,15 +23,18 @@ export interface UseControlLockResult {
 /**
  * Control-gate state for tiles.
  *
- * The dashboard is view-only until sign-in, so a tile's destructive controls
- * are simply enabled when the user is authenticated. There is no per-tile
- * password or 10 s auto-relock anymore — that was the old CONTROL_PASSWORD
- * model; the single login bar is now the only gate. `locked` mirrors "not
- * signed in"; `unlock()` / `toggle()` flash the login bar when signed out.
+ * The dashboard is view-only until sign-in, and — since Phase 2 — a tile's
+ * destructive controls are enabled only when the signed-in user holds a role
+ * on *that equipment* (`canControl(equipmentId)`, backed by the auth
+ * sidecar's /authz/mine map). Pass the tile's `snapshot.id`; omitting it
+ * keeps the old authentication-only behavior. `locked` is UX: the control
+ * passthrough enforces the same answer server-side (403).
  */
-export function useControlLock(): UseControlLockResult {
-  const { authenticated, requestLogin } = useUserAuth();
-  const locked = !authenticated;
+export function useControlLock(equipmentId?: string): UseControlLockResult {
+  const { authenticated, canControl, requestLogin } = useUserAuth();
+  const authorized = equipmentId ? canControl(equipmentId) : authenticated;
+  const locked = !authenticated || !authorized;
+  const noAccess = authenticated && !authorized;
 
   const unlock = useCallback(async () => {
     if (!authenticated) requestLogin();
@@ -35,5 +42,5 @@ export function useControlLock(): UseControlLockResult {
 
   const lock = useCallback(() => {}, []);
 
-  return { locked, countdown: 0, unlock, lock, toggle: unlock };
+  return { locked, noAccess, countdown: 0, unlock, lock, toggle: unlock };
 }

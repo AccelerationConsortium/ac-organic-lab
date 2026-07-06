@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import getpass
 import os
-import sys
 import webbrowser
 
 from .config import default_secrets_path

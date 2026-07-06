@@ -18,7 +18,7 @@ servicing/maintenance. Control surface:
                                           (NOT a full shutdown — that is a manual
                                           operator procedure at the instrument)
 * ``POST   /control/workflow/start``    - take the equipment-blocking workflow lock
-                                          for a robot/agent campaign (HTE users only)
+                                          for a robot/agent campaign (``automation`` role only)
 * ``POST   /control/workflow/end``      - release the workflow lock (claim retained)
 
 ``Skill.name`` matches the device's ``allowed_actions`` (``run.submit`` /
@@ -31,8 +31,9 @@ or a technician is servicing the instrument directly in OpenLab → 409
 additionally offered only while no workflow is active, and ``workflow.end`` exactly
 while one is.
 
-**Workflow lock (queue-ownership precedence #2):** an HTE platform user takes the
-equipment-blocking lock for a campaign — a series of runs — via ``workflow.start``;
+**Workflow lock (queue-ownership precedence #2):** an ``automation``-role caller
+(a robot/agent campaign account) takes the equipment-blocking lock for a
+campaign — a series of runs — via ``workflow.start``;
 while held, the device refuses sample submits from anyone but the lock holder with
 ``423 workflow_active``. The lock rides on the caller's claim, so it inherits the
 claim's TTL/heartbeat/auto-expiry (a crashed holder loses it). ``workflow.start``
@@ -272,8 +273,8 @@ register(
                 "Take the equipment-blocking workflow lock for a robot/agent "
                 "campaign (a series of runs). While held, the device refuses "
                 "sample submits from anyone but the lock holder (423 "
-                "workflow_active). Requires an HTE platform user (403 "
-                "role_forbidden otherwise)."
+                "workflow_active). Requires the claim owner's device role to "
+                "be `automation` (403 role_forbidden otherwise)."
             ),
             endpoint="/control/workflow/start",
             args_schema=WorkflowStartArgs,

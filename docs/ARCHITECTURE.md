@@ -108,6 +108,8 @@ ac-organic-lab/
 │       ├── db.py                   # LabDatabase (SQLite, stdlib only)
 │       ├── history.py              # /api/history/* + /api/ingest/* routes
 │       ├── control.py              # control passthrough (cameras, plugs)
+│       ├── assistant.py            # /api/assistant/chat — Claude Code CLI subprocess (SSE)
+│       ├── mcp_server.py           # lab-history MCP server (read-only tools over lab.db)
 │       └── presentation.py        # dashboard snapshot types + location
 └── web/                            # Next.js UI
     └── src/
@@ -116,7 +118,8 @@ ac-organic-lab/
         │   ├── history/page.tsx    # History tab (uptime, sensors, runs)
         │   └── platforms/hte/      # HTE platform detail
         ├── components/
-        │   └── Nav.tsx             # auto-injects platform tabs from /api/platforms
+        │   ├── Nav.tsx             # auto-injects platform tabs from /api/platforms
+        │   └── AssistantBubble.tsx # floating chat bubble, consumes the SSE stream
         └── lib/
             ├── use-equipment.ts    # React Query hook — equipment list
             ├── use-platforms.ts    # React Query hook — platforms config
@@ -175,6 +178,9 @@ Owns:
   claim → action → release dance for v1.1 devices, and writes one
   `control_action` audit row to `equipment_events` per call (actor, action,
   outcome). See design decision #1.
+- **Lab assistant** (`assistant.py`, `mcp_server.py`): a read-only chat
+  endpoint and the MCP server that backs it. See the *Lab assistant*
+  component below and design decision #10.
 
 Does **not** own:
 
@@ -191,6 +197,49 @@ The user-facing dashboard. Reads from `api/`. No Python.
 The Overview page (`page.tsx`) is entirely driven by `/api/platforms`: it iterates `sections` in order and dispatches on `kind` — `environmental_map` renders the `LabMap`; `platform` renders a `PlatformCard` with snapshots looked up by the section's equipment id list. Adding or reordering a section requires only a `platforms.yaml` edit; no frontend code changes.
 
 The Nav (`Nav.tsx`) auto-injects one tab per section that has an `href` field, between the static `Overview` and `History` tabs.
+
+### Lab assistant (chat bubble)
+
+A **read-only** Claude assistant for operators, spanning `api/` and `web/`.
+It answers "what's running right now / what happened to X" by querying the
+history DB and live aggregator — it **cannot actuate hardware** (the system
+prompt says so, and the toolset makes it impossible). See design decision #10.
+
+Three pieces:
+
+- **`web/src/components/AssistantBubble.tsx`** — a floating, draggable chat
+  bubble mounted in the root layout. It POSTs the conversation to
+  `/api/assistant/chat`, consumes the Server-Sent Events stream (`text` /
+  `tool_use` / `tool_result` / `done` / `error` frames), and persists ~20
+  turns in `sessionStorage`. It only renders if `GET /api/assistant/health`
+  reports `configured: true`.
+- **`api/app/assistant.py`** — `POST /api/assistant/chat`. Instead of calling
+  the Anthropic API (which would need an `ANTHROPIC_API_KEY` in the dashboard
+  env), it shells out to the locally-installed **`claude` CLI** in
+  `--print --output-format stream-json` mode, translates each stream-json
+  event into an SSE frame, and streams it to the browser. Auth/billing
+  piggyback on the dashboard user's Claude Code OAuth login. The subprocess
+  is locked down: `--allowedTools mcp__lab-history__*` (no Bash/file/web),
+  `--mcp-config … --strict-mcp-config` (injects only the lab MCP server,
+  ignores the user's other MCP config), `--no-session-persistence` (history
+  is re-sent in the prompt each turn), a 120 s wallclock cap, and a minimal
+  cwd outside the repo tree so Claude Code doesn't auto-load the ~50k-token
+  `CLAUDE.md` doc bundle on every turn. Model defaults to `sonnet`.
+- **`api/app/mcp_server.py`** — the `lab-history` MCP server (stdio,
+  `lab-history-mcp` entry point). Exposes **seven read-only tools**:
+  `list_equipment_now` (live, via the aggregator's `/api/equipment`),
+  `query_equipment_events`, `query_service_uptime`, `query_sensor_readings`,
+  `query_runs`, `query_well_results` (all over `data/lab.db`), and
+  `tail_journald` (last N lines of a **whitelisted** dashboard systemd unit).
+  Row counts and lookback are capped. The same server can be registered
+  directly with a developer's own Claude Code via `claude mcp add` — the
+  chat bubble is just one of its two consumers.
+
+Configuration is via env vars (`ASSISTANT_CLAUDE_MODEL`,
+`ASSISTANT_CLAUDE_BIN`, `ASSISTANT_CLAUDE_TIMEOUT_S`, `ASSISTANT_RUNTIME_DIR`).
+Dependency-wise this adds `mcp>=1.0` to `api/` and the presence of the
+`claude` CLI on the dashboard host; no new npm deps (the bubble is plain
+React + an SSE `fetch`).
 
 ### `equipment.yaml` (root)
 
@@ -260,7 +309,7 @@ There are **two** classes of writer, distinguished by privilege and lifetime —
 What this buys, and what it costs:
 
 - **Audit.** Because the dashboard is now a writer, every passthrough call is recorded to `equipment_events` (`event_type: "control_action"`, with the actor, action, and outcome) so "who moved the sash, when" is answerable. See [`OBSERVABILITY.md`](OBSERVABILITY.md).
-- **Auth.** Operator writes are gated by `CONTROL_PASSWORD` today; the [`AUTH_SERVICE_DESIGN.md`](AUTH_SERVICE_DESIGN.md) auth module (email one-time-code login, `ac_auth`) will replace the generic `ac-organic-lab-dashboard` owner with a per-user identity, stamped into both the claim and the audit row.
+- **Auth.** Operator writes are gated by `CONTROL_PASSWORD` today; the [`AUTH_DESIGN.md`](AUTH_DESIGN.md) auth module (email one-time-code login, `ac_auth`) will replace the generic `ac-organic-lab-dashboard` owner with a per-user identity, stamped into both the claim and the audit row.
 - **No SDK safety net.** The passthrough skips skill-catalog preconditions and project interlocks — those run only in the workflow path. The dashboard tiles compensate client-side (disabling buttons when they can compute a precondition), and the device's 412/423 is the backstop. This is an accepted trade-off for keeping the operator path a one-hop proxy; destructive cross-device coordination must go through a workflow, not the dashboard.
 
 ### 2. Per-device REST services are authoritative for their own state
@@ -299,6 +348,15 @@ Every contract change is a doc PR first (`docs/STATUS_SPEC_v*.md`), then a refer
 ### 9. History database is append-only and owned by the aggregator
 
 `data/lab.db` (SQLite) is written exclusively by the `api/` dashboard server — never by device services directly. The aggregator observes reachability from its existing poll loop and records transitions. Device services push domain events via `POST /api/ingest/events` rather than opening a DB connection. This keeps the database on one host with one writer, eliminates connection pooling concerns, and lets the file be backed up with a single `cp` while the server is running (WAL mode).
+
+### 10. The lab assistant is read-only, and reuses the CLI rather than the API
+
+The dashboard's chat bubble (the *Lab assistant* component above) is deliberately a **fourth, read-only** surface — distinct from the three writers/readers in decision #1. It never touches `/control/*`, never holds a claim, and never imports `lab-skills`; it only reads the history DB, the live `/api/equipment` snapshot, and whitelisted journald units, through the `lab-history` MCP server.
+
+Two choices are worth recording:
+
+- **Subprocess, not SDK.** `assistant.py` shells out to the `claude` CLI instead of calling the Anthropic API. This keeps `ANTHROPIC_API_KEY` out of the dashboard environment — billing and rate limits ride the operator's existing Claude Code OAuth login — and lets the same MCP server serve both the bubble and a developer's own `claude mcp add`. The cost is an operational dependency: the `claude` binary must be installed on the dashboard host, and the bubble silently hides itself (`/api/assistant/health` → `configured: false`) when it isn't.
+- **A separate MCP server from decision #7.** This is the *history/observability* MCP server (read-only, lives in `api/`), not the SDK's *skill-catalog* MCP server (control, lives in `skills/`). They are intentionally different servers with different trust levels: an operator-facing assistant gets read-only history tools; a control-capable agent gets the claim-gated skill catalog. Keep them apart.
 
 ## Long-term goals
 

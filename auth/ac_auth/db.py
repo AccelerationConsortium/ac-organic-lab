@@ -2,7 +2,7 @@
 
 Three tables — the allow-list (``users``), one-time login codes
 (``login_codes``), and opaque ``sessions``. Process-wide single connection with
-WAL + a write lock (see AUTH_SERVICE_DESIGN.md: SQLite serializes writers
+WAL + a write lock (see AUTH_DESIGN.md: SQLite serializes writers
 DB-wide). Methods are synchronous and fast; the FastAPI routes call them via
 ``asyncio.to_thread`` so the event loop never blocks.
 
@@ -17,7 +17,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -32,7 +32,16 @@ CREATE TABLE IF NOT EXISTS users (
     role               TEXT NOT NULL DEFAULT 'user',
     status             TEXT NOT NULL DEFAULT 'active',
     is_automation INTEGER NOT NULL DEFAULT 0,
-    created_at         REAL NOT NULL
+    -- account-management metadata (all additive; see _migrate for live DBs)
+    name               TEXT NOT NULL DEFAULT '',   -- display name
+    lab_account        TEXT NOT NULL DEFAULT '',   -- group / PI affiliation
+    notes              TEXT NOT NULL DEFAULT '',   -- free-form admin notes
+    expires_at         REAL,                       -- account lapse; enforced at login
+    last_login_at      REAL,                       -- stamped on each successful verify
+    email_verified     INTEGER NOT NULL DEFAULT 0, -- set true on first code sign-in
+    disabled_at        REAL,                       -- when status flipped to disabled
+    disabled_reason    TEXT NOT NULL DEFAULT '',   -- why it was disabled
+    created_at         REAL NOT NULL               -- "active since" (row creation)
 );
 CREATE TABLE IF NOT EXISTS login_codes (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,12 +86,61 @@ def norm_email(email: str) -> str:
     return email.strip().lower()
 
 
+# Sentinel so update_user() can distinguish "leave expiry untouched" from
+# "clear expiry" (expires_at=None means no expiry).
+_UNSET = object()
+
+# Account-management columns added after the original (email/role/status/
+# is_automation/created_at) schema. Each is applied to a live DB by _migrate
+# via ALTER TABLE ... ADD COLUMN (a no-op once the column exists). NOT NULL
+# columns must carry a DEFAULT so existing rows back-fill.
+_ADDED_USER_COLUMNS: dict[str, str] = {
+    "name": "TEXT NOT NULL DEFAULT ''",
+    "lab_account": "TEXT NOT NULL DEFAULT ''",
+    "notes": "TEXT NOT NULL DEFAULT ''",
+    "expires_at": "REAL",
+    "last_login_at": "REAL",
+    "email_verified": "INTEGER NOT NULL DEFAULT 0",
+    "disabled_at": "REAL",
+    "disabled_reason": "TEXT NOT NULL DEFAULT ''",
+}
+
+# Single source of truth for the column list every user SELECT pulls, so
+# _row_to_user always receives a fully-populated row.
+_USER_COLS = (
+    "email, role, status, is_automation, name, lab_account, notes, "
+    "expires_at, last_login_at, email_verified, disabled_at, disabled_reason, "
+    "created_at"
+)
+
+
 @dataclass(frozen=True)
 class User:
     email: str
     role: str
     status: str
     is_automation: bool = False
+    # per-scope authorization grants (Phase 1) — a list of roster Grant objects
+    # (duck-typed .scope/.id/.role); consulted by authz.effective_*_role. Kept as
+    # a bare list here so db.py stays free of a roster import.
+    grants: list = field(default_factory=list)
+    # account-management metadata (defaulted so positional User(email, role,
+    # status, is_automation) construction in tests/authz keeps working)
+    name: str = ""
+    lab_account: str = ""
+    notes: str = ""
+    expires_at: Optional[float] = None
+    last_login_at: Optional[float] = None
+    email_verified: bool = False
+    disabled_at: Optional[float] = None
+    disabled_reason: str = ""
+    created_at: Optional[float] = None
+
+    def is_expired(self, now: Optional[float] = None) -> bool:
+        """True once past ``expires_at`` (a lapsed account). No expiry → never."""
+        if self.expires_at is None:
+            return False
+        return (now if now is not None else _now()) > self.expires_at
 
 
 @dataclass(frozen=True)
@@ -99,7 +157,19 @@ class ApiKeyInfo:
 
 def _row_to_user(row: sqlite3.Row) -> User:
     return User(
-        row["email"], row["role"], row["status"], bool(row["is_automation"])
+        email=row["email"],
+        role=row["role"],
+        status=row["status"],
+        is_automation=bool(row["is_automation"]),
+        name=row["name"],
+        lab_account=row["lab_account"],
+        notes=row["notes"],
+        expires_at=row["expires_at"],
+        last_login_at=row["last_login_at"],
+        email_verified=bool(row["email_verified"]),
+        disabled_at=row["disabled_at"],
+        disabled_reason=row["disabled_reason"],
+        created_at=row["created_at"],
     )
 
 
@@ -134,6 +204,12 @@ class Db:
                 self._conn.execute(
                     "ALTER TABLE users ADD COLUMN is_automation INTEGER NOT NULL DEFAULT 0"
                 )
+        # Account-management columns. Re-read table_info (the block above may
+        # have just altered it) and add any that are missing.
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(users)").fetchall()}
+        for col, decl in _ADDED_USER_COLUMNS.items():
+            if col not in cols:
+                self._conn.execute(f"ALTER TABLE users ADD COLUMN {col} {decl}")
 
     # ---- users (the allow-list) -------------------------------------------
 
@@ -148,6 +224,10 @@ class Db:
             raise ValueError(f"role must be one of {VALID_ROLES}")
         email = norm_email(email)
         with self._lock:
+            # Only the core identity (role/status/is_automation) is upserted;
+            # profile columns (name/lab_account/notes/expires_at) are left
+            # untouched on conflict so re-adding a user never wipes them — use
+            # update_user() to edit those.
             self._conn.execute(
                 """INSERT INTO users (email, role, status, is_automation, created_at)
                    VALUES (?, ?, ?, ?, ?)
@@ -157,18 +237,64 @@ class Db:
                 (email, role, status, int(is_automation), _now()),
             )
             self._conn.commit()
-        return User(email, role, status, bool(is_automation))
+        return self.get_user(email)  # fully-populated (incl. created_at)
+
+    def update_user(
+        self,
+        email: str,
+        *,
+        name: Optional[str] = None,
+        lab_account: Optional[str] = None,
+        notes: Optional[str] = None,
+        expires_at: object = _UNSET,
+    ) -> Optional[User]:
+        """Patch profile columns. Only arguments that are passed are written
+        (``None`` leaves a text field unchanged); pass ``expires_at=None`` to
+        clear an expiry, or a float to set it. Returns the updated user."""
+        email = norm_email(email)
+        sets: list[str] = []
+        vals: list[object] = []
+        if name is not None:
+            sets.append("name=?")
+            vals.append(name)
+        if lab_account is not None:
+            sets.append("lab_account=?")
+            vals.append(lab_account)
+        if notes is not None:
+            sets.append("notes=?")
+            vals.append(notes)
+        if expires_at is not _UNSET:
+            sets.append("expires_at=?")
+            vals.append(expires_at)
+        if sets:
+            vals.append(email)
+            with self._lock:
+                self._conn.execute(
+                    f"UPDATE users SET {', '.join(sets)} WHERE email=?", vals
+                )
+                self._conn.commit()
+        return self.get_user(email)
+
+    def touch_login(self, email: str) -> None:
+        """Record a successful sign-in: stamp last_login_at and mark the email
+        verified (the code reached the inbox)."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET last_login_at=?, email_verified=1 WHERE email=?",
+                (_now(), norm_email(email)),
+            )
+            self._conn.commit()
 
     def get_user(self, email: str) -> Optional[User]:
         email = norm_email(email)
         with self._lock:
             row = self._conn.execute(
-                "SELECT email, role, status, is_automation FROM users WHERE email=?", (email,)
+                f"SELECT {_USER_COLS} FROM users WHERE email=?", (email,)
             ).fetchone()
         return _row_to_user(row) if row else None
 
     def list_users(self, *, active_only: bool = False) -> list[User]:
-        sql = "SELECT email, role, status, is_automation FROM users"
+        sql = f"SELECT {_USER_COLS} FROM users"
         if active_only:
             sql += " WHERE status='active'"
         sql += " ORDER BY email"
@@ -176,11 +302,21 @@ class Db:
             rows = self._conn.execute(sql).fetchall()
         return [_row_to_user(r) for r in rows]
 
-    def set_status(self, email: str, status: str) -> None:
+    def set_status(self, email: str, status: str, reason: str = "") -> None:
+        """Set a user's status. Disabling stamps disabled_at + disabled_reason;
+        re-enabling (any non-disabled status) clears both."""
+        email = norm_email(email)
         with self._lock:
-            self._conn.execute(
-                "UPDATE users SET status=? WHERE email=?", (status, norm_email(email))
-            )
+            if status == "disabled":
+                self._conn.execute(
+                    "UPDATE users SET status=?, disabled_at=?, disabled_reason=? WHERE email=?",
+                    (status, _now(), reason, email),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE users SET status=?, disabled_at=NULL, disabled_reason='' WHERE email=?",
+                    (status, email),
+                )
             self._conn.commit()
 
     def delete_user(self, email: str) -> None:
@@ -205,6 +341,22 @@ class Db:
                 (email, _hash(code), now + ttl_s, now),
             )
             self._conn.commit()
+
+    def login_code_rate(
+        self, email: str, window_s: float
+    ) -> tuple[int, Optional[float], Optional[float]]:
+        """Send-rate stats for ``email`` over the last ``window_s`` seconds, used
+        to throttle code emails (anti-spam): ``(count, oldest_at, latest_at)``
+        of login codes created in the window. ``oldest/latest`` are ``None`` when
+        count is 0. Counts *sends*, not verify attempts."""
+        cutoff = _now() - window_s
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n, MIN(created_at) AS oldest, MAX(created_at) AS latest"
+                " FROM login_codes WHERE email=? AND created_at>=?",
+                (norm_email(email), cutoff),
+            ).fetchone()
+        return (row["n"], row["oldest"], row["latest"])
 
     def verify_login_code(self, email: str, code: str, max_attempts: int) -> bool:
         """Check ``code`` against the latest live code for ``email``. Burns the
@@ -284,9 +436,11 @@ class Db:
             self._conn.commit()
         return token
 
-    def verify_api_key(self, token: str) -> Optional[User]:
-        """Return the principal :class:`User` for a live (un-revoked, unexpired)
-        key, else ``None``. The caller still checks ``status == 'active'``."""
+    def verify_api_key(self, token: str) -> Optional[str]:
+        """Return the principal's **email** for a live (un-revoked, unexpired)
+        key, else ``None``. The api_keys table only proves possession of a valid
+        key; the caller resolves that email to a principal via the roster (and
+        checks it is an approved, active automation account)."""
         if not token:
             return None
         with self._lock:
@@ -297,7 +451,16 @@ class Db:
             return None
         if row["expires_at"] is not None and _now() > row["expires_at"]:
             return None
-        return self.get_user(row["email"])
+        return row["email"]
+
+    def last_login_at(self, email: str) -> Optional[float]:
+        """Most recent successful sign-in for an email = newest session row's
+        ``created_at`` (the session IS the login record; no separate column)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT MAX(created_at) AS t FROM sessions WHERE email=?", (norm_email(email),)
+            ).fetchone()
+        return row["t"] if row and row["t"] is not None else None
 
     def list_api_keys(self, email: str) -> list[ApiKeyInfo]:
         with self._lock:

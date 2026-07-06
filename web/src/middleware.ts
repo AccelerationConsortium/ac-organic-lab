@@ -25,6 +25,18 @@ const API_REF_UNLOCK = "/api-reference/unlock";
 const CONTROL_PATH_RE = /^\/api\/equipment\/[^/]+\/(?:control|sash)(?:\/.*)?$/;
 const CONTROL_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+// -- /api/assistant/* gate (Phase 2) -----------------------------------------
+//
+// The lab assistant is read-only for hardware but can read ALL lab history,
+// so every method (including GET) requires a signed-in user — except the
+// /health liveness probe, which exposes config only. The verified identity is
+// injected as X-Auth-User so the assistant backend records who asked (the
+// backend Claude account is shared; attribution lives here). The same
+// DASHBOARD_CONTROL_OPEN escape hatch opens it for local dev.
+
+const ASSISTANT_PATH_RE = /^\/api\/assistant(?:\/.*)?$/;
+const ASSISTANT_PUBLIC_PATHS = new Set(["/api/assistant/health"]);
+
 const AUTH_SERVICE_BASE =
   process.env.AUTH_SERVICE_BASE ?? "http://127.0.0.1:8009";
 const CONTROL_OPEN = process.env.DASHBOARD_CONTROL_OPEN === "true";
@@ -75,6 +87,30 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // ---- Assistant guard (it reads all lab history — sign-in required) -----
+  if (
+    ASSISTANT_PATH_RE.test(pathname) &&
+    !ASSISTANT_PUBLIC_PATHS.has(pathname)
+  ) {
+    const headers = new Headers(request.headers);
+    headers.delete("x-auth-user");
+    headers.delete("x-auth-role");
+
+    if (!CONTROL_OPEN) {
+      const v = await verifySession(request);
+      if (!v.ok) {
+        return NextResponse.json(
+          { detail: "Sign in to use the lab assistant." },
+          { status: 401 },
+        );
+      }
+      if (v.user) headers.set("x-auth-user", v.user);
+      if (v.role) headers.set("x-auth-role", v.role);
+    }
+
+    return NextResponse.next({ request: { headers } });
+  }
+
   // ---- Control-surface guard (view-only until signed in) ----------------
   if (CONTROL_METHODS.has(request.method) && CONTROL_PATH_RE.test(pathname)) {
     // Never trust a client-supplied identity header; we set it only after
@@ -102,5 +138,9 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/api-reference/:path*", "/api/equipment/:path*"],
+  matcher: [
+    "/api-reference/:path*",
+    "/api/equipment/:path*",
+    "/api/assistant/:path*",
+  ],
 };

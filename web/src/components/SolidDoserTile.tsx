@@ -34,7 +34,7 @@ function balanceReadingMg(snapshot: EquipmentSnapshot): number | null {
 
 export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const [isPending, startTransition] = useTransition();
-  const { locked, countdown, toggle } = useControlLock();
+  const { locked, countdown, toggle } = useControlLock(snapshot.id);
   const [targetMg, setTargetMg] = useState<number>(TARGET_MG_DEFAULT);
 
   const status = snapshot.status.equipment_status;

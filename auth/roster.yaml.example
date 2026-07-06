@@ -1,0 +1,97 @@
+# roster.yaml — the authoritative allow-list for the auth sidecar.
+#
+# THIS IS AN EXAMPLE. Copy it to `roster.yaml` (same directory) and edit:
+#     cp roster.yaml.example roster.yaml
+# The real `roster.yaml` is gitignored (it holds real emails); only this
+# example is committed. Generate one from a live DB instead with:
+#     python -m ac_auth.cli export -o roster.yaml
+#
+# Workflow:  edit → validate → reload
+#     python -m ac_auth.cli validate roster.yaml   # schema + invariants
+#     sudo systemctl reload ac-organic-lab-auth     # (or restart) — keep-last-good on failure
+#
+# Path override: set AUTH_ROSTER_PATH to keep the file outside the repo.
+# SQLite holds only runtime state (sessions / login codes / API keys);
+# API-key SECRETS are NEVER in this file (issue them with `issue-key`).
+
+users:
+  # --- roles -------------------------------------------------------------
+  #   admin    : full control everywhere + (global) governance; admin grants
+  #              are global or platform scope only. At least ONE active admin
+  #              must always exist (validation refuses a roster without one).
+  #   operator : submit/run control (must claim); grantable at global /
+  #              platform / equipment scope.
+  - email: lab.manager@example.edu
+    role: admin
+    name: Lab Manager
+
+  - email: alice.researcher@example.edu
+    role: operator
+    name: Alice Researcher
+    lab_account: Example Group          # group / PI affiliation (free text)
+
+  # A visiting student who should auto-lapse — `expires` is enforced at login
+  # (valid through 23:59:59 UTC of that day), same effect as disabling.
+  - email: sam.intern@example.edu
+    role: operator
+    name: Sam Intern
+    expires: 2026-08-31
+    notes: summer student
+
+  # A turned-off account. `status: disabled` blocks login; the reason is shown
+  # in `list`/audit. (Re-enable by removing these two lines.)
+  - email: former.member@example.edu
+    role: operator
+    name: Former Member
+    status: disabled
+    disabled_reason: left the lab
+
+  # --- per-platform / per-equipment access (Phase 1) ----------------------
+  # Grants are ADDITIVE (highest wins); there are no deny rules.
+  # `scope: equipment|platform|global`; `id` is the platforms.yaml /
+  # equipment.yaml key (omit for global). admin is not allowed at equipment.
+  #
+  # ELEVATION (role + grants): a base global role, raised on specific scopes.
+  - email: bob.operator@example.edu
+    role: operator                      # base: operator everywhere
+    name: Bob Operator
+    grants:
+      - { scope: platform, id: hte, role: admin }     # ...but admin of the HTE platform
+
+  # RESTRICTION (role: none + grants): NO global access — reaches ONLY granted
+  # equipment/platforms. Use this to limit someone to specific devices.
+  - email: carol.intern@example.edu
+    role: none
+    name: Carol Intern
+    grants:
+      - { scope: equipment, id: ot2, role: operator }   # may operate ONLY the OT-2
+
+# --- automation accounts (machine principals) -----------------------------
+# Authenticate by API key (not email code). Created here, but a key only works
+# after a global admin sets `approved: true` (requirement 5). The key SECRET is
+# issued separately and stored hashed in SQLite — never written here.
+automation:
+  - email: hte-orchestrator@lab.local
+    name: HTE platform principal
+    approved: true
+    platform: hte                        # Phase 1 scope
+    # expires: 2026-12-31                 # time-box campaign principals
+
+# --- projects (Phase 2 — data ownership, NOT hardware) --------------------
+# A project is the unit of data ownership. `pis` (one or more) OWN the project's
+# data and get the bill; `members` are the team who may READ it while the project
+# is `active`. A user may be a member of MANY projects (no "leaving a group"). A
+# PI need not have hardware access (give them `role: none`). Access to a datum =
+# active account AND active member of its (active) project — plus the project's
+# PIs (owners, any status) and global admins. `status: closed` keeps the data
+# (owners/admin still read) but stops members. Every PI/member must be a user
+# defined above. This drives data visibility only — hardware stays on role/grants.
+projects:
+  - id: pdb-solubility
+    name: PDB solubility screen
+    status: active                 # `closed` retains data but revokes member reads
+    pis:
+      - lab.manager@example.edu    # one or more PIs; own the data regardless of status
+    members:
+      - alice.researcher@example.edu
+      - bob.operator@example.edu   # the same user may also be a member of other projects

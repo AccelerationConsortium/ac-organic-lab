@@ -261,7 +261,7 @@ function EditablePill({
 export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const shaker = parseShaker(snapshot);
   const [, startTransition] = useTransition();
-  const { locked, countdown, toggle } = useControlLock();
+  const { locked, countdown, toggle } = useControlLock(snapshot.id);
   const [actionError, setActionError] = useState<ActionError | null>(null);
 
   // Next-cycle parameters for shake.start. Local-only state (the device

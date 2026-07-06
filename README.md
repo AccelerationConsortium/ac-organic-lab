@@ -1,6 +1,6 @@
-# ac-organic-lab
+# AC Organic Lab
 
-Monorepo for the Acceleration Consortium (AC) Organic Self-driving Lab platform stack: the equipment-status contract, the inventory, the Python SDK that workflows and the dashboard share, and the dashboard's web server and Next.js UI.
+Monorepo for the Acceleration Consortium (AC) Organic Self-driving Lab platform stack: the equipment-status contract, the inventory, the Python SDK that workflows and the dashboard share, the dashboard's web server and Next.js UI, the lab's login service, and the read-only lab assistant.
 
 The dashboard runs on a single Tailscale-attached server and aggregates status from each lab equipment's REST API into one normalized contract. The browser only ever talks to the dashboard server; the dashboard server is the only client that calls the equipment APIs over the lab Tailnet. Workflow code uses the same SDK directly without going through the dashboard.
 
@@ -21,8 +21,27 @@ Browser  ->  Next.js (web/, port 8000)  ->  FastAPI (api/, port 8001)  ->  lab-s
 - **`web/`** — Next.js 14 (App Router) + TypeScript + TanStack Query.
 - **`equipment.yaml`** — equipment inventory (committed). Hardware identity, adapter, URLs, tile sizing, and pill config. Edit when hardware physically changes.
 - **`platforms.yaml`** — Overview layout config (committed). Defines sections, display order, and which equipment ids belong to each section. Edit when the dashboard layout changes.
-- **`deploy/`** — systemd units for the two services.
+- **`auth/`** — `ac_auth`, the lab's email-code login service + `roster.yaml` allow-list (see [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md)).
+- **`deploy/`** — systemd units for the three services + the Caddy edge config.
 - **`docs/`** — architectural docs, device contract, runbooks, roadmap. See [Documentation](#documentation) below.
+
+## Services
+
+Everything below runs on the one Tailscale-attached dashboard host:
+
+| Service | Unit / source | Port | What it provides |
+|---|---|---|---|
+| Dashboard UI | `ac-organic-lab-web.service` (`web/`) | 8000 | Next.js frontend — the only thing browsers talk to. |
+| Dashboard API | `ac-organic-lab-api.service` (`api/`) | 8001 | FastAPI aggregator over `lab-skills`: normalized equipment status, the audited control passthrough (claim-gated on v1.1 devices), the history endpoints (`/api/history/*`, backed by `lab.db`), and the read-only **lab assistant** (`claude` CLI subprocess + the `lab-history` MCP tools). |
+| Auth service | `ac-organic-lab-auth.service` (`auth/`) | `<tailscale-ip>:8009` | `ac_auth` email-code login and roster/grant checks. Control-route enforcement lives in the Next.js middleware calling `GET /auth/verify`; Caddy `forward_auth` ([`deploy/Caddyfile.auth-snippet`](deploy/Caddyfile.auth-snippet)) is the edge alternative. See [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md). |
+| Edge (Caddy) | [`deploy/Caddyfile`](deploy/Caddyfile) | 443/80 | TLS over Tailscale (`tailscale cert`), fronting the UI and the camera streams; the auth snippet wires `forward_auth`. |
+
+Companion services on the same host from sibling repos:
+[`kasa-tapo-services`](https://github.com/cyrilcaoyang/kasa_tapo_services)
+(camera + smart-plug gateway, deliberately loopback-only on
+`127.0.0.1:8002`) and its `ac-go2rtc` streaming service (MSE/WebRTC).
+The AnaliticaDB record service is separate infrastructure on the data
+server (`100.64.254.6:8010`, own repo).
 
 ## Documentation
 
@@ -38,6 +57,9 @@ All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](doc
 | [`docs/DEVICE_PC_SETUP.md`](docs/DEVICE_PC_SETUP.md) | Canonical install recipe for a Windows device PC (uv + NSSM + Tailscale). Linked from every device repo's README rather than duplicated per-repo. |
 | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Logging tiers (journald → events.jsonl → central SQLite), the history DB schema, dashboard history endpoints, retention guidance. |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Per-device migration status (`legacy_http` → v1.0 → v1.1), SDK milestones (v0.1 → v0.5), and live operational regressions. |
+| [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md) | **Canonical auth doc.** Email-code login (`ac_auth`), roster allow-list, per-scope grants, claim-before-control, data isolation, and the phased rollout (Phase 0 shipped). |
+| [`docs/AGENT_RULES.md`](docs/AGENT_RULES.md) | Lab-wide rules for agents operating on lab infrastructure (safety, records, change control, escalation). Project repos link here from their own `AGENT_RULES.md`. |
+| [`docs/ANALITICADB_ELN_LIMS_DESIGN.md`](docs/ANALITICADB_ELN_LIMS_DESIGN.md) | Design for generalizing AnaliticaDB into the lab's ELN+LIMS record layer (mirror — the canonical copy lives in the AnaliticaDB repo). |
 | [`deploy/README.md`](deploy/README.md) | Linux server deployment, systemd units, Caddy + Tailscale TLS, day-to-day operations. |
 
 ## Local development
@@ -112,7 +134,7 @@ npm run build
 
 ## Deployment (Linux server with systemd)
 
-Both processes run as separate systemd services on one Tailscale-attached Linux server. There is no per-equipment authentication in v1 - access is gated by Tailscale ACLs.
+The services (see [Services](#services)) run as separate systemd units on one Tailscale-attached Linux server. Access is gated by Tailscale ACLs at the network layer; dashboard login (email-code via `ac_auth`) is rolling out per [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md) — device REST APIs themselves carry no per-equipment authentication yet (see the *Control-surface exposure* section of [`docs/ROADMAP.md`](docs/ROADMAP.md)).
 
 See [`deploy/README.md`](deploy/README.md) for:
 
@@ -160,12 +182,14 @@ for the production wiring.
 
 ## Status
 
-**v1 (current scope):** read-only monitoring of plate readers, sealers,
-sensors, etc., plus full control of cameras (PTZ, presets, snapshot,
-recording) and Kasa plugs through `kasa-tapo-services`. Overview page
-(`/`) is driven by `platforms.yaml`; per-platform detail pages (e.g.
-`/platforms/hte`) are also section-order-driven. Polling every 2-3
-seconds.
+**Current:** live monitoring of the full fleet plus control through the
+audited dashboard passthrough (claim-gated on v1.1 devices), full camera
+control (PTZ, presets, snapshot, recording) and Kasa plugs through
+`kasa-tapo-services`, and persistent history (`lab.db` + the
+`/api/history/*` endpoints). Overview page (`/`) is driven by
+`platforms.yaml`; per-platform detail pages (e.g. `/platforms/hte`) are
+also section-order-driven. Polling every 2-3 seconds.
 
-**Future:** WebSocket-based real-time pages, control endpoints with
-explicit confirmations on the slow lab equipment, persistent history.
+**Future:** WebSocket-based real-time pages, the MCP agent surface
+(SDK v0.4, see [`docs/ROADMAP.md`](docs/ROADMAP.md)), and the remaining
+auth rollout phases ([`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md)).

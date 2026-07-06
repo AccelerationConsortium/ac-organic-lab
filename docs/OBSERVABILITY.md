@@ -190,6 +190,43 @@ CREATE TABLE IF NOT EXISTS well_results (
 CREATE INDEX IF NOT EXISTS idx_wr_run ON well_results(run_id);
 ```
 
+### The `event_type` registry
+
+`event_type` is TEXT with no CHECK constraint — any string is accepted on
+the wire. This registry records what is actually emitted (and by whom) so
+readers don't have to reverse-engineer it from the table:
+
+| `event_type` | Emitted by | Notes |
+|---|---|---|
+| `state_transition` | **Aggregator** 60 s poll (`api/app/main.py`) on an observed `equipment_status` change; **device-pushed** by exporters (xArm) for fine-grained transitions | The poll path misses any transition that begins and ends inside one 60 s window; device-pushed rows close that gap. Both use `from_state` / `to_state`. |
+| `control_action` | Dashboard control passthrough (`api/app/control.py`) | One audit row per operator write: `payload: {action, method, status_code, outcome, owner}`. |
+| `agent_observation` | PyPoe read-only journaling | Free-form agent notes via `/api/ingest/events`. |
+| `error` | **Device-pushed** (xArm exporter, from the SDK error/warn callbacks) | `payload.extra: {severity: "error"\|"warning", error_code, warn_code, xarm_state, graph_node}`. |
+| `startup` / `shutdown` | **Device-pushed** (xArm exporter, on connect / disconnect) | Marks controller lifecycle, not process lifecycle (that's `service_uptime`). |
+| `calibration`, `claim_acquired` | *reserved — not yet emitted* | Kept in the vocabulary for future device exporters. |
+
+#### Device-pushed events (reference implementation: xArm)
+
+The `xarm-translocation` repo ships the first device-side exporter
+(`src/core/events_exporter.py`): a stdlib-only, bounded-queue,
+daemon-thread forwarder that POSTs batches to `POST /api/ingest/events`
+straight from the xArm SDK's `state_changed` / `error_warn_changed`
+callbacks. Conventions any future exporter should copy:
+
+- **Best-effort by contract.** `emit()` never blocks or raises; a full
+  queue or unreachable dashboard drops the row. The aggregator's 60 s
+  poll remains the coarse backstop, so a dropped row costs timing
+  fidelity, never truth.
+- **Disabled unless configured** — the xArm reads `XARM_INGEST_URL`
+  (full ingest endpoint URL) and `XARM_INGEST_DEVICE_ID` (defaults to
+  the `equipment.yaml` id); unset means no-op, so dev machines and CI
+  emit nothing.
+- **Standard context keys** ride in `extra` on every record:
+  `xarm_state` (raw SDK state int), `error_code`, `warn_code`,
+  `graph_node` (current motion-graph node or null). The ingest handler
+  folds `extra` into the persisted JSON `payload` verbatim, so new keys
+  need no `api/` change.
+
 ### Why not InfluxDB or TimescaleDB?
 
 Use SQLite until you have > 1 sensor per zone reading at > 1 Hz, or until you need
@@ -220,18 +257,12 @@ equipment_events.jsonl ─────► Exporter script POSTs to              
                               Aggregator writes to equipment_events table
 ```
 
-### API endpoints to add to `ac-organic-lab/api/`
+### API endpoints
 
-These do not exist yet — they are the next implementation step:
-
-| Endpoint | Returns | Dashboard use |
-|---|---|---|
-| `GET /api/history/uptime/{device_id}?days=7` | `[{ts, state, duration_s}]` | Per-device uptime % tile |
-| `GET /api/history/events/{device_id}?limit=50` | `[{ts, event_type, message}]` | Event timeline sidebar |
-| `GET /api/history/runs?limit=20` | `[{id, plate_id, n_converged, status, ...}]` | Run history table |
-| `GET /api/history/runs/{run_id}/wells` | `[{well, actual_mg, converged, ...}]` | 96-well heatmap |
-| `GET /api/history/sensors/{sensor_id}?since=1h` | `[{ts, metric, value}]` | Env monitoring line chart |
-| `POST /api/ingest/events` | `204` | Receive events.jsonl records from device exporters |
+Implemented in `api/app/history.py` (`/api/history/*` reads +
+`/api/ingest/*` writes). See §9 for the full endpoint reference —
+earlier revisions of this section listed the endpoints as future work;
+they shipped.
 
 ---
 
@@ -334,7 +365,52 @@ via Next's built-in proxy (`/api/...` → `http://127.0.0.1:8001/api/...`).
 
 ---
 
-## 10. Direct database access
+## 10. The lab assistant as a read consumer (MCP)
+
+The dashboard ships a read-only Claude assistant (the chat bubble) whose
+entire job is to *consume* the observability data described above and turn it
+into operator answers ("has the plateloc errored today?", "when did the
+gateway last go down?"). It is read-only by construction and is the main
+non-human reader of `lab.db` and the dashboard's journald units. See
+[`ARCHITECTURE.md`](ARCHITECTURE.md) decision #10 for the design rationale;
+this section documents what it reads and the limits it reads under.
+
+The tools live in `api/app/mcp_server.py` (the `lab-history` MCP server, stdio
+transport, `lab-history-mcp` entry point) and are surfaced to the assistant —
+and to any developer who runs `claude mcp add lab-history` — as seven
+read-only tools:
+
+| MCP tool | Reads from | Maps to |
+|---|---|---|
+| `list_equipment_now` | live aggregator (`GET /api/equipment`) | current device state, `fetch_error`, `latency_ms` |
+| `query_equipment_events` | `equipment_events` table | §4 state transitions / errors / startup / shutdown |
+| `query_service_uptime` | `service_uptime` table | §6 uptime % + reachability transitions |
+| `query_sensor_readings` | `sensor_readings` table | §7 downsampled env history |
+| `query_runs` | `runs` table | dosing-run records |
+| `query_well_results` | `well_results` table | per-well dispense results |
+| `tail_journald` | `journalctl -u <unit>` | §2 host journald (whitelisted units only) |
+
+Guardrails (all enforced in `mcp_server.py`, mirroring the API bubble):
+
+- **Read-only.** No tool writes the DB or actuates hardware. The history DB's
+  single-writer invariant (§4, decision #9) is unaffected — the assistant is
+  purely a reader.
+- **Journald unit whitelist.** `tail_journald` accepts only
+  `ac-organic-lab-api.service`, `ac-organic-lab-web.service`,
+  `kasa-tapo-services.service`, and `ac-go2rtc.service`, so the tool cannot
+  become a side channel into the host's full journal. Capped at
+  `MAX_JOURNAL_LINES = 200` lines and an 8 s `journalctl` timeout.
+- **Query caps.** `MAX_LIMIT = 200` rows, `MAX_SINCE_HOURS = 24 × 7` lookback,
+  clamped server-side regardless of what the model requests.
+
+Nothing the assistant does is itself logged to `lab.db` — unlike operator
+*control* writes (§8, `event_type: control_action`), a read-only chat turn
+produces no audit row. The subprocess's own stdout/stderr land in the
+`ac-organic-lab-api` journald unit (it runs inside that FastAPI process).
+
+---
+
+## 11. Direct database access
 
 The database lives at `/opt/ac-organic-lab/data/lab.db` on the dashboard host.
 Override the path with `LAB_DB_PATH` in `.env`.
@@ -384,7 +460,7 @@ print(json.dumps(runs, indent=2))
 
 ---
 
-## 11. Backup and retention
+## 12. Backup and retention
 
 ```bash
 # Safe hot backup while server is running (WAL mode makes this safe)
