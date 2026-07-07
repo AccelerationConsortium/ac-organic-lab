@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import signal
 import socket
 import time
@@ -39,7 +40,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from .authz import data_scope, effective_central_role, effective_device_role
@@ -364,12 +365,24 @@ def create_app(
         return {"ok": True, "email": email, "role": user.role}
 
     @app.get("/auth/verify")
-    async def verify(request: Request) -> JSONResponse:
+    async def verify(request: Request) -> Response:
         """Forward-auth: 200 + identity headers when a session cookie (human) or
         ``X-Api-Key`` (machine principal) is valid, else 401. Caddy copies
-        X-Auth-* downstream so control.py stamps the real owner into the claim."""
+        X-Auth-* downstream so control.py stamps the real owner into the claim.
+
+        Unauthenticated **browser page navigations** (``Accept: text/html``) get a
+        302 to the login page instead of a raw 401: behind the edge's
+        ``forward_auth``, Caddy copies this 3xx (incl. ``Location``) back to the
+        browser on the deny path, so a logged-out user landing on a gated path
+        (e.g. ``/xarm5``) is sent to login rather than shown a bare 401. API / XHR
+        callers (``fetch``, the Next middleware) send ``*/*`` or JSON and still get
+        401, so their programmatic auth checks are unchanged."""
         user = await _session_user(request) or await _api_key_user(request)
         if user is None:
+            accept = request.headers.get("accept", "").lower()
+            if "text/html" in accept:
+                login_url = os.environ.get("AUTH_LOGIN_URL", "/")
+                return RedirectResponse(url=login_url, status_code=302)
             raise HTTPException(status_code=401, detail="not authenticated")
         # Also propagate the project-based data scope so forward_auth-fronted
         # services (lab.db reads, AnaliticaDB) can authorize without a second call.

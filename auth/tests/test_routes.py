@@ -133,6 +133,23 @@ def test_verify_without_cookie_is_401(tmp_path):
         assert c.get("/auth/me").json()["authenticated"] is False
 
 
+def test_verify_browser_navigation_redirects_to_login(tmp_path):
+    """A logged-out *browser page* (Accept: text/html) behind the edge's
+    forward_auth gets a 302 to the login page (Caddy copies the 3xx back on the
+    deny path); API/XHR callers (*/* or JSON) still get 401 so the Next
+    middleware's programmatic check is unchanged."""
+    app, _, _ = _ctx(tmp_path)
+    with TestClient(app) as c:
+        r = c.get(
+            "/auth/verify",
+            headers={"accept": "text/html,application/xhtml+xml"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 302 and r.headers["location"] == "/"
+        assert c.get("/auth/verify", headers={"accept": "*/*"}).status_code == 401
+        assert c.get("/auth/verify", headers={"accept": "application/json"}).status_code == 401
+
+
 def test_wrong_code_401_then_correct_then_single_use(tmp_path):
     app, _, mailer = _ctx(tmp_path)
     with TestClient(app) as c:

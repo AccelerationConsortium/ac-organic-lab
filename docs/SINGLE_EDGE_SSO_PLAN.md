@@ -1,7 +1,12 @@
 # Single-Edge SSO Plan — one login for every lab UI
 
-**Status:** plan (drafted 2026-07-06). Interim Phase 1 config committed at
-`deploy/Caddyfile.single-edge`; not yet deployed/tested on the dashboard host.
+**Status:** **Phase 1 edge deployed 2026-07-07** — Caddy on `http://100.64.254.6`
+serves the dashboard at `/`, one host-only `ac_auth_session` cookie, and
+`forward_auth`-gated device paths. Verified: `/` 200, login round-trips through
+the edge, `/xarm5` gate 401→login-redirect logged-out / proxies logged-in. **Still
+open (Phase 1):** the xArm `/web/` panel rendering under `/xarm5` (subpath +
+trust-edge — device-repo work, tasks 3–4) and publishing the one canonical URL
+(task 6). Phases 2–3 (close the side-door; friendly name + HTTPS) not started.
 **Owner concern:** central server (`ac-organic-lab`) — the edge runs on the
 dashboard host.
 **Relationship to `AUTH_DESIGN.md`:** this is the concrete build-out of that
@@ -51,22 +56,25 @@ Config: **`deploy/Caddyfile.single-edge`** (extends the existing `deploy/Caddyfi
 
 Tasks:
 
-1. **Extend the edge.** Add path routes for each device-native panel
-   (`/xarm5` → xArm `/web/`; add others as they gain UIs). Dashboard stays at
-   `/`. Camera streams / gateway blocks unchanged. *(config written)*
-2. **Gate UI paths with `forward_auth`** → `ac_auth /auth/verify`, injecting
-   `X-Auth-User` / `X-Auth-Role` downstream. *(config written)*
+1. ✅ **Extend the edge.** Path routes: `/xarm5` → xArm `/web/`, dashboard at `/`,
+   camera streams / gateway blocks. *(deployed; a stray one-line-block syntax bug
+   in the committed config was fixed on first deploy — commit b0e9619.)*
+2. ✅ **Gate UI paths with `forward_auth`** → `ac_auth /auth/verify`, injecting
+   `X-Auth-User` / `X-Auth-Role`. *(deployed; verified 401 logged-out / pass
+   logged-in on `/xarm5`.)*
 3. **Device panel trusts the edge identity.** The xArm panel must accept the
    edge-injected `X-Auth-User` (or drop its own self-login when reached via the
    edge), else the user is prompted twice. **Device-side change in the
    `xarm-translocation` repo.** ← the real work of "single source of login."
 4. **Subpath vs base-path.** The xArm `/web/` panel uses root-absolute asset
-   links. Either the `rewrite * /web{uri}` in the edge config suffices, or set a
-   base path in the xarm repo. Verify on-host; prefer base-path if assets 404.
-5. **Browser 401 → login redirect.** `forward_auth` returns the sidecar's 401
-   verbatim; for a *page* navigation that's an ugly raw 401. Decide: either
-   `ac_auth` grows a redirect mode for browser `Accept: text/html` requests, or
-   the edge catches 401 and 302s to the dashboard login with a return URL.
+   links (the live symptom: `/xarm5` 404s once past the gate). Either the
+   `rewrite * /web{uri}` in the edge config suffices, or set a base path in the
+   xarm repo. Verify on-host; prefer base-path if assets 404.
+5. ✅ **Browser 401 → login redirect.** Chosen: `ac_auth`-side. `/auth/verify`
+   returns **302 → `AUTH_LOGIN_URL` (default `/`)** for `Accept: text/html`
+   navigations; Caddy copies the 3xx back on the `forward_auth` deny path.
+   API/XHR (`*/*`, JSON — incl. the Next middleware) still get 401. *(main.py;
+   `AUTH_LOGIN_URL` overrides the target.)*
 6. **One canonical entrypoint.** Publish only `http://100.64.254.6/`. The ts.net
    hostname and device `host:port`s are different origins → second logins.
    301-redirect the old dashboard hostname to the IP (or vice-versa) so nobody
