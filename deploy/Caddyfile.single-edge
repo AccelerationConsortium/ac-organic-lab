@@ -22,42 +22,48 @@
 #   sudo systemctl reload caddy
 
 http://100.64.254.6 {
-    encode gzip
+	encode gzip
 
-    # ---- camera video + gateway (unchanged; already on this origin) --------
-    handle_path /streams/* { reverse_proxy 127.0.0.1:1984 }
-    handle /api/cameras/*  { reverse_proxy 127.0.0.1:8002 }
-    handle /api/plugs/*    { reverse_proxy 127.0.0.1:8002 }
+	# ---- camera video + gateway (unchanged; already on this origin) --------
+	handle_path /streams/* {
+		reverse_proxy 127.0.0.1:1984
+	}
+	handle /api/cameras/* {
+		reverse_proxy 127.0.0.1:8002
+	}
+	handle /api/plugs/* {
+		reverse_proxy 127.0.0.1:8002
+	}
 
-    # ---- device-native panels, path-routed ONTO this origin ----------------
-    # These are the UIs that used to demand their own login (each on its own
-    # origin). forward_auth gates them at the edge against the SAME ac_auth the
-    # dashboard uses (100.64.254.6:8009 /auth/verify → 200 + X-Auth-User/Role,
-    # else 401). On allow we proxy to the device panel over the tailnet.
-    #
-    # xArm5 native panel lives at :8000/web/ on the device PC. handle_path strips
-    # the /xarm5 prefix; the rewrite re-adds the device's own /web root.
-    #
-    # TODO(on-host): the xArm /web/ panel uses root-absolute asset links
-    # (/static, /web/…). Verify it renders under the /xarm5 prefix; if assets
-    # 404, set a base path in the xarm repo instead of the rewrite below (plan
-    # Phase 1 → "subpath vs base-path"). Also: the panel currently runs its OWN
-    # auth banner — it must trust the edge identity (X-Auth-User) or drop its
-    # self-login, else the user is prompted twice (plan Phase 1 → "device panel
-    # trusts the edge").
-    @xarm_ui path /xarm5 /xarm5/*
-    forward_auth @xarm_ui 100.64.254.6:8009 {
-        uri /auth/verify
-        copy_headers X-Auth-User X-Auth-Role
-    }
-    handle_path /xarm5/* {
-        rewrite * /web{uri}
-        reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000
-    }
+	# ---- device-native panels, path-routed ONTO this origin ----------------
+	# These are the UIs that used to demand their own login (each on its own
+	# origin). forward_auth gates them at the edge against the SAME ac_auth the
+	# dashboard uses (100.64.254.6:8009 /auth/verify → 200 + X-Auth-User/Role,
+	# else 401). On allow we proxy to the device panel over the tailnet.
+	#
+	# xArm5 native panel lives at :8000/web/ on the device PC. handle_path strips
+	# the /xarm5 prefix; the rewrite re-adds the device's own /web root.
+	#
+	# TODO(on-host): the xArm /web/ panel uses root-absolute asset links
+	# (/static, /web/…). Verify it renders under the /xarm5 prefix; if assets
+	# 404, set a base path in the xarm repo instead of the rewrite below (plan
+	# Phase 1 → "subpath vs base-path"). Also: the panel currently runs its OWN
+	# auth banner — it must trust the edge identity (X-Auth-User) or drop its
+	# self-login, else the user is prompted twice (plan Phase 1 → "device panel
+	# trusts the edge").
+	@xarm_ui path /xarm5 /xarm5/*
+	forward_auth @xarm_ui 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
+	handle_path /xarm5/* {
+		rewrite * /web{uri}
+		reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000
+	}
 
-    # ---- dashboard (Next.js) at root ---------------------------------------
-    # Next.js serves / and /api/* (it rewrites /api/* to FastAPI on :8001) and
-    # enforces its own control/assistant gate via web/src/middleware.ts against
-    # the same sidecar — so no forward_auth wrapper is needed here.
-    reverse_proxy 100.64.254.6:8000
+	# ---- dashboard (Next.js) at root ---------------------------------------
+	# Next.js serves / and /api/* (it rewrites /api/* to FastAPI on :8001) and
+	# enforces its own control/assistant gate via web/src/middleware.ts against
+	# the same sidecar — so no forward_auth wrapper is needed here.
+	reverse_proxy 100.64.254.6:8000
 }
