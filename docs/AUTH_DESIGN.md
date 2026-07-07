@@ -558,6 +558,34 @@ here: trivial revocation, no key management, central is already on the path.
 a front-door swap that touches none of the model below; needs a UofT app
 registration we chose to avoid.
 
+### Why sessions can't be shared per-host — the edge must be one origin
+
+A session cookie is scoped to the origin that set it and **cannot be shared
+across the lab's device hosts as they are addressed today.** Two independent
+browser rules kill the "one sign-in, every device UI" shortcut, so a shared
+parent-domain cookie is not an option over either addressing scheme:
+
+- **Raw `100.x` Tailnet IPs** — RFC 6265 forbids a `Domain` attribute on an
+  IP-literal host, so a cookie set on `100.64.254.100:8000` is *host-only* and
+  never travels to another IP or to a hostname.
+- **MagicDNS `*.tail….ts.net`** — `ts.net` is on the browser Public Suffix List
+  (Tailscale registered it so tailnets are origin-isolated), so Chrome/Safari
+  **silently drop** any `Domain=tail….ts.net` cookie. A per-device UI that tries
+  to set a tailnet-wide session cookie gets no cookie at all. *(Confirmed live
+  2026-07-06 on the xArm's own auth banner: `/auth/verify-code` returned 200 but
+  the session never stuck; the fix was to leave the cookie host-only — sign in
+  once per device host. `localStorage`/bearer schemes don't help — they are
+  origin-partitioned the same way.)*
+
+So a device UI hosted directly on its own `<host>:<port>` forces a **separate
+login per origin** (the interim state on the xArm today). **This is the concrete
+reason the single public Caddy edge is required for SSO, not merely cleaner:**
+collapsing every UI behind one origin (path-routed) yields one cookie, set on a
+single registrable public domain (*not* `ts.net`), shared across the whole
+dashboard — genuine single sign-on, and the same move that closes the
+direct-device side-door (Phase 4). Per-host device UIs and a shared session are
+mutually exclusive; the edge is what reconciles them.
+
 ## Auth flows
 
 - **Human login:** `POST /auth/request-code {email}` → (if allow-listed &

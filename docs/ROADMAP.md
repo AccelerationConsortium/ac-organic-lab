@@ -312,7 +312,13 @@ out-of-band, un-audited?"):
    (AUTH_DESIGN) — note Caddy `forward_auth` covers only the dashboard's
    passthrough routes; closing the direct-device hole needs devices
    behind that edge or loopback-bound + reverse-proxied like the
-   camera/plug gateway.
+   camera/plug gateway. The single edge is also the *only* way to get
+   one sign-in across UIs: a session cookie can't be shared across
+   per-host device UIs (raw `100.x` IPs can't carry a `Domain` cookie;
+   `*.ts.net` is on the Public Suffix List so browsers drop tailnet-wide
+   cookies — confirmed live 2026-07-06 on the xArm). One origin behind
+   the edge ⇒ one shared cookie ⇒ SSO. See AUTH_DESIGN → *Why sessions
+   can't be shared per-host*.
 3. **xArm `/web/` panel** — replace the deep-link with audited,
    claim-gated dashboard controls and/or front the native panel at the
    edge.
