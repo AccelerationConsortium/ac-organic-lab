@@ -41,10 +41,12 @@ def _settings(tmp_path, **kw) -> Settings:
 def _roster(users=(("alice@utoronto.ca", "operator"),), automation=()) -> Roster:
     """Build a Roster fixture. `users` items are (email, role[, status]); the
     allow-list now lives in the roster, not the DB."""
-    us = [
-        RosterUser(email=spec[0], role=spec[1], status=(spec[2] if len(spec) > 2 else "active"))
-        for spec in users
-    ]
+    us = []
+    for spec in users:
+        kw = dict(email=spec[0], role=spec[1], status=(spec[2] if len(spec) > 2 else "active"))
+        if len(spec) > 3:  # optional display name (4th element)
+            kw["name"] = spec[3]
+        us.append(RosterUser(**kw))
     au = [RosterAutomation(email=e, approved=approved) for (e, approved) in automation]
     return Roster(users=us, automation=au)
 
@@ -154,12 +156,15 @@ def test_logout_revokes_session(tmp_path):
 
 
 def test_users_lists_active_humans_only(tmp_path):
-    """The login dropdown sees active humans, not automation accounts or disabled users."""
+    """The login dropdown sees active humans as {id, name, role} — never an
+    email — and excludes automation accounts and disabled users."""
+    from ac_auth.main import _login_id
+
     app, _, _ = _ctx(
         tmp_path,
         users=(
-            ("alice@utoronto.ca", "operator"),
-            ("boss@utoronto.ca", "admin"),
+            ("alice@utoronto.ca", "operator", "active", "Alice A"),  # has a name
+            ("boss@utoronto.ca", "admin"),                           # no name
             ("gone@utoronto.ca", "operator", "disabled"),
         ),
         automation=(("robot@lab.local", True),),
@@ -167,9 +172,42 @@ def test_users_lists_active_humans_only(tmp_path):
     with TestClient(app) as c:
         r = c.get("/auth/users")
     assert r.status_code == 200
-    by_email = {u["email"]: u["role"] for u in r.json()["users"]}
-    # operator maps to the wire value "user"
-    assert by_email == {"alice@utoronto.ca": "user", "boss@utoronto.ca": "admin"}
+    entries = r.json()["users"]
+    # Privacy: the payload never carries a raw email.
+    assert all("email" not in u for u in entries)
+    assert all({"id", "name", "role"} <= set(u) for u in entries)
+    # Only active humans, keyed by opaque login id → wire role (operator == user).
+    by_id = {u["id"]: u["role"] for u in entries}
+    assert by_id == {
+        _login_id("alice@utoronto.ca"): "user",
+        _login_id("boss@utoronto.ca"): "admin",
+    }
+    by_id_name = {u["id"]: u["name"] for u in entries}
+    # Named user shows its name; unnamed user falls back to a masked address.
+    assert by_id_name[_login_id("alice@utoronto.ca")] == "Alice A"
+    masked = by_id_name[_login_id("boss@utoronto.ca")]
+    assert masked == "b…@utoronto.ca" and "boss@utoronto.ca" not in masked
+    # Sorted by display name (case-insensitive): "Alice A" before "b…@…".
+    assert [u["name"] for u in entries] == sorted((u["name"] for u in entries), key=str.lower)
+
+
+def test_login_and_verify_by_opaque_id(tmp_path):
+    """The dropdown flow: the client sends the opaque id (never an email); the
+    sidecar resolves id -> email server-side for both /auth/login and
+    /auth/verify-code. A bogus id is refused like an unknown account."""
+    from ac_auth.main import _login_id
+
+    app, _, mailer = _ctx(tmp_path, users=(("alice@utoronto.ca", "operator"),))
+    uid = _login_id("alice@utoronto.ca")
+    with TestClient(app) as c:
+        assert c.post("/auth/login", json={"id": uid}).status_code == 202
+        code = mailer.sent[-1][1]
+        r = c.post("/auth/verify-code", json={"id": uid, "code": code})
+        assert r.status_code == 200 and r.json()["role"] == "user"
+        assert c.get("/auth/verify").status_code == 200
+    # Unknown id resolves to no email → 422 (invalid account), nothing sent.
+    with TestClient(app) as c:
+        assert c.post("/auth/login", json={"id": "deadbeefdeadbeef"}).status_code == 422
 
 
 def test_expired_account_cannot_request_or_verify(tmp_path):

@@ -17,7 +17,10 @@ export interface Identity {
 }
 
 export interface UserSummary {
-  email: string;
+  /** Opaque login handle (the dropdown option value) — not an email. */
+  id: string;
+  /** Display name shown in the dropdown. */
+  name: string;
   role: string;
 }
 
@@ -32,11 +35,11 @@ export interface UserAuthValue {
   users: UserSummary[];
   usersLoading: boolean;
 
-  /** Ask the sidecar to email a one-time code to `email`. */
-  requestCode: (email: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Ask the sidecar to email a one-time code to the account with this id. */
+  requestCode: (id: string) => Promise<{ ok: boolean; error?: string }>;
   /** Submit a code; on success the session cookie is set and state updates. */
   verifyCode: (
-    email: string,
+    id: string,
     code: string,
   ) => Promise<{ ok: boolean; error?: string }>;
   /** Revoke the session and clear local state. */
@@ -154,12 +157,12 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
     [authenticated, equipmentRoles, identity],
   );
 
-  const requestCode = useCallback(async (email: string) => {
+  const requestCode = useCallback(async (id: string) => {
     try {
       const r = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ id }),
       });
       if (r.ok) return { ok: true };
       const d = await r.json().catch(() => null);
@@ -169,17 +172,17 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const verifyCode = useCallback(async (email: string, code: string) => {
+  const verifyCode = useCallback(async (id: string, code: string) => {
     try {
       const r = await fetch("/api/auth/verify-code", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, code }),
+        body: JSON.stringify({ id, code }),
       });
       if (r.ok) {
         const d = await r.json().catch(() => null);
         setAuthenticated(true);
-        setIdentity({ email: d?.email ?? email, role: d?.role ?? "user" });
+        setIdentity({ email: d?.email ?? "", role: d?.role ?? "user" });
         return { ok: true };
       }
       const d = await r.json().catch(() => null);

@@ -8,11 +8,11 @@ inject ``X-Auth-User`` / ``X-Auth-Role`` downstream.
 
 Endpoints:
 - ``GET  /health``                    — liveness.
-- ``POST /auth/login``                — ``{email}`` → email a code (403 if not allow-listed).
-- ``POST /auth/verify-code``          — ``{email, code}`` → set session cookie.
+- ``POST /auth/login``                — ``{id|email}`` → email a code (403 if not allow-listed).
+- ``POST /auth/verify-code``          — ``{id|email, code}`` → set session cookie.
 - ``GET  /auth/verify``               — forward-auth: validate cookie **or** ``X-Api-Key``
   (machine principals) → 200 + X-Auth-* headers / 401.
-- ``GET  /auth/users``                — active human accounts for the login dropdown.
+- ``GET  /auth/users``                — ``{id, name, role}`` for the login dropdown (no email).
 - ``GET  /auth/me``                   — identity for the frontend.
 - ``POST /auth/logout``               — revoke session + clear cookie.
 - ``GET  /equipment/{key}/roster``    — owner→device-role projection a device pulls
@@ -29,6 +29,7 @@ Run: ``uvicorn ac_auth.main:app --host 127.0.0.1 --port 8009``.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import signal
 import socket
@@ -55,11 +56,15 @@ logger = logging.getLogger("ac_auth")
 
 
 class EmailIn(BaseModel):
-    email: str = Field(min_length=3, max_length=254)
+    # Login accepts either an opaque dropdown ``id`` (so the client never holds a
+    # raw email) or a raw ``email`` (CLI / back-compat). At least one is required.
+    email: Optional[str] = Field(default=None, max_length=254)
+    id: Optional[str] = Field(default=None, max_length=64)
 
 
 class VerifyIn(BaseModel):
-    email: str = Field(min_length=3, max_length=254)
+    email: Optional[str] = Field(default=None, max_length=254)
+    id: Optional[str] = Field(default=None, max_length=64)
     code: str = Field(min_length=4, max_length=12)
 
 
@@ -101,6 +106,24 @@ def _automation_user(a: RosterAutomation) -> User:
         name=a.name,
         expires_at=a.expires_at,
     )
+
+
+def _login_id(email: str) -> str:
+    """Opaque, stable, non-reversible handle used as the login-dropdown option
+    value so the client never receives a raw email address (privacy on a public
+    login page). Derived from the email; reversed server-side by scanning the
+    roster (see :func:`_email_from_login_id`)."""
+    return hashlib.sha256(("login:" + norm_email(email)).encode("utf-8")).hexdigest()[:16]
+
+
+def _email_from_login_id(roster: Roster, login_id: Optional[str]) -> Optional[str]:
+    """Reverse a dropdown ``id`` back to its email (human accounts only)."""
+    if not login_id:
+        return None
+    for u in roster.users:
+        if _login_id(u.email) == login_id:
+            return u.email
+    return None
 
 
 def _lookup_principal(roster: Roster, email: Optional[str]) -> Optional[User]:
@@ -265,10 +288,13 @@ def create_app(
     @app.post("/auth/login", status_code=202)
     async def login(body: EmailIn, request: Request) -> dict:
         s, db = _s(request), _db(request)
-        email = body.email.strip().lower()
+        roster = _roster(request)
+        email = (body.email or "").strip().lower()
+        if not email and body.id:
+            email = _email_from_login_id(roster, body.id.strip()) or ""
         if "@" not in email:
-            raise HTTPException(status_code=422, detail="invalid email")
-        user = _lookup_principal(_roster(request), email)
+            raise HTTPException(status_code=422, detail="invalid account")
+        user = _lookup_principal(roster, email)
         # Clear 403 for an unknown email (internal tool, small allow-list). For a
         # fully public deployment, return a generic 202 here to avoid enumeration.
         if user is None or user.status != "active":
@@ -316,11 +342,16 @@ def create_app(
     @app.post("/auth/verify-code")
     async def verify_code(body: VerifyIn, request: Request, response: Response) -> dict:
         s, db = _s(request), _db(request)
-        email = body.email.strip().lower()
+        roster = _roster(request)
+        email = (body.email or "").strip().lower()
+        if not email and body.id:
+            email = _email_from_login_id(roster, body.id.strip()) or ""
+        if "@" not in email:
+            raise HTTPException(status_code=422, detail="invalid account")
         ok = await asyncio.to_thread(db.verify_login_code, email, body.code.strip(), s.code_max_attempts)
         if not ok:
             raise HTTPException(status_code=401, detail="Invalid or expired code.")
-        user = _lookup_principal(_roster(request), email)
+        user = _lookup_principal(roster, email)
         if user is None or user.status != "active" or user.is_expired():
             raise HTTPException(status_code=403, detail="This email is not authorized.")
         # The session row IS the login record — last-login derives from it; no
@@ -511,17 +542,27 @@ def create_app(
 
     @app.get("/auth/users")
     async def users(request: Request) -> dict:
-        """Active human accounts for the dashboard's login dropdown. Automation
-        accounts (machine principals) are excluded — they authenticate by API
-        key, not email code. Tailnet-gated like the rest of the sidecar; the
-        list of allow-listed emails is not a secret in this internal tool."""
-        return {
-            "users": [
-                {"email": u.email, "role": u.role}
-                for u in _active_principals(_roster(request))
-                if not u.is_automation
-            ]
-        }
+        """Active human accounts for the dashboard's login dropdown, as
+        ``{id, name, role}`` — **no email**. ``id`` is an opaque, stable handle
+        (see :func:`_login_id`) the client passes back to /auth/login and
+        /auth/verify-code, so raw addresses never reach the browser (privacy on
+        a public login page). ``name`` is the roster display name, falling back
+        to a masked address only if a user has none. Automation accounts
+        (API-key principals) are excluded. Sorted by name."""
+
+        def _label(u: User) -> str:
+            if u.name and u.name.strip():
+                return u.name.strip()
+            local, _, dom = u.email.partition("@")
+            return f"{local[:1]}…@{dom}" if dom else "account"
+
+        entries = [
+            {"id": _login_id(u.email), "name": _label(u), "role": u.role}
+            for u in _active_principals(_roster(request))
+            if not u.is_automation
+        ]
+        entries.sort(key=lambda e: e["name"].lower())
+        return {"users": entries}
 
     @app.get("/auth/me")
     async def me(request: Request) -> dict:

@@ -38,7 +38,7 @@ export function LoginBar() {
     registerLoginHint,
   } = useUserAuth();
 
-  const [email, setEmail] = useState("");
+  const [selectedId, setSelectedId] = useState("");
   const [code, setCode] = useState("");
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -61,10 +61,8 @@ export function LoginBar() {
     });
   }, [registerLoginHint]);
 
-  // Default-select the first account once the list loads.
-  useEffect(() => {
-    if (!email && users.length > 0) setEmail(users[0].email);
-  }, [users, email]);
+  // No default selection: the dropdown starts blank ("Select your name…") so
+  // no account is pre-chosen and no identity is revealed until the user picks.
 
   // Focus the code input as soon as a code is sent.
   useEffect(() => {
@@ -75,23 +73,23 @@ export function LoginBar() {
   }, [sent]);
 
   async function handleSend() {
-    if (!email || sending) return;
+    if (!selectedId || sending) return;
     setSending(true);
     setSendErr(null);
     setResult(null);
     setVerifyErr(null);
-    const r = await requestCode(email);
+    const r = await requestCode(selectedId);
     setSending(false);
     if (r.ok) setSent(true);
     else setSendErr(r.error ?? "Could not send code");
   }
 
   async function handleVerify() {
-    if (!email || !code || verifying) return;
+    if (!selectedId || !code || verifying) return;
     setVerifying(true);
     setVerifyErr(null);
     setResult(null);
-    const r = await verifyCode(email, code);
+    const r = await verifyCode(selectedId, code);
     setVerifying(false);
     if (r.ok) {
       setResult("ok");
@@ -155,21 +153,24 @@ export function LoginBar() {
       </label>
       <select
         id="login-user"
-        value={email}
+        value={selectedId}
         disabled={loading || usersLoading || sending || verifying}
         onChange={(e) => {
-          setEmail(e.target.value);
+          setSelectedId(e.target.value);
           resetFlow();
         }}
         className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm text-ink outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
       >
-        {usersLoading && <option value="">Loading…</option>}
-        {!usersLoading && users.length === 0 && (
-          <option value="">No accounts</option>
-        )}
+        <option value="">
+          {usersLoading
+            ? "Loading…"
+            : users.length === 0
+              ? "No accounts"
+              : "Select your name…"}
+        </option>
         {users.map((u) => (
-          <option key={u.email} value={u.email}>
-            {u.email}
+          <option key={u.id} value={u.id}>
+            {u.name}
           </option>
         ))}
       </select>
@@ -178,7 +179,7 @@ export function LoginBar() {
         <button
           type="button"
           onClick={handleSend}
-          disabled={!email || sending || usersLoading}
+          disabled={!selectedId || sending || usersLoading}
           className="rounded-md border border-sky-400 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800 hover:bg-sky-100 disabled:opacity-50 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-200 dark:hover:bg-sky-900/60"
         >
           {sending ? "Sending…" : "Send code"}

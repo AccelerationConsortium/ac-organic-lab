@@ -1,13 +1,14 @@
 # Auth Design — identity, authorization, and data access
 
-**Status:** v1 + **Phase 0 shipped** (`auth/ac_auth`: email-code login, sessions,
-Gmail sender, send-rate limiting, and the **`roster.yaml` allow-list** — config in
-a gitignored YAML with fail-closed validation, runtime-only SQLite). The hierarchy
-/ per-equipment authorization (Phase 1+), data isolation, and automation-approval
-layers below are designed but not yet built — see *Phasing*. Drafted 2026-06-23;
-revised 2026-06-27 (role model simplified; equipment↔platform many-to-many;
-data-isolation + automation-approval added; **allow-list moved to `roster.yaml`
-— Phase 0, now shipped + deployed**).
+**Status:** v1 + **Phases 0 / 1a / 1b + data-ownership projects shipped & deployed**
+(`auth/ac_auth`: email-code login, opaque sessions, Gmail sender, send-rate
+limiting, the **`roster.yaml` allow-list** with fail-closed validation, per-scope
+**grant resolution** — global / platform / equipment — plus `role: none`
+restriction, and **project-based data scope**). What remains: data-isolation
+*enforcement* (`can_read`), finishing claim-authorization + closing the
+direct-device side-door, and automation approval — see *Phasing*. Drafted
+2026-06-23; last revised 2026-07-07 (login dropdown shows **names, not emails**;
+`/auth/request-code` → `/auth/login`; `/auth/*` namespace documented).
 **Scope:** central auth/authorization **module inside `ac-organic-lab`** serving
 every platform and device. Single source of truth for *who may do what on which
 equipment, as what role* across a platform↔device graph, plus session
@@ -513,17 +514,6 @@ service:
 6. **Explicit reload** in prod (restart or SIGHUP), not on-save — editing the file
    mid-thought doesn't hit the running service until you choose.
 
-### Current implementation (being migrated to `roster.yaml` — Phase 0)
-
-Today the allow-list still lives in the SQLite `users` table (`ac_auth/db.py`):
-email PK; `role` (`user`/`admin`, where `user` == target `operator`); `status`;
-`is_automation`; and the account-management columns `name` / `lab_account` /
-`notes` / `expires_at` (login-enforced) / `last_login_at` / `email_verified` /
-`disabled_at` / `disabled_reason` / `created_at` (additive via `_migrate()`).
-**Phase 0 moves these fields into `roster.yaml` and shrinks SQLite to the runtime
-tables above;** `last_login_at` / `email_verified` become derived and the `users`
-table is retired.
-
 ---
 
 ## The `/auth/*` namespace — providers vs shared machinery
@@ -558,7 +548,7 @@ authorized you."
 | **shared** | `GET /auth/verify` | GET | now | forward-auth: the edge calls it every protected request → 200 + `X-Auth-*` / 401 |
 | **shared** | `POST /auth/logout` | POST | now | revoke session + clear cookie |
 | **shared** | `GET /auth/me` | GET | now | session introspection (soft; never 401) |
-| **shared** | `GET /auth/users` | GET | now | active-humans list for the login dropdown |
+| **shared** | `GET /auth/users` | GET | now | login-dropdown list as `{id, name, role}` — **no email** (see below) |
 
 The naming reads as **start / complete per provider**:
 
@@ -574,6 +564,18 @@ harmless because they answer different verbs and always have.
 The **authorization plane** — `/authz/check`, `/authz/scope`, `/authz/mine`,
 `/authz/matrix`, `/equipment/{key}/roster` — is a *separate* namespace (what you
 may do, not who you are) and is unaffected by provider changes.
+
+**Login dropdown — names, not emails (privacy).** On a public login page,
+returning raw emails would let anyone reaching it enumerate every lab member's
+address (network tab). So `GET /auth/users` returns `{id, name, role}` with **no
+email**: `id` is an opaque, stable, non-reversible handle
+(`sha256("login:"+email)[:16]`) used only as the dropdown's option value; `name`
+is the roster display name (falling back to a masked address like `b…@utoronto.ca`
+only if a user has none). The dropdown defaults to a blank "Select your name…"
+so no identity is pre-revealed. The client then sends that `id` to `/auth/login`
+and `/auth/verify-code`, which resolve `id → email` **server-side** by scanning
+the roster — a raw address never reaches the browser. (Both endpoints still accept
+`{email}` for CLI/back-compat.)
 
 **Service lives on the Tailnet; the surface lives on the public edge.** The
 sidecar runs at `100.64.254.6:8009` (Tailnet, loopback refused). But the `/auth/*`
@@ -706,13 +708,9 @@ login like `status: disabled`). The CLI keeps **`validate`** (systemd
 `ExecStartPre` + the `roster.yaml.example` pre-commit hook), **`export`** (dump
 the live state to roster format — the way to capture/back-up the gitignored file),
 and the machine-principal secret commands **`issue-key`** / **`revoke-key`**
-(these write the SQLite `api_keys` table — secrets are never in the YAML). When
-the hierarchy lands, grants + platform/equipment membership are added to
-`roster.yaml`, not new CLI verbs.
-
-> Pre-Phase-0 (today) the mutating CLI still exists — `add-user` / `set-user` /
-> `disable-user` / `list-users` write the SQLite `users` table directly. They are
-> replaced by the file workflow above once Phase 0 lands.
+(these write the SQLite `api_keys` table — secrets are never in the YAML). Grants
++ platform/equipment membership are edited directly in `roster.yaml` (Phase 1a/1b),
+not via new CLI verbs.
 
 ## Service / API surface
 
