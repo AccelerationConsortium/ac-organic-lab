@@ -62,14 +62,25 @@ Tasks:
 2. ✅ **Gate UI paths with `forward_auth`** → `ac_auth /auth/verify`, injecting
    `X-Auth-User` / `X-Auth-Role`. *(deployed; verified 401 logged-out / pass
    logged-in on `/xarm5`.)*
-3. **Device panel trusts the edge identity.** The xArm panel must accept the
-   edge-injected `X-Auth-User` (or drop its own self-login when reached via the
-   edge), else the user is prompted twice. **Device-side change in the
-   `xarm-translocation` repo.** ← the real work of "single source of login."
-4. **Subpath vs base-path.** The xArm `/web/` panel uses root-absolute asset
-   links (the live symptom: `/xarm5` 404s once past the gate). Either the
-   `rewrite * /web{uri}` in the edge config suffices, or set a base path in the
-   xarm repo. Verify on-host; prefer base-path if assets 404.
+3. ✅ **Device panel trusts the edge identity.** *(xarm-translocation branch
+   `edge-sso-trust`, 2026-07-07 — not yet deployed.)* The device now trusts the
+   edge-injected `X-Auth-User`/`X-Auth-Role` when they carry a matching
+   `X-Edge-Auth` shared secret (`XARM_EDGE_SHARED_SECRET`): `/auth/me` reports
+   that identity (`via: "edge"`) so the banner shows the user signed-in with no
+   second login and hides the per-panel sign-out; `_resolve_identity` returns it
+   first, so `/control/claim` stamps the edge user as owner and the login-gated
+   endpoints pass — all with **no** sidecar hop. Secret unset → headers ignored
+   (today's behaviour); interim trust until Phase 2 loopback-binds `:8000`.
+4. ✅ **Subpath vs base-path — resolved to base-path, edge strip-only.** The
+   panel's asset links were already **relative**, so the real breakage was the
+   API/WS base (`window.location.host` with no prefix) and the edge's
+   `rewrite * /web{uri}` (which sent `/xarm5/status` → `/web/status` → 404).
+   Fix: the edge now **strips `/xarm5` only** (no `/web` rewrite) and the panel
+   JS derives the `/xarm5` base-path from `window.location` and prefixes its own
+   API/WS calls (`main.js`/`graph.js`/`auth.js`). A FastAPI `root_path` was
+   tried and **rejected**: under Starlette 1.x it relocates the StaticFiles
+   mount to `/xarm5/web/`, which 404s once the edge has stripped the prefix.
+   Canonical URL: `http://100.64.254.6/xarm5/web/`.
 5. ✅ **Browser 401 → login redirect.** Chosen: `ac_auth`-side. `/auth/verify`
    returns **302 → `AUTH_LOGIN_URL` (default `/`)** for `Accept: text/html`
    navigations; Caddy copies the 3xx back on the `forward_auth` deny path.
