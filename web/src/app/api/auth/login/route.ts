@@ -7,7 +7,7 @@ import { AUTH_SERVICE_BASE } from "@/lib/auth-service";
 export async function POST(request: NextRequest) {
   const body = await request.text();
   try {
-    const r = await fetch(`${AUTH_SERVICE_BASE}/auth/request-code`, {
+    const r = await fetch(`${AUTH_SERVICE_BASE}/auth/login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body,

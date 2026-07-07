@@ -1,4 +1,4 @@
-"""Tests for the email-code auth flow (request-code -> verify-code -> session)."""
+"""Tests for the email-code auth flow (login -> verify-code -> session)."""
 
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ def test_health(tmp_path):
 def test_request_code_allowlisted(tmp_path):
     app, _, mailer = _ctx(tmp_path)
     with TestClient(app) as c:
-        r = c.post("/auth/request-code", json={"email": "alice@utoronto.ca"})
+        r = c.post("/auth/login", json={"email": "alice@utoronto.ca"})
     assert r.status_code == 202
     assert len(mailer.sent) == 1 and mailer.sent[0][0] == "alice@utoronto.ca"
 
@@ -76,7 +76,7 @@ def test_request_code_allowlisted(tmp_path):
 def test_request_code_unknown_is_403(tmp_path):
     app, _, mailer = _ctx(tmp_path)
     with TestClient(app) as c:
-        r = c.post("/auth/request-code", json={"email": "stranger@utoronto.ca"})
+        r = c.post("/auth/login", json={"email": "stranger@utoronto.ca"})
     assert r.status_code == 403 and mailer.sent == []
 
 
@@ -85,8 +85,8 @@ def test_request_code_cooldown_429(tmp_path):
     the first email actually goes out (inbox-flood protection)."""
     app, _, mailer = _ctx(tmp_path)  # default 60s cooldown
     with TestClient(app) as c:
-        assert c.post("/auth/request-code", json={"email": "alice@utoronto.ca"}).status_code == 202
-        r = c.post("/auth/request-code", json={"email": "alice@utoronto.ca"})
+        assert c.post("/auth/login", json={"email": "alice@utoronto.ca"}).status_code == 202
+        r = c.post("/auth/login", json={"email": "alice@utoronto.ca"})
     assert r.status_code == 429 and "retry-after" in {k.lower() for k in r.headers}
     assert len(mailer.sent) == 1
 
@@ -95,9 +95,9 @@ def test_request_code_hourly_cap_429(tmp_path):
     """With the cooldown disabled, the rolling-hour cap still bounds total sends."""
     app, _, mailer = _ctx(tmp_path, code_resend_cooldown_s=0, code_max_per_hour=2)
     with TestClient(app) as c:
-        assert c.post("/auth/request-code", json={"email": "alice@utoronto.ca"}).status_code == 202
-        assert c.post("/auth/request-code", json={"email": "alice@utoronto.ca"}).status_code == 202
-        r = c.post("/auth/request-code", json={"email": "alice@utoronto.ca"})
+        assert c.post("/auth/login", json={"email": "alice@utoronto.ca"}).status_code == 202
+        assert c.post("/auth/login", json={"email": "alice@utoronto.ca"}).status_code == 202
+        r = c.post("/auth/login", json={"email": "alice@utoronto.ca"})
     assert r.status_code == 429
     assert len(mailer.sent) == 2
 
@@ -105,14 +105,14 @@ def test_request_code_hourly_cap_429(tmp_path):
 def test_request_code_disabled_is_403(tmp_path):
     app, _, mailer = _ctx(tmp_path, users=(("alice@utoronto.ca", "operator", "disabled"),))
     with TestClient(app) as c:
-        r = c.post("/auth/request-code", json={"email": "alice@utoronto.ca"})
+        r = c.post("/auth/login", json={"email": "alice@utoronto.ca"})
     assert r.status_code == 403 and mailer.sent == []
 
 
 def test_full_login_flow_sets_session(tmp_path):
     app, _, mailer = _ctx(tmp_path, users=(("boss@utoronto.ca", "admin"),))
     with TestClient(app) as c:
-        c.post("/auth/request-code", json={"email": "boss@utoronto.ca"})
+        c.post("/auth/login", json={"email": "boss@utoronto.ca"})
         code = mailer.sent[-1][1]
         r = c.post("/auth/verify-code", json={"email": "boss@utoronto.ca", "code": code})
         assert r.status_code == 200 and r.json()["role"] == "admin"
@@ -134,7 +134,7 @@ def test_verify_without_cookie_is_401(tmp_path):
 def test_wrong_code_401_then_correct_then_single_use(tmp_path):
     app, _, mailer = _ctx(tmp_path)
     with TestClient(app) as c:
-        c.post("/auth/request-code", json={"email": "alice@utoronto.ca"})
+        c.post("/auth/login", json={"email": "alice@utoronto.ca"})
         code = mailer.sent[-1][1]
         assert c.post("/auth/verify-code", json={"email": "alice@utoronto.ca", "code": "000000"}).status_code == 401
         assert c.post("/auth/verify-code", json={"email": "alice@utoronto.ca", "code": code}).status_code == 200
@@ -145,7 +145,7 @@ def test_wrong_code_401_then_correct_then_single_use(tmp_path):
 def test_logout_revokes_session(tmp_path):
     app, _, mailer = _ctx(tmp_path)
     with TestClient(app) as c:
-        c.post("/auth/request-code", json={"email": "alice@utoronto.ca"})
+        c.post("/auth/login", json={"email": "alice@utoronto.ca"})
         code = mailer.sent[-1][1]
         c.post("/auth/verify-code", json={"email": "alice@utoronto.ca", "code": code})
         assert c.get("/auth/verify").status_code == 200
@@ -180,15 +180,15 @@ def test_expired_account_cannot_request_or_verify(tmp_path):
     app, _, mailer = _ctx(tmp_path)
     # First, sign in while still valid and confirm the session works.
     with TestClient(app) as c:
-        c.post("/auth/request-code", json={"email": "alice@utoronto.ca"})
+        c.post("/auth/login", json={"email": "alice@utoronto.ca"})
         code = mailer.sent[-1][1]
         assert c.post("/auth/verify-code", json={"email": "alice@utoronto.ca", "code": code}).status_code == 200
         assert c.get("/auth/verify").status_code == 200
-        # Now expire the account in the roster; request-code + the live session both fail.
+        # Now expire the account in the roster; login + the live session both fail.
         app.state.roster = Roster(
             users=[RosterUser(email="alice@utoronto.ca", role="operator", expires=date(2000, 1, 1))]
         )
-        assert c.post("/auth/request-code", json={"email": "alice@utoronto.ca"}).status_code == 403
+        assert c.post("/auth/login", json={"email": "alice@utoronto.ca"}).status_code == 403
         assert c.get("/auth/verify").status_code == 401
 
 
@@ -196,7 +196,7 @@ def test_last_login_derived_from_sessions(tmp_path):
     app, db, mailer = _ctx(tmp_path)
     assert db.last_login_at("alice@utoronto.ca") is None
     with TestClient(app) as c:
-        c.post("/auth/request-code", json={"email": "alice@utoronto.ca"})
+        c.post("/auth/login", json={"email": "alice@utoronto.ca"})
         code = mailer.sent[-1][1]
         c.post("/auth/verify-code", json={"email": "alice@utoronto.ca", "code": code})
         # the session row created on login IS the last-login record
@@ -311,7 +311,7 @@ def test_roster_projection_maps_roles(tmp_path):
 
 def _login(c, mailer, email):
     """Drive the email-code flow; TestClient keeps the session cookie."""
-    assert c.post("/auth/request-code", json={"email": email}).status_code == 202
+    assert c.post("/auth/login", json={"email": email}).status_code == 202
     code = mailer.sent[-1][1]
     assert c.post("/auth/verify-code", json={"email": email, "code": code}).status_code == 200
 

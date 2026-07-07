@@ -156,7 +156,7 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
 
   const requestCode = useCallback(async (email: string) => {
     try {
-      const r = await fetch("/api/auth/request-code", {
+      const r = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email }),

@@ -526,6 +526,84 @@ table is retired.
 
 ---
 
+## The `/auth/*` namespace — providers vs shared machinery
+
+The auth surface is organized around one split, so that adding a login method
+(Google, UofT) never touches session handling or the per-request gate:
+
+- **Provider login flows** — *prove an email, then mint a session.* Each provider
+  (email-code now; Google / UofT OIDC later) is a pluggable front-end whose only
+  job is to produce a **verified email**.
+- **Shared session machinery** — *consume a session.* Provider-agnostic: issue /
+  validate / revoke the `ac_auth_session` cookie, and the per-request check the
+  edge calls on every protected request.
+
+Every provider converges on **one internal seam**: `mint_session(verified_email)
+→ Set-Cookie`, which does the **roster gate** (allow-listed? active? not
+expired?) + session row + cookie. The corollary is the load-bearing one for the
+"public dashboard" question: **OIDC does not bypass the allow-list.** A valid
+Google/UofT account is *authentication* only; if the email is not in
+`roster.yaml`, `mint_session` refuses (403). No self-registration, regardless of
+provider — same as the *Going public* section's "after auth means after an admin
+authorized you."
+
+| Category | Route | Method | Status | Notes |
+|---|---|---|---|---|
+| **email — start** | `POST /auth/login` | POST | now | `{email}` → email a one-time code (403 if not allow-listed / 429 if rate-limited) |
+| **email — complete** | `POST /auth/verify-code` | POST | now | `{email, code}` → `mint_session` → session cookie |
+| **google — start** | `GET /auth/google/login` | GET | later | 302 → Google; stash state / nonce / PKCE |
+| **google — complete** | `GET /auth/google/callback` | GET | later | exchange code → verified email → `mint_session` |
+| **uoft — start** | `GET /auth/uoft/login` | GET | later | UofT Entra / Shibboleth OIDC |
+| **uoft — complete** | `GET /auth/uoft/callback` | GET | later | → `mint_session` |
+| **shared** | `GET /auth/verify` | GET | now | forward-auth: the edge calls it every protected request → 200 + `X-Auth-*` / 401 |
+| **shared** | `POST /auth/logout` | POST | now | revoke session + clear cookie |
+| **shared** | `GET /auth/me` | GET | now | session introspection (soft; never 401) |
+| **shared** | `GET /auth/users` | GET | now | active-humans list for the login dropdown |
+
+The naming reads as **start / complete per provider**:
+
+- **start:** `/auth/login` · `/auth/google/login` · `/auth/uoft/login`
+- **complete:** `/auth/verify-code` · `/auth/google/callback` · `/auth/uoft/callback`
+- **shared consume:** `/auth/verify` (forward-auth) · `/auth/logout` · `/auth/me` · `/auth/users`
+
+Email is the **unnamespaced default provider**: `POST /auth/login` +
+`POST /auth/verify-code`. `verify` (GET, forward-auth) and `verify-code` (POST,
+email complete) are a deliberately method-split pair — the string proximity is
+harmless because they answer different verbs and always have.
+
+The **authorization plane** — `/authz/check`, `/authz/scope`, `/authz/mine`,
+`/authz/matrix`, `/equipment/{key}/roster` — is a *separate* namespace (what you
+may do, not who you are) and is unaffected by provider changes.
+
+**Service lives on the Tailnet; the surface lives on the public edge.** The
+sidecar runs at `100.64.254.6:8009` (Tailnet, loopback refused). But the `/auth/*`
+**URLs** must be served from the single public edge origin, because (a) OIDC
+`redirect_uri`s must be public HTTPS — Google/UofT can't redirect to a `100.x` IP
+or `http://`, so `redirect_uri = https://<public-domain>/auth/google/callback`,
+which Caddy reverse-proxies to `:8009`; and (b) the session cookie must be set on
+one real registrable domain (not `ts.net`, not a bare IP) to give SSO. This is the
+same "edge must be one origin" requirement in *Why sessions can't be shared
+per-host* — the namespace and the single-edge move are the same move.
+
+**Config the OIDC providers will need** (mirrors the email settings in
+`config.py`; a provider is "enabled" iff its config is present, and `/auth/me` can
+advertise `enabled_providers` so the login UI shows the right buttons):
+
+```
+AUTH_PUBLIC_BASE_URL                 # e.g. https://dashboard.<domain> — builds absolute redirect_uris
+AUTH_GOOGLE_CLIENT_ID / _SECRET      # + optional hosted-domain (hd) restriction
+AUTH_UOFT_ISSUER / _CLIENT_ID / _SECRET   # UofT Entra / Shibboleth OIDC
+```
+
+> **Rename shipped 2026-07-07:** `POST /auth/request-code` → `POST /auth/login`
+> (sidecar `main.py`, the `web/src/app/api/auth/login` proxy route, and
+> `user-auth.tsx`). No back-compat alias — every caller is in-repo and deploys
+> together; only `/auth/verify` sits on the per-request path and it was untouched,
+> so live sessions ride straight through. The Google/UofT rows are the reserved
+> shape, not yet built.
+
+---
+
 ## Authentication (account-based; public edge)
 
 **Email one-time code (passwordless) — the chosen mechanism, implemented.**
@@ -538,7 +616,7 @@ table is retired.
 Single-factor (inbox possession), acceptable behind the allow-list; `utoronto.ca`
 inboxes sit behind UofT Duo in practice.
 
-**Send-rate limiting (implemented).** `/auth/request-code` throttles code emails
+**Send-rate limiting (implemented).** `/auth/login` throttles code emails
 **per target address** so nobody can flood a real user's inbox: a **cooldown**
 between sends (`AUTH_CODE_RESEND_COOLDOWN_S`, default 60 s) and a **rolling-hour
 cap** (`AUTH_CODE_MAX_PER_HOUR`, default 5). Over either, **429 + `Retry-After`**
@@ -554,9 +632,11 @@ arrives via the proxy.
 server-side revocation (logout / disable / expiry all revoke). Preferred over JWT
 here: trivial revocation, no key management, central is already on the path.
 
-**Optional future (not planned):** "Sign in with Microsoft" (Entra OIDC + Duo) —
-a front-door swap that touches none of the model below; needs a UofT app
-registration we chose to avoid.
+**Future providers (namespace reserved, not yet built):** Google and UofT
+(Entra / Shibboleth OIDC + Duo) — front-door swaps that touch none of the model
+below; each plugs in behind the `/auth/{google,uoft}/{login,callback}` routes and
+ends at the shared `mint_session` seam (see *The `/auth/*` namespace*). Deferred
+on the UofT app registration; the shape is in place so adding one is additive.
 
 ### Why sessions can't be shared per-host — the edge must be one origin
 
@@ -588,7 +668,7 @@ mutually exclusive; the edge is what reconciles them.
 
 ## Auth flows
 
-- **Human login:** `POST /auth/request-code {email}` → (if allow-listed &
+- **Human login:** `POST /auth/login {email}` → (if allow-listed &
   un-expired & rate ok) email a code → `POST /auth/verify-code {email,code}` →
   session cookie. Then Caddy `forward_auth` → `/auth/verify` → inject
   `X-Auth-User` / `X-Auth-Role`.
@@ -640,8 +720,10 @@ Human endpoints at the **public edge** (Caddy); device-plane endpoints
 (`/authz/check`, `/equipment/{key}/roster`) are Tailnet-only.
 
 - `GET  /auth/verify` — forward-auth (session cookie or `X-Api-Key`).
-- `POST /auth/request-code`, `POST /auth/verify-code`, `POST /auth/logout`,
-  `GET /auth/me`, `GET /auth/users`.
+- `POST /auth/login`, `POST /auth/verify-code`, `POST /auth/logout`,
+  `GET /auth/me`, `GET /auth/users`. (Provider login flows + shared session
+  machinery — see *The `/auth/*` namespace*; `/auth/google/*` + `/auth/uoft/*`
+  are the reserved OIDC shape.)
 - `GET  /authz/check` — peer/device authorization probe (**implemented**, Phase 1a):
   `?user&equipment` → `{allowed, role, central_role}` via the grant resolver.
 - `GET  /equipment/{key}/roster` — **scope-filtered** owner→role projection a
@@ -690,7 +772,7 @@ Human endpoints at the **public edge** (Caddy); device-plane endpoints
 
 **DONE (v1, in `auth/ac_auth`):** SQLite store (users / login_codes / sessions,
 WAL), Gmail mailer + App-Password setup, email-code routes
-(request-code / verify-code / verify / me / logout / users), allow-list CLI,
+(login / verify-code / verify / me / logout / users), allow-list CLI,
 **account-management columns** (name / lab_account / notes / expires_at +
 **login expiry enforcement** / last_login_at / email_verified / disabled
 metadata), and **per-address send-rate limiting**. Tested.
@@ -792,7 +874,9 @@ per-IP rate-limit, and the device-side roster pull in each device repo (e.g.
 ## Open decisions
 
 1. **Human authN:** decided & built — email one-time code (passwordless) via
-   Gmail. OIDC remains an optional, unplanned future front door.
+   Gmail. The `/auth/*` namespace **reserves** Google + UofT OIDC as pluggable
+   providers (see *The `/auth/*` namespace*); building them is deferred, not
+   unplanned.
 2. **Force-release on revoke:** when a grant/account is revoked, do we also
    force-release that principal's *active* claims, or only block new ones? (Lean:
    block new + let the claim lapse at its TTL; force-release only for admin

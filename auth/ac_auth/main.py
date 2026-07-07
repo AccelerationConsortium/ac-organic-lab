@@ -8,7 +8,7 @@ inject ``X-Auth-User`` / ``X-Auth-Role`` downstream.
 
 Endpoints:
 - ``GET  /health``                    — liveness.
-- ``POST /auth/request-code``         — ``{email}`` → email a code (403 if not allow-listed).
+- ``POST /auth/login``                — ``{email}`` → email a code (403 if not allow-listed).
 - ``POST /auth/verify-code``          — ``{email, code}`` → set session cookie.
 - ``GET  /auth/verify``               — forward-auth: validate cookie **or** ``X-Api-Key``
   (machine principals) → 200 + X-Auth-* headers / 401.
@@ -262,8 +262,8 @@ def create_app(
             "details": {},
         }
 
-    @app.post("/auth/request-code", status_code=202)
-    async def request_code(body: EmailIn, request: Request) -> dict:
+    @app.post("/auth/login", status_code=202)
+    async def login(body: EmailIn, request: Request) -> dict:
         s, db = _s(request), _db(request)
         email = body.email.strip().lower()
         if "@" not in email:
@@ -282,7 +282,7 @@ def create_app(
                 detail="This account has expired. Ask an admin to extend it.",
             )
         # Anti-spam: throttle code emails per address so nobody can flood a real
-        # user's inbox via /auth/request-code. Two limits — a short cooldown
+        # user's inbox via /auth/login. Two limits — a short cooldown
         # between sends and a rolling-hour cap — both keyed on the target email,
         # computed from the login_codes send history. 429 + Retry-After.
         _WINDOW_S = 3600.0
