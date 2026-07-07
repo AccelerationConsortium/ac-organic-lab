@@ -67,6 +67,14 @@ http://100.64.254.6 {
 		uri /auth/verify
 		copy_headers X-Auth-User X-Auth-Role
 	}
+	# Normalize the entrypoints to the panel's canonical trailing-slash URL.
+	# Without this, /xarm5, /xarm5/ and /xarm5/web reach the device at /web,
+	# whose StaticFiles issues a slash-redirect to /web/ that DROPS the /xarm5
+	# prefix -> the browser lands on the dashboard and 404s. Redirecting at the
+	# edge keeps the prefix. (redir is ordered before handle_path in Caddy.)
+	redir /xarm5 /xarm5/web/ 308
+	redir /xarm5/ /xarm5/web/ 308
+	redir /xarm5/web /xarm5/web/ 308
 	handle_path /xarm5/* {
 		reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000 {
 			header_up X-Edge-Auth {env.XARM_EDGE_SHARED_SECRET}
