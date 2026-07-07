@@ -81,6 +81,34 @@ http://100.64.254.6 {
 		}
 	}
 
+	# ---- AnaliticaDB results catalog (this host), path-routed ONTO this origin
+	# AnaliticaDB (FastAPI) serves the analytical-results catalog + /docs at :8010
+	# on this host. handle_path strips /analytica so the service sees its own root
+	# paths (/experiments, /docs, …). forward_auth gates every /analytica/* request
+	# against the same ac_auth and injects the identity AND the project scope
+	# (member/pi projects) the service's can_read consumes. header_up stamps the
+	# shared secret so the service trusts those headers — X-Auth-* are honoured
+	# ONLY when X-Edge-Secret matches, because :8010 is directly reachable on the
+	# Tailnet (a direct caller can't produce the secret; see AnaliticaDB
+	# api/deps.py get_caller). Set the SAME secret on both sides, and only once
+	# AnaliticaDB flips ENFORCE_AUTHZ on:
+	#   edge:    ANALYTICA_EDGE_SECRET=…   in caddy's systemd env
+	#   service: TRUSTED_PROXY_SECRET=…    in AnaliticaDB's .env (with ENFORCE_AUTHZ=1)
+	# /status + /health carry no caller identity, so the dashboard aggregator keeps
+	# polling :8010 directly, unaffected by this route or by enforcement. Full
+	# Swagger /docs rendering under the prefix additionally needs `--root-path
+	# /analytica` on the uvicorn ExecStart (deferred; raw API paths work without it).
+	@analytica path /analytica /analytica/*
+	forward_auth @analytica 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
+	}
+	handle_path /analytica/* {
+		reverse_proxy 100.64.254.6:8010 {
+			header_up X-Edge-Secret {env.ANALYTICA_EDGE_SECRET}
+		}
+	}
+
 	# ---- dashboard (Next.js) at root ---------------------------------------
 	# Next.js serves / and /api/* (it rewrites /api/* to FastAPI on :8001) and
 	# enforces its own control/assistant gate via web/src/middleware.ts against
