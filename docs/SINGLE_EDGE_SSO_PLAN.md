@@ -121,6 +121,83 @@ a valid cert, keeping everything tailnet-only:
 
 ---
 
+## Spec — xArm `/web/` behind the edge (device-repo work, Phase 1 tasks 3–4)
+
+**Repo:** `xarm-translocation` (not in this monorepo). **Symptom today:** once the
+edge gate passes, `http://100.64.254.6/xarm5` renders broken / 404s, and the
+panel still shows its own login. Two independent fixes.
+
+### What the edge already guarantees (the device can rely on this)
+
+- **Reached at** `sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000`. The edge does
+  `handle_path /xarm5/*` (strips `/xarm5`) → `rewrite * /web{uri}` → reverse-proxy,
+  so the device receives requests at its own **`/web/…`** root.
+- **Auth is already done** at the edge (`forward_auth` → `/auth/verify`). On the
+  pass path Caddy injects **`X-Auth-User`** and **`X-Auth-Role`** onto the
+  proxied request. The device does **not** need to authenticate the human.
+
+### Task 4 — render under the `/xarm5` prefix (asset paths)
+
+Root cause: the panel emits **root-absolute** asset URLs (`/static/…`, `/web/…`).
+The browser resolves those against the edge origin as `http://100.64.254.6/static/…`
+(no `/xarm5` prefix) → the edge routes them to the **dashboard** → 404.
+
+**Fix (preferred): make the panel base-path aware.** Serve it under a configurable
+prefix so every generated URL is either **relative** or **`/xarm5`-prefixed**:
+
+- If the panel is FastAPI-served: set **`root_path="/xarm5"`** (via
+  `FastAPI(root_path=…)` or `--root-path`, driven by an env like
+  `XARM_WEB_ROOT_PATH`), and make templates/static references use
+  `{{ request.scope.root_path }}`-prefixed or **relative** URLs (`static/…`, not
+  `/static/…`). `url_for` with `root_path` set produces correct prefixed URLs.
+- Serve when unset (`root_path=""`) exactly as today, so the standalone
+  `:8000/web/` still works for on-host use.
+
+**Rejected: edge-side asset rewrites.** Routing `/static/*` and `/web/*` at the
+edge back to the xArm doesn't scale — those namespaces collide with the dashboard
+and with a second device panel. Base-path is the only approach that generalizes to
+N panels under one origin.
+
+### Task 3 — trust the edge identity, drop the second login
+
+When reached via the edge the request carries a trusted **`X-Auth-User`**; the
+panel must **adopt that identity and skip its own login banner**, else the user is
+prompted twice.
+
+- **Behind the edge → no banner.** If `X-Auth-User` is present (and trusted, see
+  below), treat the session as authenticated as that user; don't render the
+  self-login.
+- **Trust boundary.** `X-Auth-User` is only sound if it can't be forged by a
+  direct caller. Today the device is directly reachable on the Tailnet, so a raw
+  `curl …:8000/web/ -H 'X-Auth-User: someone'` would spoof it. Two ways to make it
+  safe, in order of preference:
+  1. **Phase 2 first** — loopback-bind the panel / Tailscale-ACL `:8000` so **only
+     the edge** can reach it; then `X-Auth-User` is unspoofable and can be trusted
+     directly. (This is the clean sequencing.)
+  2. **Interim shared secret** — the edge injects `X-Edge-Auth: <secret>`
+     (`header_up X-Edge-Auth {env.EDGE_SHARED_SECRET}` in the Caddyfile) and the
+     device trusts `X-Auth-User` **only** when `X-Edge-Auth` matches. Lets you ship
+     task 3 before Phase 2.
+
+### Deeper follow-on (not required for SSO; tracked in ROADMAP *Control-surface exposure*)
+
+Suppressing the login is the SSO fix. Separately, actions taken *in* the panel
+still drive the arm outside the dashboard's audited claim path. Making the panel
+**claim- and authz-aware** — acquire/hold a claim as `owner=X-Auth-User`, honor
+the roster role — is the side-door closure, related but beyond Phase 1.
+
+### Acceptance criteria
+
+- [ ] `http://100.64.254.6/xarm5/` renders the panel fully (all assets 200, no
+      `/static` 404s against the dashboard).
+- [ ] A user already signed in at the edge reaches `/xarm5` with **no second
+      login prompt**; the panel shows them as `X-Auth-User`.
+- [ ] Standalone `…:8000/web/` still works on-host (base-path unset).
+- [ ] A direct `curl` with a forged `X-Auth-User` is **not** trusted (via Phase 2
+      ACL, or the `X-Edge-Auth` secret if shipping task 3 first).
+
+---
+
 ## Non-goals / decisions carried in
 
 - **No Google/OIDC, no UofT Entra, no public exposure.** Considered and set
