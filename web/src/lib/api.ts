@@ -130,6 +130,15 @@ async function controlDelete<TResp = ControlAck>(
   });
 }
 
+async function controlGet<TResp>(
+  equipmentId: string,
+  action: string,
+): Promise<TResp> {
+  return fetchJson<TResp>(controlUrl(equipmentId, action), {
+    method: "GET",
+  });
+}
+
 // PTZ - the route accepts either nudge or continuous bodies; callers can
 // pass whichever shape they want.
 export async function postPtz(
@@ -460,12 +469,49 @@ export async function postDoserTare(equipmentId: string): Promise<ControlAck> {
   return controlPost(equipmentId, "tare", {});
 }
 
+export interface DoserBalanceReading {
+  mass_g: number;
+  mass_mg: number;
+}
+
+// Read-only; the device doesn't gate this behind a claim (see
+// GET /control/read-balance), so it's cheap to call on demand from a
+// "Weigh" button rather than poll continuously (the reading fluctuates
+// with air currents/vibration, so a live-updating number is more noise
+// than signal — the operator asks for a fresh read when they want one).
+export async function getDoserBalanceReading(
+  equipmentId: string,
+): Promise<DoserBalanceReading> {
+  return controlGet(equipmentId, "read-balance");
+}
+
+// Full sequences (open+lower+close, or open+raise). Not currently surfaced
+// on the dashboard tile, which exposes the granular lid/lift moves below
+// instead so an operator can drive each axis independently; kept here as
+// the typed wrapper for the device's full-sequence endpoints.
 export async function postDoserPlateLoad(equipmentId: string): Promise<ControlAck> {
   return controlPost(equipmentId, "plate/load", {});
 }
 
 export async function postDoserPlateUnload(equipmentId: string): Promise<ControlAck> {
   return controlPost(equipmentId, "plate/unload", {});
+}
+
+// Granular single-axis moves for manual plate placement/removal.
+export async function postDoserOpenLid(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "lid/open", {});
+}
+
+export async function postDoserCloseLid(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "lid/close", {});
+}
+
+export async function postDoserRaisePlate(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "plate/raise", {});
+}
+
+export async function postDoserLowerPlate(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "plate/lower", {});
 }
 
 export async function postDoserDoseWell(
@@ -478,6 +524,36 @@ export async function postDoserDoseWell(
   return controlPost(equipmentId, "dose/well", { well, target_mg, verify, use_pid });
 }
 
+export interface DoseResult {
+  well: string;
+  position: [number, number];
+  target_mg: number;
+  initial_mg?: number | null;
+  final_mg?: number | null;
+  actual_mg?: number | null;
+  error_mg?: number | null;
+}
+
+export interface DoseMultipleResponse {
+  results: Record<string, DoseResult>;
+  total_wells: number;
+  successful_wells: number;
+}
+
+// well_targets maps well name -> target mass in mg (e.g. an operator's
+// multi-select in the well grid, all doses to the same target).
+export async function postDoserDoseMultiple(
+  equipmentId: string,
+  well_targets: Record<string, number>,
+  verify: boolean = true,
+  use_pid: boolean = false,
+): Promise<DoseMultipleResponse> {
+  return controlPost<
+    { well_targets: Record<string, number>; verify: boolean; use_pid: boolean },
+    DoseMultipleResponse
+  >(equipmentId, "dose/multiple", { well_targets, verify, use_pid });
+}
+
 export async function postDoserDoseAll(
   equipmentId: string,
   target_mg: number,
@@ -485,6 +561,77 @@ export async function postDoserDoseAll(
   use_pid: boolean = false,
 ): Promise<ControlAck> {
   return controlPost(equipmentId, "dose/all", { target_mg, verify, use_pid });
+}
+
+// -- Plate labware (definitions + current-plate status) -------------------
+//
+// Sibling namespace to /control/* on the device (`/plate/definitions`,
+// `/plate/status`), proxied by the dashboard's generic plate passthrough
+// (api/app/control.py `plate_get`). Both are read-only and not
+// claim-gated on the device.
+
+export interface PlateDefinitionInfo {
+  key: string;
+  name: string;
+  rows: number;
+  columns: number;
+  total_wells: number;
+  well_spacing_mm: number;
+  well_diameter_mm: number;
+  well_depth_mm: number;
+  well_volume_ul: number;
+  plate_type: string;
+}
+
+export async function getDoserPlateDefinitions(
+  equipmentId: string,
+): Promise<PlateDefinitionInfo[]> {
+  return fetchJson<PlateDefinitionInfo[]>(
+    `/api/equipment/${encodeURIComponent(equipmentId)}/plate/definitions`,
+  );
+}
+
+export interface WellInfo {
+  name: string;
+  row: number;
+  column: number;
+  position_x: number;
+  position_y: number;
+  current_mass_mg: number;
+  target_mass_mg?: number | null;
+  dosed: boolean;
+}
+
+export interface PlateStatusInfo {
+  name: string;
+  rows: number;
+  columns: number;
+  total_wells: number;
+  dosed_wells: number;
+  undosed_wells: number;
+  origin: [number, number];
+  wells: WellInfo[];
+}
+
+// Only meaningful once a plate has been set (`postDoserSetPlate`) — the
+// device 500s with "No plate currently set" otherwise (surfaced as an
+// ApiError), which callers should treat as "no plate set yet" rather than
+// a real fault.
+export async function getDoserPlateStatus(
+  equipmentId: string,
+): Promise<PlateStatusInfo> {
+  return fetchJson<PlateStatusInfo>(
+    `/api/equipment/${encodeURIComponent(equipmentId)}/plate/status`,
+  );
+}
+
+export async function postDoserSetPlate(
+  equipmentId: string,
+  definition: string,
+  origin_x: number = 0.0,
+  origin_y: number = 0.0,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "plate/set", { definition, origin_x, origin_y });
 }
 
 export async function startRolling(

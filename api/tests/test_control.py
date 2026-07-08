@@ -117,6 +117,50 @@ def test_delete_preset_proxies_method() -> None:
     assert route.called
 
 
+@respx.mock
+def test_get_control_action_proxies_without_claim() -> None:
+    """GET /control/{action} (e.g. dose_every_well's read-balance) must not
+    attempt the claim dance — only POST does (`_proxy`'s `needs_claim`) —
+    and must forward the device's JSON body back verbatim."""
+    entry = _fume_hood_entry(
+        id="dose_every_well", base_url="http://127.0.0.1:8000", status_path="/status"
+    )
+    app = _make_app(entry)
+    claim_route = respx.post("http://127.0.0.1:8000/control/claim")
+    action_route = respx.get("http://127.0.0.1:8000/control/read-balance").mock(
+        return_value=httpx.Response(200, json={"mass_g": 1.2345, "mass_mg": 1234.5})
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/api/equipment/dose_every_well/control/read-balance")
+
+    assert r.status_code == 200
+    assert r.json() == {"mass_g": 1.2345, "mass_mg": 1234.5}
+    assert action_route.called
+    assert not claim_route.called
+
+
+@respx.mock
+def test_plate_passthrough_proxies_json_get() -> None:
+    """GET /{id}/plate/{sub} is a sibling namespace to /control/* — used by
+    dose_every_well's read-only plate/status and plate/definitions, which
+    aren't claim-gated on the device (no _proxy claim dance needed)."""
+    entry = _entry(
+        id="dose_every_well", base_url="http://127.0.0.1:8000", status_path="/status"
+    )
+    app = _make_app(entry)
+    route = respx.get("http://127.0.0.1:8000/plate/definitions").mock(
+        return_value=httpx.Response(200, json=[{"key": "96-well-standard", "rows": 8}])
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/api/equipment/dose_every_well/plate/definitions")
+
+    assert r.status_code == 200
+    assert r.json() == [{"key": "96-well-standard", "rows": 8}]
+    assert route.called
+
+
 def test_unknown_equipment_returns_404() -> None:
     aggregator = MagicMock()
     aggregator.entry.return_value = None

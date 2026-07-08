@@ -147,7 +147,11 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 2.0
     tiles:
-      hte: { w: 2, h: 2 }
+      # Full-width hero: the tile hosts a plate-type picker plus a full
+      # well-selection grid (up to 8x12 for a 96-well plate) on top of the
+      # lifecycle/lid/plate/tare/dose controls, which needs much more room
+      # than the default 2x2 (see SolidDoserTile.tsx).
+      hte: { w: 4, h: 5 }
     pills: {}
 
   - id: torry_pines_shaker

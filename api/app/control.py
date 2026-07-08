@@ -134,6 +134,20 @@ def build_control_router() -> APIRouter:
     ) -> dict:
         return await _proxy(request, equipment_id, action, "POST", body)
 
+    @router.get("/{equipment_id}/control/{action:path}")
+    async def control_get(
+        equipment_id: str,
+        action: str,
+        request: Request,
+    ) -> dict:
+        """Read-only control-namespace endpoints (e.g. ``read-balance``).
+
+        These never carry ``X-Claim-Token`` (``_proxy`` only attempts the
+        claim dance for POST), matching devices that expose them without
+        ``Depends(require_claim)``.
+        """
+        return await _proxy(request, equipment_id, action, "GET", None)
+
     @router.delete("/{equipment_id}/control/{action:path}")
     async def control_delete(
         equipment_id: str,
@@ -141,6 +155,20 @@ def build_control_router() -> APIRouter:
         request: Request,
     ) -> dict:
         return await _proxy(request, equipment_id, action, "DELETE", None)
+
+    @router.get("/{equipment_id}/plate/{sub:path}")
+    async def plate_get(equipment_id: str, sub: str, request: Request) -> Any:
+        """JSON GET passthrough to ``<gateway>/plate/<sub>``.
+
+        Sibling namespace to ``/control/*`` — dose_every_well's
+        ``plate/status`` and ``plate/definitions`` are read-only and not
+        claim-gated, so they don't go through ``_proxy``'s claim dance;
+        this reuses the same generic JSON-GET plumbing as the camera media
+        listing below. Return type is ``Any`` (not ``dict``) because
+        ``plate/definitions`` returns a JSON array, not an object.
+        """
+
+        return await _media_proxy_json(request, equipment_id, f"plate/{sub}")
 
     @router.get("/{equipment_id}/media")
     async def media_list(equipment_id: str, request: Request) -> dict:
@@ -454,6 +482,8 @@ async def _proxy(
             headers = {"X-Claim-Token": token} if token else None
             if method == "POST":
                 response = await client.post(target, json=body or {}, headers=headers)
+            elif method == "GET":
+                response = await client.get(target, headers=headers)
             elif method == "DELETE":
                 response = await client.delete(target, headers=headers)
             else:  # pragma: no cover - guarded by FastAPI routing
