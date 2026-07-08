@@ -122,6 +122,22 @@ http://100.64.254.6 {
 		}
 	}
 
+	# ---- LaAgenteAnalitica UI (agent chat, separate PC) --------------------
+	# The agent's React/Vite UI runs at 100.64.254.21:8080. Fronting it here
+	# gives it the shared /auth/banner.js top bar + the single sign-in cookie
+	# (same origin) and publishes one URL: http://100.64.254.6/analitica/ .
+	# We pass the /analitica prefix THROUGH (no strip): the SPA must be served
+	# with Vite base:'/analitica/' so its own asset + HMR URLs carry the prefix
+	# and line up (root-absolute /@vite/client, /*.svg would otherwise 404
+	# against the dashboard). Ungated at the edge — the agent keeps its own auth;
+	# the shared banner just reflects the session (add forward_auth here later if
+	# edge-enforced login is wanted; the app has a forward_auth-edge mode).
+	# NOTE: distinct path from /analytica (AnaliticaDB results catalog, :8010).
+	@analitica path /analitica /analitica/*
+	handle @analitica {
+		reverse_proxy 100.64.254.21:8080
+	}
+
 	# ---- dashboard (Next.js) at root ---------------------------------------
 	# Next.js serves / and /api/* (it rewrites /api/* to FastAPI on :8001) and
 	# enforces its own control/assistant gate via web/src/middleware.ts against

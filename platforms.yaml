@@ -1,10 +1,16 @@
 sections:
-  - id: lab_environment
-    title: Lab Environment
-    description: "Temperature, humidity, O₂, and VOC"
-    kind: environmental_map
-    equipment: [env_sample_prep, env_storage, env_lab499_west, env_lab499_east]
+  # - id: lab_environment
+  #   title: Lab Environment
+  #   description: "Temperature, humidity, O₂, and VOC"
+  #   kind: environmental_map
+  #   equipment: [env_sample_prep, env_storage, env_lab499_west, env_lab499_east]
 
+  - id: web_services
+    title: Services
+    description: Lab web UIs and dashboards
+    kind: platform
+    equipment: [pypoe_web, analytica_db, laagente_analitica, ac_organic_lab_api, ac_organic_lab_auth]
+    
   - id: hte
     title: HTE Platform
     description: High-throughput platform for chemistry
@@ -26,8 +32,4 @@ sections:
       - plug_hte_strip_right
       - plug_hte_strip_left
 
-  - id: web_services
-    title: Web Services
-    description: Lab web UIs and dashboards
-    kind: platform
-    equipment: [pypoe_web, analytica_db, ac_organic_lab_api, ac_organic_lab_auth]
+

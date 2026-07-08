@@ -260,6 +260,22 @@ equipment:
     pills:
       open: true
 
+  # LaAgenteAnalitica — the agent chat UI (React/Vite) on a separate PC
+  # (100.64.254.21:8080), fronted by the edge at /analitica/ so it shows the
+  # shared auth banner and one sign-in. It serves no STATUS_SPEC /status (SPA
+  # HTML only), so it's a link-out tile (adapter: mock, not polled); base_url is
+  # the edge path the "Open ↗" pill points at.
+  - id: laagente_analitica
+    name: Analitica
+    kind: other
+    adapter: mock
+    base_url: http://100.64.254.6/analitica/
+    poll_timeout_seconds: 3.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills:
+      open: true
+
   # AnaliticaDB — the analytical-chemistry results catalog (FastAPI) on the
   # dashboard host. Serves a minimal STATUS_SPEC v1.0 /status envelope
   # (equipment_status `ready`, or `degraded` if its DB is unreachable); the
