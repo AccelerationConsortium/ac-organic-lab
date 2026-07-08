@@ -123,19 +123,31 @@ http://100.64.254.6 {
 	}
 
 	# ---- LaAgenteAnalitica UI (agent chat, separate PC) --------------------
-	# The agent's React/Vite UI runs at 100.64.254.21:8080. Fronting it here
-	# gives it the shared /auth/banner.js top bar + the single sign-in cookie
-	# (same origin) and publishes one URL: http://100.64.254.6/analitica/ .
-	# We pass the /analitica prefix THROUGH (no strip): the SPA must be served
-	# with Vite base:'/analitica/' so its own asset + HMR URLs carry the prefix
-	# and line up (root-absolute /@vite/client, /*.svg would otherwise 404
-	# against the dashboard). Ungated at the edge — the agent keeps its own auth;
-	# the shared banner just reflects the session (add forward_auth here later if
-	# edge-enforced login is wanted; the app has a forward_auth-edge mode).
-	# NOTE: distinct path from /analytica (AnaliticaDB results catalog, :8010).
+	# The agent's Node server (serves the built React frontend + API + WS) runs
+	# at 100.64.254.21:3000 in GRAPHCHAT_AUTH_MODE=forward_auth. Same pattern as
+	# the AnaliticaDB block below: forward_auth gates the path against ac_auth and
+	# injects X-Auth-User/Role; header_up stamps the shared proxy secret so the
+	# app trusts that identity (it verifies x-graphchat-proxy-secret against its
+	# GRAPHCHAT_TRUSTED_PROXY_SECRET — direct callers can't forge it) and shows no
+	# in-app login (loginHandledHere:false). The shared /auth/banner.js top bar
+	# rides on top. We STRIP /analitica (handle_path): the backend serves the SPA
+	# + API at its root, and the frontend was built with a matching base so the
+	# browser-side URLs carry the prefix the edge strips back off.
+	#   edge:    GRAPHCHAT_EDGE_SECRET=…       in caddy's systemd env
+	#   service: GRAPHCHAT_TRUSTED_PROXY_SECRET=… on the :3000 host (must match)
+	# The frontend build MUST use the SAME slug as this route (VITE_BASE=/analitica/,
+	# VITE_API_URL=/analitica, VITE_WS_URL=ws://100.64.254.6/analitica/…). Distinct
+	# path from /analytica (AnaliticaDB results catalog, :8010).
 	@analitica path /analitica /analitica/*
-	handle @analitica {
-		reverse_proxy 100.64.254.21:8080
+	forward_auth @analitica 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
+	redir /analitica /analitica/ 308
+	handle_path /analitica/* {
+		reverse_proxy 100.64.254.21:3000 {
+			header_up X-Graphchat-Proxy-Secret {env.GRAPHCHAT_EDGE_SECRET}
+		}
 	}
 
 	# ---- dashboard (Next.js) at root ---------------------------------------
