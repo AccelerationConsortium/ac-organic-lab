@@ -54,28 +54,29 @@
   }
 
   var CSS =
-    // Everything lives inside a shadow root, so page styles don't leak in (and
-    // ours don't leak out). We still set font/color explicitly because those
-    // few properties inherit across the shadow boundary. No :host{all:initial}
-    // — it would fight a host slot's own positioning classes on the dashboard.
+    // Light theme. Everything lives inside a shadow root, so page styles don't
+    // leak in (and ours don't leak out). We still set font/color explicitly
+    // because those few properties inherit across the shadow boundary. No
+    // :host{all:initial} — it would fight a host slot's positioning classes.
     "*{box-sizing:border-box;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}" +
-    ".bar{display:flex;align-items:center;gap:.6rem;min-height:44px;padding:.35rem .8rem;" +
-    "background:#0f172a;color:#e2e8f0;border-bottom:1px solid #1e293b;font-size:14px}" +
-    ".brand{font-weight:600;letter-spacing:.02em;color:#f8fafc;margin-right:.4rem}" +
-    ".dot{width:8px;height:8px;border-radius:50%;background:#475569;display:inline-block}" +
-    ".dot.on{background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.18)}" +
+    ".bar{display:flex;align-items:center;gap:.6rem;min-height:44px;padding:.35rem 1rem;" +
+    "background:#ffffff;color:#0f172a;border-bottom:1px solid #e2e8f0;font-size:14px;" +
+    "box-shadow:0 1px 2px rgba(15,23,42,.04)}" +
+    ".brand{font-weight:600;letter-spacing:.02em;color:#0f172a;margin-right:.4rem}" +
+    ".dot{width:8px;height:8px;border-radius:50%;background:#cbd5e1;display:inline-block}" +
+    ".dot.on{background:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.15)}" +
     ".spacer{flex:1 1 auto}" +
-    ".avatar{width:26px;height:26px;border-radius:50%;background:#334155;color:#f1f5f9;" +
+    ".avatar{width:26px;height:26px;border-radius:50%;background:#e2e8f0;color:#0f172a;" +
     "display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px}" +
-    ".who{display:flex;flex-direction:column;line-height:1.15}" +
-    ".who .email{color:#f1f5f9}.who .role{color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:.04em}" +
-    "button{font:inherit;border-radius:7px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;" +
-    "padding:.3rem .7rem;cursor:pointer}button:hover{background:#334155}button:disabled{opacity:.5;cursor:default}" +
+    ".who{display:flex;flex-direction:column;line-height:1.15;text-align:right}" +
+    ".who .email{color:#0f172a}.who .role{color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.04em}" +
+    "button{font:inherit;border-radius:7px;border:1px solid #cbd5e1;background:#ffffff;color:#0f172a;" +
+    "padding:.3rem .7rem;cursor:pointer}button:hover{background:#f1f5f9}button:disabled{opacity:.5;cursor:default}" +
     "button.primary{background:#2563eb;border-color:#2563eb;color:#fff}button.primary:hover{background:#1d4ed8}" +
-    "button.ghost{background:transparent}" +
-    "select,input{font:inherit;border-radius:7px;border:1px solid #334155;background:#0b1220;color:#e2e8f0;padding:.3rem .5rem}" +
+    "button.ghost{background:transparent;color:#475569}button.ghost:hover{background:#f1f5f9}" +
+    "select,input{font:inherit;border-radius:7px;border:1px solid #cbd5e1;background:#ffffff;color:#0f172a;padding:.3rem .5rem}" +
     "input{width:7.5rem;letter-spacing:.2em}" +
-    ".msg{color:#93c5fd;font-size:12px}.msg.err{color:#fca5a5}" +
+    ".msg{color:#2563eb;font-size:12px}.msg.err{color:#dc2626}" +
     ".hide{display:none!important}";
 
   function el(tag, props, kids) {
@@ -129,7 +130,8 @@
     var signedOut = el("div", { class: "hide" }, [login]);
 
     var msg = el("span", { class: "msg" });
-    var bar = el("div", { class: "bar" }, [dot, brand, signedOut, signedIn, el("span", { class: "spacer" }), msg]);
+    // Brand on the left; account + buttons pushed to the right by the spacer.
+    var bar = el("div", { class: "bar" }, [dot, brand, el("span", { class: "spacer" }), msg, signedOut, signedIn]);
     root.appendChild(bar);
 
     function setMsg(t, isErr) { msg.textContent = t || ""; msg.className = "msg" + (isErr ? " err" : ""); }
