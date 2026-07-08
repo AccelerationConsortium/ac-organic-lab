@@ -260,16 +260,16 @@ equipment:
     pills:
       open: true
 
-  # LaAgenteAnalitica — the agent chat UI (React/Vite) on a separate PC
-  # (100.64.254.21:8080), fronted by the edge at /analitica/ so it shows the
-  # shared auth banner and one sign-in. It serves no STATUS_SPEC /status (SPA
-  # HTML only), so it's a link-out tile (adapter: mock, not polled); base_url is
-  # the edge path the "Open ↗" pill points at.
+  # LaAgenteAnalitica — the agent chat UI (React/Vite) on a separate PC,
+  # fronted by the edge at /agente/ (the built Vite base) so it shows the shared
+  # auth banner and one sign-in. Displayed as "Analitica" on the dashboard. It
+  # serves no STATUS_SPEC /status, so it's a link-out tile (adapter: mock, not
+  # polled); base_url is the edge path the "Open ↗" pill points at.
   - id: laagente_analitica
     name: Analitica
     kind: other
     adapter: mock
-    base_url: http://100.64.254.6/analitica/
+    base_url: http://100.64.254.6/agente/
     poll_timeout_seconds: 3.0
     tiles:
       web_services: { w: 2, h: 1 }

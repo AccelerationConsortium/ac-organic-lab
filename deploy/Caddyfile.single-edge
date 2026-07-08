@@ -130,21 +130,22 @@ http://100.64.254.6 {
 	# app trusts that identity (it verifies x-graphchat-proxy-secret against its
 	# GRAPHCHAT_TRUSTED_PROXY_SECRET — direct callers can't forge it) and shows no
 	# in-app login (loginHandledHere:false). The shared /auth/banner.js top bar
-	# rides on top. We STRIP /analitica (handle_path): the backend serves the SPA
+	# rides on top. We STRIP /agente (handle_path): the backend serves the SPA
 	# + API at its root, and the frontend was built with a matching base so the
 	# browser-side URLs carry the prefix the edge strips back off.
 	#   edge:    GRAPHCHAT_EDGE_SECRET=…       in caddy's systemd env
 	#   service: GRAPHCHAT_TRUSTED_PROXY_SECRET=… on the :3000 host (must match)
-	# The frontend build MUST use the SAME slug as this route (VITE_BASE=/analitica/,
-	# VITE_API_URL=/analitica, VITE_WS_URL=ws://100.64.254.6/analitica/…). Distinct
-	# path from /analytica (AnaliticaDB results catalog, :8010).
-	@analitica path /analitica /analitica/*
-	forward_auth @analitica 100.64.254.6:8009 {
+	# The frontend build MUST use the SAME slug as this route (VITE_BASE=/agente/,
+	# VITE_API_URL=/agente, VITE_WS_URL=ws://100.64.254.6/agente/…). The URL slug
+	# is /agente (the built base); the dashboard pill is still labelled "Analitica".
+	# Distinct path from /analytica (AnaliticaDB results catalog, :8010).
+	@agente path /agente /agente/*
+	forward_auth @agente 100.64.254.6:8009 {
 		uri /auth/verify
 		copy_headers X-Auth-User X-Auth-Role
 	}
-	redir /analitica /analitica/ 308
-	handle_path /analitica/* {
+	redir /agente /agente/ 308
+	handle_path /agente/* {
 		reverse_proxy 100.64.254.21:3000 {
 			header_up X-Graphchat-Proxy-Secret {env.GRAPHCHAT_EDGE_SECRET}
 		}
