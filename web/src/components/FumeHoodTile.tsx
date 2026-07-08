@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import { postSashMove, postSashStop } from "@/lib/api";
+import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
+import { ActionErrorBand } from "./ActionErrorBand";
 import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
 import { PositionPill, TileButton } from "./TileButton";
@@ -31,7 +33,7 @@ function parseSash(snapshot: EquipmentSnapshot): SashState {
 export function FumeHoodTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const sash = parseSash(snapshot);
   const [optimisticTarget, setOptimisticTarget] = useState<number | null>(null);
-  const [, startTransition] = useTransition();
+  const { actionError, exec } = useActionError();
 
   const { locked, countdown, toggle } = useControlLock(snapshot.id);
 
@@ -52,21 +54,18 @@ export function FumeHoodTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
     if (locked) return;
     if (position === sash.position && !sash.isMoving) return;
     setOptimisticTarget(position);
-    startTransition(() => {
-      postSashMove(snapshot.id, position).catch(() => {
-        setOptimisticTarget(null);
-      });
+    // On failure the shared band shows the refusal (423/etc.) and we drop the
+    // optimistic target so the next /status poll takes over.
+    exec(() => postSashMove(snapshot.id, position), {
+      action: "sash.move",
+      onError: () => setOptimisticTarget(null),
     });
   }
 
   function handleStop() {
     if (locked) return;
     setOptimisticTarget(null);
-    startTransition(() => {
-      postSashStop(snapshot.id).catch(() => {
-        // Best-effort; the next /status poll will reflect reality.
-      });
-    });
+    exec(() => postSashStop(snapshot.id), { action: "sash.stop" });
   }
 
   const displayTarget = optimisticTarget ?? sash.target;
@@ -110,6 +109,8 @@ export function FumeHoodTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           Stop
         </TileButton>
       </div>
+
+      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }

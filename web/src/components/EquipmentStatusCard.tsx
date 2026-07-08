@@ -8,6 +8,7 @@ import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
 import { MetricList } from "./MetricList";
 import { ComponentList } from "./ComponentList";
+import { FetchErrorBand } from "./FetchErrorBand";
 import { TileShell } from "./TileShell";
 
 export function EquipmentStatusCard({ snapshot }: { snapshot: EquipmentSnapshot }) {
@@ -45,17 +46,7 @@ export function EquipmentStatusCard({ snapshot }: { snapshot: EquipmentSnapshot 
       {hasMetrics && <MetricList metrics={metrics} />}
       {hasComponents && <ComponentList components={components} />}
 
-      {snapshot.fetch_error && (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-900 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
-          <div className="font-medium">Aggregator could not reach device</div>
-          <div className="font-mono">
-            {snapshot.fetch_error.kind}
-            {snapshot.fetch_error.http_status
-              ? ` · HTTP ${snapshot.fetch_error.http_status}`
-              : ""}
-          </div>
-        </div>
-      )}
+      {snapshot.fetch_error && <FetchErrorBand error={snapshot.fetch_error} />}
     </TileShell>
   );
 }

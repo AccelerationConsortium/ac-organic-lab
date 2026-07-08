@@ -3,25 +3,22 @@
 import { useCallback, useEffect, useState, useTransition } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import {
-  ApiError,
   getDoserBalanceReading,
-  getDoserPlateDefinitions,
   getDoserPlateStatus,
   postDoserCloseLid,
-  postDoserDoseAll,
   postDoserDoseMultiple,
   postDoserHome,
   postDoserLowerPlate,
   postDoserOpenLid,
   postDoserRaisePlate,
-  postDoserSetPlate,
   postDoserShutdown,
   postDoserStartup,
   postDoserTare,
-  type PlateDefinitionInfo,
   type PlateStatusInfo,
 } from "@/lib/api";
+import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
+import { ActionErrorBand } from "./ActionErrorBand";
 import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
 import { TileButton } from "./TileButton";
@@ -29,68 +26,65 @@ import { TileShell } from "./TileShell";
 
 const TARGET_MG_DEFAULT = 5.0;
 
-// Friendlier labels for the plate-type picker than the raw definition
-// keys — falls back to "<name> (RxC)" for anything not in this map (e.g.
-// a custom definition added on the device side that the dashboard doesn't
-// know about yet).
-const PLATE_TYPE_LABELS: Record<string, string> = {
-  "96-well-standard": "96-well (Shallow)",
-  "96-well-medium": "96-well (Medium)",
-  "deep-well-96": "96-well (Tall / Deep)",
-  "24-vial-rack": "24 Vials",
-  "384-well-standard": "384-well (Standard)",
-};
-
-function plateTypeLabel(def: PlateDefinitionInfo): string {
-  return PLATE_TYPE_LABELS[def.key] ?? `${def.name} (${def.rows}\u00d7${def.columns})`;
+// Client-side grid layouts for the well-selection grid. The grid is a
+// recording tool (which wells to dose), so its shape is chosen here rather
+// than driven by the device's plate definitions. The on-screen plate footprint
+// is fixed; fewer wells simply render larger.
+interface PlateLayout {
+  key: string;
+  label: string;
+  rows: number;
+  columns: number;
 }
+
+const PLATE_LAYOUTS: PlateLayout[] = [
+  { key: "96", label: "96-well", rows: 8, columns: 12 },
+  { key: "54", label: "54-well", rows: 6, columns: 9 },
+  { key: "24", label: "24-well", rows: 4, columns: 6 },
+];
 
 function wellName(row: number, column: number): string {
   return `${String.fromCharCode(65 + row)}${column + 1}`;
 }
 
-interface ActionError {
-  status: number;
-  message: string;
-}
-
-function interpretActionError(e: unknown): ActionError {
-  if (!(e instanceof ApiError)) {
-    return { status: 0, message: e instanceof Error ? e.message : String(e) };
-  }
-  const body = (e.body ?? {}) as Record<string, unknown>;
-  const detail = typeof body.detail === "string" ? body.detail : undefined;
-
-  if (e.status === 423) {
-    const claimedBy = body.claimed_by as { owner?: string } | undefined;
-    const owner = claimedBy?.owner;
-    return {
-      status: 423,
-      message: owner
-        ? `Device claim is held by ${owner}. Try again later.`
-        : detail ?? "Device is busy with another caller.",
-    };
-  }
-
-  return { status: e.status, message: detail ?? e.message };
+// Build the grid's PlateStatusInfo from a client layout, overlaying the
+// device's dosed-well info when a plate is actually set. WellGrid reads
+// rows/columns/wells; the remaining fields just satisfy the type.
+function layoutToPlateStatus(
+  layout: PlateLayout,
+  deviceWells: PlateStatusInfo["wells"],
+): PlateStatusInfo {
+  return {
+    name: layout.label,
+    rows: layout.rows,
+    columns: layout.columns,
+    total_wells: layout.rows * layout.columns,
+    dosed_wells: 0,
+    undosed_wells: layout.rows * layout.columns,
+    origin: [0, 0],
+    wells: deviceWells,
+  };
 }
 
 export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const [isPending, startTransition] = useTransition();
   const { locked, countdown, toggle } = useControlLock(snapshot.id);
   const [targetMg, setTargetMg] = useState<number>(TARGET_MG_DEFAULT);
-  const [actionError, setActionError] = useState<ActionError | null>(null);
+  // Error state comes from the shared hook; this tile keeps its own
+  // useTransition + pendingAction so each button can show a per-action
+  // spinner ("Opening…") and clear it in a `.finally`.
+  const { actionError, setActionError, reportError } = useActionError();
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   // Only ever updated by an explicit "Weigh" click — the reading fluctuates
   // with air currents/vibration, so a live-polled number would just be
   // noise. `null` until the operator asks for a fresh read.
   const [massG, setMassG] = useState<number | null>(null);
 
-  // Plate/well selection. `plateStatus` is the device's authoritative view
-  // (null until a plate has actually been set on the device) — the grid is
-  // only rendered from it, not from a locally-guessed preview, so it can
-  // never drift out of sync with what /control/plate/set actually applied.
-  const [plateDefs, setPlateDefs] = useState<PlateDefinitionInfo[]>([]);
+  // Well selection is a client-side recording of which wells to dose. The grid
+  // shape comes from `layoutKey` (a client preset — 96-well default, 54-vial
+  // for HPLC), NOT from the device. `plateStatus` is still fetched best-effort
+  // so dosed wells can be tinted green once a plate is actually set on-device.
+  const [layoutKey, setLayoutKey] = useState<string>(PLATE_LAYOUTS[0].key);
   const [plateStatus, setPlateStatus] = useState<PlateStatusInfo | null>(null);
   const [selectedWells, setSelectedWells] = useState<Set<string>>(new Set());
   // Purely a local rendering preference — flips which corner A1 renders in
@@ -104,27 +98,16 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const components = snapshot.status.components ?? {};
   const gantry = components["gantry"];
 
+  // The grid always renders a client layout; the device's dosed-well info (if
+  // any) is overlaid for green tinting.
+  const layout =
+    PLATE_LAYOUTS.find((l) => l.key === layoutKey) ?? PLATE_LAYOUTS[0];
+  const gridPlate = layoutToPlateStatus(layout, plateStatus?.wells ?? []);
+
   const refreshPlateStatus = useCallback(() => {
     getDoserPlateStatus(snapshot.id)
       .then((s) => setPlateStatus(s))
       .catch(() => setPlateStatus(null)); // no plate set yet (404) — not an error worth surfacing
-  }, [snapshot.id]);
-
-  // Plate definitions are static labware metadata (no claim, no
-  // initialization required), so fetch once up front to populate the
-  // picker regardless of device state.
-  useEffect(() => {
-    let cancelled = false;
-    getDoserPlateDefinitions(snapshot.id)
-      .then((defs) => {
-        if (!cancelled) setPlateDefs(defs);
-      })
-      .catch(() => {
-        /* dropdown just stays empty; not worth an error band for this */
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [snapshot.id]);
 
   // Sync the grid to whatever plate is actually set on the device once the
@@ -139,7 +122,7 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
     setPendingAction(name);
     startTransition(() => {
       fn()
-        .catch((err: unknown) => setActionError(interpretActionError(err)))
+        .catch((err: unknown) => reportError(err, name))
         .finally(() => setPendingAction((current) => (current === name ? null : current)));
     });
   }
@@ -150,20 +133,14 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
     startTransition(() => {
       getDoserBalanceReading(snapshot.id)
         .then((reading) => setMassG(reading.mass_g))
-        .catch((err: unknown) => setActionError(interpretActionError(err)))
+        .catch((err: unknown) => reportError(err, "weigh"))
         .finally(() => setPendingAction((current) => (current === "weigh" ? null : current)));
     });
   }
 
-  function handlePlateTypeChange(definitionKey: string) {
-    if (!definitionKey) return;
+  function handleLayoutChange(key: string) {
+    setLayoutKey(key);
     setSelectedWells(new Set());
-    exec("plate.set", () =>
-      postDoserSetPlate(snapshot.id, definitionKey).then((res) => {
-        refreshPlateStatus();
-        return res;
-      }),
-    );
   }
 
   function toggleWell(name: string) {
@@ -194,9 +171,18 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   }
 
   function doseAllWells() {
+    // Dose every well in the current layout (no device-side "all" call, since
+    // the plate layout is client-chosen).
+    const wellTargets: Record<string, number> = {};
+    for (let r = 0; r < layout.rows; r++) {
+      for (let c = 0; c < layout.columns; c++) {
+        wellTargets[wellName(r, c)] = targetMg;
+      }
+    }
     exec("dose.all", () =>
-      postDoserDoseAll(snapshot.id, targetMg).then((res) => {
+      postDoserDoseMultiple(snapshot.id, wellTargets).then((res) => {
         refreshPlateStatus();
+        setSelectedWells(new Set());
         return res;
       }),
     );
@@ -233,7 +219,9 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </span>
       </div>
 
-      {/* Row 1 — lifecycle */}
+      {/* Row 1 — lifecycle + manual lid/plate single-axis moves. The loader's
+          own collision guard refuses an unsafe move (e.g. raising the plate
+          while the lid is closed). */}
       <div className="flex flex-wrap items-center gap-1">
         {isRequiresInit && (
           <TileButton
@@ -248,52 +236,39 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           onClick={() => exec("home", () => postDoserHome(snapshot.id))}
           disabled={locked || isPending}
         >
-          Home
+          {pendingAction === "home" ? "Homing…" : "Home"}
         </TileButton>
         <TileButton
           onClick={() => exec("shutdown", () => postDoserShutdown(snapshot.id))}
           disabled={locked || isPending}
           variant="danger"
+          title="Safe shutdown + return home (this device has no motion-stop endpoint)"
         >
-          Shutdown
+          {pendingAction === "shutdown" ? "Stopping…" : "Stop"}
         </TileButton>
-      </div>
-
-      {/* Row 2 — manual lid/plate-lift moves + tare. Granular single-axis
-          controls (as opposed to the full load/unload sequences) so an
-          operator can drive each axis independently while placing or
-          removing a plate. The loader's own collision guard refuses an
-          unsafe move (e.g. raising the plate while the lid is closed). */}
-      <div className="flex flex-wrap items-center gap-1">
         <TileButton
           onClick={() => exec("lid.open", () => postDoserOpenLid(snapshot.id))}
           disabled={locked || isPending}
         >
-          {pendingAction === "lid.open" ? "Opening…" : "Open Lid"}
+          {pendingAction === "lid.open" ? "Opening…" : "Lid Open"}
         </TileButton>
         <TileButton
           onClick={() => exec("lid.close", () => postDoserCloseLid(snapshot.id))}
           disabled={locked || isPending}
         >
-          {pendingAction === "lid.close" ? "Closing…" : "Close Lid"}
+          {pendingAction === "lid.close" ? "Closing…" : "Lid Closed"}
         </TileButton>
         <TileButton
           onClick={() => exec("plate.raise", () => postDoserRaisePlate(snapshot.id))}
           disabled={locked || isPending}
         >
-          {pendingAction === "plate.raise" ? "Raising…" : "Raise Plate"}
+          {pendingAction === "plate.raise" ? "Raising…" : "Plate Up"}
         </TileButton>
         <TileButton
           onClick={() => exec("plate.lower", () => postDoserLowerPlate(snapshot.id))}
           disabled={locked || isPending}
         >
-          {pendingAction === "plate.lower" ? "Lowering…" : "Lower Plate"}
-        </TileButton>
-        <TileButton
-          onClick={() => exec("tare", () => postDoserTare(snapshot.id))}
-          disabled={locked || isPending}
-        >
-          {pendingAction === "tare" ? "Taring…" : "Tare"}
+          {pendingAction === "plate.lower" ? "Lowering…" : "Plate Down"}
         </TileButton>
       </div>
 
@@ -301,6 +276,12 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           with air currents/vibration, so a static number that only updates
           when asked for is more useful than a jittery live one. */}
       <div className="flex flex-wrap items-center gap-1">
+        <TileButton
+          onClick={() => exec("tare", () => postDoserTare(snapshot.id))}
+          disabled={locked || isPending}
+        >
+          {pendingAction === "tare" ? "Taring…" : "Tare"}
+        </TileButton>
         <TileButton
           onClick={weigh}
           disabled={locked || isPending}
@@ -316,54 +297,44 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         />
       </div>
 
-      {/* Row 3 — plate type + well selection + dosing (only meaningful when
-          ready). The grid is rendered strictly from `plateStatus` (the
-          device's own view), so it only appears once a plate is actually
-          set — no locally-guessed preview that could drift from reality. */}
+      {/* Row 3 — plate layout + well selection + dosing (only meaningful when
+          ready). The layout picker (96-well / 54-vial) is client-side and just
+          reshapes the recording grid; the on-screen footprint stays fixed so
+          fewer wells render larger. */}
       {isReady && (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
-              Plate
-            </span>
-            <select
-              value={plateStatus?.name ?? ""}
-              onChange={(e) => handlePlateTypeChange(e.target.value)}
-              disabled={locked || isPending || plateDefs.length === 0}
-              className="min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-ink disabled:bg-slate-50 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900 dark:disabled:text-slate-600"
-            >
-              <option value="" disabled>
-                {plateDefs.length === 0 ? "(loading…)" : "Select plate type…"}
-              </option>
-              {plateDefs.map((def) => (
-                <option key={def.key} value={def.key}>
-                  {plateTypeLabel(def)}
-                </option>
-              ))}
-            </select>
-            {plateStatus && (
+          {/* Plate orientation (top) + plate selection (below) stacked to the
+              left of the grid. */}
+          <div className="flex min-h-0 flex-1 items-start gap-2">
+            <div className="flex shrink-0 flex-col gap-1.5">
               <TileButton
                 onClick={() => setA1TopLeft((v) => !v)}
                 disabled={isPending}
               >
                 A1: {a1TopLeft ? "Top-Left" : "Bottom-Right"}
               </TileButton>
-            )}
-          </div>
-
-          {plateStatus ? (
+              <select
+                value={layoutKey}
+                onChange={(e) => handleLayoutChange(e.target.value)}
+                disabled={locked || isPending}
+                aria-label="Plate type"
+                className="min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-ink disabled:bg-slate-50 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900 dark:disabled:text-slate-600"
+              >
+                {PLATE_LAYOUTS.map((l) => (
+                  <option key={l.key} value={l.key}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <WellGrid
-              plateStatus={plateStatus}
+              plateStatus={gridPlate}
               selectedWells={selectedWells}
               a1TopLeft={a1TopLeft}
               disabled={locked || isPending}
               onToggleWell={toggleWell}
             />
-          ) : (
-            <p className="text-[11px] text-ink-subtle dark:text-slate-500">
-              Select a plate type above to load the well grid.
-            </p>
-          )}
+          </div>
 
           <div className="mt-auto flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-1 text-[10px] text-ink-subtle dark:text-slate-500">
@@ -387,8 +358,14 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
               Dose{selectedWells.size > 0 ? ` (${selectedWells.size})` : ""}
             </TileButton>
             <TileButton
+              onClick={() => setSelectedWells(new Set())}
+              disabled={locked || isPending || selectedWells.size === 0}
+            >
+              Clear
+            </TileButton>
+            <TileButton
               onClick={doseAllWells}
-              disabled={locked || isPending || !plateStatus}
+              disabled={locked || isPending}
               variant="primary"
             >
               Dose All Wells
@@ -397,28 +374,17 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </div>
       )}
 
-      {actionError !== null && (
-        <div
-          role="status"
-          className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
-        >
-          {actionError.status > 0 && (
-            <span className="shrink-0 font-mono font-semibold">
-              {actionError.status}
-            </span>
-          )}
-          <span className="leading-snug">{actionError.message}</span>
-        </div>
-      )}
+      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }
 
 /**
- * Well-selection grid rendered strictly from the device's own plate status
- * (rows/columns/well list) — never a locally-guessed layout. Clicking a
- * well toggles it in/out of the caller's selection set; `a1TopLeft` only
- * changes which corner A1 renders in (reversing both axes), not well
+ * Well-selection grid rendered from a plate layout (rows/columns/well list).
+ * The caller passes the device's authoritative `plateStatus` once a plate is
+ * set, or a default 96-well layout beforehand so wells can still be selected.
+ * Clicking a well toggles it in/out of the caller's selection set; `a1TopLeft`
+ * only changes which corner A1 renders in (reversing both axes), not well
  * identity.
  */
 function WellGrid({
@@ -442,43 +408,66 @@ function WellGrid({
     colOrder.reverse();
   }
 
+  // The cells are tiny unlabelled squares; the two first-column corner wells
+  // are annotated in the gutter *outside* the grid so the labels never eat a
+  // cell. Names are derived from the plate dims (A1 / H1 for 96-well, A1 / P1
+  // for 384-well). Positions follow the a1TopLeft flip: column 1 is on the
+  // left when a1TopLeft, otherwise on the right, with the rows reversed.
+  const topWell = wellName(0, 0);
+  const bottomWell = wellName(plateStatus.rows - 1, 0);
+  const sideCls = a1TopLeft ? "left-0" : "right-0";
+  const topVCls = a1TopLeft ? "top-0" : "bottom-0";
+  const bottomVCls = a1TopLeft ? "bottom-0" : "top-0";
+  const cornerLabelCls =
+    "pointer-events-none absolute font-mono text-[8px] leading-none text-ink-subtle dark:text-slate-500";
+
   return (
-    <div
-      className="grid flex-1 gap-0.5 overflow-auto"
-      style={{ gridTemplateColumns: `repeat(${plateStatus.columns}, minmax(1.5rem, 1fr))` }}
-    >
-      {rowOrder.flatMap((row) =>
-        colOrder.map((col) => {
-          const name = wellName(row, col);
-          const well = wellsByName.get(name);
-          const selected = selectedWells.has(name);
-          return (
-            <button
-              key={name}
-              type="button"
-              onClick={() => onToggleWell(name)}
-              disabled={disabled}
-              title={
-                well
-                  ? `${name}${well.dosed ? " — dosed" : ""}${
-                      well.target_mass_mg != null ? ` (target ${well.target_mass_mg} mg)` : ""
-                    }`
-                  : name
-              }
-              className={wellButtonClass(selected, well?.dosed)}
-            >
-              {name}
-            </button>
-          );
-        }),
-      )}
+    <div className="flex-1 overflow-auto">
+      {/* Content-hugging: the grid is only as wide as its wells (fixed cell
+          size), so it never stretches to fill the tile. */}
+      <div className="relative w-max px-4">
+        <span className={`${cornerLabelCls} ${topVCls} ${sideCls}`}>{topWell}</span>
+        <span className={`${cornerLabelCls} ${bottomVCls} ${sideCls}`}>
+          {bottomWell}
+        </span>
+        <div
+          className="grid gap-px"
+          style={{ gridTemplateColumns: `repeat(${plateStatus.columns}, 1.4rem)` }}
+        >
+          {rowOrder.flatMap((row) =>
+            colOrder.map((col) => {
+              const name = wellName(row, col);
+              const well = wellsByName.get(name);
+              const selected = selectedWells.has(name);
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  onClick={() => onToggleWell(name)}
+                  disabled={disabled}
+                  title={
+                    well
+                      ? `${name}${well.dosed ? " — dosed" : ""}${
+                          well.target_mass_mg != null
+                            ? ` (target ${well.target_mass_mg} mg)`
+                            : ""
+                        }`
+                      : name
+                  }
+                  className={wellButtonClass(selected, well?.dosed)}
+                />
+              );
+            }),
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 function wellButtonClass(selected: boolean, dosed?: boolean): string {
   const base =
-    "flex items-center justify-center rounded border py-1 font-mono text-[9px] leading-none transition-colors disabled:opacity-40";
+    "aspect-square rounded-[1px] border transition-colors disabled:opacity-40";
   if (selected) {
     return `${base} border-sky-600 bg-sky-600 text-white dark:border-sky-500 dark:bg-sky-500`;
   }

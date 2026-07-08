@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import {
-  ApiError,
   postShakerSetTemperature,
   postShakerShakeStart,
   postShakerShakeStop,
   postShakerStartup,
 } from "@/lib/api";
+import type { Parse412 } from "@/lib/action-error";
+import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
+import { ActionErrorBand } from "./ActionErrorBand";
 import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
 import { TileButton } from "./TileButton";
@@ -107,61 +109,25 @@ function fmt(value: number | null, unit: string, decimals: number): string {
   return `${value.toFixed(decimals)} ${unit}`;
 }
 
-interface ActionError {
-  status: number;
-  message: string;
-}
-
-function interpretActionError(e: unknown): ActionError {
-  if (!(e instanceof ApiError)) {
-    const message = e instanceof Error ? e.message : String(e);
-    return { status: 0, message };
+// 412 from shake.start when wait_for_temperature=true and the heater didn't
+// reach the band in time. Body shape matches the sealer's temperature
+// interlock: { actual_c, setpoint_c, tolerance_c, retry_after_s }. Every other
+// refusal (423 claim, 409 state) is handled generically by interpretActionError.
+const parseShaker412: Parse412 = (body, { retryAfterS }) => {
+  const actual = typeof body.actual_c === "number" ? body.actual_c : null;
+  const setpoint = typeof body.setpoint_c === "number" ? body.setpoint_c : null;
+  const tol = typeof body.tolerance_c === "number" ? body.tolerance_c : null;
+  const retry =
+    typeof body.retry_after_s === "number" ? body.retry_after_s : retryAfterS;
+  if (actual !== null && setpoint !== null && tol !== null) {
+    const retryStr =
+      retry !== null && retry > 0 ? ` Try again in ~${Math.ceil(retry)} s.` : "";
+    return `Heater at ${actual.toFixed(0)} °C, need ${setpoint.toFixed(
+      0,
+    )} ±${tol} °C.${retryStr}`;
   }
-  const body = (e.body ?? {}) as Record<string, unknown>;
-  const detail = typeof body.detail === "string" ? body.detail : undefined;
-
-  // 412 from shake.start when wait_for_temperature=true and the heater
-  // didn't reach the band in time. Body shape matches the sealer's
-  // temperature interlock: { actual_c, setpoint_c, tolerance_c, retry_after_s }.
-  if (e.status === 412) {
-    const actual = typeof body.actual_c === "number" ? body.actual_c : null;
-    const setpoint =
-      typeof body.setpoint_c === "number" ? body.setpoint_c : null;
-    const tol = typeof body.tolerance_c === "number" ? body.tolerance_c : null;
-    const retry =
-      typeof body.retry_after_s === "number" ? body.retry_after_s : e.retryAfterS;
-    if (actual !== null && setpoint !== null && tol !== null) {
-      const retryStr =
-        retry !== null && retry > 0 ? ` Try again in ~${Math.ceil(retry)} s.` : "";
-      return {
-        status: 412,
-        message: `Heater at ${actual.toFixed(0)} °C, need ${setpoint.toFixed(
-          0,
-        )} ±${tol} °C.${retryStr}`,
-      };
-    }
-    return { status: 412, message: detail ?? "Device precondition not met." };
-  }
-
-  if (e.status === 423) {
-    const claimedBy = body.claimed_by as { owner?: string } | undefined;
-    const owner = claimedBy?.owner;
-    return {
-      status: 423,
-      message: owner
-        ? `Device claim is held by ${owner}. Try again later.`
-        : detail ?? "Device is busy with another caller.",
-    };
-  }
-
-  if (e.status === 409) {
-    const msg = detail ?? "Action rejected.";
-    const hint = /init|startup|connect/i.test(msg) ? " Click Startup first." : "";
-    return { status: 409, message: msg + hint };
-  }
-
-  return { status: e.status, message: detail ?? e.message };
-}
+  return null;
+};
 
 function MetricPill({
   caption,
@@ -260,9 +226,8 @@ function EditablePill({
 
 export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const shaker = parseShaker(snapshot);
-  const [, startTransition] = useTransition();
   const { locked, countdown, toggle } = useControlLock(snapshot.id);
-  const [actionError, setActionError] = useState<ActionError | null>(null);
+  const { actionError, setActionError, exec } = useActionError(parseShaker412);
 
   // Next-cycle parameters for shake.start. Local-only state (the device
   // doesn't echo a stored cycle config; shake.start takes them inline).
@@ -288,15 +253,6 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const heaterHealthy = shaker.heaterState === "stable";
 
   const controlsDisabled = locked;
-
-  function exec<T>(fn: () => Promise<T>) {
-    setActionError(null);
-    startTransition(() => {
-      fn().catch((err: unknown) => {
-        setActionError(interpretActionError(err));
-      });
-    });
-  }
 
   useEffect(() => {
     if (actionError && isReady) setActionError(null);
@@ -493,19 +449,7 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </TileButton>
       </div>
 
-      {actionError !== null && (
-        <div
-          role="status"
-          className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
-        >
-          {actionError.status > 0 && (
-            <span className="shrink-0 font-mono font-semibold">
-              {actionError.status}
-            </span>
-          )}
-          <span className="leading-snug">{actionError.message}</span>
-        </div>
-      )}
+      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }

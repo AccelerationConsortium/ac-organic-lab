@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import {
-  ApiError,
   postStackerHandoff,
   postStackerHome,
   postStackerPresentPlate,
@@ -11,8 +10,12 @@ import {
   postStackerStagePlate,
   postStackerStartup,
 } from "@/lib/api";
+import type { Parse412 } from "@/lib/action-error";
+import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
+import { ActionErrorBand } from "./ActionErrorBand";
 import { LockButton } from "./ControlLock";
+import type { LastErrorInterpret } from "./LastErrorBadge";
 import { StatusPill } from "./StatusPill";
 import { TileButton } from "./TileButton";
 import { TileShell } from "./TileShell";
@@ -70,64 +73,28 @@ const STATE_FALLBACK: Record<string, string[]> = {
   dry_run: ["startup", "shutdown", "home", "stage_plate", "present_plate", "handoff"],
 };
 
-/** Inline error band shape (mirrors PlateSealerTile.ActionError). */
-interface ActionError {
-  status: number;
-  message: string;
-}
-
 /**
- * Translate a thrown control error into renderable copy. The BioStack 412
- * precondition body shape is `{ detail, plate_staged, required }` — a
- * stage/present/handoff action attempted with the shuttle in the wrong
- * state (e.g. handoff with no plate staged, or stage_plate when one is
- * already staged).
+ * The BioStack 412 precondition body shape is `{ detail, plate_staged,
+ * required }` — a stage/present/handoff action attempted with the shuttle in
+ * the wrong state (e.g. handoff with no plate staged, or stage_plate when one
+ * is already staged). Prefer the device's `detail` sentence; else synthesize
+ * one from plate_staged/required. Every other refusal (423 claim, 409 state)
+ * is handled generically by interpretActionError.
  */
-function interpretActionError(e: unknown): ActionError {
-  if (!(e instanceof ApiError)) {
-    return { status: 0, message: e instanceof Error ? e.message : String(e) };
-  }
-  const body = (e.body ?? {}) as Record<string, unknown>;
+const parseStacker412: Parse412 = (body) => {
   const detail = typeof body.detail === "string" ? body.detail : undefined;
-
-  if (e.status === 412) {
-    const staged =
-      typeof body.plate_staged === "boolean" ? body.plate_staged : null;
-    const required =
-      body.required === undefined || body.required === null
-        ? null
-        : String(body.required);
-    if (detail) {
-      return { status: 412, message: detail };
-    }
-    if (staged !== null && required !== null) {
-      return {
-        status: 412,
-        message: `Plate staged is ${staged}, action requires ${required}.`,
-      };
-    }
-    return { status: 412, message: "Stacker precondition not met." };
+  if (detail) return detail;
+  const staged =
+    typeof body.plate_staged === "boolean" ? body.plate_staged : null;
+  const required =
+    body.required === undefined || body.required === null
+      ? null
+      : String(body.required);
+  if (staged !== null && required !== null) {
+    return `Plate staged is ${staged}, action requires ${required}.`;
   }
-
-  if (e.status === 423) {
-    const claimedBy = body.claimed_by as { owner?: string } | undefined;
-    const owner = claimedBy?.owner;
-    return {
-      status: 423,
-      message: owner
-        ? `Device claim is held by ${owner}. Try again later.`
-        : detail ?? "Device is busy with another caller.",
-    };
-  }
-
-  if (e.status === 409) {
-    const msg = detail ?? "Action rejected.";
-    const hint = /init|startup|connect/i.test(msg) ? " Click Startup first." : "";
-    return { status: 409, message: msg + hint };
-  }
-
-  return { status: e.status, message: detail ?? e.message };
-}
+  return null;
+};
 
 /**
  * Map the BioStack `last_error.code` taxonomy to prescriptive recovery
@@ -136,12 +103,15 @@ function interpretActionError(e: unknown): ActionError {
  *   protocol_error · command_error
  * Unknown / null code → render the raw message verbatim (forward-compat
  * for new codes, back-compat for devices that don't populate `code`).
+ *
+ * Shaped as a {@link LastErrorInterpret} so it feeds the standardized
+ * <LastErrorBadge> in the TileShell header (the same surface PlateSealerTile
+ * uses) — not a bespoke in-body band.
  */
-function interpretLastError(
-  errorInfo: EquipmentSnapshot["status"]["last_error"],
-): { code: string | null; recovery: string; raw: string } | null {
+const interpretLastError: LastErrorInterpret = (errorInfo) => {
   if (!errorInfo) return null;
-  const raw = errorInfo.message;
+  const raw = (errorInfo.message ?? "").trim();
+  if (!raw) return null;
   const code = errorInfo.code ?? null;
   const recovery: string =
     {
@@ -155,7 +125,7 @@ function interpretLastError(
       command_error: "Stacker command failed — see message.",
     }[code ?? ""] ?? "";
   return { code, recovery, raw };
-}
+};
 
 // Display order = the natural plate-cycle progression, with lifecycle
 // (startup/shutdown) bookending it.
@@ -176,8 +146,7 @@ const ACTIONS: {
 export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const stacker = parseStacker(snapshot);
   const { locked, countdown, toggle } = useControlLock(snapshot.id);
-  const [, startTransition] = useTransition();
-  const [actionError, setActionError] = useState<ActionError | null>(null);
+  const { actionError, setActionError, exec } = useActionError(parseStacker412);
 
   const status = snapshot.status.equipment_status;
   const isReady = status === "ready";
@@ -187,24 +156,16 @@ export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) 
     allowed.length > 0 ? allowed : STATE_FALLBACK[status] ?? [];
   const isAllowed = (name: string) => effectiveAllowed.includes(name);
 
-  function exec(fn: () => Promise<unknown>) {
-    setActionError(null);
-    startTransition(() => {
-      fn().catch((err: unknown) => setActionError(interpretActionError(err)));
-    });
-  }
-
   // Auto-clear the inline error once the device is back to ready (the
   // refusal is no longer the current truth).
   useEffect(() => {
     if (actionError && isReady) setActionError(null);
   }, [actionError, isReady]);
 
-  const lastErrorBand = interpretLastError(snapshot.status.last_error);
-
   return (
     <TileShell
       snapshot={snapshot}
+      lastErrorInterpret={interpretLastError}
       headerRight={
         <>
           <LockButton
@@ -243,32 +204,6 @@ export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) 
         </div>
       </div>
 
-      {/* last_error band (rose): a hardware/driver fault the device
-          reported. Distinct from the amber refusal band below. */}
-      {lastErrorBand !== null && (
-        <div
-          role="status"
-          className="flex items-start gap-2 rounded-md border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-900 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-200"
-          title={lastErrorBand.raw}
-        >
-          {lastErrorBand.code && (
-            <span className="shrink-0 font-mono font-semibold">
-              {lastErrorBand.code}
-            </span>
-          )}
-          <span className="min-w-0 flex-1 leading-snug">
-            {lastErrorBand.recovery ? (
-              <>
-                {lastErrorBand.recovery}{" "}
-                <span className="opacity-75">{lastErrorBand.raw}</span>
-              </>
-            ) : (
-              lastErrorBand.raw
-            )}
-          </span>
-        </div>
-      )}
-
       {/* Action buttons, gated by allowed_actions (device-authoritative)
           and the control lock. */}
       <div className="flex flex-wrap items-center gap-1">
@@ -287,19 +222,7 @@ export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) 
       {/* Inline refusal band (amber): 412 precondition / 423 claim / 409
           state from the last action. Auto-clears on next click or when the
           device returns to ready. */}
-      {actionError !== null && (
-        <div
-          role="status"
-          className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
-        >
-          {actionError.status > 0 && (
-            <span className="shrink-0 font-mono font-semibold">
-              {actionError.status}
-            </span>
-          )}
-          <span className="leading-snug">{actionError.message}</span>
-        </div>
-      )}
+      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }

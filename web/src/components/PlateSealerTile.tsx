@@ -3,12 +3,10 @@
 import {
   useEffect,
   useState,
-  useTransition,
   type FormEvent,
 } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import {
-  ApiError,
   postSealerSealStart,
   postSealerSealStop,
   postSealerSetTemperature,
@@ -18,7 +16,10 @@ import {
   postSealerStageOut,
   postSealerStartup,
 } from "@/lib/api";
+import type { Parse412 } from "@/lib/action-error";
+import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
+import { ActionErrorBand } from "./ActionErrorBand";
 import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
 import { PositionPill, TileButton } from "./TileButton";
@@ -124,108 +125,46 @@ function fmt(value: number | null, unit: string, decimals: number): string {
  *  the border + background (used for heater state on the Actual pill);
  *  `title` becomes the native hover tooltip (heater.message). */
 /**
- * What we render in the inline error band below the action buttons.
- * `kind` is a hint for future styling; today every kind shares the
- * amber tone (these are refusals to act, not catastrophic errors).
+ * plateloc's `seal.start` 412 has two distinct body shapes:
+ *
+ *   stage interlock (v1.3+):
+ *     { detail, stage_state: "out" | "unknown", required: "in" }
+ *
+ *   temperature interlock (v1.2+):
+ *     { detail, actual_c, setpoint_c, tolerance_c, retry_after_s }
+ *
+ * We branch on which fields are present. Only `seal.start` carries these;
+ * every other refusal (423 claim, 409 state) is handled generically by
+ * interpretActionError. Module-scope so useActionError's identity is stable.
  */
-interface ActionError {
-  status: number;
-  message: string;
-  kind: "precondition" | "claim" | "state" | "other";
-}
-
-/** Translate a thrown error from a tile action into a renderable message. */
-function interpretActionError(e: unknown, action: string): ActionError {
-  if (!(e instanceof ApiError)) {
-    const message = e instanceof Error ? e.message : String(e);
-    return { status: 0, message, kind: "other" };
+const parseSealer412: Parse412 = (body, { action, retryAfterS }) => {
+  if (action !== "seal.start") return null;
+  // Stage interlock first (operator-driven, fastest to fix).
+  if (typeof body.stage_state === "string") {
+    const stage = String(body.stage_state);
+    const hint =
+      stage === "out"
+        ? ' Click "Stage in" first.'
+        : stage === "unknown"
+          ? ' Click "Stage in" or "Stage out" to home the stage.'
+          : "";
+    return `Plate stage is ${stage}, needs to be loaded.${hint}`;
   }
-  const body = (e.body ?? {}) as Record<string, unknown>;
-  const detail = typeof body.detail === "string" ? body.detail : undefined;
-
-  // 412 Precondition Failed - two distinct body shapes from plateloc:
-  //
-  //   stage interlock (v1.3+):
-  //     { detail, stage_state: "out" | "unknown", required: "in" }
-  //
-  //   temperature interlock (v1.2+):
-  //     { detail, actual_c, setpoint_c, tolerance_c, retry_after_s }
-  //
-  // We branch on which fields are present.
-  if (e.status === 412) {
-    if (action === "seal.start") {
-      // Stage interlock first (operator-driven, fastest to fix).
-      if (typeof body.stage_state === "string") {
-        const stage = String(body.stage_state);
-        const hint =
-          stage === "out"
-            ? ' Click "Stage in" first.'
-            : stage === "unknown"
-              ? ' Click "Stage in" or "Stage out" to home the stage.'
-              : "";
-        return {
-          status: 412,
-          message: `Plate stage is ${stage}, needs to be loaded.${hint}`,
-          kind: "precondition",
-        };
-      }
-      // Temperature interlock.
-      const actual = typeof body.actual_c === "number" ? body.actual_c : null;
-      const setpoint =
-        typeof body.setpoint_c === "number" ? body.setpoint_c : null;
-      const tol = typeof body.tolerance_c === "number" ? body.tolerance_c : null;
-      const retry =
-        typeof body.retry_after_s === "number"
-          ? body.retry_after_s
-          : e.retryAfterS;
-      if (actual !== null && setpoint !== null && tol !== null) {
-        const retryStr =
-          retry !== null && retry > 0
-            ? ` Try again in ~${Math.ceil(retry)} s.`
-            : "";
-        return {
-          status: 412,
-          message: `Heater at ${actual.toFixed(0)} °C, need ${setpoint.toFixed(
-            0,
-          )} ±${tol} °C.${retryStr}`,
-          kind: "precondition",
-        };
-      }
-    }
-    return {
-      status: 412,
-      message: detail ?? "Device precondition not met.",
-      kind: "precondition",
-    };
+  // Temperature interlock.
+  const actual = typeof body.actual_c === "number" ? body.actual_c : null;
+  const setpoint = typeof body.setpoint_c === "number" ? body.setpoint_c : null;
+  const tol = typeof body.tolerance_c === "number" ? body.tolerance_c : null;
+  const retry =
+    typeof body.retry_after_s === "number" ? body.retry_after_s : retryAfterS;
+  if (actual !== null && setpoint !== null && tol !== null) {
+    const retryStr =
+      retry !== null && retry > 0 ? ` Try again in ~${Math.ceil(retry)} s.` : "";
+    return `Heater at ${actual.toFixed(0)} °C, need ${setpoint.toFixed(
+      0,
+    )} ±${tol} °C.${retryStr}`;
   }
-
-  // 423 Locked - another holder owns the claim.
-  if (e.status === 423) {
-    const claimedBy = body.claimed_by as { owner?: string } | undefined;
-    const owner = claimedBy?.owner;
-    return {
-      status: 423,
-      message: owner
-        ? `Device claim is held by ${owner}. Try again later.`
-        : detail ?? "Device is busy with another caller.",
-      kind: "claim",
-    };
-  }
-
-  // 409 Conflict - typically "driver not connected; click Startup first".
-  if (e.status === 409) {
-    const msg = detail ?? "Action rejected.";
-    const hint = /init|startup|connect/i.test(msg) ? " Click Startup first." : "";
-    return { status: 409, message: msg + hint, kind: "state" };
-  }
-
-  // Fall-through: surface whatever the device sent.
-  return {
-    status: e.status,
-    message: detail ?? e.message,
-    kind: "other",
-  };
-}
+  return null;
+};
 
 /**
  * What we render in the rose `last_error` band above the action buttons.
@@ -394,9 +333,8 @@ function EditablePill({
 
 export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const sealer = parseSealer(snapshot);
-  const [, startTransition] = useTransition();
   const { locked, countdown, toggle } = useControlLock(snapshot.id);
-  const [actionError, setActionError] = useState<ActionError | null>(null);
+  const { actionError, setActionError, exec } = useActionError(parseSealer412);
 
   const status = snapshot.status.equipment_status;
   const isBusy = status === "busy";
@@ -438,8 +376,8 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
 
   // Tooltip explains why. Order matches the device's 412 priority:
   // stage first (operator-driven, fastest to fix), then temperature,
-  // then heater. Aligns with PlateSealerTile.interpretActionError's
-  // branching on the 412 body shape.
+  // then heater. Aligns with parseSealer412's branching on the 412
+  // body shape.
   let sealStartTitle: string | undefined;
   if (!stageReady) {
     sealStartTitle =
@@ -456,19 +394,10 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
     sealStartTitle = sealer.heaterMessage ?? "Heater not stable";
   }
 
-  // Capture per-action errors so 412 / 423 / 409 surface inline rather
-  // than being swallowed. `actionName` is the skill name (e.g.
-  // "seal.start") so interpretActionError can specialise on the 412
-  // body shape that ships from /control/seal/start on plateloc v1.2+.
-  function exec<T>(actionName: string, fn: () => Promise<T>) {
-    // Optimistic clear: any new click supersedes a prior error.
-    setActionError(null);
-    startTransition(() => {
-      fn().catch((err: unknown) => {
-        setActionError(interpretActionError(err, actionName));
-      });
-    });
-  }
+  // exec (from useActionError) captures per-action errors so 412 / 423 / 409
+  // surface in the shared <ActionErrorBand> rather than being swallowed. The
+  // skill name (e.g. "seal.start") is threaded through so parseSealer412 can
+  // specialise on the 412 body shape from /control/seal/start (plateloc v1.2+).
 
   // Auto-clear when the device transitions to a state where the previous
   // error is no longer relevant: ready + nothing else blocking seal.start.
@@ -539,9 +468,9 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           locked={locked}
           busy={isBusy}
           onSet={(v) =>
-            exec("seal.set_temperature", () =>
-              postSealerSetTemperature(snapshot.id, v),
-            )
+            exec(() => postSealerSetTemperature(snapshot.id, v), {
+              action: "seal.set_temperature",
+            })
           }
         />
         <EditablePill
@@ -555,7 +484,9 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           locked={locked}
           busy={isBusy}
           onSet={(v) =>
-            exec("seal.set_time", () => postSealerSetTime(snapshot.id, v))
+            exec(() => postSealerSetTime(snapshot.id, v), {
+              action: "seal.set_time",
+            })
           }
         />
         <MetricPill
@@ -578,7 +509,7 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         {isRequiresInit && (
           <TileButton
             onClick={() =>
-              exec("startup", () => postSealerStartup(snapshot.id))
+              exec(() => postSealerStartup(snapshot.id), { action: "startup" })
             }
             disabled={controlsDisabled}
             variant="primary"
@@ -589,7 +520,7 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         {(isReady || isBusy) && (
           <TileButton
             onClick={() =>
-              exec("shutdown", () => postSealerShutdown(snapshot.id))
+              exec(() => postSealerShutdown(snapshot.id), { action: "shutdown" })
             }
             disabled={controlsDisabled}
           >
@@ -611,7 +542,7 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
               isMoving={isBusy && sealer.stageState !== "in"}
               disabled={controlsDisabled || sealer.stageState === "in"}
               onClick={() =>
-                exec("stage.in", () => postSealerStageIn(snapshot.id))
+                exec(() => postSealerStageIn(snapshot.id), { action: "stage.in" })
               }
             />
             <PositionPill
@@ -620,12 +551,16 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
               isMoving={isBusy && sealer.stageState !== "out"}
               disabled={controlsDisabled || sealer.stageState === "out"}
               onClick={() =>
-                exec("stage.out", () => postSealerStageOut(snapshot.id))
+                exec(() => postSealerStageOut(snapshot.id), {
+                  action: "stage.out",
+                })
               }
             />
             <TileButton
               onClick={() =>
-                exec("seal.start", () => postSealerSealStart(snapshot.id))
+                exec(() => postSealerSealStart(snapshot.id), {
+                  action: "seal.start",
+                })
               }
               disabled={controlsDisabled || sealStartBlocked}
               variant="primary"
@@ -640,7 +575,7 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             lock gates it. */}
         <TileButton
           onClick={() =>
-            exec("seal.stop", () => postSealerSealStop(snapshot.id))
+            exec(() => postSealerSealStop(snapshot.id), { action: "seal.stop" })
           }
           disabled={controlsDisabled}
           variant="danger"
@@ -651,20 +586,8 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
 
       {/* Inline error band: 412 / 423 / 409 from the last action.
           Auto-clears on next click or when the device transitions to
-          ready + tempInBand + heaterOk. Amber for all kinds today. */}
-      {actionError !== null && (
-        <div
-          role="status"
-          className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
-        >
-          {actionError.status > 0 && (
-            <span className="shrink-0 font-mono font-semibold">
-              {actionError.status}
-            </span>
-          )}
-          <span className="leading-snug">{actionError.message}</span>
-        </div>
-      )}
+          ready + tempInBand + heaterOk. */}
+      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }

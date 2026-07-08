@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import { useControlLock } from "@/lib/use-control-lock";
 import { LockButton } from "./ControlLock";
+import { MessageBand } from "./MessageBand";
 import { StatusPill } from "./StatusPill";
 import { TileShell } from "./TileShell";
 
@@ -282,12 +283,7 @@ export function HplcTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       }
     >
       {needsAction && snapshot.status.message && (
-        <div
-          role="status"
-          className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs leading-snug text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
-        >
-          <span>{snapshot.status.message}</span>
-        </div>
+        <MessageBand tone="amber">{snapshot.status.message}</MessageBand>
       )}
 
       {/* ── HPLC (liquid chromatography) ── */}

@@ -28,9 +28,12 @@ import type {
   SnapshotResponse,
 } from "@/types/api";
 
+import { useActionError } from "@/lib/use-action-error";
 import { useUserAuth } from "@/lib/user-auth";
 
+import { ActionErrorBand } from "./ActionErrorBand";
 import { CameraPlayer } from "./CameraPlayer";
+import { MessageBand } from "./MessageBand";
 import { PtzPad } from "./PtzPad";
 import { StalenessIndicator } from "./StalenessIndicator";
 import { StatusPill } from "./StatusPill";
@@ -95,12 +98,11 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   // / cancel calls fall back to the camera's only active recording.
   const recordingActive = activeLens?.recording_active === true;
 
+  const { actionError, reportError } = useActionError();
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["equipment"] });
-  const onError = (err: unknown) => {
-    if (typeof window !== "undefined") {
-      window.alert(`Camera control failed: ${(err as Error).message}`);
-    }
-  };
+  // Surface control failures in the shared inline band (same as every other
+  // tile) instead of a blocking window.alert.
+  const onError = (err: unknown) => reportError(err);
 
   const ptzMutation = useMutation({
     mutationFn: (direction: PtzDirection) =>
@@ -414,6 +416,8 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       </div>
       </fieldset>
 
+      <ActionErrorBand error={actionError} />
+
       {lastSnapshot && (
         <a
           href={mediaUrlForBrowser(snapshot.id, lastSnapshot.url)}
@@ -427,9 +431,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       )}
 
       {snapshot.status.message && (
-        <p className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
-          {snapshot.status.message}
-        </p>
+        <MessageBand tone="amber">{snapshot.status.message}</MessageBand>
       )}
 
       {presetModalOpen && (

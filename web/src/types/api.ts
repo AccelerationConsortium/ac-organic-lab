@@ -117,6 +117,11 @@ export type EquipmentStatus = Omit<
 
 export interface PillConfig {
   open?: boolean;
+  /** Optional labelled pill (e.g. "XArm5 UI") pointing at `link_href`. */
+  link_label?: string | null;
+  /** Href for the labelled pill; a root-relative path (e.g. "/xarm5/web/")
+   *  resolves against the edge origin so it is forward-auth gated. */
+  link_href?: string | null;
 }
 
 export interface PlatformSection {

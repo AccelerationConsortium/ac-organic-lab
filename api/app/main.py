@@ -30,6 +30,7 @@ from . import __version__
 from .assistant import build_assistant_router
 from .control import build_control_router
 from .db import LabDatabase, resolve_db_path
+from .deck import build_deck_router
 from .history import build_history_router
 from .presentation import (
     AggregatorHealth,
@@ -420,6 +421,8 @@ app.add_middleware(
 # device gateway named by ``equipment.yaml::base_url``. See
 # ``api/app/control.py`` for the routing rules.
 app.include_router(build_control_router())
+
+app.include_router(build_deck_router())
 # History + ingest endpoints (SQLite-backed).
 app.include_router(build_history_router())
 # Read-only Claude assistant -- streams chat over SSE, has tool access to

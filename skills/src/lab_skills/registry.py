@@ -41,10 +41,20 @@ class PillConfig(BaseModel):
     """Pill configuration for the Overview platform-card row.
 
     ``open: true`` renders an "Open ↗" link to the equipment's ``base_url``.
-    Extensible: add ``label``, ``icon``, etc. without breaking older entries.
+
+    ``link_label`` + ``link_href`` render an extra labelled pill (e.g.
+    ``"XArm5 UI"`` → ``/xarm5/web/``). Prefer this over ``open`` when the
+    target is an edge-gated URL rather than the device's raw ``base_url`` —
+    a root-relative ``link_href`` (``/xarm5/web/``) resolves against the
+    canonical dashboard origin (the Caddy edge), which forward-auths it,
+    instead of pointing at the device's directly-reachable Tailnet port.
+
+    Extensible: add ``icon``, etc. without breaking older entries.
     """
 
     open: bool = False
+    link_label: str | None = None
+    link_href: str | None = None
 
 
 # Protocol version a device claims to implement. Drives client-side behavior

@@ -1,13 +1,17 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { ApiError, postSetLights } from "@/lib/api";
+import { getDeckLayout, postSetLights, putDeckLayout } from "@/lib/api";
 import type { EquipmentSnapshot } from "@/types/api";
+import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
 import { useUserAuth } from "@/lib/user-auth";
 
+import { ActionErrorBand } from "./ActionErrorBand";
 import { ComponentList } from "./ComponentList";
+import { FetchErrorBand } from "./FetchErrorBand";
 import { LockButton } from "./ControlLock";
 import { MetricList } from "./MetricList";
 import { StatusPill } from "./StatusPill";
@@ -21,44 +25,144 @@ function parseLights(snapshot: EquipmentSnapshot): LightsState {
   return "unknown";
 }
 
+// "p300_multi_gen2" -> "P300 Multi"; drops the genN suffix, keeps the model
+// and channel count. Empty/absent mounts render as "—".
+function pipetteLabel(state: string | undefined | null): string {
+  if (!state || state === "none" || state === "disconnected") return "—";
+  return state
+    .split("_")
+    .filter((p) => !/^gen\d+$/i.test(p))
+    .map((p) => (/^p\d+$/i.test(p) ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)))
+    .join(" ");
+}
+
+// Rendered on the tile as their own pills / lights control, so they are
+// excluded from the generic ComponentList below to avoid duplication.
+const TILE_OWNED_COMPONENTS = new Set([
+  "lights",
+  "pipette_left",
+  "pipette_right",
+]);
+
+// OT-2 deck: 12 numbered slots, 3 columns × 4 rows, slot 1 at the bottom-left,
+// slot 3 at the bottom-right, slot 12 at the top-right. Rendered top row first
+// so the on-screen layout matches the physical deck.
+const DECK_ROWS: number[][] = [
+  [10, 11, 12],
+  [7, 8, 9],
+  [4, 5, 6],
+  [1, 2, 3],
+];
+
+// Labware the operator can place on a slot. Client-side only for now; the deck
+// will later be driven by the device's own state (details.snapshot.deck.slots).
+interface LabwareType {
+  key: string;
+  label: string;
+  rows: number;
+  columns: number;
+}
+
+const LABWARE_TYPES: LabwareType[] = [
+  { key: "96-well", label: "96-well plate", rows: 8, columns: 12 },
+  { key: "24-well", label: "24-well plate", rows: 4, columns: 6 },
+  // Waste bin: no wells — just greys out the slot.
+  { key: "waste", label: "Waste bin", rows: 0, columns: 0 },
+];
+
+function labwareType(key: string | undefined): LabwareType | undefined {
+  return LABWARE_TYPES.find((l) => l.key === key);
+}
+function labwareLabel(key: string | undefined): string {
+  return labwareType(key)?.label ?? key ?? "";
+}
+
+// Miniature well grid drawn inside a deck slot once well-plate labware is
+// assigned. The inner grid is given the plate's own aspect ratio (columns/rows)
+// so every cell is square — which makes the `rounded-full` wells true circles —
+// and it is centred within the (taller) slot box.
+function MiniPlate({ rows, columns }: { rows: number; columns: number }) {
+  return (
+    <div className="flex h-full w-full items-center justify-center p-1.5">
+      <div
+        className="grid w-full gap-[2px]"
+        style={{
+          aspectRatio: `${columns} / ${rows}`,
+          gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+        }}
+        aria-hidden
+      >
+        {Array.from({ length: rows * columns }, (_, i) => (
+          <span key={i} className="rounded-full bg-slate-300 dark:bg-slate-600" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const { status } = snapshot;
   const metrics = status.metrics ?? {};
   const components = status.components ?? {};
-  // Display all components on the tile *except* `lights` — it gets its own
-  // dedicated toggle, so listing it twice would be noise.
-  const componentsWithoutLights = Object.fromEntries(
-    Object.entries(components).filter(([k]) => k !== "lights"),
+  // Lights + pipettes have dedicated affordances in the top row; keep them out
+  // of the generic ComponentList so they aren't shown twice.
+  const otherComponents = Object.fromEntries(
+    Object.entries(components).filter(([k]) => !TILE_OWNED_COMPONENTS.has(k)),
   );
+  const pipLeft = components["pipette_left"];
+  const pipRight = components["pipette_right"];
 
   const lights = parseLights(snapshot);
   const { locked, noAccess, countdown, toggle } = useControlLock(snapshot.id);
   const [, startTransition] = useTransition();
   const [pending, setPending] = useState<boolean>(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  // Keeps its own useTransition + `pending` (the On/Off buttons disable while
+  // in flight); error state comes from the shared hook so a refusal renders in
+  // the same <ActionErrorBand> as every other tile.
+  const { actionError, setActionError, reportError } = useActionError();
 
   function setLights(on: boolean) {
     setActionError(null);
     setPending(true);
     startTransition(() => {
       postSetLights(snapshot.id, on)
-        .catch((e: unknown) => {
-          if (e instanceof ApiError) {
-            const detail =
-              typeof (e.body as { detail?: unknown } | null)?.detail === "string"
-                ? ((e.body as { detail: string }).detail)
-                : e.message;
-            setActionError(`HTTP ${e.status}: ${detail}`);
-          } else {
-            setActionError(e instanceof Error ? e.message : String(e));
-          }
-        })
+        .catch((e: unknown) => reportError(e, "lights.set"))
         .finally(() => setPending(false));
     });
   }
 
   const lightsKnown = lights === "on" || lights === "off";
   const isOn = lights === "on";
+
+  // Deck labware is stored server-side (shared across users) via
+  // GET/PUT /api/equipment/<id>/deck, and polled so other operators' edits
+  // appear. TODO: replace with the device's own deck state
+  // (status.details.snapshot.deck.slots) once the OT-2 server publishes it.
+  const queryClient = useQueryClient();
+  const deckKey = ["deck", snapshot.id] as const;
+  const { data: deckData } = useQuery({
+    queryKey: deckKey,
+    queryFn: () => getDeckLayout(snapshot.id),
+    refetchInterval: 15000,
+  });
+  const deckLabware = deckData?.slots ?? {};
+  const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
+
+  function setSlotLabware(slot: number, labware: string) {
+    const next = { ...deckLabware };
+    if (labware) next[String(slot)] = labware;
+    else delete next[String(slot)];
+    // Optimistic: reflect immediately, then persist. On failure, refetch the
+    // authoritative server copy and surface the error.
+    queryClient.setQueryData(deckKey, { slots: next });
+    putDeckLayout(snapshot.id, next)
+      .then((res) => queryClient.setQueryData(deckKey, res))
+      .catch((e: unknown) => {
+        reportError(e, "deck.set");
+        queryClient.invalidateQueries({ queryKey: deckKey });
+      });
+  }
 
   return (
     <TileShell
@@ -80,93 +184,144 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
         </>
       }
     >
-      {/* Lights row — enabled when signed in (no lock chip). */}
+      {/* Top row — one "Light" toggle + state dot, and the two pipette-mount
+          pills (left mount rendered first, so no need to label it). The Light
+          control is convenience-class (no lock chip) but still requires a
+          signed-in session. */}
       <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-800/40">
-        <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
-          Lights
-        </span>
-        <span
-          className={[
-            "ml-1 inline-block h-2.5 w-2.5 rounded-full",
-            isOn
-              ? "bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.7)]"
-              : lightsKnown
-                ? "bg-slate-300 dark:bg-slate-600"
-                : "bg-slate-200 dark:bg-slate-700",
-          ].join(" ")}
-          aria-hidden
+        <button
+          type="button"
+          onClick={() => setLights(!isOn)}
+          disabled={locked || pending}
           title={
-            lightsKnown
-              ? isOn
-                ? "On"
-                : "Off"
-              : "Lights state not reported"
+            locked
+              ? noAccess
+                ? "No access to this equipment"
+                : "Sign in to control"
+              : lightsKnown
+                ? isOn
+                  ? "Lights on — click to turn off"
+                  : "Lights off — click to turn on"
+                : "Lights state not reported — click to turn on"
           }
-        />
-        <span className="font-mono text-xs font-semibold text-ink dark:text-slate-100">
-          {lightsKnown ? (isOn ? "ON" : "OFF") : "—"}
-        </span>
-        <div className="ml-auto flex items-center gap-1">
-          {locked && (
-            <span className="mr-1 text-[10px] text-ink-subtle dark:text-slate-500">
-              {noAccess ? "no access" : "sign in to control"}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => setLights(true)}
-            title={locked ? (noAccess ? "No access to this equipment" : "Sign in to control") : undefined}
-            disabled={locked || pending || isOn}
+          className={[
+            "flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-semibold transition-colors",
+            "disabled:cursor-not-allowed disabled:opacity-50",
+            "border-slate-300 bg-white text-ink hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
+          ].join(" ")}
+        >
+          <span
             className={[
-              "h-7 rounded-md border px-2 text-xs font-semibold transition-colors",
-              "disabled:cursor-not-allowed disabled:opacity-50",
+              "inline-block h-2.5 w-2.5 rounded-full",
               isOn
-                ? "border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
-                : "border-slate-300 bg-white text-ink hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
+                ? "bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.7)]"
+                : "bg-slate-900 dark:bg-black",
             ].join(" ")}
+            aria-hidden
+          />
+          Light
+        </button>
+
+        <div className="ml-auto flex items-center gap-1.5">
+          <span
+            className="flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 font-mono text-xs font-semibold text-ink dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"
+            title={`Left mount: ${pipLeft?.state ?? "empty"}`}
           >
-            On
-          </button>
-          <button
-            type="button"
-            onClick={() => setLights(false)}
-            title={locked ? (noAccess ? "No access to this equipment" : "Sign in to control") : undefined}
-            disabled={locked || pending || (lightsKnown && !isOn)}
-            className={[
-              "h-7 rounded-md border px-2 text-xs font-semibold transition-colors",
-              "disabled:cursor-not-allowed disabled:opacity-50",
-              lightsKnown && !isOn
-                ? "border-slate-300 bg-slate-100 text-ink-muted dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                : "border-slate-300 bg-white text-ink hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-            ].join(" ")}
+            {pipetteLabel(pipLeft?.state)}
+          </span>
+          <span
+            className="flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 font-mono text-xs font-semibold text-ink dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"
+            title={`Right mount: ${pipRight?.state ?? "empty"}`}
           >
-            Off
-          </button>
+            {pipetteLabel(pipRight?.state)}
+          </span>
         </div>
       </div>
 
-      {actionError && (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-900 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
-          {actionError}
-        </div>
-      )}
+      <ActionErrorBand error={actionError} />
+
+      {/* Deck — 12 slots (1 bottom-left … 12 top-right). Click a slot to select
+          it, then assign labware via "Select Labware" below. Client-side only
+          for now; later this reflects the device's actual deck state. */}
+      <div className="grid grid-cols-3 gap-1">
+        {DECK_ROWS.flat().map((slot) => {
+          const lw = deckLabware[slot];
+          const lwType = labwareType(lw);
+          const selected = selectedSlot === slot;
+          return (
+            <button
+              key={slot}
+              type="button"
+              onClick={() => setSelectedSlot((s) => (s === slot ? null : slot))}
+              title={`Slot ${slot}${lw ? ` — ${labwareLabel(lw)}` : " — empty"}`}
+              className={[
+                "relative h-28 overflow-hidden rounded border transition-colors",
+                selected
+                  ? "border-sky-500 bg-sky-50 dark:border-sky-500 dark:bg-sky-950/40"
+                  : "border-slate-200 bg-white hover:border-slate-400 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-slate-500",
+              ].join(" ")}
+            >
+              {lwType ? (
+                lwType.key === "waste" ? (
+                  // Waste bin: grey the whole slot, no wells.
+                  <div className="flex h-full w-full items-center justify-center bg-slate-300/70 dark:bg-slate-700/60">
+                    <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+                      waste
+                    </span>
+                  </div>
+                ) : (
+                  <MiniPlate rows={lwType.rows} columns={lwType.columns} />
+                )
+              ) : (
+                // Empty: large light-grey watermark slot number.
+                <div className="flex h-full w-full items-center justify-center">
+                  <span className="select-none text-4xl font-semibold text-slate-200 dark:text-slate-700">
+                    {slot}
+                  </span>
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Select Labware — assigns to the highlighted slot. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+          Select Labware
+        </span>
+        <select
+          value={selectedSlot != null ? deckLabware[selectedSlot] ?? "" : ""}
+          onChange={(e) => {
+            if (selectedSlot == null) return;
+            setSlotLabware(selectedSlot, e.target.value);
+          }}
+          disabled={selectedSlot == null}
+          aria-label="Select labware for the highlighted slot"
+          className="min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-ink disabled:bg-slate-50 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900 dark:disabled:text-slate-600"
+        >
+          <option value="">
+            {selectedSlot == null ? "Select a slot first" : "Empty"}
+          </option>
+          {LABWARE_TYPES.map((l) => (
+            <option key={l.key} value={l.key}>
+              {l.label}
+            </option>
+          ))}
+        </select>
+        {selectedSlot != null && (
+          <span className="text-[10px] text-ink-subtle dark:text-slate-500">
+            → slot {selectedSlot}
+          </span>
+        )}
+      </div>
 
       {Object.keys(metrics).length > 0 && <MetricList metrics={metrics} />}
-      {Object.keys(componentsWithoutLights).length > 0 && (
-        <ComponentList components={componentsWithoutLights} />
+      {Object.keys(otherComponents).length > 0 && (
+        <ComponentList components={otherComponents} />
       )}
 
-      {snapshot.fetch_error && (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-900 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
-          <div className="font-medium">Aggregator could not reach device</div>
-          <div className="font-mono">
-            {snapshot.fetch_error.kind}
-            {snapshot.fetch_error.http_status
-              ? ` · HTTP ${snapshot.fetch_error.http_status}`
-              : ""}
-          </div>
-        </div>
-      )}
+      {snapshot.fetch_error && <FetchErrorBand error={snapshot.fetch_error} />}
     </TileShell>
   );
 }

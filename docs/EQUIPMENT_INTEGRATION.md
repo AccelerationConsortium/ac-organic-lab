@@ -856,7 +856,7 @@ state, track position).
   the static range; the slot lights up automatically once the device
   emits the metric.
 
-## 11) Liquid handler (`kind: liquid_handler`) — OT-2 deck lights
+## 11) Liquid handler (`kind: liquid_handler`) — OT-2
 
 The Opentrons OT-2 (`ot2`, STATUS_SPEC v1.1 via `opentrons-server` on
 `sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020`) renders as the
@@ -864,27 +864,70 @@ kind-specific `LiquidHandlerTile`. Protocol-execution actions
 (`setup`, `home`, `aspirate`, `dispense`, `pick_up_tip`, `drop_tip`,
 `move_labware`, `pause`) are advertised by the device today but the
 catalog has no typed protocol-arg shapes for them yet — those land in
-a follow-up. **What ships now is the deck-light toggle.**
+a follow-up. **What ships now is the deck-light toggle, the pipette
+pills, and a shared deck-layout picker.**
 
 ### Tile behaviour
 
-A single Lights row at the top of the tile, followed by the standard
-`MetricList` / `ComponentList` for everything else:
+A top row with the light control + pipette pills, a 12-slot deck grid,
+a "Select Labware" picker, then the standard `MetricList` /
+`ComponentList` for anything left over.
+
+**Top row** — one Light toggle + two pipette pills:
 
 | Element | Source | Behaviour |
 |---|---|---|
-| Status dot + `ON` / `OFF` / `—` label | `components.lights.state` (`on` / `off` / `unknown`) | Amber-glow dot when ON; muted dot when OFF; pale dot when state not reported |
-| **On** button | — | Disabled when `pending` or already `on`. POSTs to `/api/equipment/ot2/control/lights` with `{ "on": true }` |
-| **Off** button | — | Disabled when `pending` or already `off`. POSTs same endpoint with `{ "on": false }` |
+| **Light** button with a state dot | `components.lights.state` (`on` / `off` / `unknown`) | One button that toggles (POSTs the opposite of the current state). Dot is **amber (glowing)** when on, **black** when off. Convenience-class: no lock chip, but disabled + hinted when signed out. |
+| Left / right **pipette pills** | `components.pipette_left.state` / `pipette_right.state` | Model formatted (`p300_multi_gen2` → `P300 Multi`); left mount rendered first (position implies the mount, so no caption). Hover shows mount + raw model; empty mount shows `—`. |
 
-The Lights row is **always interactable** — it does NOT respect the
-in-tile lock chip (see §6b "Two layers, two bypass points"). The
-lock chip is in the header because protocol-execution actions will
-land later and they *will* be gated.
+**Deck grid** — 12 slots, 3 columns × 4 rows, numbered to match the
+physical deck (**1 bottom-left, 3 bottom-right, 10 top-left, 12
+top-right**). Click a slot to select it (highlights sky-blue; click
+again to deselect). Rendering by slot contents:
 
-The remaining components (deliberately filtered to exclude `lights`,
-which has its own row) and any `metrics` are rendered as standard
-read-only lists below the Lights row.
+- **Empty** — a large, light-grey *watermark* slot number (centred).
+- **96-well / 24-well** — a miniature well grid of round wells (**8×12**
+  / **4×6**); the inner grid takes the plate's own aspect ratio so cells
+  are square and the wells render as true circles. No number.
+- **Waste bin** — the slot is simply greyed out (no wells), labelled
+  `waste`.
+
+**Select Labware** — a picker at the bottom, disabled until a slot is
+selected; then choose **96-well plate** / **24-well plate** / **Waste
+bin** (or **Empty** to clear). Assigns to the highlighted slot.
+
+The `lights`, `pipette_left`, and `pipette_right` components are
+rendered by the top row, so they're filtered out of the generic
+`ComponentList` (`TILE_OWNED_COMPONENTS` in `LiquidHandlerTile.tsx`) to
+avoid duplication. The Light row does NOT respect the in-tile lock chip
+(see §6b "Two layers, two bypass points"); the lock chip is in the
+header because protocol-execution actions will land later and *will* be
+gated.
+
+### Deck-layout store (shared, server-persisted — stopgap)
+
+The deck labware assignment is **shared across users**, not per-browser.
+It is stored server-side and served by a small store in
+`api/app/deck.py`:
+
+- `GET /api/equipment/{id}/deck` → `{ slots: { "<1..12>": "96-well" | "24-well" | "waste" } }`
+- `PUT /api/equipment/{id}/deck` → replaces the layout (validates slot
+  range 1..12 and labware against an allowlist), returns the cleaned map.
+
+Persistence is a JSON file (`deck_layouts.json`) next to `lab.db` in the
+data directory, written atomically under a lock. The tile loads it via
+`react-query` (`queryKey: ["deck", id]`), polls every 15 s so other
+operators' edits appear, and writes optimistically on each change.
+`equipment.yaml` is deliberately **not** touched (pyyaml would strip its
+comments). This whole store is a stopgap: once `opentrons-server`
+publishes real deck state on `/status`
+(`details.snapshot.deck.slots`, currently all `null`), the tile should
+read that instead and this store can be retired.
+
+> **Not auth-gated yet.** Unlike `/control/*`, the `/deck` PUT is not
+> covered by the sign-in middleware, so any Tailnet user can edit the
+> shared layout. Acceptable for the stopgap; gate it (add to
+> `CONTROL_PATH_RE`-style matching) if that becomes a concern.
 
 ### Status derivation (device side)
 
@@ -923,3 +966,10 @@ operator-facing class as camera PTZ. See §6b for the matrix.
   `aspirate`, `dispense`, `pick_up_tip`, `drop_tip`,
   `move_labware`, `pause`, `resume`, `reconcile`. These need labware-
   typed Pydantic args that the catalog has no shapes for yet.
+- **Deck from device state** — retire the `api/app/deck.py` stopgap once
+  `opentrons-server` publishes real deck contents on `/status`
+  (`details.snapshot.deck.slots`); the tile should read that (and push
+  assignments through a `plate.load`-style skill) instead of the shared
+  JSON store.
+- **Gate the `/deck` PUT** behind the sign-in middleware if the shared
+  layout needs write protection.

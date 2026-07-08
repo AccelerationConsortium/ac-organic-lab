@@ -18,8 +18,8 @@ sections:
     kind: platform
     equipment:
       - cam_hte_tapo_c245
-      - fume_hood_actuator
       - xarm_translocation
+      - fume_hood_actuator
       - ot2
       - dose_every_well
       - torry_pines_shaker

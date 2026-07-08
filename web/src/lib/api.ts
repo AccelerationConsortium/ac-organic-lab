@@ -678,3 +678,33 @@ export function mediaUrlForBrowser(
   const tail = gatewayUrl.slice(idx + "/media/".length);
   return `/api/equipment/${encodeURIComponent(equipmentId)}/media/${tail}`;
 }
+
+// ---------------------------------------------------------------------------
+// Deck layout (shared, server-persisted). Stopgap until a device publishes its
+// own deck state on /status; see api/app/deck.py.
+// ---------------------------------------------------------------------------
+
+export interface DeckLayout {
+  /** Slot number (as string, "1".."12") -> labware key ("96-well" | "24-well"). */
+  slots: Record<string, string>;
+}
+
+export async function getDeckLayout(equipmentId: string): Promise<DeckLayout> {
+  return fetchJson<DeckLayout>(
+    `/api/equipment/${encodeURIComponent(equipmentId)}/deck`,
+  );
+}
+
+export async function putDeckLayout(
+  equipmentId: string,
+  slots: Record<string, string>,
+): Promise<DeckLayout> {
+  return fetchJson<DeckLayout>(
+    `/api/equipment/${encodeURIComponent(equipmentId)}/deck`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slots }),
+    },
+  );
+}

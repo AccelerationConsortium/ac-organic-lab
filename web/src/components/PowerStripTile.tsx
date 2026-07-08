@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import { postPlugSwitch } from "@/lib/api";
+import { useActionError } from "@/lib/use-action-error";
 import { useUserAuth } from "@/lib/user-auth";
+import { ActionErrorBand } from "./ActionErrorBand";
 import { StatusPill } from "./StatusPill";
 import { TileShell } from "./TileShell";
 
@@ -157,6 +159,7 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
 
   const [optimistic, setOptimistic] = useState<Record<number, boolean>>({});
   const [, startTransition] = useTransition();
+  const { actionError, reportError } = useActionError();
 
   const { authenticated, canControl, requestLogin } = useUserAuth();
   const authorized = authenticated && canControl(snapshot.id);
@@ -217,12 +220,14 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
     setOptimistic((prev) => ({ ...prev, [outlet.index]: nextOn }));
 
     startTransition(() => {
-      postPlugSwitch(snapshot.id, "toggle", outlet.index).catch(() => {
+      postPlugSwitch(snapshot.id, "toggle", outlet.index).catch((err: unknown) => {
+        // Roll back the optimistic flip, then surface the refusal in the band.
         setOptimistic((prev) => {
           const next = { ...prev };
           delete next[outlet.index];
           return next;
         });
+        reportError(err, "toggle");
       });
     });
   }
@@ -282,6 +287,8 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           </button>
         )}
       </div>
+
+      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }

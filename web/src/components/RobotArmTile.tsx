@@ -3,6 +3,7 @@
 import type { EquipmentSnapshot } from "@/types/api";
 import { useControlLock } from "@/lib/use-control-lock";
 import { LockButton } from "./ControlLock";
+import { FetchErrorBand } from "./FetchErrorBand";
 import { StatusPill } from "./StatusPill";
 import { TileShell } from "./TileShell";
 
@@ -123,9 +124,14 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       ? (motionGraph["rail_location_name"] as string)
       : null;
 
-  const controlPanelUrl = snapshot.base_url
-    ? `${snapshot.base_url.replace(/\/+$/, "")}/web`
-    : null;
+  // Prefer the edge-gated panel URL from the registry (pill.link_href, e.g.
+  // "/xarm5/web/" behind Caddy forward_auth) over the device's raw
+  // base_url/web, which is the directly-reachable Tailnet side-door.
+  const controlPanelUrl =
+    snapshot.pill?.link_href ??
+    (snapshot.base_url
+      ? `${snapshot.base_url.replace(/\/+$/, "")}/web`
+      : null);
 
   return (
     <TileShell
@@ -261,17 +267,7 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </div>
       )}
 
-      {snapshot.fetch_error && (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-900 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
-          <div className="font-medium">Aggregator could not reach device</div>
-          <div className="font-mono">
-            {snapshot.fetch_error.kind}
-            {snapshot.fetch_error.http_status
-              ? ` · HTTP ${snapshot.fetch_error.http_status}`
-              : ""}
-          </div>
-        </div>
-      )}
+      {snapshot.fetch_error && <FetchErrorBand error={snapshot.fetch_error} />}
     </TileShell>
   );
 }

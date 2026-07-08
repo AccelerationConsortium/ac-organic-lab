@@ -92,6 +92,9 @@ function EquipmentRowSkeleton() {
 
 function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const showOpen = snapshot.pill?.open === true && !!snapshot.base_url;
+  const linkLabel = snapshot.pill?.link_label;
+  const linkHref = snapshot.pill?.link_href;
+  const showLink = !!linkLabel && !!linkHref;
   return (
     <li className="flex items-center justify-between gap-2 rounded-md border border-slate-100 bg-white/60 px-2.5 py-1.5 dark:border-slate-800 dark:bg-slate-950/40">
       <div
@@ -101,6 +104,16 @@ function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
         {snapshot.name}
       </div>
       <div className="flex shrink-0 items-center gap-2">
+        {showLink && (
+          <a
+            href={linkHref!}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] font-medium text-sky-700 hover:underline dark:text-sky-400"
+          >
+            {linkLabel} ↗
+          </a>
+        )}
         {showOpen && (
           <a
             href={snapshot.base_url!}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import {
   postPlateIn,
@@ -10,7 +10,9 @@ import {
   postPressStop,
   postPressUp,
 } from "@/lib/api";
+import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
+import { ActionErrorBand } from "./ActionErrorBand";
 import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
 import { PositionPill, TileButton } from "./TileButton";
@@ -53,7 +55,7 @@ function clampHold(raw: number): number {
 
 export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const press = parsePress(snapshot);
-  const [, startTransition] = useTransition();
+  const { actionError, exec } = useActionError();
   const { locked, countdown, toggle } = useControlLock(snapshot.id);
   const [upHold, setUpHold] = useState<number>(UP_HOLD_DEFAULT);
   const [downHold, setDownHold] = useState<number>(DOWN_HOLD_DEFAULT);
@@ -67,13 +69,8 @@ export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   // disable them. "Stop" is the only action allowed while busy.
   const movementDisabled = locked || isBusy || isRequiresInit;
 
-  function exec<T>(fn: () => Promise<T>) {
-    startTransition(() => {
-      fn().catch(() => {
-        /* fail silently; next /status poll catches up */
-      });
-    });
-  }
+  // exec (from useActionError) runs the action in a transition and surfaces
+  // any refusal (412/423/409) in the shared <ActionErrorBand> below.
 
   return (
     <TileShell
@@ -182,6 +179,8 @@ export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           Stop
         </TileButton>
       </div>
+
+      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }

@@ -89,18 +89,6 @@ equipment:
       hte: { w: 2, h: 1 }
     pills: {}
 
-  - id: fume_hood_actuator
-    name: Fume Hood Actuator
-    kind: fume_hood
-    adapter: http
-    protocol: "1.1"
-    base_url: http://100.64.254.100:5000
-    status_path: /status
-    poll_timeout_seconds: 2.0
-    tiles:
-      hte: { w: 2, h: 1 }
-    pills: {}
-
   - id: xarm_translocation
     name: UFactory xArm5
     kind: robot_arm
@@ -119,6 +107,24 @@ equipment:
     do_not_call_connect: true
     tiles:
       hte: { w: 2, h: 1 }
+    # "XArm5 UI" pill / tile deep-link -> the edge-gated canonical panel URL
+    # (Caddy: forward_auth @xarm_ui -> ac_auth). Root-relative so it resolves
+    # against the dashboard origin, NOT the device's directly-reachable
+    # :8000/web side-door. See docs/ROADMAP.md "Control-surface exposure".
+    pills:
+      link_label: "UI"
+      link_href: /xarm5/web/
+
+  - id: fume_hood_actuator
+    name: Fume Hood Actuator
+    kind: fume_hood
+    adapter: http
+    protocol: "1.1"
+    base_url: http://100.64.254.100:5000
+    status_path: /status
+    poll_timeout_seconds: 2.0
+    tiles:
+      hte: { w: 2, h: 1 }
     pills: {}
 
   - id: ot2
@@ -135,7 +141,7 @@ equipment:
     poll_timeout_seconds: 8.0
     do_not_call_connect: true
     tiles:
-      hte: { w: 2, h: 2}
+      hte: { w: 2, h: 3}
     pills: {}
 
   - id: dose_every_well
@@ -147,11 +153,11 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 2.0
     tiles:
-      # Full-width hero: the tile hosts a plate-type picker plus a full
-      # well-selection grid (up to 8x12 for a 96-well plate) on top of the
-      # lifecycle/lid/plate/tare/dose controls, which needs much more room
-      # than the default 2x2 (see SolidDoserTile.tsx).
-      hte: { w: 4, h: 5 }
+      # Plate-type picker + a compact well-selection grid (small unlabelled
+      # cells, only the corner wells labelled for orientation) on top of the
+      # lifecycle/lid/plate/tare/dose controls. The grid is dense, so this
+      # needs only modestly more height than the 2x1 default.
+      hte: { w: 2, h: 2 }
     pills: {}
 
   - id: torry_pines_shaker
