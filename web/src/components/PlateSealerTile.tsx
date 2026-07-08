@@ -514,6 +514,59 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             onToggle={toggle}
             noun="sealer"
           />
+          {/* Device fault (last_error): a message icon to the left of the
+              status pill. Click to pop the detail box open; click again to
+              hide it back to the icon. Only shown when a fault is present. */}
+          {lastErrorBand !== null && (
+            <div className="relative flex items-center">
+              <button
+                type="button"
+                onClick={() => setFaultExpanded((v) => !v)}
+                aria-expanded={faultExpanded}
+                aria-label="Device fault details"
+                title={
+                  faultExpanded
+                    ? "Hide fault"
+                    : (lastErrorBand.code ?? "Device fault")
+                }
+                className="flex h-6 w-6 items-center justify-center rounded-md border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+              </button>
+              {faultExpanded && (
+                <div
+                  role="status"
+                  className="absolute right-0 top-7 z-30 w-64 rounded-md border border-rose-300 bg-rose-50 px-2.5 py-2 text-left text-[11px] leading-snug text-rose-900 shadow-lg dark:border-rose-700 dark:bg-rose-950 dark:text-rose-100"
+                >
+                  {lastErrorBand.code && (
+                    <div className="mb-1 font-mono font-semibold">
+                      {lastErrorBand.code}
+                    </div>
+                  )}
+                  {lastErrorBand.recovery ? (
+                    <>
+                      {lastErrorBand.recovery}{" "}
+                      <span className="opacity-75">{lastErrorBand.raw}</span>
+                    </>
+                  ) : (
+                    lastErrorBand.raw
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <StatusPill state={status} />
         </>
       }
@@ -572,53 +625,9 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         />
       </div>
 
-      {/* last_error band: rose tone distinguishes "hardware reported a
-          fault" from the amber "your action was refused" band below.
-          Renders the prescriptive recovery sentence (when we recognise
-          the code) plus the device's raw message truncated with a
-          hover tooltip. Auto-clears via the device's own v1.2.1+
-          auto-clear contract on the next successful action. */}
-      {lastErrorBand !== null && (
-        <div
-          role="status"
-          className="rounded-md border border-rose-300 bg-rose-50 text-[11px] text-rose-900 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-200"
-        >
-          {/* Collapsed bubble: warning + code + one-line preview + caret.
-              Click to expand the full recovery + raw driver message. */}
-          <button
-            type="button"
-            onClick={() => setFaultExpanded((v) => !v)}
-            aria-expanded={faultExpanded}
-            title={faultExpanded ? "Hide fault details" : "Show fault details"}
-            className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left"
-          >
-            <span aria-hidden className="shrink-0">⚠</span>
-            <span className="shrink-0 font-mono font-semibold">
-              {lastErrorBand.code ?? "fault"}
-            </span>
-            {!faultExpanded && (
-              <span className="min-w-0 flex-1 truncate opacity-80">
-                {lastErrorBand.recovery ?? lastErrorBand.raw}
-              </span>
-            )}
-            <span aria-hidden className="ml-auto shrink-0 opacity-60">
-              {faultExpanded ? "▾" : "▸"}
-            </span>
-          </button>
-          {faultExpanded && (
-            <div className="border-t border-rose-200 px-2.5 py-1.5 leading-snug dark:border-rose-800/60">
-              {lastErrorBand.recovery ? (
-                <>
-                  {lastErrorBand.recovery}{" "}
-                  <span className="opacity-75">{lastErrorBand.raw}</span>
-                </>
-              ) : (
-                lastErrorBand.raw
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      {/* Device fault (last_error) is surfaced as a message icon next to the
+          status pill in the header (see headerRight) — click to pop the
+          detail box open/closed — rather than an always-expanded band here. */}
 
       {/* Action buttons. Visibility is state-aware so the row doesn't
           balloon during requires_init or busy. */}
