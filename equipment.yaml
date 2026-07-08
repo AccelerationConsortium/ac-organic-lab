@@ -313,7 +313,7 @@ equipment:
     pills: {}
 
   - id: ac_organic_lab_auth
-    name: SDL2 Auth
+    name: SDL2 Authentication
     kind: other
     adapter: http
     protocol: "1.0"
