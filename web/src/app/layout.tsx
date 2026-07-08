@@ -32,7 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     Organic Self-driving Lab
                   </h1>
                   <p className="mt-1 text-base text-ink-muted dark:text-slate-400 md:text-lg">
-                    Acceleration Consortium | Live Status of Lab and Platforms
+                    Live Status of Lab and Platforms
                   </p>
                 </div>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
