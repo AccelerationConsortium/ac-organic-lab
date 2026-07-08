@@ -397,6 +397,9 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const [, startTransition] = useTransition();
   const { locked, countdown, toggle } = useControlLock(snapshot.id);
   const [actionError, setActionError] = useState<ActionError | null>(null);
+  // The last_error fault band is collapsed to a small bubble by default (the
+  // driver messages can be long); the operator clicks to expand / hide.
+  const [faultExpanded, setFaultExpanded] = useState(false);
 
   const status = snapshot.status.equipment_status;
   const isBusy = status === "busy";
@@ -578,24 +581,42 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       {lastErrorBand !== null && (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-md border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-900 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-200"
-          title={lastErrorBand.raw}
+          className="rounded-md border border-rose-300 bg-rose-50 text-[11px] text-rose-900 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-200"
         >
-          {lastErrorBand.code && (
+          {/* Collapsed bubble: warning + code + one-line preview + caret.
+              Click to expand the full recovery + raw driver message. */}
+          <button
+            type="button"
+            onClick={() => setFaultExpanded((v) => !v)}
+            aria-expanded={faultExpanded}
+            title={faultExpanded ? "Hide fault details" : "Show fault details"}
+            className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left"
+          >
+            <span aria-hidden className="shrink-0">⚠</span>
             <span className="shrink-0 font-mono font-semibold">
-              {lastErrorBand.code}
+              {lastErrorBand.code ?? "fault"}
             </span>
-          )}
-          <span className="min-w-0 flex-1 leading-snug">
-            {lastErrorBand.recovery ? (
-              <>
-                {lastErrorBand.recovery}{" "}
-                <span className="opacity-75">{lastErrorBand.raw}</span>
-              </>
-            ) : (
-              lastErrorBand.raw
+            {!faultExpanded && (
+              <span className="min-w-0 flex-1 truncate opacity-80">
+                {lastErrorBand.recovery ?? lastErrorBand.raw}
+              </span>
             )}
-          </span>
+            <span aria-hidden className="ml-auto shrink-0 opacity-60">
+              {faultExpanded ? "▾" : "▸"}
+            </span>
+          </button>
+          {faultExpanded && (
+            <div className="border-t border-rose-200 px-2.5 py-1.5 leading-snug dark:border-rose-800/60">
+              {lastErrorBand.recovery ? (
+                <>
+                  {lastErrorBand.recovery}{" "}
+                  <span className="opacity-75">{lastErrorBand.raw}</span>
+                </>
+              ) : (
+                lastErrorBand.raw
+              )}
+            </div>
+          )}
         </div>
       )}
 
