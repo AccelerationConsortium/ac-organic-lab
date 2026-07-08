@@ -27,6 +27,11 @@ dev = [
 where = ["."]
 include = ["ac_auth*"]
 
+# Ship the shared banner asset (served by GET /auth/banner.js) for non-editable
+# installs; an editable/source install finds it on disk next to main.py anyway.
+[tool.setuptools.package-data]
+ac_auth = ["static/*.js"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

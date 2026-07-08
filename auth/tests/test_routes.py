@@ -67,6 +67,21 @@ def test_health(tmp_path):
         assert c.get("/health").json()["status"] == "healthy"
 
 
+def test_banner_js_served(tmp_path):
+    """The shared banner asset is served ungated as JS and carries the
+    window.labAuth host-page contract the panels consume."""
+    app, _, _ = _ctx(tmp_path)
+    with TestClient(app) as c:
+        r = c.get("/auth/banner.js")
+    assert r.status_code == 200
+    assert "javascript" in r.headers["content-type"]
+    assert r.headers.get("cache-control") == "no-store"
+    body = r.text
+    assert "window.labAuth" in body
+    assert "labauth:change" in body
+    assert "/auth/verify-code" in body  # login flow wired to the id-based endpoints
+
+
 def test_request_code_allowlisted(tmp_path):
     app, _, mailer = _ctx(tmp_path)
     with TestClient(app) as c:

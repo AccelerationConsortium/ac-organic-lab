@@ -35,6 +35,19 @@ http://100.64.254.6 {
 		reverse_proxy 127.0.0.1:8002
 	}
 
+	# ---- shared auth surface + banner, on this origin ----------------------
+	# ac_auth (:8009) serves the login/session API AND the self-contained top
+	# banner asset (GET /auth/banner.js). Every UI includes the banner with one
+	# line (<script src="/auth/banner.js">); it and its /auth/me, /auth/login,
+	# /auth/verify-code, /auth/users, /auth/logout calls all resolve here on the
+	# single origin, so the host-only ac_auth_session cookie rides along. This
+	# path is UNgated (it is the login surface). NOTE: /auth/verify is still
+	# called internally by the forward_auth blocks below (also to :8009); routing
+	# it here too is harmless — same upstream.
+	handle /auth/* {
+		reverse_proxy 100.64.254.6:8009
+	}
+
 	# ---- device-native panels, path-routed ONTO this origin ----------------
 	# These are the UIs that used to demand their own login (each on its own
 	# origin). forward_auth gates them at the edge against the SAME ac_auth the

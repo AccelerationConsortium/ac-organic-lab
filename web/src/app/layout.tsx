@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import "./globals.css";
 import { QueryProvider } from "@/lib/query-client";
 import { UserAuthProvider } from "@/lib/user-auth";
 import { AssistantBubble } from "@/components/AssistantBubble";
-import { LoginBar } from "@/components/LoginBar";
 import { Nav } from "@/components/Nav";
 
 export const metadata: Metadata = {
@@ -15,16 +15,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="min-h-screen">
+        {/* Shared SDL2 auth banner — the same top bar every lab UI shows,
+            served once by ac_auth at /auth/banner.js. It attaches its UI into
+            this slot's shadow root, so React owns the light-DOM element and
+            never reconciles the banner's markup (no hydration conflict).
+            Loaded afterInteractive so it mounts once hydration is done. */}
+        <div id="ac-auth-banner-slot" className="sticky top-0 z-50" />
+        <Script src="/auth/banner.js" strategy="afterInteractive" />
         <QueryProvider>
          <UserAuthProvider>
-          {/* Sticky sign-in bar pinned to the top of the viewport — stays put
-              as the page scrolls so controlling the lab is always one click
-              away. */}
-          <div className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur dark:border-slate-800 dark:bg-slate-950/85">
-            <div className="mx-auto max-w-7xl px-4 py-2 sm:px-6 lg:px-8">
-              <LoginBar />
-            </div>
-          </div>
           <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
             <header className="flex flex-col gap-4">
               <div className="flex items-center justify-between gap-4">

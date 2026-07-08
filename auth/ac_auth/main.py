@@ -37,10 +37,13 @@ import socket
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
 from pydantic import BaseModel, Field
 
 from .authz import data_scope, effective_central_role, effective_device_role
@@ -592,6 +595,21 @@ def create_app(
             await asyncio.to_thread(db.revoke_session, token)
         response.delete_cookie(s.cookie_name, path="/")
         return {"ok": True}
+
+    @app.get("/auth/banner.js")
+    async def banner_js() -> Response:
+        """Self-contained shared top banner. Every lab UI behind the single edge
+        opts in with one line — ``<script src="/auth/banner.js" defer></script>``
+        — and gets the same login/logout bar, driven by this one asset. It calls
+        only same-origin /auth/* endpoints, so the host-only session cookie rides
+        along; markup/styling/logic live here, so updating it updates every UI.
+        Served ungated (it is the login surface). No-store so a banner update is
+        picked up on the next page load rather than lingering in caches."""
+        return FileResponse(
+            _STATIC_DIR / "banner.js",
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
 
     return app
 
