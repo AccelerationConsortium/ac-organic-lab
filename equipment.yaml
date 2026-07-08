@@ -267,7 +267,7 @@ equipment:
   # not health-polled — shown "ready" because base_url is set); base_url is the
   # edge path the "Open ↗" pill points at.
   - id: laagente_analitica
-    name: AnaliticaChat
+    name: Analitica Chat
     kind: other
     adapter: mock
     base_url: http://100.64.254.6/agente/
@@ -284,7 +284,7 @@ equipment:
   # /files with Swagger at /docs. No "Open ↗" pill (it is an API, not a
   # browsable UI — its base_url root is not a page).
   - id: analytica_db
-    name: AnaliticaDB
+    name: Analitica Database
     kind: other
     adapter: http
     protocol: "1.0"

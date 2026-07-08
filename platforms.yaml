@@ -9,7 +9,7 @@ sections:
     title: Services
     description: Lab web UIs and dashboards
     kind: platform
-    equipment: [pypoe_web, analytica_db, laagente_analitica, ac_organic_lab_api, ac_organic_lab_auth]
+    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, pypoe_web]
     
   - id: hte
     title: HTE Platform
