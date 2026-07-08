@@ -33,6 +33,20 @@ class MockAdapter(EquipmentAdapter):
                 device_time=now_utc(),
                 metrics=metrics,
             )
+        elif self.entry.base_url:
+            # A non-sensor mock entry that points at a real base_url is a
+            # deployed external web UI we only *link* to (it doesn't speak
+            # STATUS_SPEC, so there's nothing to poll) — show it as a reachable
+            # link tile rather than "not integrated". Not a health check: the
+            # tile is a launcher, not a monitored device.
+            envelope = EquipmentStatus(
+                equipment_id=self.entry.id,
+                equipment_name=self.entry.name,
+                equipment_kind=self.entry.kind,
+                equipment_status="ready",
+                message="External web UI (link only — not health-polled)",
+                device_time=now_utc(),
+            )
         else:
             envelope = EquipmentStatus(
                 equipment_id=self.entry.id,
