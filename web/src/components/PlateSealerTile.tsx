@@ -397,9 +397,6 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const [, startTransition] = useTransition();
   const { locked, countdown, toggle } = useControlLock(snapshot.id);
   const [actionError, setActionError] = useState<ActionError | null>(null);
-  // The last_error fault band is collapsed to a small bubble by default (the
-  // driver messages can be long); the operator clicks to expand / hide.
-  const [faultExpanded, setFaultExpanded] = useState(false);
 
   const status = snapshot.status.equipment_status;
   const isBusy = status === "busy";
@@ -481,11 +478,9 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
     }
   }, [actionError, isReady, sealStartBlocked]);
 
-  // last_error band: plateloc v1.3.1+ ships a structured `last_error.code`
-  // taxonomy and auto-clears the field on the next successful operational
-  // action. So when this returns non-null, it's freshly meaningful —
-  // not stale debris from a previous shift.
-  const lastErrorBand = interpretLastError(snapshot.status.last_error);
+  // The last_error fault surface is standardized in TileShell as a message
+  // icon + popover next to the status pill; we pass interpretLastError to it
+  // (below) so plateloc's v1.3.1 code taxonomy gets prescriptive recovery copy.
 
   // Footer message override: when the device is in `ready` but the seal
   // interlock would refuse, the device's own `status.message` (typically
@@ -514,62 +509,10 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             onToggle={toggle}
             noun="sealer"
           />
-          {/* Device fault (last_error): a message icon to the left of the
-              status pill. Click to pop the detail box open; click again to
-              hide it back to the icon. Only shown when a fault is present. */}
-          {lastErrorBand !== null && (
-            <div className="relative flex items-center">
-              <button
-                type="button"
-                onClick={() => setFaultExpanded((v) => !v)}
-                aria-expanded={faultExpanded}
-                aria-label="Device fault details"
-                title={
-                  faultExpanded
-                    ? "Hide fault"
-                    : (lastErrorBand.code ?? "Device fault")
-                }
-                className="flex h-6 w-6 items-center justify-center rounded-md border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
-              >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden
-                >
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-              </button>
-              {faultExpanded && (
-                <div
-                  role="status"
-                  className="absolute right-0 top-7 z-30 w-64 rounded-md border border-rose-300 bg-rose-50 px-2.5 py-2 text-left text-[11px] leading-snug text-rose-900 shadow-lg dark:border-rose-700 dark:bg-rose-950 dark:text-rose-100"
-                >
-                  {lastErrorBand.code && (
-                    <div className="mb-1 font-mono font-semibold">
-                      {lastErrorBand.code}
-                    </div>
-                  )}
-                  {lastErrorBand.recovery ? (
-                    <>
-                      {lastErrorBand.recovery}{" "}
-                      <span className="opacity-75">{lastErrorBand.raw}</span>
-                    </>
-                  ) : (
-                    lastErrorBand.raw
-                  )}
-                </div>
-              )}
-            </div>
-          )}
           <StatusPill state={status} />
         </>
       }
+      lastErrorInterpret={interpretLastError}
     >
       {/* 2x2 metric grid. The Actual pill is tinted by the heater state
           (emerald=stable, amber=heating/cooling, slate=unknown/disconnected,

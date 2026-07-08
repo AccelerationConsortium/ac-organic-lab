@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import { kindLabel } from "@/lib/format";
 import { StalenessIndicator } from "./StalenessIndicator";
+import { LastErrorBadge, type LastErrorInterpret } from "./LastErrorBadge";
 
 // Latency at or above this threshold paints the "_ ms" label amber,
 // matching StalenessIndicator's "stale" color. Most devices poll in
@@ -45,6 +46,13 @@ export interface TileShellProps {
   footerLeft?: ReactNode;
   /** Extra inline content in the subtitle line after "kind · id". */
   subtitleExtra?: ReactNode;
+  /**
+   * Optional enricher for the standardized `last_error` badge (the message
+   * icon left of the status pill). Omit for the generic code+message display;
+   * a kind-specific tile can map device codes to recovery copy (see
+   * PlateSealerTile). Returning null suppresses the badge.
+   */
+  lastErrorInterpret?: LastErrorInterpret;
 }
 
 export function TileShell({
@@ -53,6 +61,7 @@ export function TileShell({
   children,
   footerLeft,
   subtitleExtra,
+  lastErrorInterpret,
 }: TileShellProps) {
   const { status } = snapshot;
   const requiredActions = status.required_actions ?? [];
@@ -78,7 +87,16 @@ export function TileShell({
             )}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">{headerRight}</div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {/* Standardized device-fault badge: a message icon left of the
+              status pill, present on every tile whenever the device reports a
+              last_error. Click to pop the detail box. */}
+          <LastErrorBadge
+            error={status.last_error}
+            interpret={lastErrorInterpret}
+          />
+          {headerRight}
+        </div>
       </header>
 
       {/* Body */}
