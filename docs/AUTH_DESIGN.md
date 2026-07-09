@@ -30,6 +30,35 @@ the auth edge, or bind it to loopback and reverse-proxy through the platform
 gateway). This is a prerequisite for requirements 1–3 below, not a finishing
 touch. See `docs/ROADMAP.md` → *Control-surface exposure*.
 
+### Policy: every web service carries the central auth (normative)
+
+**Every browsable web service in the lab MUST be served behind the single auth
+edge (`http://100.64.254.6`) and carry the shared central-auth surface** — the
+`ac_auth` session cookie and the shared top banner (`<script
+src="/auth/banner.js">`). There is one place a user signs in, and every UI shows
+it. This applies to all of them: the dashboard, the xArm `/web/` panel,
+AnaliticaDB, LaAgenteAnalitica, `pypoe_web`, and any future UI. A web service
+that is only reachable on its own `host:port` origin (a second sign-in, or no
+sign-in at all) is a **non-conformance** to be migrated onto the edge.
+
+Two levels, and they are distinct:
+
+- **Carry the banner (mandatory for every UI).** The service is path-routed onto
+  the single edge so `/auth/*` resolves same-origin and the host-only
+  `ac_auth_session` cookie rides along; the banner renders and the user can sign
+  in once for the whole lab. This is required even for a service that is not yet
+  gated.
+- **Enforce (per service, as it is ready).** Wrapping the service's edge path in
+  Caddy `forward_auth` → `/auth/verify` (and/or the service's own cookie-verify
+  middleware) is applied when that service is ready to gate access. Bringing a UI
+  onto the edge *without* `forward_auth` (banner present, access still open) is
+  the sanctioned interim step — carry first, enforce next — not a resting state.
+
+Reads that are deliberately public (live equipment status / telemetry; see *Reads
+vs writes*) stay public **behind** the edge — "carry the central auth" means the
+sign-in surface is present and identity is available, not that every byte is
+gated.
+
 ## Requirements (what this design must deliver)
 
 1. **A clear definition of what each user can do on each equipment/platform** —
@@ -886,7 +915,7 @@ per-IP rate-limit, and the device-side roster pull in each device repo (e.g.
 
 - `docs/STATUS_SPEC.md §4.11` & §5 — Tailnet-as-boundary posture; the claim protocol.
 - `docs/ROADMAP.md` → *Control-surface exposure* — the direct-device side-door this design closes.
-- `docs/EQUIPMENT_INTEGRATION.md §6b` — the `CONTROL_PASSWORD` gate this replaces.
+- `docs/EQUIP_GUIDE.md §6b` — the `CONTROL_PASSWORD` gate this replaces.
 - `docs/OBSERVABILITY.md` — history DB schema that gains the `owner` column (data isolation).
 - `api/app/control.py` — claim/heartbeat/release passthrough that stamps the real `owner`.
 - Device side (`agilent-hplcms-server`): the roster + role gates (`user` / `automation` / `service`) this feeds.

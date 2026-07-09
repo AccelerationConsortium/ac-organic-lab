@@ -120,7 +120,7 @@ host. Spec is what the device's live `/status` envelope reports.
 | `ot2` | `http` | 1.1 | ✅ `ready` | Protocol actions + `lights.set` advertised; deck snapshot pulled over SSH. Protocol-action SkillDefs pending (typed labware args). |
 | `dose_every_well` | `http` | 1.1 | ✅ `requires_init` | Full v1.1 verified live 2026-05-31: hard `X-Claim-Token` (423), `/control/*` consolidation (breaking), state-driven `allowed_actions`. |
 | `torry_pines_shaker` | `http` | 1.1 | ✅ `ready` | 2026-05-09 `cal3` degrade cleared. Poll capped at 2.5 s pending the device-repo read-off-lock fix (watch item below). |
-| `filter_every_well` | `http` | 1.1 | ✅ `ready` | v1.1 deployed on the Pi at `100.64.254.104`; PressTile per-direction `hold_time` inputs verified (EQUIPMENT_INTEGRATION §8). |
+| `filter_every_well` | `http` | 1.1 | ✅ `ready` | v1.1 deployed on the Pi at `100.64.254.104`; PressTile per-direction `hold_time` inputs verified (EQUIP_STATUS.md §8). |
 | `plateloc` | `http` | 1.1 | ✅ `ready` | Real claims (TTL `ClaimStore`, commit fa98ca8) verified 2026-05-31; 423 ahead of the 412 seal interlocks. Only a cosmetic version bump remains. |
 | `cytation_5` | `http` | 1.1 | ✅ `ready` | 13 actions advertised; device-repo Phases 3+4 shipped; Phase 2 (per-well tracking) remains. |
 | `agilent_uplc_ms` | `http` | 1.1 | ✅ `ready` | v1.1 sidecar with hard claims and the `workflow.start`/`end` campaign lock; the sidecar owns the queue. Detail in the sub-task below. |
@@ -387,7 +387,8 @@ PlateLoc) is the gate.
   recipe for a Windows device PC (uv + NSSM).
 - [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) — logging tiers, central
   history DB schema.
-- [`docs/EQUIPMENT_INTEGRATION.md`](EQUIPMENT_INTEGRATION.md) —
-  onboarding / maintenance runbook.
+- [`docs/EQUIP_GUIDE.md`](EQUIP_GUIDE.md) — onboarding / maintenance
+  guideline; [`docs/EQUIP_STATUS.md`](EQUIP_STATUS.md) — current per-device
+  tile implementations.
 - `.cursor/plans/build_ac-organic-lab-skills_5bb34ed0.plan.md` — original
   layered plan; this file is its committed counterpart.

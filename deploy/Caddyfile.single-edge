@@ -160,6 +160,26 @@ http://100.64.254.6 {
 		}
 	}
 
+	# ---- PyPoe web UI, path-routed ONTO this origin (banner only, NOT gated) --
+	# PyPoe (:8006 on this host) is pulled onto the single edge so it carries the
+	# shared /auth/banner.js banner and the host-only ac_auth_session cookie rides
+	# along (one sign-in for the whole lab). Deliberately NO forward_auth yet —
+	# "carry the banner first, enforce next" (AUTH_DESIGN.md → "Policy: every web
+	# service carries the central auth"). handle_path strips /services/pypoe so
+	# PyPoe sees its own root paths; header_up X-Forwarded-Prefix tells PyPoe to
+	# prefix the URLs it emits (assets / links / API / WS) so they resolve back
+	# under /services/pypoe (_ForwardedPrefixMiddleware → base_path() /
+	# window.PYPOE_BASE). /auth/* is NOT under this prefix — it resolves at the
+	# edge root above, so the banner + its /auth/me,/login,… calls are same-origin.
+	# WebSocket (/ws/chat/*) proxies through unblocked (no forward_auth to exclude
+	# Upgrade from). Canonical URL: http://100.64.254.6/services/pypoe/
+	redir /services/pypoe /services/pypoe/ 308
+	handle_path /services/pypoe/* {
+		reverse_proxy 100.64.254.6:8006 {
+			header_up X-Forwarded-Prefix /services/pypoe
+		}
+	}
+
 	# ---- dashboard (Next.js) at root ---------------------------------------
 	# Next.js serves / and /api/* (it rewrites /api/* to FastAPI on :8001) and
 	# enforces its own control/assistant gate via web/src/middleware.ts against

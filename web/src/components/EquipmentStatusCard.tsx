@@ -21,7 +21,7 @@ export function EquipmentStatusCard({ snapshot }: { snapshot: EquipmentSnapshot 
   // The lock chip appears on every kind that will eventually expose
   // destructive controls, even before kind-specific buttons are wired
   // up. Once they are, they should respect `locked` from this hook.
-  // See lib/tile-policy.ts for the policy and EQUIPMENT_INTEGRATION
+  // See lib/tile-policy.ts for the policy and EQUIP_GUIDE.md
   // §6b for the operator-facing explanation.
   const showsLock = kindHasDestructiveControls(snapshot.kind);
   const { locked, countdown, toggle } = useControlLock(snapshot.id);

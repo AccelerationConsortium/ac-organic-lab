@@ -116,12 +116,14 @@ equipment:
     tiles:
       hte: { w: 2, h: 1 }
     # "XArm5 UI" pill / tile deep-link -> the edge-gated canonical panel URL
-    # (Caddy: forward_auth @xarm_ui -> ac_auth). Root-relative so it resolves
-    # against the dashboard origin, NOT the device's directly-reachable
-    # :8000/web side-door. See docs/ROADMAP.md "Control-surface exposure".
+    # (Caddy: forward_auth @xarm_ui -> ac_auth). ABSOLUTE edge URL (port 80) so
+    # it always lands on the Caddy edge, NOT the device's directly-reachable
+    # :8000/web side-door and NOT the dashboard's own :8000 origin (a
+    # root-relative /xarm5/web/ would resolve to :8000/xarm5/web/ when the
+    # dashboard is viewed on :8000). See docs/ROADMAP.md "Control-surface exposure".
     pills:
       link_label: "UI"
-      link_href: /xarm5/web/
+      link_href: http://100.64.254.6/xarm5/web/
 
   - id: fume_hood_actuator
     name: Fume Hood Actuator
@@ -330,13 +332,22 @@ equipment:
     kind: other
     adapter: http
     protocol: "1.1"
+    # base_url stays the direct :8006 origin — that's where the aggregator polls
+    # /status. The browsable UI, however, is served through the single auth edge
+    # at /services/pypoe/ (Caddy handle_path + X-Forwarded-Prefix) so it carries
+    # the shared /auth banner. The "Open" pill points at the ABSOLUTE edge URL
+    # (http://100.64.254.6/services/pypoe/) rather than a root-relative path, so
+    # it lands on the Caddy edge (port 80) even when the dashboard itself is being
+    # viewed directly on :8000 — a root-relative link would resolve to
+    # :8000/services/pypoe/, which the edge routes don't cover.
     base_url: http://100.64.254.6:8006
     status_path: /status
     poll_timeout_seconds: 3.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills:
-      open: true
+      link_label: "Open"
+      link_href: http://100.64.254.6/services/pypoe/
 
   # LaAgenteAnalitica — the agent chat UI (React/Vite) on a separate PC,
   # fronted by the edge at /agente/ (the built Vite base) so it shows the shared

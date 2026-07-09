@@ -421,7 +421,8 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 - `docs/OBSERVABILITY.md` — logging, events, and the central history DB
 - `docs/AUTH_DESIGN.md` — identity, authorization, and the data-isolation `can_read` policy AnaliticaDB shares
 - `docs/ANALITICADB_ELN_LIMS_DESIGN.md` — the experiment-data record layer (ELN + LIMS results catalog)
-- `docs/EQUIPMENT_INTEGRATION.md` — onboarding and maintenance runbook
+- `docs/EQUIP_GUIDE.md` — onboarding and maintenance guideline (§1–§6b)
+- `docs/EQUIP_STATUS.md` — current per-device tile implementations (§7–§11)
 - `docs/DEVICE_PC_SETUP.md` — canonical install recipe for a Windows device PC
 - `docs/ROADMAP.md` — per-device migration status
 - `equipment.yaml` — the lab's equipment inventory (schema v2)

@@ -509,7 +509,7 @@ A repo that does **not** want to opt into v1.1 stays on v1.0 unchanged. The SDK 
 
 For *deploying* the repo to the actual lab PC (uv environment, NSSM service registration, log paths, multi-device hosting), follow [`DEVICE_PC_SETUP.md`](DEVICE_PC_SETUP.md). Each device repo's README should link to that document rather than re-deriving the recipe.
 
-For onboarding the device into the dashboard registry and handling maintenance windows, see [`EQUIPMENT_INTEGRATION.md`](EQUIPMENT_INTEGRATION.md).
+For onboarding the device into the dashboard registry and handling maintenance windows, see [`EQUIP_GUIDE.md`](EQUIP_GUIDE.md).
 
 ---
 
@@ -865,7 +865,7 @@ The semantics line up well enough that this would be a few hundred lines of Pyth
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — system layering and where the contract lives in the monorepo.
 - [`SKILLS_CATALOG.md`](SKILLS_CATALOG.md) — `Skill.name` is what `allowed_actions` lists; how the catalog evolves from hard-coded → device-declared.
 - [`INTERLOCKS.md`](INTERLOCKS.md) — four-layer safety model; claims are layer-3-adjacent, cross-device safety still goes through interlocks.
-- [`EQUIPMENT_INTEGRATION.md`](EQUIPMENT_INTEGRATION.md) — operational runbook for onboarding and maintenance.
+- [`EQUIP_GUIDE.md`](EQUIP_GUIDE.md) — operational runbook for onboarding and maintenance.
 - [`DEVICE_PC_SETUP.md`](DEVICE_PC_SETUP.md) — canonical install recipe for a Windows device PC (uv + NSSM).
 - [`OBSERVABILITY.md`](OBSERVABILITY.md) — where state-history rows go (devices do not own them).
 - [`ROADMAP.md`](ROADMAP.md) — per-device migration status to v1.0 / v1.1.
