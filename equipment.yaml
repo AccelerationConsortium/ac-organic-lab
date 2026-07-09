@@ -334,12 +334,12 @@ equipment:
     protocol: "1.1"
     # base_url stays the direct :8006 origin — that's where the aggregator polls
     # /status. The browsable UI, however, is served through the single auth edge
-    # at /services/pypoe/ (Caddy handle_path + X-Forwarded-Prefix) so it carries
+    # at /service/pypoe/ (Caddy handle_path + X-Forwarded-Prefix) so it carries
     # the shared /auth banner. The "Open" pill points at the ABSOLUTE edge URL
-    # (http://100.64.254.6/services/pypoe/) rather than a root-relative path, so
+    # (http://100.64.254.6/service/pypoe/) rather than a root-relative path, so
     # it lands on the Caddy edge (port 80) even when the dashboard itself is being
     # viewed directly on :8000 — a root-relative link would resolve to
-    # :8000/services/pypoe/, which the edge routes don't cover.
+    # :8000/service/pypoe/, which the edge routes don't cover.
     base_url: http://100.64.254.6:8006
     status_path: /status
     poll_timeout_seconds: 3.0
@@ -347,7 +347,7 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills:
       link_label: "Open"
-      link_href: http://100.64.254.6/services/pypoe/
+      link_href: http://100.64.254.6/service/pypoe/
 
   # LaAgenteAnalitica — the agent chat UI (React/Vite) on a separate PC,
   # fronted by the edge at /agente/ (the built Vite base) so it shows the shared
