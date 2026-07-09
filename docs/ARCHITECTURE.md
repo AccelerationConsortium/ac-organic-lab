@@ -20,6 +20,7 @@ It does **not** house:
 - Per-device drivers / REST APIs (one repo per instrument: `agilent-plateloc-server`, `filter_every_well`, `xarm_translocation`, `dose_every_well`, `fume_hood_actuator`, ...)
 - Project-specific workflow code (e.g. `solubility-screening`, `hte-screening`)
 - Agent code (LLM planners, prompts, evals — future `ac-organic-lab-agents`)
+- The experiment-data record store (**AnaliticaDB**, the ELN + LIMS results catalog) — its own service/repo on the data server, distinct from the platform's operational history DB (`data/lab.db`). See the *Layered system* section below.
 
 ## Layered system
 
@@ -44,6 +45,10 @@ graph TB
       dev["Per-device REST services<br/>implement STATUS_SPEC v1.x"]
     end
 
+    subgraph recordlayer [Experiment-data record layer]
+      analitica[("AnaliticaDB<br/>ELN + LIMS results catalog<br/>separate service · Postgres<br/>project-scoped experiment data")]
+    end
+
     proj --> skills
     agents --> skills
     api --> skills
@@ -53,8 +58,12 @@ graph TB
     skills --> dev
     api --> dev
     api --> db
+    proj --> analitica
+    agents --> analitica
+    skills -.polls /status tile.-> analitica
     spec -.governs.-> dev
     spec -.governs.-> skills
+    spec -.governs.-> analitica
 ```
 
 Three responsibilities, three layers:
@@ -62,6 +71,8 @@ Three responsibilities, three layers:
 1. **Device layer** — each instrument runs its own REST service implementing `STATUS_SPEC`. Authoritative for that device's state.
 2. **Platform layer** (this repo) — the SDK aggregates device state, provides typed control, manages claims/leases, and exposes the runtime skill catalog. The dashboard's web server is a thin SDK client for *reads*; for operator-initiated *writes* it proxies single `/control/*` actions to devices directly (per-request claim, bypassing the SDK — see design decision #1). The Next.js UI calls the dashboard server.
 3. **Application layer** — project workflows and agents consume the SDK to run experiments. Each project lives in its own repo with its own data model, recipes, and interlocks.
+
+Alongside these three sits the **experiment-data record layer — AnaliticaDB**, the lab's analytical-chemistry results catalog being generalized into an ELN + LIMS record store (a separate FastAPI service on the data server at `100.64.254.6:8010`, backed by Postgres; its data API lives under `/experiments`, `/samples`, `/measurements`, `/files`). It is deliberately **not** part of the platform monorepo and is **distinct from the platform's operational history DB** (`data/lab.db`, owned by `api/`): `lab.db` holds public lab telemetry (uptime, events, sensors, dosing runs), whereas AnaliticaDB holds **project-scoped scientific results** — application-layer workflows and agents write their results there, and reads are governed by the data-isolation `can_read(project, caller)` policy shared with `ac_auth` (see [`AUTH_DESIGN.md`](AUTH_DESIGN.md) and [`ANALITICADB_ELN_LIMS_DESIGN.md`](ANALITICADB_ELN_LIMS_DESIGN.md)). Because it also serves a STATUS_SPEC `/status` envelope, the dashboard registers it (`analytica_db` in `equipment.yaml`) and the aggregator polls it for a "Services" tile like any other endpoint — the dotted edge in the diagram above.
 
 ## Why a monorepo
 
@@ -408,6 +419,8 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 - `docs/SKILLS_CATALOG.md` — skill catalog design (`SkillDef` / `Skill`, runtime availability, evolution from hard-coded → device-declared)
 - `docs/INTERLOCKS.md` — four-layer safety model and the project interlock API (`add_interlock`, `validate_plan`, `PlanReport`)
 - `docs/OBSERVABILITY.md` — logging, events, and the central history DB
+- `docs/AUTH_DESIGN.md` — identity, authorization, and the data-isolation `can_read` policy AnaliticaDB shares
+- `docs/ANALITICADB_ELN_LIMS_DESIGN.md` — the experiment-data record layer (ELN + LIMS results catalog)
 - `docs/EQUIPMENT_INTEGRATION.md` — onboarding and maintenance runbook
 - `docs/DEVICE_PC_SETUP.md` — canonical install recipe for a Windows device PC
 - `docs/ROADMAP.md` — per-device migration status
