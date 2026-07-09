@@ -258,9 +258,14 @@ function MetricPill({
   );
 }
 
-/** Single-line editable pill: caption + input + unit + Set, all inline. */
+/** Single-line editable pill: caption + optional live reading + input +
+ *  unit + Set, all inline. With `actual` set, one pill carries the live
+ *  value and the setpoint together (e.g. "TEMP 165 °C [170] °C Set"). */
 function EditablePill({
   caption,
+  actual,
+  tone = "neutral",
+  title,
   current,
   unit,
   step,
@@ -272,6 +277,9 @@ function EditablePill({
   onSet,
 }: {
   caption: string;
+  actual?: string;
+  tone?: Tone;
+  title?: string;
   current: number | null;
   unit: string;
   step: number;
@@ -304,11 +312,17 @@ function EditablePill({
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 dark:border-slate-700 dark:bg-slate-800/40"
+      className={`flex h-7 items-center gap-1 rounded-md border px-2 ${TONE_CLASSES[tone]}`}
+      title={title}
     >
       <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
         {caption}
       </span>
+      {actual !== undefined && (
+        <span className="shrink-0 text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">
+          {actual}
+        </span>
+      )}
       <input
         type="number"
         inputMode="decimal"
@@ -430,6 +444,24 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       snapshot={snapshot}
       actionError={actionError}
       footerLeft={footerOverride}
+      lifecycle={{
+        // ON toggles startup/shutdown; STOP is the halt (seal.stop aborts the
+        // seal cycle — always available, never a disconnect).
+        isOn: !isRequiresInit,
+        onPowerToggle: () =>
+          isRequiresInit
+            ? exec(() => postSealerStartup(snapshot.id), { action: "startup" })
+            : exec(() => postSealerShutdown(snapshot.id), {
+                action: "shutdown",
+              }),
+        onStop: () =>
+          exec(() => postSealerSealStop(snapshot.id), { action: "seal.stop" }),
+        disabled: controlsDisabled,
+        powerTitle: isRequiresInit
+          ? "Device is off — click to start up"
+          : "Device is on — click to shut down",
+        stopTitle: "Halt: abort the seal cycle",
+      }}
       headerRight={
         <>
           <LockButton
@@ -443,22 +475,16 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       }
       lastErrorInterpret={interpretLastError}
     >
-      {/* 2x2 metric grid. The Actual pill is tinted by the heater state
-          (emerald=stable, amber=heating/cooling, slate=unknown/disconnected,
-          neutral when the device hasn't published components.heater). */}
-      <div className="grid grid-cols-2 gap-1.5">
-        <MetricPill
-          caption="Actual"
-          value={fmt(sealer.actualTempC, "°C", 0)}
-          // Out-of-band always trumps the device's heater.state — the
-          // pill should not look "ready" while the seal interlock blocks.
-          tone={!tempInBand ? "warn" : heaterTone(sealer.heaterState)}
-          title={
-            sealStartTitle ?? sealer.heaterMessage ?? undefined
-          }
-        />
+      {/* One metric row: Temp (live actual + editable setpoint in a single
+          pill, tinted by heater state — out-of-band always trumps so the pill
+          never looks "ready" while the seal interlock blocks), Seal time,
+          Cycles. */}
+      <div className="flex flex-wrap items-center gap-1.5">
         <EditablePill
-          caption="Setpoint"
+          caption="Temp"
+          actual={fmt(sealer.actualTempC, "°C", 0)}
+          tone={!tempInBand ? "warn" : heaterTone(sealer.heaterState)}
+          title={sealStartTitle ?? sealer.heaterMessage ?? undefined}
           current={sealer.setpointTempC}
           unit="°C"
           step={1}
@@ -503,30 +529,8 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           status pill in the header (see headerRight) — click to pop the
           detail box open/closed — rather than an always-expanded band here. */}
 
-      {/* Action buttons. Visibility is state-aware so the row doesn't
-          balloon during requires_init or busy. */}
+      {/* Action buttons (lifecycle ON/STOP live in the template banner). */}
       <div className="flex flex-wrap items-center gap-1">
-        {isRequiresInit && (
-          <TileButton
-            onClick={() =>
-              exec(() => postSealerStartup(snapshot.id), { action: "startup" })
-            }
-            disabled={controlsDisabled}
-            variant="primary"
-          >
-            Startup
-          </TileButton>
-        )}
-        {(isReady || isBusy) && (
-          <TileButton
-            onClick={() =>
-              exec(() => postSealerShutdown(snapshot.id), { action: "shutdown" })
-            }
-            disabled={controlsDisabled}
-          >
-            Shutdown
-          </TileButton>
-        )}
         {isReady && (
           <>
             {/* Stage in / Stage out are click-to-move pills, same pattern
@@ -570,18 +574,6 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             </TileButton>
           </>
         )}
-        {/* Seal stop is always visible — an abort control should never
-            disappear, including when idle or before init. Only the control
-            lock gates it. */}
-        <TileButton
-          onClick={() =>
-            exec(() => postSealerSealStop(snapshot.id), { action: "seal.stop" })
-          }
-          disabled={controlsDisabled}
-          variant="danger"
-        >
-          Seal stop
-        </TileButton>
       </div>
 
       {/* Inline error band: 412 / 423 / 409 from the last action.

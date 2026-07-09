@@ -126,20 +126,18 @@ const interpretLastError: LastErrorInterpret = (errorInfo) => {
   return { code, recovery, raw };
 };
 
-// Display order = the natural plate-cycle progression, with lifecycle
-// (startup/shutdown) bookending it.
+// Display order = the natural plate-cycle progression. Lifecycle
+// (startup/shutdown) lives in the template banner's ON toggle instead.
 const ACTIONS: {
   name: string;
   label: string;
   variant?: "primary" | "danger" | "default";
   run: (id: string) => Promise<unknown>;
 }[] = [
-  { name: "startup", label: "Startup", variant: "primary", run: postStackerStartup },
   { name: "home", label: "Home", run: postStackerHome },
   { name: "stage_plate", label: "Stage plate", run: postStackerStagePlate },
   { name: "present_plate", label: "Present plate", run: postStackerPresentPlate },
   { name: "handoff", label: "Handoff", variant: "primary", run: postStackerHandoff },
-  { name: "shutdown", label: "Shutdown", run: postStackerShutdown },
 ];
 
 export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
@@ -149,6 +147,7 @@ export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) 
 
   const status = snapshot.status.equipment_status;
   const isReady = status === "ready";
+  const deviceOn = status !== "requires_init" && status !== "unknown";
 
   const allowed = allowedActions(snapshot);
   const effectiveAllowed =
@@ -166,6 +165,20 @@ export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) 
       snapshot={snapshot}
       actionError={actionError}
       lastErrorInterpret={interpretLastError}
+      lifecycle={{
+        // ON toggles startup/shutdown. No STOP: the stacker exposes no
+        // halt/abort endpoint (per the template contract STOP must never
+        // alias a shutdown).
+        isOn: deviceOn,
+        onPowerToggle: () =>
+          deviceOn
+            ? exec(() => postStackerShutdown(snapshot.id))
+            : exec(() => postStackerStartup(snapshot.id)),
+        disabled: locked,
+        powerTitle: deviceOn
+          ? "Device is on — click to shut down"
+          : "Device is off — click to start up",
+      }}
       headerRight={
         <>
           <LockButton

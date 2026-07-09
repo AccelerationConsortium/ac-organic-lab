@@ -4,6 +4,7 @@ import { EquipmentStatusCard } from "./EquipmentStatusCard";
 import { FumeHoodTile } from "./FumeHoodTile";
 import { HplcTile } from "./HplcTile";
 import { LiquidHandlerTile } from "./LiquidHandlerTile";
+import { PlateReaderTile } from "./PlateReaderTile";
 import { PlateSealerTile } from "./PlateSealerTile";
 import { PlateStackerTile } from "./PlateStackerTile";
 import { PowerStripTile } from "./PowerStripTile";
@@ -66,6 +67,8 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
               <PowerStripTile snapshot={snapshot} />
             ) : snapshot.kind === "fume_hood" ? (
               <FumeHoodTile snapshot={snapshot} />
+            ) : snapshot.kind === "plate_reader" ? (
+              <PlateReaderTile snapshot={snapshot} />
             ) : snapshot.kind === "plate_sealer" ? (
               <PlateSealerTile snapshot={snapshot} />
             ) : snapshot.kind === "plate_stacker" ? (

@@ -408,6 +408,42 @@ export async function postOt2Pause(equipmentId: string): Promise<ControlAck> {
   return controlPost(equipmentId, "pause", {});
 }
 
+// -- HPLC (Agilent UPLC-MS sidecar) ------------------------------------------
+//
+// Lifecycle + halt only. `standby` parks the instrument in low-flow standby
+// (a true power-down is a deliberate manual procedure, not an API action);
+// `abort` halts the current acquisition. run.submit / queue verbs need typed
+// arg shapes and stay out of the tile.
+
+export async function postHplcStartup(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "startup", {});
+}
+
+export async function postHplcStandby(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "standby", {});
+}
+
+export async function postHplcAbort(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "abort", {});
+}
+
+// -- Plate reader (BioTek Cytation 5 / agilent-cytation-server) -------------
+//
+// Lifecycle only for now (the ON toggle on the tile). The read/imaging verbs
+// need typed arg shapes and land with the protocol-execution work.
+
+export async function postPlateReaderStartup(
+  equipmentId: string,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "startup", {});
+}
+
+export async function postPlateReaderShutdown(
+  equipmentId: string,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "shutdown", {});
+}
+
 // -- Sash (fume hood) control ----------------------------------------------
 //
 // As of STATUS_SPEC v1.1 the actuator exposes `/control/sash/{move,stop}`;

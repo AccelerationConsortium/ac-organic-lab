@@ -233,11 +233,44 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
 
   const totalW = outlets.reduce((sum, o) => sum + (o.powerW ?? 0), 0);
 
+  // Whole-strip power state for the template's ON toggle: on when any outlet
+  // (with optimistic overlay) is on. Toggling switches the entire strip.
+  const anyOn = outlets.some((o) =>
+    optimistic[o.index] !== undefined ? optimistic[o.index] : o.isOn,
+  );
+
+  function handleStripToggle() {
+    if (locked) return;
+    const target = !anyOn;
+    // Optimistically flip every outlet, then send the whole-strip switch.
+    setOptimistic(Object.fromEntries(outlets.map((o) => [o.index, target])));
+    startTransition(() => {
+      postPlugSwitch(snapshot.id, target ? "on" : "off").catch((err: unknown) => {
+        setOptimistic({});
+        reportError(err, target ? "on" : "off");
+      });
+    });
+  }
+
   return (
     <TileShell
       snapshot={snapshot}
       actionError={actionError}
       subtitleExtra={totalW > 0 ? `${totalW.toFixed(1)} W` : undefined}
+      lifecycle={{
+        // Whole-strip ON/OFF. No STOP (nothing to halt on a plug). Gated by
+        // the same unlock window as the per-outlet pills; the off direction
+        // additionally confirms (it kills every outlet, incl. hotplates).
+        isOn: anyOn,
+        onPowerToggle: handleStripToggle,
+        confirmOff: "Switch ALL outlets off?",
+        disabled: locked,
+        powerTitle: locked
+          ? "Unlock to control"
+          : anyOn
+            ? "At least one outlet is on — click to switch the whole strip off"
+            : "All outlets off — click to switch the whole strip on",
+      }}
       headerRight={
         <>
           <LockToggle

@@ -233,7 +233,7 @@ equipment:
     # management, reads, imaging). The skill catalog entry lives in
     # lab_skills/skill_catalog/plate_reader.py.
     tiles:
-      hte: { w: 2, h: 2 }
+      hte: { w: 2, h: 1 }
     pills: {}
 
   - id: agilent_uplc_ms

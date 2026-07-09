@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
 import type { ActionError } from "@/lib/action-error";
 import { kindLabel } from "@/lib/format";
@@ -69,9 +69,11 @@ export interface TileShellProps {
    * every tile's lifecycle row looks identical (semantics modelled on the
    * xArm5 control surface):
    *
-   *   - `ON` — a power/connect TOGGLE. Green (primary) while the device is
-   *     on/connected (`isOn`); clicking calls `onPowerToggle`, which should
-   *     start the device when off and shut it down / disconnect when on.
+   *   - `ON`/`OFF` — a power/connect TOGGLE, rendered like the xArm5's: a
+   *     small state dot (glowing emerald when on, grey when off) + the
+   *     current state as the label. Green (primary) while on (`isOn`);
+   *     clicking calls `onPowerToggle`, which should start the device when
+   *     off and shut it down / disconnect when on.
    *   - `STOP` — HALT MOTION (danger). Not a disconnect: wire it to the
    *     device's motion-stop / abort endpoint only. Omit it entirely for
    *     devices that have no halt endpoint rather than aliasing shutdown.
@@ -86,6 +88,14 @@ export interface TileShellProps {
     disabled?: boolean;
     powerTitle?: string;
     stopTitle?: string;
+    /**
+     * When set, clicking the toggle in the ON→off direction opens a small
+     * confirm popover with this question (e.g. "Switch all outlets off?")
+     * before `onPowerToggle` fires — for tiles whose "off" is destructive
+     * (same pattern as the xArm5 disconnect confirm). The on direction is
+     * never gated.
+     */
+    confirmOff?: string;
   };
   /**
    * Extra controls placed in the same top banner as INIT / STOP — e.g. a Light
@@ -109,6 +119,17 @@ export function TileShell({
   const showBanner = Boolean(
     lifecycle?.onPowerToggle || lifecycle?.onStop || bannerExtra,
   );
+  // Confirm-before-off popover state (only used when lifecycle.confirmOff is set).
+  const [confirmOff, setConfirmOff] = useState(false);
+
+  function handlePowerClick() {
+    if (!lifecycle?.onPowerToggle) return;
+    if (lifecycle.isOn && lifecycle.confirmOff) {
+      setConfirmOff((v) => !v);
+      return;
+    }
+    lifecycle.onPowerToggle();
+  }
   const { status } = snapshot;
   const requiredActions = status.required_actions ?? [];
   const hasMessage = Boolean(status.message);
@@ -166,14 +187,48 @@ export function TileShell({
       {showBanner && (
         <div className="flex items-center gap-2">
           {lifecycle?.onPowerToggle && (
-            <TileButton
-              onClick={lifecycle.onPowerToggle}
-              disabled={lifecycle.disabled}
-              variant={lifecycle.isOn ? "primary" : "default"}
-              title={lifecycle.powerTitle}
-            >
-              ON
-            </TileButton>
+            <div className="relative">
+              <TileButton
+                onClick={handlePowerClick}
+                disabled={lifecycle.disabled}
+                variant={lifecycle.isOn ? "primary" : "default"}
+                title={lifecycle.powerTitle}
+              >
+                {/* State dot + ON/OFF label, matching the xArm5 toggle. */}
+                <span
+                  className={[
+                    "mr-1 inline-block h-2 w-2 rounded-full",
+                    lifecycle.isOn
+                      ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]"
+                      : "bg-slate-400",
+                  ].join(" ")}
+                  aria-hidden
+                />
+                {lifecycle.isOn ? "ON" : "OFF"}
+              </TileButton>
+              {confirmOff && (
+                <div className="absolute left-0 top-full z-20 mt-1 w-44 rounded-md border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                  <p className="mb-2 text-xs text-ink dark:text-slate-200">
+                    {lifecycle.confirmOff}
+                  </p>
+                  <div className="flex justify-end gap-1.5">
+                    <TileButton size="small" onClick={() => setConfirmOff(false)}>
+                      Cancel
+                    </TileButton>
+                    <TileButton
+                      size="small"
+                      variant="danger"
+                      onClick={() => {
+                        setConfirmOff(false);
+                        lifecycle.onPowerToggle?.();
+                      }}
+                    >
+                      Yes
+                    </TileButton>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           {lifecycle?.onStop && (
             <TileButton

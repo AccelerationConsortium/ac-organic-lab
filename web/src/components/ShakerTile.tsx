@@ -6,6 +6,7 @@ import {
   postShakerSetTemperature,
   postShakerShakeStart,
   postShakerShakeStop,
+  postShakerShutdown,
   postShakerStartup,
 } from "@/lib/api";
 import type { Parse412 } from "@/lib/action-error";
@@ -156,6 +157,9 @@ function MetricPill({
 
 function EditablePill({
   caption,
+  actual,
+  tone = "neutral",
+  title,
   current,
   unit,
   step,
@@ -167,6 +171,11 @@ function EditablePill({
   onSet,
 }: {
   caption: string;
+  /** Optional live reading shown between the caption and the setpoint input
+   *  (e.g. the actual temperature), so one pill carries actual + setpoint. */
+  actual?: string;
+  tone?: Tone;
+  title?: string;
   current: number | null;
   unit: string;
   step: number;
@@ -197,11 +206,17 @@ function EditablePill({
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 dark:border-slate-700 dark:bg-slate-800/40"
+      className={`flex h-7 items-center gap-1 rounded-md border px-2 ${TONE_CLASSES[tone]}`}
+      title={title}
     >
       <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
         {caption}
       </span>
+      {actual !== undefined && (
+        <span className="shrink-0 text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">
+          {actual}
+        </span>
+      )}
       <input
         type="number"
         inputMode="decimal"
@@ -278,6 +293,21 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
     <TileShell
       snapshot={snapshot}
       actionError={actionError}
+      lifecycle={{
+        // ON toggles startup/shutdown; STOP is the halt (shake.stop aborts
+        // the running cycle — motor + heating — without disconnecting).
+        isOn: !isRequiresInit,
+        onPowerToggle: () =>
+          isRequiresInit
+            ? exec(() => postShakerStartup(snapshot.id))
+            : exec(() => postShakerShutdown(snapshot.id)),
+        onStop: () => exec(() => postShakerShakeStop(snapshot.id)),
+        disabled: controlsDisabled,
+        powerTitle: isRequiresInit
+          ? "Device is off — click to start up"
+          : "Device is on — click to shut down",
+        stopTitle: "Halt: abort the current cycle (motor and heating)",
+      }}
       headerRight={
         <>
           <LockButton
@@ -290,18 +320,14 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </>
       }
     >
-      {/* 2x2 metric grid: temperature pair on the top row, motor speed +
-          set-temperature on the bottom row. The Actual pill is tinted by
-          heater state; the Speed pill by motor state. */}
-      <div className="grid grid-cols-2 gap-1.5">
-        <MetricPill
-          caption="Actual"
-          value={fmt(shaker.actualTempC, "°C", 1)}
+      {/* One metric row: Temp (actual reading + editable setpoint in a single
+          pill, tinted by heater state), Speed (tinted by motor state), Heater. */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <EditablePill
+          caption="Temp"
+          actual={fmt(shaker.actualTempC, "°C", 1)}
           tone={heaterTone(shaker.heaterState)}
           title={shaker.heaterMessage ?? undefined}
-        />
-        <EditablePill
-          caption="Setpoint"
           current={null}
           unit="°C"
           step={1}
@@ -424,30 +450,6 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           </TileButton>
         </div>
       )}
-
-      {/* Out-of-row actions. STOP is always visible so the cycle can be
-          aborted from any state — including requires_init, where the cycle
-          row (and its Shake button) is hidden. Only the control lock gates
-          it. Startup appears only while uninitialised. */}
-      <div className="flex flex-wrap items-center gap-1">
-        {isRequiresInit && (
-          <TileButton
-            onClick={() => exec(() => postShakerStartup(snapshot.id))}
-            disabled={controlsDisabled}
-            variant="primary"
-          >
-            Startup
-          </TileButton>
-        )}
-        <TileButton
-          onClick={() => exec(() => postShakerShakeStop(snapshot.id))}
-          disabled={controlsDisabled}
-          variant="danger"
-          title="Abort the current cycle (halts motor and heating)."
-        >
-          STOP
-        </TileButton>
-      </div>
 
     </TileShell>
   );

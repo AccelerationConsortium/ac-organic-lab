@@ -1,7 +1,9 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
+import { postHplcAbort, postHplcStandby, postHplcStartup } from "@/lib/api";
+import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
 import { LockButton } from "./ControlLock";
 import { MessageBand } from "./MessageBand";
@@ -228,8 +230,22 @@ function CompPill({ label, state }: { label?: string; state: string | null }) {
 export function HplcTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const h = parseHplc(snapshot);
   const { locked, countdown, toggle } = useControlLock(snapshot.id);
+  const { actionError, setActionError, reportError } = useActionError();
+  const [, startTransition] = useTransition();
+  const [ctrlPending, setCtrlPending] = useState(false);
 
   const status = snapshot.status.equipment_status;
+  const deviceOn = status !== "requires_init" && status !== "unknown";
+
+  function runControl(name: string, fn: () => Promise<unknown>) {
+    setActionError(null);
+    setCtrlPending(true);
+    startTransition(() => {
+      fn()
+        .catch((e: unknown) => reportError(e, name))
+        .finally(() => setCtrlPending(false));
+    });
+  }
   const requiredActions = snapshot.status.required_actions ?? [];
   const needsAction = requiredActions.length > 0;
 
@@ -269,7 +285,24 @@ export function HplcTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   return (
     <TileShell
       snapshot={snapshot}
+      actionError={actionError}
       footerLeft={footerLeft}
+      lifecycle={{
+        // ON toggles startup ↔ standby (low-flow park; a true power-down is a
+        // deliberate manual procedure, not an API action). STOP halts the
+        // current acquisition (run.abort).
+        isOn: deviceOn,
+        onPowerToggle: () =>
+          deviceOn
+            ? runControl("instrument.standby", () => postHplcStandby(snapshot.id))
+            : runControl("startup", () => postHplcStartup(snapshot.id)),
+        onStop: () => runControl("run.abort", () => postHplcAbort(snapshot.id)),
+        disabled: locked || ctrlPending,
+        powerTitle: deviceOn
+          ? "Instrument is on — click to park in low-flow standby (not a power-down)"
+          : "Instrument is off — click to start up",
+        stopTitle: "Halt: abort the current acquisition",
+      }}
       headerRight={
         <>
           <LockButton

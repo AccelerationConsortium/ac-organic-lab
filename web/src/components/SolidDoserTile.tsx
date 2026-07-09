@@ -256,16 +256,6 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </>
       }
     >
-      {/* Gantry position (read-only, from /status). */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted dark:text-slate-300">
-        <span className="flex items-center gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
-            Gantry
-          </span>
-          <span>{gantry?.state ?? "—"}</span>
-        </span>
-      </div>
-
       {/* Manual lid/plate single-axis moves (lifecycle INIT/STOP + HOME/CLEAR
           live in the template banner above). The loader's own collision guard
           refuses an unsafe move (e.g. raising the plate while the lid is
@@ -324,6 +314,17 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           aria-label="Balance reading in grams"
           className="h-7 w-28 rounded border border-ink-subtle/40 bg-transparent px-2 text-right text-xs tabular-nums text-ink dark:border-slate-600 dark:text-slate-200"
         />
+      </div>
+
+      {/* Gantry state (read-only, from /status) — styled to match the other
+          caption/value rows (10px uppercase caption + xs value). */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+          Gantry
+        </span>
+        <span className="text-xs font-semibold text-ink dark:text-slate-100">
+          {gantry?.state ?? "—"}
+        </span>
       </div>
 
       {/* Row 3 — plate layout + well selection + dosing (only meaningful when
