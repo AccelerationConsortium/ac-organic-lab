@@ -83,37 +83,46 @@ export default function OverviewPage() {
           Failed to load equipment status: {equipmentError.message}
         </p>
       )}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {/* CSS multi-column masonry: every card sits at its own content height
+          and packs tightly into the columns (no stretching to match a taller
+          neighbour, no gaps below a short one). `break-inside-avoid` keeps a
+          card from splitting across the column boundary; `mb-4` is the vertical
+          gap between stacked cards (multicol uses margins, not `gap`). */}
+      <div className="columns-1 gap-4 lg:columns-2">
         {platforms.sections.map((section) => {
+          let card;
           if (section.kind === "environmental_map") {
             const sensors = section.equipment
               .map((id) => snapshotById.get(id))
               .filter((s): s is EquipmentSnapshot => s !== undefined && s.location != null);
-            return (
+            card = (
               <LabEnvironmentCard
-                key={section.id}
                 section={section}
                 sensors={sensors}
                 pending={!equipmentReady}
               />
             );
+          } else {
+            // kind === "platform"
+            const snapshots = section.equipment
+              .map((id) => snapshotById.get(id))
+              .filter((s): s is EquipmentSnapshot => s !== undefined);
+            card = (
+              <PlatformCard
+                id={section.id}
+                title={section.title}
+                description={section.description ?? undefined}
+                href={section.href ?? undefined}
+                snapshots={snapshots}
+                pending={!equipmentReady}
+                expectedCount={section.equipment.length}
+              />
+            );
           }
-
-          // kind === "platform"
-          const snapshots = section.equipment
-            .map((id) => snapshotById.get(id))
-            .filter((s): s is EquipmentSnapshot => s !== undefined);
           return (
-            <PlatformCard
-              key={section.id}
-              id={section.id}
-              title={section.title}
-              description={section.description ?? undefined}
-              href={section.href ?? undefined}
-              snapshots={snapshots}
-              pending={!equipmentReady}
-              expectedCount={section.equipment.length}
-            />
+            <div key={section.id} className="mb-4 break-inside-avoid">
+              {card}
+            </div>
           );
         })}
       </div>

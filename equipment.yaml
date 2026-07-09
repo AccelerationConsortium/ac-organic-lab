@@ -271,6 +271,57 @@ equipment:
     pills: {}
 
   # ---------------------------------------------------------------------
+  # Echem platform - displayed in the order defined in platforms.yaml.
+  # The `tiles.echem` values drive tile sizes on /platforms/echem.
+  # ---------------------------------------------------------------------
+
+  # The Echem camera is the platform's hero tile — a second Tapo C245D
+  # (device alias "Tapo for MG400"), hosted by the same `kasa-tapo-services`
+  # gateway as the HTE camera.
+  - id: cam_echem_tapo_c245
+    name: Echem Camera
+    kind: camera
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8002
+    tailscale_ip:
+    status_path: /cameras/cam_echem_tapo_c245/status
+    # Same cold-start headroom rationale as the HTE camera: the gateway
+    # serves /status from a background-poller cache, so 5 s only matters
+    # for the first request after a gateway restart.
+    poll_timeout_seconds: 5.0
+    tiles:
+      echem: { w: 2, h: 3 }
+    pills: {}
+    camera:
+      host: 172.31.60.15
+      onvif_port: 2020
+      rtsp_port: 554
+      lenses:
+        # Dual-lens C245D: wide on /stream1, tele on /stream6 (same as the
+        # HTE unit; /stream2 is the SD copy of the wide lens, NOT the tele).
+        - { id: wide, label: Wide, rtsp_path: stream1, ptz_capable: false }
+        - { id: tele, label: Tele, rtsp_path: stream6 }
+
+  # Second Opentrons OT-2 ("ot2training", Tailscale 100.64.254.91) on the
+  # Echem bench for complexation work. The robot's own HTTP API (:31950)
+  # is not STATUS_SPEC — like the HTE ot2 it needs an `opentrons-server`
+  # gateway instance fronting it (e.g. on sdl2-pc-03, port 8021, pointed at
+  # 100.64.254.91). No gateway is deployed yet, so this stays `mock`
+  # (placeholder envelope) until then; flip to `adapter: http` + the real
+  # base_url once the gateway is up.
+  - id: ot2_complexation
+    name: Opentrons OT-2 (Complexation)
+    kind: liquid_handler
+    adapter: mock
+    tailscale_ip: 100.64.254.91
+    poll_timeout_seconds: 8.0
+    do_not_call_connect: true
+    tiles:
+      echem: { w: 2, h: 3 }
+    pills: {}
+
+  # ---------------------------------------------------------------------
   # Web Services
   # ---------------------------------------------------------------------
 

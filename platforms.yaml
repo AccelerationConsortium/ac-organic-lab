@@ -11,6 +11,15 @@ sections:
     kind: platform
     equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, pypoe_web]
     
+  - id: echem
+    title: Echem Platform
+    description: Electrochemistry platform
+    href: /platforms/echem
+    kind: platform
+    equipment:
+      - cam_echem_tapo_c245
+      - ot2_complexation
+
   - id: hte
     title: HTE Platform
     description: High-throughput platform for chemistry
@@ -31,5 +40,6 @@ sections:
       # Power strips last — pinned to the bottom of the HTE grid.
       - plug_hte_strip_right
       - plug_hte_strip_left
+
 
 
