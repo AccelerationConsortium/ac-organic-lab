@@ -8,6 +8,10 @@ The dashboard runs on a single Tailscale-attached server and aggregates status f
 
 ![Organic Self-driving Lab dashboard preview](docs/images/dashboard-preview.png)
 
+The platform detail page (`/platforms/hte`) with the per-device control tiles:
+
+![HTE platform detail page preview](docs/images/platform-preview.png)
+
 ## Architecture
 
 ```
@@ -51,7 +55,8 @@ All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](doc
 |---|---|
 | [`docs/STATUS_SPEC.md`](docs/STATUS_SPEC.md) | **Authoritative device contract.** Combined v1.0 baseline + v1.1 additions (cooperative claims, `allowed_actions`, `details.claimed_by`). Includes the conformance checklists every device repo follows and an appendix comparing this contract to the **SiLA 2** standard. |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Long-form description of the monorepo's layering, the responsibilities of `skills/`, `api/`, `web/`, `equipment.yaml`, and `platforms.yaml`, and the key design decisions. |
-| [`docs/EQUIPMENT_INTEGRATION.md`](docs/EQUIPMENT_INTEGRATION.md) | Operational runbook: registering a new device, editing `equipment.yaml` and `platforms.yaml`, tile sizing, sensor map positions, maintenance windows, camera + smart-plug onboarding. |
+| [`docs/EQUIP_GUIDE.md`](docs/EQUIP_GUIDE.md) | **Guideline** (durable how-to): registering a new device, editing `equipment.yaml` and `platforms.yaml`, tile sizing, sensor map positions, maintenance windows, camera + smart-plug onboarding, control-lock policy (§1–§6b). |
+| [`docs/EQUIP_STATUS.md`](docs/EQUIP_STATUS.md) | **Current implementation** (as-built): how each device's dashboard tile renders today — status derivation, control passthrough, per-device troubleshooting for the fume hood, press, plate sealer, robot arm, and OT-2 (§7–§11). |
 | [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) | How the SDK describes "what the lab can do right now": `SkillDef` (static) vs `Skill` (runtime), how `allowed_actions` is computed, evolution from hard-coded → device-declared. |
 | [`docs/INTERLOCKS.md`](docs/INTERLOCKS.md) | Four-layer safety model (hardware limits → device state machine → skill preconditions → project plan interlocks); `validate_plan` / `execute_plan` API. |
 | [`docs/DEVICE_PC_SETUP.md`](docs/DEVICE_PC_SETUP.md) | Canonical install recipe for a Windows device PC (uv + NSSM + Tailscale). Linked from every device repo's README rather than duplicated per-repo. |
@@ -114,7 +119,7 @@ npm run gen:api-types   # writes src/types/api.generated.ts
 
 Everything visible on the dashboard — section order, equipment membership, tile sizes, and sensor positions on the lab map — is driven by `equipment.yaml` and `platforms.yaml`. No frontend code changes are needed for layout tweaks.
 
-See [`docs/EQUIPMENT_INTEGRATION.md`](docs/EQUIPMENT_INTEGRATION.md) for the step-by-step instructions.
+See [`docs/EQUIP_GUIDE.md`](docs/EQUIP_GUIDE.md) for the step-by-step instructions.
 
 ## Tests
 
@@ -145,7 +150,7 @@ See [`deploy/README.md`](deploy/README.md) for:
 - A troubleshooting table.
 
 For equipment onboarding and maintenance/offline procedures, see
-[`docs/EQUIPMENT_INTEGRATION.md`](docs/EQUIPMENT_INTEGRATION.md). For
+[`docs/EQUIP_GUIDE.md`](docs/EQUIP_GUIDE.md). For
 the canonical install recipe on a Windows device PC see
 [`docs/DEVICE_PC_SETUP.md`](docs/DEVICE_PC_SETUP.md).
 
