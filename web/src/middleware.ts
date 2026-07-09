@@ -25,7 +25,12 @@ const API_REF_UNLOCK = "/api-reference/unlock";
 // `device` covers the root-level, claim-exempt device actions proxied by
 // api/app/control.py's /device/* route (xArm connect/disconnect/stop/clear) —
 // gated exactly like /control/* so those writes always require a signed-in user.
-const CONTROL_PATH_RE = /^\/api\/equipment\/[^/]+\/(?:control|sash|device)(?:\/.*)?$/;
+// `deck` covers the shared OT-2 deck-layout store (api/app/deck.py): the PUT
+// that rewrites the layout is a write, so it requires a signed-in user here and
+// a per-equipment role check in the backend (only admin / authorized users of
+// that device may change its deck). The GET is a public read (not a write
+// method), so it is never gated.
+const CONTROL_PATH_RE = /^\/api\/equipment\/[^/]+\/(?:control|sash|device|deck)(?:\/.*)?$/;
 const CONTROL_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 // -- /api/assistant/* gate (Phase 2) -----------------------------------------

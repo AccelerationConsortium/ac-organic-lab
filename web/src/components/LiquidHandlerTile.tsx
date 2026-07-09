@@ -175,6 +175,11 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
 
   function setSlotLabware(slot: number, labware: string) {
+    // Changing the deck layout is gated to admins / authorized users of this
+    // device — the same `locked` the control affordances use (backed by
+    // /authz/mine). The picker below is disabled when locked, so this is the
+    // belt-and-suspenders guard; the backend PUT enforces the same 403.
+    if (locked) return;
     const next = { ...deckLabware };
     if (labware) next[String(slot)] = labware;
     else delete next[String(slot)];
@@ -342,12 +347,25 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
             if (selectedSlot == null) return;
             setSlotLabware(selectedSlot, e.target.value);
           }}
-          disabled={selectedSlot == null}
+          disabled={selectedSlot == null || locked}
+          title={
+            locked
+              ? noAccess
+                ? "No access — only authorized users of this device can change its deck layout"
+                : "Sign in to change the deck layout"
+              : undefined
+          }
           aria-label="Select labware for the highlighted slot"
           className="min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-ink disabled:bg-slate-50 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900 dark:disabled:text-slate-600"
         >
           <option value="">
-            {selectedSlot == null ? "Select a slot first" : "Empty"}
+            {locked
+              ? noAccess
+                ? "No access"
+                : "Sign in to edit"
+              : selectedSlot == null
+                ? "Select a slot first"
+                : "Empty"}
           </option>
           {LABWARE_TYPES.map((l) => (
             <option key={l.key} value={l.key}>

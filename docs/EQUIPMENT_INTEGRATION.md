@@ -935,10 +935,18 @@ publishes real deck state on `/status`
 (`details.snapshot.deck.slots`, currently all `null`), the tile should
 read that instead and this store can be retired.
 
-> **Not auth-gated yet.** Unlike `/control/*`, the `/deck` PUT is not
-> covered by the sign-in middleware, so any Tailnet user can edit the
-> shared layout. Acceptable for the stopgap; gate it (add to
-> `CONTROL_PATH_RE`-style matching) if that becomes a concern.
+> **Auth-gated (2026-07-09).** The `/deck` PUT is a control-class write, so
+> it is gated exactly like `/control/*`: `deck` is in the middleware's
+> `CONTROL_PATH_RE`, so an unauthenticated PUT is rejected at the edge (401),
+> and the `deck.py` backend then runs a per-equipment authorization check
+> (`GET /authz/check?user&equipment`, fail-closed) so only an **admin** or a
+> user holding `operator`+ on *that device* (an "authorized OT-2 user") may
+> change its layout — a non-authorized signed-in user gets 403. Each change is
+> audited to `equipment_events` (`control_action`, `action: deck.set`) with the
+> real actor. The GET stays a public read. The `LiquidHandlerTile` picker is
+> disabled (with a "No access" / "Sign in to edit" hint) for users who lack the
+> role, via the same `useControlLock(id)` → `/authz/mine` gate the control
+> affordances use.
 
 ### Status derivation (device side)
 
