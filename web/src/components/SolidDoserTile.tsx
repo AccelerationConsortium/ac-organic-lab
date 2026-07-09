@@ -18,7 +18,6 @@ import {
 } from "@/lib/api";
 import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
-import { ActionErrorBand } from "./ActionErrorBand";
 import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
 import { TileButton } from "./TileButton";
@@ -84,7 +83,9 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   // shape comes from `layoutKey` (a client preset — 96-well default, 54-vial
   // for HPLC), NOT from the device. `plateStatus` is still fetched best-effort
   // so dosed wells can be tinted green once a plate is actually set on-device.
-  const [layoutKey, setLayoutKey] = useState<string>(PLATE_LAYOUTS[0].key);
+  // Starts empty so the picker shows its "Select plate…" placeholder; the
+  // grid itself still falls back to the 96-well layout until a choice is made.
+  const [layoutKey, setLayoutKey] = useState<string>("");
   const [plateStatus, setPlateStatus] = useState<PlateStatusInfo | null>(null);
   const [selectedWells, setSelectedWells] = useState<Set<string>>(new Set());
   // Purely a local rendering preference — flips which corner A1 renders in
@@ -97,6 +98,19 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
 
   const components = snapshot.status.components ?? {};
   const gantry = components["gantry"];
+
+  // Live lid/plate position from the device's details blob, used to tint the
+  // matching button green (TileButton "primary"). `lid_open` is authoritative;
+  // for the plate lift we read plate_weigher.plate_loaded (true = lowered onto
+  // the weigher, false = raised) and only tint when a plate is present at all.
+  const details = (snapshot.status.details ?? {}) as Record<string, unknown>;
+  const lidOpen = details["lid_open"] === true;
+  const plateWeigher = details["plate_weigher"] as
+    | Record<string, unknown>
+    | undefined;
+  const platePresent =
+    components["plate"] != null && components["plate"].state !== "absent";
+  const plateLoaded = plateWeigher?.["plate_loaded"] === true;
 
   // The grid always renders a client layout; the device's dosed-well info (if
   // any) is overlaid for green tinting.
@@ -197,6 +211,39 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   return (
     <TileShell
       snapshot={snapshot}
+      actionError={actionError}
+      lifecycle={{
+        // ON toggles startup/shutdown. No STOP: this device has no motion-halt
+        // endpoint, and per the template contract STOP must never alias a
+        // shutdown/disconnect.
+        isOn: !isRequiresInit,
+        onPowerToggle: () =>
+          isRequiresInit
+            ? exec("startup", () => postDoserStartup(snapshot.id))
+            : exec("shutdown", () => postDoserShutdown(snapshot.id)),
+        disabled: locked || isPending,
+        powerTitle: isRequiresInit
+          ? "Device is off — click to initialise from the default config"
+          : "Device is on — click for safe shutdown + return home",
+      }}
+      bannerExtra={
+        <>
+          <TileButton
+            onClick={() => exec("home", () => postDoserHome(snapshot.id))}
+            disabled={locked || isPending}
+            title="Return all components to home"
+          >
+            {pendingAction === "home" ? "Homing…" : "HOME"}
+          </TileButton>
+          <TileButton
+            onClick={() => setSelectedWells(new Set())}
+            disabled={locked || isPending || selectedWells.size === 0}
+            title="Clear the well selection"
+          >
+            CLEAR
+          </TileButton>
+        </>
+      }
       headerRight={
         <>
           <LockButton
@@ -215,58 +262,40 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
             Gantry
           </span>
-          <span className="font-mono">{gantry?.state ?? "—"}</span>
+          <span>{gantry?.state ?? "—"}</span>
         </span>
       </div>
 
-      {/* Row 1 — lifecycle + manual lid/plate single-axis moves. The loader's
-          own collision guard refuses an unsafe move (e.g. raising the plate
-          while the lid is closed). */}
+      {/* Manual lid/plate single-axis moves (lifecycle INIT/STOP + HOME/CLEAR
+          live in the template banner above). The loader's own collision guard
+          refuses an unsafe move (e.g. raising the plate while the lid is
+          closed). */}
       <div className="flex flex-wrap items-center gap-1">
-        {isRequiresInit && (
-          <TileButton
-            onClick={() => exec("startup", () => postDoserStartup(snapshot.id))}
-            disabled={locked || isPending}
-            variant="primary"
-          >
-            Init
-          </TileButton>
-        )}
-        <TileButton
-          onClick={() => exec("home", () => postDoserHome(snapshot.id))}
-          disabled={locked || isPending}
-        >
-          {pendingAction === "home" ? "Homing…" : "Home"}
-        </TileButton>
-        <TileButton
-          onClick={() => exec("shutdown", () => postDoserShutdown(snapshot.id))}
-          disabled={locked || isPending}
-          variant="danger"
-          title="Safe shutdown + return home (this device has no motion-stop endpoint)"
-        >
-          {pendingAction === "shutdown" ? "Stopping…" : "Stop"}
-        </TileButton>
         <TileButton
           onClick={() => exec("lid.open", () => postDoserOpenLid(snapshot.id))}
           disabled={locked || isPending}
+          variant={lidOpen ? "primary" : "default"}
         >
           {pendingAction === "lid.open" ? "Opening…" : "Lid Open"}
         </TileButton>
         <TileButton
           onClick={() => exec("lid.close", () => postDoserCloseLid(snapshot.id))}
           disabled={locked || isPending}
+          variant={!lidOpen ? "primary" : "default"}
         >
-          {pendingAction === "lid.close" ? "Closing…" : "Lid Closed"}
+          {pendingAction === "lid.close" ? "Closing…" : "Lid Close"}
         </TileButton>
         <TileButton
           onClick={() => exec("plate.raise", () => postDoserRaisePlate(snapshot.id))}
           disabled={locked || isPending}
+          variant={platePresent && !plateLoaded ? "primary" : "default"}
         >
           {pendingAction === "plate.raise" ? "Raising…" : "Plate Up"}
         </TileButton>
         <TileButton
           onClick={() => exec("plate.lower", () => postDoserLowerPlate(snapshot.id))}
           disabled={locked || isPending}
+          variant={platePresent && plateLoaded ? "primary" : "default"}
         >
           {pendingAction === "plate.lower" ? "Lowering…" : "Plate Down"}
         </TileButton>
@@ -293,7 +322,7 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           readOnly
           value={massG != null ? `${massG.toFixed(4)} g` : "—"}
           aria-label="Balance reading in grams"
-          className="h-7 w-28 rounded border border-ink-subtle/40 bg-transparent px-2 text-right font-mono text-xs tabular-nums text-ink dark:border-slate-600 dark:text-slate-200"
+          className="h-7 w-28 rounded border border-ink-subtle/40 bg-transparent px-2 text-right text-xs tabular-nums text-ink dark:border-slate-600 dark:text-slate-200"
         />
       </div>
 
@@ -303,23 +332,30 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           fewer wells render larger. */}
       {isReady && (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
-          {/* Plate orientation (top) + plate selection (below) stacked to the
-              left of the grid. */}
-          <div className="flex min-h-0 flex-1 items-start gap-2">
-            <div className="flex shrink-0 flex-col gap-1.5">
+          {/* PLATE TYPE box (fixed 140px wide, stretches to the grid's height)
+              to the left of the grid: A1 orientation toggle on top, plate
+              picker below (placeholder until a plate is chosen). */}
+          <div className="flex min-h-0 flex-1 items-stretch gap-2">
+            <div className="flex w-[140px] shrink-0 flex-col gap-1.5 rounded-md border border-slate-200 bg-slate-100 p-2 dark:border-slate-700 dark:bg-slate-800/60">
+              <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+                Plate Type
+              </span>
               <TileButton
                 onClick={() => setA1TopLeft((v) => !v)}
                 disabled={isPending}
               >
-                A1: {a1TopLeft ? "Top-Left" : "Bottom-Right"}
+                A1: {a1TopLeft ? "Top" : "Bottom"}
               </TileButton>
               <select
                 value={layoutKey}
                 onChange={(e) => handleLayoutChange(e.target.value)}
                 disabled={locked || isPending}
-                aria-label="Plate type"
+                aria-label="Select plate"
                 className="min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-ink disabled:bg-slate-50 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900 dark:disabled:text-slate-600"
               >
+                <option value="" disabled>
+                  Select plate…
+                </option>
                 {PLATE_LAYOUTS.map((l) => (
                   <option key={l.key} value={l.key}>
                     {l.label}
@@ -358,12 +394,6 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
               Dose{selectedWells.size > 0 ? ` (${selectedWells.size})` : ""}
             </TileButton>
             <TileButton
-              onClick={() => setSelectedWells(new Set())}
-              disabled={locked || isPending || selectedWells.size === 0}
-            >
-              Clear
-            </TileButton>
-            <TileButton
               onClick={doseAllWells}
               disabled={locked || isPending}
               variant="primary"
@@ -374,7 +404,6 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </div>
       )}
 
-      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }
@@ -419,7 +448,7 @@ function WellGrid({
   const topVCls = a1TopLeft ? "top-0" : "bottom-0";
   const bottomVCls = a1TopLeft ? "bottom-0" : "top-0";
   const cornerLabelCls =
-    "pointer-events-none absolute font-mono text-[8px] leading-none text-ink-subtle dark:text-slate-500";
+    "pointer-events-none absolute font-mono text-[11px] leading-none text-ink-subtle dark:text-slate-500";
 
   return (
     <div className="flex-1 overflow-auto">

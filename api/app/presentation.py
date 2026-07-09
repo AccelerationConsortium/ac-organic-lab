@@ -68,6 +68,8 @@ class EquipmentSnapshot(SkillEquipmentSnapshot):
     maintenance: Maintenance | None = None
     camera: CameraConfig | None = None
     plug: PlugConfig | None = None
+    # Display-only Tailscale IP from the registry entry (None → not shown).
+    tailscale_ip: str | None = None
 
 
 class EquipmentList(BaseModel):
@@ -173,6 +175,7 @@ def _snapshot(
         maintenance=maintenance,
         camera=camera,
         plug=plug,
+        tailscale_ip=entry.tailscale_ip if entry is not None else None,
     )
 
 

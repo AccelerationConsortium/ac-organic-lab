@@ -2,9 +2,12 @@
 
 import type { ReactNode } from "react";
 import type { EquipmentSnapshot } from "@/types/api";
+import type { ActionError } from "@/lib/action-error";
 import { kindLabel } from "@/lib/format";
 import { StalenessIndicator } from "./StalenessIndicator";
+import { ActionErrorBadge } from "./ActionErrorBadge";
 import { LastErrorBadge, type LastErrorInterpret } from "./LastErrorBadge";
+import { TileButton } from "./TileButton";
 
 // Latency at or above this threshold paints the "_ ms" label amber,
 // matching StalenessIndicator's "stale" color. Most devices poll in
@@ -18,7 +21,8 @@ const SLOW_LATENCY_MS = 500;
  * Layout (top → bottom):
  *
  *   1. Header row
- *      - Left: name (text-sm font-semibold) + subtitle "kind · id" (text-[10px])
+ *      - Left: name (text-sm font-semibold) + subtitle "KIND · id[ · tailscale_ip]"
+ *        (text-xs, kind uppercased; IP only when equipment.yaml sets tailscale_ip)
  *      - Right: `headerRight` slot (typically <LockButton /> + <StatusPill />)
  *
  *   2. Body: `children` (caller-owned content)
@@ -53,6 +57,42 @@ export interface TileShellProps {
    * PlateSealerTile). Returning null suppresses the badge.
    */
   lastErrorInterpret?: LastErrorInterpret;
+  /**
+   * The tile's current control-action error (from `useActionError`). Rendered
+   * as an amber message icon + popover just left of the status pill — the
+   * standardized surface for a refused/failed action (412/423/409/504…) on
+   * every tile. Pass it instead of an inline <ActionErrorBand>.
+   */
+  actionError?: ActionError | null;
+  /**
+   * Standardized lifecycle top-banner buttons, rendered by the template so
+   * every tile's lifecycle row looks identical (semantics modelled on the
+   * xArm5 control surface):
+   *
+   *   - `ON` — a power/connect TOGGLE. Green (primary) while the device is
+   *     on/connected (`isOn`); clicking calls `onPowerToggle`, which should
+   *     start the device when off and shut it down / disconnect when on.
+   *   - `STOP` — HALT MOTION (danger). Not a disconnect: wire it to the
+   *     device's motion-stop / abort endpoint only. Omit it entirely for
+   *     devices that have no halt endpoint rather than aliasing shutdown.
+   *
+   * A button only renders when its handler is given; `disabled` is the shared
+   * gate (`locked || pending`).
+   */
+  lifecycle?: {
+    isOn?: boolean;
+    onPowerToggle?: () => void;
+    onStop?: () => void;
+    disabled?: boolean;
+    powerTitle?: string;
+    stopTitle?: string;
+  };
+  /**
+   * Extra controls placed in the same top banner as INIT / STOP — e.g. a Light
+   * toggle on the left, status pills pushed right with `ml-auto`. The banner
+   * renders whenever `lifecycle` buttons or `bannerExtra` are present.
+   */
+  bannerExtra?: ReactNode;
 }
 
 export function TileShell({
@@ -62,11 +102,23 @@ export function TileShell({
   footerLeft,
   subtitleExtra,
   lastErrorInterpret,
+  actionError = null,
+  lifecycle,
+  bannerExtra,
 }: TileShellProps) {
+  const showBanner = Boolean(
+    lifecycle?.onPowerToggle || lifecycle?.onStop || bannerExtra,
+  );
   const { status } = snapshot;
   const requiredActions = status.required_actions ?? [];
   const hasMessage = Boolean(status.message);
   const hasActions = requiredActions.length > 0;
+
+  // Display-only Tailscale IP from the registry entry (equipment.yaml
+  // `tailscale_ip:`). Deliberately NOT derived from base_url — entries whose
+  // base_url is a MagicDNS name or a loopback gateway (cameras, plugs) show
+  // nothing unless an IP is explicitly configured.
+  const address = snapshot.tailscale_ip || null;
 
   return (
     <article className="flex h-full flex-col gap-2 overflow-hidden rounded-xl border border-slate-200 bg-surface-raised p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -76,9 +128,15 @@ export function TileShell({
           <h3 className="truncate text-sm font-semibold text-ink dark:text-slate-100">
             {snapshot.name}
           </h3>
-          <p className="truncate text-[10px] text-ink-subtle dark:text-slate-500">
-            {kindLabel(snapshot.kind)} ·{" "}
+          <p className="truncate text-xs text-ink-subtle dark:text-slate-500">
+            <span className="uppercase">{kindLabel(snapshot.kind)}</span> ·{" "}
             <span className="font-mono">{snapshot.id}</span>
+            {address && (
+              <>
+                {" "}
+                · <span className="font-mono">{address}</span>
+              </>
+            )}
             {subtitleExtra && (
               <>
                 {" "}
@@ -88,9 +146,11 @@ export function TileShell({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {/* Standardized device-fault badge: a message icon left of the
-              status pill, present on every tile whenever the device reports a
-              last_error. Click to pop the detail box. */}
+          {/* Standardized badges, left of the status pill: amber for a
+              refused/failed control action (this poll's <ActionErrorBadge>),
+              rose for a device-reported fault (<LastErrorBadge>). Each renders
+              only when it has something to show; click to pop the detail box. */}
+          <ActionErrorBadge error={actionError} />
           <LastErrorBadge
             error={status.last_error}
             interpret={lastErrorInterpret}
@@ -98,6 +158,36 @@ export function TileShell({
           {headerRight}
         </div>
       </header>
+
+      {/* Standardized lifecycle top banner: ON power-toggle (green while on)
+          + STOP (halt motion, never disconnect) + any tile-specific extras.
+          Rendered by the template so the lifecycle row is identical across
+          tiles. */}
+      {showBanner && (
+        <div className="flex items-center gap-2">
+          {lifecycle?.onPowerToggle && (
+            <TileButton
+              onClick={lifecycle.onPowerToggle}
+              disabled={lifecycle.disabled}
+              variant={lifecycle.isOn ? "primary" : "default"}
+              title={lifecycle.powerTitle}
+            >
+              ON
+            </TileButton>
+          )}
+          {lifecycle?.onStop && (
+            <TileButton
+              onClick={lifecycle.onStop}
+              disabled={lifecycle.disabled}
+              variant="danger"
+              title={lifecycle.stopTitle}
+            >
+              STOP
+            </TileButton>
+          )}
+          {bannerExtra}
+        </div>
+      )}
 
       {/* Body */}
       {children}

@@ -145,6 +145,8 @@ export type EquipmentSnapshot = Omit<
   status: EquipmentStatus;
   camera?: CameraConfig | null;
   plug?: PlugConfig | null;
+  /** Display-only Tailscale IP from equipment.yaml (null/absent → not shown). */
+  tailscale_ip?: string | null;
   pill?: PillConfig | null;
 };
 

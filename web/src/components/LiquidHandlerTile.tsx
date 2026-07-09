@@ -3,18 +3,25 @@
 import { useState, useTransition } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getDeckLayout, postSetLights, putDeckLayout } from "@/lib/api";
+import {
+  getDeckLayout,
+  postOt2Pause,
+  postOt2Shutdown,
+  postOt2Startup,
+  postSetLights,
+  putDeckLayout,
+} from "@/lib/api";
 import type { EquipmentSnapshot } from "@/types/api";
 import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
 import { useUserAuth } from "@/lib/user-auth";
 
-import { ActionErrorBand } from "./ActionErrorBand";
 import { ComponentList } from "./ComponentList";
 import { FetchErrorBand } from "./FetchErrorBand";
 import { LockButton } from "./ControlLock";
 import { MetricList } from "./MetricList";
 import { StatusPill } from "./StatusPill";
+import { TileButton } from "./TileButton";
 import { TileShell } from "./TileShell";
 
 type LightsState = "on" | "off" | "unknown";
@@ -42,6 +49,8 @@ const TILE_OWNED_COMPONENTS = new Set([
   "lights",
   "pipette_left",
   "pipette_right",
+  "ssh",
+  "protocol",
 ]);
 
 // OT-2 deck: 12 numbered slots, 3 columns × 4 rows, slot 1 at the bottom-left,
@@ -132,8 +141,24 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
     });
   }
 
+  function runControl(name: string, fn: () => Promise<unknown>) {
+    setActionError(null);
+    setPending(true);
+    startTransition(() => {
+      fn()
+        .catch((e: unknown) => reportError(e, name))
+        .finally(() => setPending(false));
+    });
+  }
+
   const lightsKnown = lights === "on" || lights === "off";
   const isOn = lights === "on";
+
+  // Power state for the template's ON toggle: anything but requires_init /
+  // unknown counts as "on" (the OT-2 reports ready/busy while up).
+  const deviceOn =
+    status.equipment_status !== "requires_init" &&
+    status.equipment_status !== "unknown";
 
   // Deck labware is stored server-side (shared across users) via
   // GET/PUT /api/equipment/<id>/deck, and polled so other operators' edits
@@ -167,6 +192,7 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
   return (
     <TileShell
       snapshot={snapshot}
+      actionError={actionError}
       headerRight={
         <>
           {/* Lock chip is for the protocol-execution actions (home, setup,
@@ -183,67 +209,84 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
           <StatusPill state={status.equipment_status} />
         </>
       }
-    >
-      {/* Top row — one "Light" toggle + state dot, and the two pipette-mount
-          pills (left mount rendered first, so no need to label it). The Light
-          control is convenience-class (no lock chip) but still requires a
-          signed-in session. */}
-      <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 dark:border-slate-700 dark:bg-slate-800/40">
-        <button
-          type="button"
-          onClick={() => setLights(!isOn)}
-          disabled={locked || pending}
-          title={
-            locked
-              ? noAccess
-                ? "No access to this equipment"
-                : "Sign in to control"
-              : lightsKnown
-                ? isOn
-                  ? "Lights on — click to turn off"
-                  : "Lights off — click to turn on"
-                : "Lights state not reported — click to turn on"
-          }
-          className={[
-            "flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-semibold transition-colors",
-            "disabled:cursor-not-allowed disabled:opacity-50",
-            "border-slate-300 bg-white text-ink hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-          ].join(" ")}
-        >
-          <span
-            className={[
-              "inline-block h-2.5 w-2.5 rounded-full",
-              isOn
-                ? "bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.7)]"
-                : "bg-slate-900 dark:bg-black",
-            ].join(" ")}
-            aria-hidden
-          />
-          Light
-        </button>
-
+      lifecycle={{
+        isOn: deviceOn,
+        onPowerToggle: () =>
+          deviceOn
+            ? runControl("shutdown", () => postOt2Shutdown(snapshot.id))
+            : runControl("startup", () => postOt2Startup(snapshot.id)),
+        onStop: () => runControl("pause", () => postOt2Pause(snapshot.id)),
+        disabled: locked || pending,
+        powerTitle: locked
+          ? noAccess
+            ? "No access"
+            : "Sign in to control"
+          : deviceOn
+            ? "Device is on — click to shut down"
+            : "Device is off — click to start up",
+        stopTitle: locked
+          ? noAccess
+            ? "No access"
+            : "Sign in to control"
+          : "Halt: pause the running protocol (does not disconnect)",
+      }}
+      bannerExtra={
+        // Light toggle (convenience-class, no lock chip) + pipette pills,
+        // grouped right so the Light button never crowds the INIT/STOP
+        // group on narrow tiles.
         <div className="ml-auto flex items-center gap-1.5">
-          <span
-            className="flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 font-mono text-xs font-semibold text-ink dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"
-            title={`Left mount: ${pipLeft?.state ?? "empty"}`}
+          <TileButton
+            onClick={() => setLights(!isOn)}
+            disabled={locked || pending}
+            title={
+              locked
+                ? noAccess
+                  ? "No access to this equipment"
+                  : "Sign in to control"
+                : lightsKnown
+                  ? isOn
+                    ? "Lights on — click to turn off"
+                    : "Lights off — click to turn on"
+                  : "Lights state not reported — click to turn on"
+            }
           >
-            {pipetteLabel(pipLeft?.state)}
-          </span>
-          <span
-            className="flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 font-mono text-xs font-semibold text-ink dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"
-            title={`Right mount: ${pipRight?.state ?? "empty"}`}
-          >
-            {pipetteLabel(pipRight?.state)}
-          </span>
-        </div>
-      </div>
+            <span
+              className={[
+                "mr-1.5 inline-block h-2.5 w-2.5 rounded-full",
+                isOn
+                  ? "bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.7)]"
+                  : "bg-slate-900 dark:bg-black",
+              ].join(" ")}
+              aria-hidden
+            />
+            Light
+          </TileButton>
+            <span
+              className="flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-ink dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"
+              title={`Left mount: ${pipLeft?.state ?? "empty"}`}
+            >
+              {pipetteLabel(pipLeft?.state)}
+            </span>
+            <span
+              className="flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-ink dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"
+              title={`Right mount: ${pipRight?.state ?? "empty"}`}
+            >
+              {pipetteLabel(pipRight?.state)}
+            </span>
+          </div>
+      }
+    >
 
-      <ActionErrorBand error={actionError} />
 
-      {/* Deck — 12 slots (1 bottom-left … 12 top-right). Click a slot to select
-          it, then assign labware via "Select Labware" below. Client-side only
-          for now; later this reflects the device's actual deck state. */}
-      <div className="grid grid-cols-3 gap-1">
+      {/* Deck — 12 slots (1 bottom-left … 12 top-right), 3 per row. Blocks are a
+          fixed 160×120 px with a fixed 10px gap both horizontally and
+          vertically (total 3×160 + 2×10 = 500px wide). Scrolls if the tile is
+          narrower. Click a slot to select it, then assign labware via "Select
+          Labware" below. */}
+      <div
+        className="grid justify-center gap-[10px] overflow-x-auto"
+        style={{ gridTemplateColumns: "repeat(3, 160px)" }}
+      >
         {DECK_ROWS.flat().map((slot) => {
           const lw = deckLabware[slot];
           const lwType = labwareType(lw);
@@ -255,7 +298,7 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
               onClick={() => setSelectedSlot((s) => (s === slot ? null : slot))}
               title={`Slot ${slot}${lw ? ` — ${labwareLabel(lw)}` : " — empty"}`}
               className={[
-                "relative h-28 overflow-hidden rounded border transition-colors",
+                "relative h-[120px] w-[160px] overflow-hidden rounded border transition-colors",
                 selected
                   ? "border-sky-500 bg-sky-50 dark:border-sky-500 dark:bg-sky-950/40"
                   : "border-slate-200 bg-white hover:border-slate-400 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-slate-500",
@@ -285,7 +328,10 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
         })}
       </div>
 
-      {/* Select Labware — assigns to the highlighted slot. */}
+      {/* Select Labware (assigns to the highlighted slot) on the left; SSH /
+          Protocol status pills pushed to the right. The pills show status by
+          dot colour only (green = connected/ready, else grey) — no state
+          text; the raw state is in the hover title. */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
           Select Labware
@@ -314,6 +360,31 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
             → slot {selectedSlot}
           </span>
         )}
+
+        <div className="ml-auto flex items-center gap-1.5">
+          {(["ssh", "protocol"] as const).map((key) => {
+            const c = components[key];
+            if (!c) return null;
+            const ok = c.state === "connected" || c.state === "ready";
+            return (
+              <span
+                key={key}
+                className="flex h-7 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 dark:border-slate-700 dark:bg-slate-800/60"
+                title={`${key === "ssh" ? "SSH" : "Protocol"}: ${c.state}`}
+              >
+                <span
+                  className={`inline-block h-2 w-2 rounded-full ${
+                    ok ? "bg-emerald-400" : "bg-slate-400 dark:bg-slate-500"
+                  }`}
+                  aria-hidden
+                />
+                <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+                  {key === "ssh" ? "SSH" : "Protocol"}
+                </span>
+              </span>
+            );
+          })}
+        </div>
       </div>
 
       {Object.keys(metrics).length > 0 && <MetricList metrics={metrics} />}

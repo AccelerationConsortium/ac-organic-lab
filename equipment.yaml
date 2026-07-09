@@ -18,6 +18,10 @@
 #   pills:  shared config for the Overview platform-card pill row.
 #           Currently only `open: true|false` (default false). When true,
 #           the equipment row renders an "Open ↗" link to its base_url.
+#   tailscale_ip:  optional, display-only. Shown in the tile subtitle after
+#           "kind · id". Leave empty (or omit) to show nothing — e.g. for
+#           gateway-fronted devices (cameras, plugs) whose base_url is
+#           loopback. Does not affect how the aggregator reaches the device.
 
 equipment:
   # ---------------------------------------------------------------------
@@ -33,6 +37,7 @@ equipment:
     adapter: http
     protocol: "1.0"
     base_url: http://127.0.0.1:8002
+    tailscale_ip:
     status_path: /cameras/cam_hte_tapo_c245/status
     # The kasa-tapo-services gateway serves /status from a per-device cache
     # refreshed by a background poller, so dashboard polls return in ~ms
@@ -65,6 +70,7 @@ equipment:
     adapter: http
     protocol: "1.0"
     base_url: http://127.0.0.1:8002
+    tailscale_ip:
     # python-kasa's per-outlet emeter sweep on a busy HS300 takes ~3-4 s
     # per cycle. The kasa-tapo-services gateway now hides that with a
     # per-device background poller + cache, so dashboard polls return in
@@ -83,6 +89,7 @@ equipment:
     adapter: http
     protocol: "1.0"
     base_url: http://127.0.0.1:8002
+    tailscale_ip:
     status_path: /plugs/plug_hte_strip_left/status
     poll_timeout_seconds: 10.0
     tiles:
@@ -95,6 +102,7 @@ equipment:
     adapter: http
     protocol: "1.1"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000
+    tailscale_ip: 100.64.254.16
     status_path: /status
     poll_timeout_seconds: 2.0
     # STATUS_SPEC v1.1: claim/heartbeat/release + claim-gated control
@@ -121,6 +129,7 @@ equipment:
     adapter: http
     protocol: "1.1"
     base_url: http://100.64.254.100:5000
+    tailscale_ip: 100.64.254.100
     status_path: /status
     poll_timeout_seconds: 2.0
     tiles:
@@ -133,6 +142,7 @@ equipment:
     adapter: http
     protocol: "1.1"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020
+    tailscale_ip: 100.64.254.16
     status_path: /status
     # The OT-2 gateway builds /status from an SSH snapshot, so it is slower than
     # other devices — but 8s is plenty and keeps one slow/dead device from
@@ -150,6 +160,7 @@ equipment:
     adapter: http
     protocol: "1.1"
     base_url: http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000
+    tailscale_ip: 100.64.254.85
     status_path: /status
     poll_timeout_seconds: 2.0
     tiles:
@@ -166,6 +177,7 @@ equipment:
     adapter: http
     protocol: "1.1"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8030
+    tailscale_ip: 100.64.254.16
     status_path: /status
     # /status on the device holds a service lock across 4 serial round-trips
     # (~1.7 s on the live SC25XR). Under dashboard load that lock queues
@@ -187,6 +199,7 @@ equipment:
     adapter: http
     protocol: "1.1"
     base_url: http://100.64.254.104:8000
+    tailscale_ip: 100.64.254.104
     status_path: /status
     poll_timeout_seconds: 2.0
     tiles:
@@ -199,6 +212,7 @@ equipment:
     adapter: http
     protocol: "1.1"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8010
+    tailscale_ip: 100.64.254.16
     status_path: /status
     poll_timeout_seconds: 2.0
     tiles:
@@ -211,6 +225,7 @@ equipment:
     adapter: http
     protocol: "1.1"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8040
+    tailscale_ip: 100.64.254.16
     status_path: /status
     poll_timeout_seconds: 3.0
     # The agilent-cytation-server repo conforms to STATUS_SPEC v1.1.
@@ -227,6 +242,7 @@ equipment:
     adapter: http
     protocol: "1.1"
     base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8010
+    tailscale_ip: 100.64.254.19
     status_path: /status
     poll_timeout_seconds: 5.0
     # protocol: "1.1" turns on the aggregator's per-request claim dance
@@ -246,6 +262,7 @@ equipment:
     adapter: http
     protocol: "1.1"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8050
+    tailscale_ip: 100.64.254.16
     status_path: /status
     poll_timeout_seconds: 2.0
     do_not_call_connect: true

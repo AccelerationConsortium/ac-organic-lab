@@ -26,7 +26,7 @@ export function MetricList({ metrics }: { metrics: Record<string, MetricValue> }
           <dt className="text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-500">
             {humanKey(key)}
           </dt>
-          <dd className="font-mono text-ink dark:text-slate-100">{formatValue(metric)}</dd>
+          <dd className="text-xs text-ink dark:text-slate-100">{formatValue(metric)}</dd>
         </div>
       ))}
     </dl>

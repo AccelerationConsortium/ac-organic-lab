@@ -28,7 +28,7 @@ export function ComponentList({
             />
             <span className="text-ink dark:text-slate-200">{humanKey(key)}</span>
           </div>
-          <span className="font-mono text-xs text-ink-muted dark:text-slate-400">
+          <span className="text-xs text-ink-muted dark:text-slate-400">
             {comp.state}
           </span>
         </li>

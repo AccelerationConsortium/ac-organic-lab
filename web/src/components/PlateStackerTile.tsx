@@ -13,7 +13,6 @@ import {
 import type { Parse412 } from "@/lib/action-error";
 import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
-import { ActionErrorBand } from "./ActionErrorBand";
 import { LockButton } from "./ControlLock";
 import type { LastErrorInterpret } from "./LastErrorBadge";
 import { StatusPill } from "./StatusPill";
@@ -165,6 +164,7 @@ export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) 
   return (
     <TileShell
       snapshot={snapshot}
+      actionError={actionError}
       lastErrorInterpret={interpretLastError}
       headerRight={
         <>
@@ -222,7 +222,6 @@ export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) 
       {/* Inline refusal band (amber): 412 precondition / 423 claim / 409
           state from the last action. Auto-clears on next click or when the
           device returns to ready. */}
-      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }

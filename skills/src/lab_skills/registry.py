@@ -135,6 +135,11 @@ class EquipmentEntry(BaseModel):
     kind: EquipmentKind
     adapter: AdapterKind
     base_url: str | None = None
+    # Optional display-only Tailscale IP (e.g. "100.64.254.100"). Shown in the
+    # tile subtitle after "kind · id" when set; leave unset to show nothing.
+    # Purely informational — the aggregator always reaches the device via
+    # base_url; this does not affect routing.
+    tailscale_ip: str | None = None
     status_path: str = "/status"
     poll_timeout_seconds: float = 2.0
     do_not_call_connect: bool = False

@@ -156,6 +156,24 @@ def build_control_router() -> APIRouter:
     ) -> dict:
         return await _proxy(request, equipment_id, action, "DELETE", None)
 
+    @router.post("/{equipment_id}/device/{action:path}")
+    async def device_post(
+        equipment_id: str,
+        action: str,
+        request: Request,
+        body: dict | None = None,
+    ) -> dict:
+        """Proxy to a device's root-level, claim-exempt "safety-floor" action.
+
+        The xArm exposes connect / disconnect / move-stop / clear-errors as
+        siblings of ``/status`` (outside ``/control/*``) and takes no claim on
+        them, so the ``/control/*`` passthrough can't reach them. This route
+        does: auth (via the same edge gate + ``_authorize_control``) and audit
+        still apply — only the claim dance is skipped. Allowlisted per kind so
+        it can't become a general side-door. See ``_device_action_proxy``.
+        """
+        return await _device_action_proxy(request, equipment_id, action, body)
+
     @router.get("/{equipment_id}/plate/{sub:path}")
     async def plate_get(equipment_id: str, sub: str, request: Request) -> Any:
         """JSON GET passthrough to ``<gateway>/plate/<sub>``.
@@ -208,6 +226,53 @@ _CLAIM_PROTOCOL_ACTIONS: frozenset[str] = frozenset({"claim", "heartbeat", "rele
 # The device then resolves owner→role from its roster projection
 # (`GET /equipment/{key}/roster`), so per-user device roles work end-to-end.
 _DASHBOARD_CLAIM_OWNER = "ac-organic-lab-dashboard"
+
+
+# Operator-identity forwarding to login-gated devices. Devices on the
+# single-edge SSO standard (e.g. the xArm: `require_login` on
+# connect/disconnect/stop/clear, `XARM_REQUIRE_LOGIN_FOR_CLAIM` on
+# `/control/claim`) verify identity against the SAME ac_auth sidecar the
+# dashboard uses, accepting (in order): trusted-edge headers, an `X-Api-Key`,
+# or the `ac_auth_session` cookie (see xarm_api_server `_resolve_identity`).
+#
+# The dashboard reaches devices on their Tailnet base_url directly — not
+# through the Caddy edge — so it forwards the operator's OWN credential from
+# the incoming browser request: the session cookie (humans) or the api key
+# (machine principals). The device verifies it with the sidecar itself, so no
+# shared secret needs distributing and the device audits the real actor.
+#
+# Optional fast path: when DEVICE_EDGE_SHARED_SECRET is set (matching the
+# device's XARM_EDGE_SHARED_SECRET), present the already-verified identity as
+# trusted-edge headers instead — header-only on the device, no second sidecar
+# round-trip. Purely an optimisation; cookie forwarding is the default.
+_EDGE_SHARED_SECRET = os.environ.get("DEVICE_EDGE_SHARED_SECRET", "").strip()
+_AUTH_COOKIE_NAME = os.environ.get("AUTH_COOKIE_NAME", "ac_auth_session")
+
+
+def _device_auth_headers(request: Request) -> dict[str, str]:
+    """Identity headers to attach to outbound calls to a login-gated device.
+
+    Forwards only the ac_auth session cookie (never the full cookie jar) or
+    the machine api key. Empty when the caller presented no credential —
+    an open deployment (dev) or a device with login disabled.
+    """
+    # Optional trusted-edge fast path (both sides must share the secret).
+    if _EDGE_SHARED_SECRET:
+        user = request.headers.get("x-auth-user")
+        if user:
+            headers = {"X-Auth-User": user, "X-Edge-Auth": _EDGE_SHARED_SECRET}
+            role = request.headers.get("x-auth-role")
+            if role:
+                headers["X-Auth-Role"] = role
+            return headers
+    # Default: act on the operator's behalf with their own credential.
+    api_key = request.headers.get("x-api-key")
+    if api_key:
+        return {"X-Api-Key": api_key}
+    token = request.cookies.get(_AUTH_COOKIE_NAME)
+    if token:
+        return {"Cookie": f"{_AUTH_COOKIE_NAME}={token}"}
+    return {}
 
 
 def _claim_owner(request: Request) -> str:
@@ -312,6 +377,7 @@ async def _acquire_claim(
     status_path: str,
     equipment_id: str,
     owner: str,
+    extra_headers: dict[str, str] | None = None,
 ) -> str:
     """POST /control/claim and return the claim token.
 
@@ -328,7 +394,7 @@ async def _acquire_claim(
         "ttl_s": _CLAIM_TTL_SECONDS,
     }
     try:
-        resp = await client.post(claim_url, json=body)
+        resp = await client.post(claim_url, json=body, headers=extra_headers or None)
     except httpx.HTTPError as exc:
         logger.warning("claim transport error %s -> %s: %s", equipment_id, claim_url, exc)
         raise HTTPException(status_code=502, detail=f"Cannot acquire claim: {exc}") from exc
@@ -357,12 +423,15 @@ async def _release_claim_best_effort(
     status_path: str,
     token: str,
     equipment_id: str,
+    extra_headers: dict[str, str] | None = None,
 ) -> None:
     """POST /control/release; swallow errors. Idempotent per the spec."""
 
     try:
         release_url = _control_url(base_url, status_path, "release")
-        await client.post(release_url, headers={"X-Claim-Token": token})
+        await client.post(
+            release_url, headers={"X-Claim-Token": token, **(extra_headers or {})}
+        )
     except Exception as exc:  # noqa: BLE001 - best-effort cleanup
         logger.warning(
             "claim release failed %s -> %s: %s", equipment_id, release_url, exc
@@ -472,14 +541,20 @@ async def _proxy(
     # Authorization precedes the claim dance: an unauthorized caller must
     # never even acquire a claim (claiming is itself control).
     await _authorize_control(request, client, equipment_id, action, method, owner)
+    # Operator credential forwarded on every device hop (claim, action,
+    # release) so login-gated claims (XARM_REQUIRE_LOGIN_FOR_CLAIM) pass and
+    # the device stamps/audits the real operator. Empty when unauthenticated.
+    edge_headers = _device_auth_headers(request)
     try:
         token: str | None = None
         if needs_claim:
             token = await _acquire_claim(
-                client, entry.base_url, entry.status_path, equipment_id, owner
+                client, entry.base_url, entry.status_path, equipment_id, owner,
+                extra_headers=edge_headers,
             )
         try:
-            headers = {"X-Claim-Token": token} if token else None
+            headers = {**edge_headers, **({"X-Claim-Token": token} if token else {})}
+            headers = headers or None
             if method == "POST":
                 response = await client.post(target, json=body or {}, headers=headers)
             elif method == "GET":
@@ -491,7 +566,8 @@ async def _proxy(
         finally:
             if token is not None:
                 await _release_claim_best_effort(
-                    client, entry.base_url, entry.status_path, token, equipment_id
+                    client, entry.base_url, entry.status_path, token, equipment_id,
+                    extra_headers=edge_headers,
                 )
     except HTTPException as exc:
         # The action never executed: claim acquisition was refused
@@ -542,6 +618,109 @@ async def _proxy(
         request, equipment_id, action, method,
         owner=owner, status_code=response.status_code,
         outcome="ok",
+    )
+    try:
+        return response.json()
+    except ValueError:
+        return {"ok": True, "raw": response.text}
+
+
+# Root-level device actions that live OUTSIDE the ``/control/*`` namespace:
+# the device's claim-exempt "safety floor". The ``/control/*`` passthrough
+# can't reach them (they're siblings of ``/status``, not under ``/control/``)
+# and they take no claim. We still require auth (the Next middleware gates the
+# path; ``_authorize_control`` enforces the role) and still audit. Allowlisted
+# per kind so this cannot become a general side-door into arbitrary paths.
+#
+# TODO(xarm): retire once the device exposes ``/control/*`` aliases for these
+# and the tile can go back through the standard claim-gated passthrough.
+_DEVICE_ACTION_ALLOWLIST: dict[str, frozenset[str]] = {
+    "robot_arm": frozenset({"connect", "disconnect", "move/stop", "clear/errors"}),
+}
+
+
+async def _device_action_proxy(
+    request: Request,
+    equipment_id: str,
+    action: str,
+    body: dict | None,
+) -> dict:
+    """Auth + audit proxy to an allowlisted root-level device action.
+
+    Unlike :func:`_proxy` this performs no claim dance: connect is claim-gated
+    on the device side (you can't claim until connected) and stop/clear are the
+    safety floor. Auth is *not* skipped — the edge middleware already rejects
+    unauthenticated callers, and ``_authorize_control`` enforces the per-device
+    role when an identity is present.
+    """
+
+    aggregator = getattr(request.app.state, "aggregator", None)
+    if aggregator is None:
+        raise HTTPException(status_code=503, detail="Aggregator not initialised")
+    entry = aggregator.entry(equipment_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Unknown equipment id: {equipment_id}")
+    if not _has_control_capability(entry):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Equipment {equipment_id!r} does not expose a control surface"
+                f" (adapter={entry.adapter})"
+            ),
+        )
+
+    normalized = action.strip("/")
+    allowed = _DEVICE_ACTION_ALLOWLIST.get(getattr(entry, "kind", None), frozenset())
+    if normalized not in allowed:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Device action {normalized!r} is not allowlisted for kind "
+                f"{getattr(entry, 'kind', None)!r}"
+            ),
+        )
+
+    owner = _claim_owner(request)
+    client = _get_control_client(request)
+    # Auth precedes the call (claim-exempt on the device ≠ auth-exempt here).
+    await _authorize_control(request, client, equipment_id, normalized, "POST", owner)
+
+    target = _device_url(entry.base_url, entry.status_path, normalized)
+    # Forward the operator's credential so the device's `require_login` passes
+    # and its audit records the real actor (empty when unauthenticated).
+    edge_headers = _device_auth_headers(request)
+    try:
+        response = await client.post(target, json=body or {}, headers=edge_headers or None)
+    except httpx.TimeoutException as exc:
+        logger.warning("device action timeout %s -> %s: %s", equipment_id, target, exc)
+        await _record_control_event(
+            request, equipment_id, normalized, "POST",
+            owner=owner, status_code=504, outcome="timeout", detail=str(exc),
+        )
+        raise HTTPException(status_code=504, detail=f"Gateway timeout calling {target}") from exc
+    except httpx.HTTPError as exc:
+        logger.warning("device action transport error %s -> %s: %s", equipment_id, target, exc)
+        await _record_control_event(
+            request, equipment_id, normalized, "POST",
+            owner=owner, status_code=502, outcome="transport_error", detail=str(exc),
+        )
+        raise HTTPException(status_code=502, detail=f"Cannot reach gateway: {exc}") from exc
+
+    if response.status_code >= 400:
+        try:
+            payload = response.json()
+            detail = payload.get("detail", payload)
+        except ValueError:
+            detail = response.text
+        await _record_control_event(
+            request, equipment_id, normalized, "POST",
+            owner=owner, status_code=response.status_code, outcome="refused", detail=detail,
+        )
+        raise HTTPException(status_code=response.status_code, detail=detail)
+
+    await _record_control_event(
+        request, equipment_id, normalized, "POST",
+        owner=owner, status_code=response.status_code, outcome="ok",
     )
     try:
         return response.json()

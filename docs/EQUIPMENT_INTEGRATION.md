@@ -869,21 +869,28 @@ pills, and a shared deck-layout picker.**
 
 ### Tile behaviour
 
-A top row with the light control + pipette pills, a 12-slot deck grid,
-a "Select Labware" picker, then the standard `MetricList` /
-`ComponentList` for anything left over.
+A top row with the lifecycle/light controls + pipette pills, a 12-slot
+deck grid, a "Select Labware" picker, then the SSH / Protocol status
+pills (and any leftover `MetricList` / `ComponentList`).
 
-**Top row** — one Light toggle + two pipette pills:
+**Top row** — `Init` / `Stop` / `Light` controls + two pipette pills:
 
 | Element | Source | Behaviour |
 |---|---|---|
+| **Init** button | `POST /control/startup` | Initialise / home the robot. Lock-gated (requires sign-in), disabled while a control call is in flight. |
+| **Stop** button | `POST /control/shutdown` | Danger-styled. The OT-2 has **no motion-stop endpoint**, so "Stop" maps to `shutdown` (power down; re-`Init` required afterward). Lock-gated. |
 | **Light** button with a state dot | `components.lights.state` (`on` / `off` / `unknown`) | One button that toggles (POSTs the opposite of the current state). Dot is **amber (glowing)** when on, **black** when off. Convenience-class: no lock chip, but disabled + hinted when signed out. |
 | Left / right **pipette pills** | `components.pipette_left.state` / `pipette_right.state` | Model formatted (`p300_multi_gen2` → `P300 Multi`); left mount rendered first (position implies the mount, so no caption). Hover shows mount + raw model; empty mount shows `—`. |
 
 **Deck grid** — 12 slots, 3 columns × 4 rows, numbered to match the
 physical deck (**1 bottom-left, 3 bottom-right, 10 top-left, 12
-top-right**). Click a slot to select it (highlights sky-blue; click
-again to deselect). Rendering by slot contents:
+top-right**). Blocks are a **fixed 160×120 px**; the grid keeps three
+fixed columns and distributes extra width between them
+(`justify-content: space-between`), so resizing the window only spaces
+the blocks out horizontally rather than stretching them (scrolls if the
+tile is narrower than three blocks). Click a slot to select it
+(highlights sky-blue; click again to deselect). Rendering by slot
+contents:
 
 - **Empty** — a large, light-grey *watermark* slot number (centred).
 - **96-well / 24-well** — a miniature well grid of round wells (**8×12**
@@ -896,13 +903,17 @@ again to deselect). Rendering by slot contents:
 selected; then choose **96-well plate** / **24-well plate** / **Waste
 bin** (or **Empty** to clear). Assigns to the highlighted slot.
 
-The `lights`, `pipette_left`, and `pipette_right` components are
-rendered by the top row, so they're filtered out of the generic
-`ComponentList` (`TILE_OWNED_COMPONENTS` in `LiquidHandlerTile.tsx`) to
-avoid duplication. The Light row does NOT respect the in-tile lock chip
-(see §6b "Two layers, two bypass points"); the lock chip is in the
-header because protocol-execution actions will land later and *will* be
-gated.
+**SSH + Protocol pills** — `components.ssh` and `components.protocol`
+render as two side-by-side pills (dot green when `connected` / `ready`,
+else grey; state text alongside). These plus `lights` /
+`pipette_left` / `pipette_right` are all in `TILE_OWNED_COMPONENTS`
+(`LiquidHandlerTile.tsx`), so they're filtered out of the generic
+`ComponentList` to avoid duplication.
+
+The Light control does NOT respect the in-tile lock chip (convenience-
+class, see §6b "Two layers, two bypass points"); `Init` / `Stop` **do**
+(they're claim-gated lifecycle writes, not a middleware bypass), so the
+header lock chip is now load-bearing.
 
 ### Deck-layout store (shared, server-persisted — stopgap)
 

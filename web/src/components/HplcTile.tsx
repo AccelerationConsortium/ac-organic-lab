@@ -121,7 +121,7 @@ function MetricPill({
       <span className="shrink-0 text-[11px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
         {caption}
       </span>
-      <span className="ml-auto truncate font-mono text-sm font-semibold text-ink dark:text-slate-100 tabular-nums">
+      <span className="ml-auto truncate text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">
         {value}
       </span>
     </div>
@@ -187,7 +187,7 @@ function FluidBar({
           />
         )}
       </div>
-      <span className="w-28 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink-muted dark:text-slate-400">
+      <span className="w-28 shrink-0 text-right text-xs tabular-nums text-ink-muted dark:text-slate-400">
         {value !== null && capacity
           ? `${value.toFixed(0)}/${capacity.toFixed(0)} mL`
           : "— mL"}
@@ -218,7 +218,7 @@ function CompPill({ label, state }: { label?: string; state: string | null }) {
           {label}
         </span>
       )}
-      <span className="font-mono text-[11px] font-semibold text-ink dark:text-slate-100">
+      <span className="text-xs font-semibold text-ink dark:text-slate-100">
         {state ?? "—"}
       </span>
     </div>
@@ -362,7 +362,7 @@ export function HplcTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       >
         <div className="flex items-center justify-between text-xs">
           <span className="text-ink-subtle dark:text-slate-500">Pending</span>
-          <span className="font-mono tabular-nums text-ink dark:text-slate-100">
+          <span className="tabular-nums text-ink dark:text-slate-100">
             {pending !== null ? pending : "—"}
           </span>
         </div>

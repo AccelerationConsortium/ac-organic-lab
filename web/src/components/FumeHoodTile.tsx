@@ -5,10 +5,9 @@ import type { EquipmentSnapshot } from "@/types/api";
 import { postSashMove, postSashStop } from "@/lib/api";
 import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
-import { ActionErrorBand } from "./ActionErrorBand";
 import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
-import { PositionPill, TileButton } from "./TileButton";
+import { PositionPill } from "./TileButton";
 import { TileShell } from "./TileShell";
 
 const POSITIONS = [1, 2, 3, 4, 5] as const;
@@ -73,6 +72,14 @@ export function FumeHoodTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   return (
     <TileShell
       snapshot={snapshot}
+      actionError={actionError}
+      lifecycle={{
+        // No power toggle: the actuator has no connect/startup surface. STOP
+        // is a true halt (sash/stop).
+        onStop: handleStop,
+        disabled: locked,
+        stopTitle: "Halt sash movement",
+      }}
       headerRight={
         <>
           <LockButton locked={locked} countdown={countdown} onToggle={toggle} noun="sash" />
@@ -101,16 +108,6 @@ export function FumeHoodTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </div>
       </div>
 
-      {/* Stop button — always visible so the sash can be halted at any
-          time, including after it has reached a position. Only the control
-          lock gates it. */}
-      <div className="self-start">
-        <TileButton onClick={handleStop} disabled={locked} variant="danger">
-          Stop
-        </TileButton>
-      </div>
-
-      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }

@@ -5,7 +5,6 @@ import type { EquipmentSnapshot } from "@/types/api";
 import { postPlugSwitch } from "@/lib/api";
 import { useActionError } from "@/lib/use-action-error";
 import { useUserAuth } from "@/lib/user-auth";
-import { ActionErrorBand } from "./ActionErrorBand";
 import { StatusPill } from "./StatusPill";
 import { TileShell } from "./TileShell";
 
@@ -237,6 +236,7 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   return (
     <TileShell
       snapshot={snapshot}
+      actionError={actionError}
       subtitleExtra={totalW > 0 ? `${totalW.toFixed(1)} W` : undefined}
       headerRight={
         <>
@@ -288,7 +288,6 @@ export function PowerStripTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         )}
       </div>
 
-      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }

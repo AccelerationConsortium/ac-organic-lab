@@ -31,12 +31,13 @@ import type {
 import { useActionError } from "@/lib/use-action-error";
 import { useUserAuth } from "@/lib/user-auth";
 
-import { ActionErrorBand } from "./ActionErrorBand";
+import { ActionErrorBadge } from "./ActionErrorBadge";
 import { CameraPlayer } from "./CameraPlayer";
 import { MessageBand } from "./MessageBand";
 import { PtzPad } from "./PtzPad";
 import { StalenessIndicator } from "./StalenessIndicator";
 import { StatusPill } from "./StatusPill";
+import { TileButton } from "./TileButton";
 
 type CameraStatusDetails = CameraDetails & Record<string, unknown>;
 
@@ -200,7 +201,10 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <StatusPill state={snapshot.status.equipment_status} />
+          <div className="flex items-center gap-1.5">
+            <ActionErrorBadge error={actionError} />
+            <StatusPill state={snapshot.status.equipment_status} />
+          </div>
           {lenses.length > 1 && (
             <div className="flex gap-1">
               {lenses.map((lens) => {
@@ -287,31 +291,27 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
                 </option>
               ))}
             </select>
-            <button
-              type="button"
+            <TileButton
               disabled={!ptzCapable || !presetSelection}
               onClick={() => presetSelection && gotoMutation.mutate(presetSelection)}
-              className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-ink hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-700"
             >
               Go
-            </button>
-            <button
-              type="button"
+            </TileButton>
+            <TileButton
+              variant="danger"
+              ariaLabel="Delete preset"
               disabled={!ptzCapable || !presetSelection}
               onClick={() => presetSelection && deleteMutation.mutate(presetSelection)}
-              className="rounded-md border border-rose-200 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40 dark:border-rose-900/60 dark:text-rose-300 dark:hover:bg-rose-900/20"
             >
               ✕
-            </button>
+            </TileButton>
           </div>
-          <button
-            type="button"
+          <TileButton
             disabled={!ptzCapable}
             onClick={() => setPresetModalOpen(true)}
-            className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-ink hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-700"
           >
             + Save current view as…
-          </button>
+          </TileButton>
         </div>
 
         {/*
@@ -320,8 +320,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           buttons match what the user is looking at.
         */}
         <div className="flex w-32 shrink-0 flex-col gap-2">
-          <button
-            type="button"
+          <TileButton
             disabled={
               !activeLens ||
               !streamingEnabled ||
@@ -329,34 +328,32 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
               snapshotMutation.isPending
             }
             onClick={() => snapshotMutation.mutate(activeLens?.id)}
-            className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-ink hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-700"
           >
             {snapshotMutation.isPending ? "Capturing…" : "📷 Snapshot"}
-          </button>
+          </TileButton>
           {recordingActive ? (
             <div className="flex items-stretch gap-1">
-              <button
-                type="button"
+              <TileButton
+                variant="danger"
                 disabled={recordStopMutation.isPending}
                 onClick={() => recordStopMutation.mutate()}
-                className="flex flex-1 items-center justify-center rounded-md border border-rose-500 bg-rose-500 px-2 py-1 text-xs font-medium text-white hover:bg-rose-600 disabled:opacity-40"
               >
-                <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-white align-middle" />
+                <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current align-middle" />
                 {recordStopMutation.isPending ? "Stopping…" : "Stop"}
-              </button>
-              <button
-                type="button"
+              </TileButton>
+              <TileButton
+                variant="danger"
+                ariaLabel="Discard the in-progress recording"
+                title="Discard the in-progress recording"
                 disabled={recordCancelMutation.isPending}
                 onClick={() => recordCancelMutation.mutate()}
-                className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40 dark:border-slate-700 dark:text-rose-300 dark:hover:bg-rose-900/20"
-                title="Discard the in-progress recording"
               >
                 ✕
-              </button>
+              </TileButton>
             </div>
           ) : (
-            <button
-              type="button"
+            <TileButton
+              variant="danger"
               disabled={
                 !activeLens ||
                 !streamingEnabled ||
@@ -364,10 +361,9 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
                 recordStartMutation.isPending
               }
               onClick={() => recordStartMutation.mutate(activeLens?.id)}
-              className="rounded-md border border-rose-300 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40 dark:border-rose-900/60 dark:text-rose-300 dark:hover:bg-rose-900/20"
             >
               {recordStartMutation.isPending ? "Starting…" : "● Record"}
-            </button>
+            </TileButton>
           )}
           <Link
             href={`/platforms/${snapshot.platform}/media/${snapshot.id}`}
@@ -415,8 +411,6 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </span>
       </div>
       </fieldset>
-
-      <ActionErrorBand error={actionError} />
 
       {lastSnapshot && (
         <a

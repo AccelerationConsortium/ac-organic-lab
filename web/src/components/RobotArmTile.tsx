@@ -1,10 +1,20 @@
 "use client";
 
+import { useState, useTransition } from "react";
+
 import type { EquipmentSnapshot } from "@/types/api";
+import {
+  postArmClear,
+  postArmConnect,
+  postArmDisconnect,
+  postArmStop,
+} from "@/lib/api";
+import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
 import { LockButton } from "./ControlLock";
 import { FetchErrorBand } from "./FetchErrorBand";
 import { StatusPill } from "./StatusPill";
+import { TileButton } from "./TileButton";
 import { TileShell } from "./TileShell";
 
 type Tone = "ok" | "warn" | "muted" | "neutral";
@@ -48,7 +58,7 @@ function Pill({
           {caption}
         </span>
       ) : null}
-      <span className="font-mono text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">
+      <span className="text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">
         {value}
       </span>
     </div>
@@ -74,7 +84,47 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const { status } = snapshot;
   const components = status.components ?? {};
   const details = (status.details ?? {}) as Record<string, unknown>;
-  const { locked, countdown, toggle } = useControlLock(snapshot.id);
+  const { locked, noAccess, countdown, toggle } = useControlLock(snapshot.id);
+
+  const { actionError, setActionError, reportError } = useActionError();
+  const [pending, setPending] = useState(false);
+  const [, startTransition] = useTransition();
+  // Disconnect is the one destructive direction of the ON/OFF toggle, so it
+  // asks for confirmation via a small popover before firing.
+  const [confirmOff, setConfirmOff] = useState(false);
+
+  // Connection state is derived from the device, not stored: the arm reports
+  // `requires_init` while disconnected and ready/busy/error once connected.
+  const st = status.equipment_status;
+  const reachable = !snapshot.fetch_error;
+  const isConnected = reachable && st !== "requires_init" && st !== "unknown";
+  const isBusy = st === "busy";
+
+  function runControl(name: string, fn: () => Promise<unknown>) {
+    setActionError(null);
+    setPending(true);
+    startTransition(() => {
+      fn()
+        .catch((e: unknown) => reportError(e, name))
+        .finally(() => setPending(false));
+    });
+  }
+
+  function onToggle() {
+    // OFF → connect immediately; ON → confirm before disconnecting.
+    if (isConnected) setConfirmOff(true);
+    else runControl("connect", () => postArmConnect(snapshot.id));
+  }
+
+  function onConfirmDisconnect() {
+    setConfirmOff(false);
+    runControl("disconnect", () => postArmDisconnect(snapshot.id));
+  }
+
+  // All manipulation is locked unless the operator is authorized (signed in
+  // with a role on this equipment); pending/unreachable also block.
+  const ctrlBlocked = locked || pending || !reachable;
+  const lockTitle = noAccess ? "No access to this equipment" : "Sign in to control";
 
   const arm = components["arm"];
   const gripper = components["gripper"];
@@ -133,9 +183,111 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       ? `${snapshot.base_url.replace(/\/+$/, "")}/web`
       : null);
 
+  // Deep-link to the device's own /web panel. Disabled (not a link) while
+  // locked, matching the rest of the tile's controls. Lives in the top banner,
+  // pushed to the right of STOP / CLEAR.
+  const panelLink = !controlPanelUrl ? null : locked ? (
+    <button
+      type="button"
+      disabled
+      title={`${lockTitle} to open the xArm control panel`}
+      className={[
+        "inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md border px-2.5 text-xs font-semibold",
+        "cursor-not-allowed opacity-40",
+        "border-slate-200 bg-white text-ink-muted",
+        "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300",
+      ].join(" ")}
+    >
+      Open control panel ↗
+    </button>
+  ) : (
+    <a
+      href={controlPanelUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={[
+        "inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md border px-2.5 text-xs font-semibold transition-colors",
+        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500",
+        "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100",
+        "dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200 dark:hover:bg-emerald-900/60",
+      ].join(" ")}
+    >
+      Open control panel ↗
+    </a>
+  );
+
   return (
     <TileShell
       snapshot={snapshot}
+      actionError={actionError}
+      bannerExtra={
+        <>
+          {/* ON/OFF toggle: grey OFF → connect; green ON → confirm → disconnect.
+              Disconnect is disabled while the arm is moving. */}
+          <div className="relative">
+            <TileButton
+              variant={isConnected ? "primary" : "default"}
+              disabled={ctrlBlocked || (isConnected && isBusy)}
+              onClick={onToggle}
+              title={
+                locked
+                  ? lockTitle
+                  : isConnected
+                    ? isBusy
+                      ? "Arm is moving — Stop before disconnecting"
+                      : "Connected — click to disconnect"
+                    : "Disconnected — click to connect"
+              }
+            >
+              <span
+                className={[
+                  "mr-1 inline-block h-2 w-2 rounded-full",
+                  isConnected
+                    ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]"
+                    : "bg-slate-400",
+                ].join(" ")}
+                aria-hidden
+              />
+              {isConnected ? "ON" : "OFF"}
+            </TileButton>
+            {confirmOff && (
+              <div className="absolute left-0 top-full z-20 mt-1 w-44 rounded-md border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                <p className="mb-2 text-xs text-ink dark:text-slate-200">
+                  Disconnect the arm?
+                </p>
+                <div className="flex justify-end gap-1.5">
+                  <TileButton size="small" onClick={() => setConfirmOff(false)}>
+                    Cancel
+                  </TileButton>
+                  <TileButton
+                    size="small"
+                    variant="danger"
+                    onClick={onConfirmDisconnect}
+                  >
+                    Yes
+                  </TileButton>
+                </div>
+              </div>
+            )}
+          </div>
+          <TileButton
+            variant="danger"
+            disabled={ctrlBlocked || !isConnected}
+            onClick={() => runControl("move/stop", () => postArmStop(snapshot.id))}
+            title={locked ? lockTitle : "Halt current motion"}
+          >
+            STOP
+          </TileButton>
+          <TileButton
+            disabled={ctrlBlocked || !isConnected}
+            onClick={() => runControl("clear/errors", () => postArmClear(snapshot.id))}
+            title={locked ? lockTitle : "Clear a fault so motion can resume"}
+          >
+            CLEAR
+          </TileButton>
+          {panelLink && <div className="ml-auto">{panelLink}</div>}
+        </>
+      }
       headerRight={
         <>
           <LockButton
@@ -232,40 +384,6 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           )}
         </div>
       </div>
-
-      {controlPanelUrl && (
-        <div className="self-start">
-          {locked ? (
-            <button
-              type="button"
-              disabled
-              title="Unlock to open the xArm control panel"
-              className={[
-                "inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md border px-2.5 text-xs font-semibold",
-                "cursor-not-allowed opacity-40",
-                "border-slate-200 bg-white text-ink-muted",
-                "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300",
-              ].join(" ")}
-            >
-              Open control panel ↗
-            </button>
-          ) : (
-            <a
-              href={controlPanelUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={[
-                "inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md border px-2.5 text-xs font-semibold transition-colors",
-                "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500",
-                "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100",
-                "dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200 dark:hover:bg-emerald-900/60",
-              ].join(" ")}
-            >
-              Open control panel ↗
-            </a>
-          )}
-        </div>
-      )}
 
       {snapshot.fetch_error && <FetchErrorBand error={snapshot.fetch_error} />}
     </TileShell>

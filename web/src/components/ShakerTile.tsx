@@ -11,7 +11,6 @@ import {
 import type { Parse412 } from "@/lib/action-error";
 import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
-import { ActionErrorBand } from "./ActionErrorBand";
 import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
 import { TileButton } from "./TileButton";
@@ -148,7 +147,7 @@ function MetricPill({
       <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
         {caption}
       </span>
-      <span className="ml-auto font-mono text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">
+      <span className="ml-auto text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">
         {value}
       </span>
     </div>
@@ -212,7 +211,7 @@ function EditablePill({
         value={draft}
         disabled={disabled}
         onChange={(e) => setDraft(e.target.value)}
-        className="ml-auto w-12 min-w-0 rounded border border-slate-200 bg-white px-1 py-0 text-right font-mono text-xs tabular-nums text-ink outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+        className="ml-auto w-12 min-w-0 rounded border border-slate-200 bg-white px-1 py-0 text-right text-xs tabular-nums text-ink outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
       />
       <span className="shrink-0 text-[10px] text-ink-subtle dark:text-slate-500">
         {unit}
@@ -278,6 +277,7 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   return (
     <TileShell
       snapshot={snapshot}
+      actionError={actionError}
       headerRight={
         <>
           <LockButton
@@ -352,7 +352,7 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
               disabled={controlsDisabled}
               onChange={(e) => setCycleTempC(parseFloat(e.target.value))}
               aria-label="Cycle temperature in degrees C"
-              className="h-7 w-14 rounded border border-slate-200 bg-white px-1 text-right font-mono text-xs tabular-nums text-ink outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              className="h-7 w-14 rounded border border-slate-200 bg-white px-1 text-right text-xs tabular-nums text-ink outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             />
             °C
           </label>
@@ -368,7 +368,7 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
                 setCycleSpeed(parseInt(e.target.value, 10) || 0)
               }
               aria-label="Cycle speed level 1-9"
-              className="h-7 w-10 rounded border border-slate-200 bg-white px-1 text-right font-mono text-xs tabular-nums text-ink outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              className="h-7 w-10 rounded border border-slate-200 bg-white px-1 text-right text-xs tabular-nums text-ink outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             />
             level
           </label>
@@ -382,7 +382,7 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
               disabled={controlsDisabled}
               onChange={(e) => setCycleDurationS(parseFloat(e.target.value))}
               aria-label="Cycle duration in seconds"
-              className="h-7 w-16 rounded border border-slate-200 bg-white px-1 text-right font-mono text-xs tabular-nums text-ink outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              className="h-7 w-16 rounded border border-slate-200 bg-white px-1 text-right text-xs tabular-nums text-ink outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             />
             s
           </label>
@@ -449,7 +449,6 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </TileButton>
       </div>
 
-      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }

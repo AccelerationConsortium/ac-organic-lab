@@ -43,7 +43,10 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
   }
   return (
     <div
-      className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+      // lg+ caps each column at 262px so a standard 2-wide tile maxes at 540px
+      // (2×262 + one 16px gap); columns still compress below that on narrower
+      // screens. Grid left-aligns and stops growing on very wide monitors.
+      className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:[grid-template-columns:repeat(4,minmax(0,262px))]"
       style={{ gridAutoRows: `${ROW_HEIGHT_PX}px` }}
     >
       {snapshots.map((snapshot) => {

@@ -12,10 +12,9 @@ import {
 } from "@/lib/api";
 import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
-import { ActionErrorBand } from "./ActionErrorBand";
 import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
-import { PositionPill, TileButton } from "./TileButton";
+import { PositionPill } from "./TileButton";
 import { TileShell } from "./TileShell";
 
 interface PressState {
@@ -75,6 +74,23 @@ export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   return (
     <TileShell
       snapshot={snapshot}
+      actionError={actionError}
+      lifecycle={{
+        // ON toggles startup/stop: /control/stop is also this device's "off"
+        // (de-energise valves; re-startup required). STOP doubles as the halt
+        // — same endpoint, kept separate for the standardized banner shape.
+        isOn: !isRequiresInit,
+        onPowerToggle: () =>
+          isRequiresInit
+            ? exec(() => postPressInit(snapshot.id))
+            : exec(() => postPressStop(snapshot.id)),
+        onStop: () => exec(() => postPressStop(snapshot.id)),
+        disabled: locked,
+        powerTitle: isRequiresInit
+          ? "Device is off — click to initialise (press UP, plate OUT)"
+          : "Device is on — click to de-energise valves",
+        stopTitle: "Halt: de-energise valves (re-init required afterward)",
+      }}
       headerRight={
         <>
           <LockButton
@@ -157,30 +173,6 @@ export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </div>
       </div>
 
-      {/* State-aware action buttons */}
-      <div className="flex flex-wrap items-center gap-1">
-        {isRequiresInit && (
-          <TileButton
-            onClick={() => exec(() => postPressInit(snapshot.id))}
-            disabled={locked}
-            variant="primary"
-          >
-            Init
-          </TileButton>
-        )}
-        {/* Stop is always visible — an abort control should never disappear,
-            including before init and after a move completes. Only the control
-            lock gates it. */}
-        <TileButton
-          onClick={() => exec(() => postPressStop(snapshot.id))}
-          disabled={locked}
-          variant="danger"
-        >
-          Stop
-        </TileButton>
-      </div>
-
-      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }

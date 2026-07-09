@@ -19,7 +19,6 @@ import {
 import type { Parse412 } from "@/lib/action-error";
 import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
-import { ActionErrorBand } from "./ActionErrorBand";
 import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
 import { PositionPill, TileButton } from "./TileButton";
@@ -252,7 +251,7 @@ function MetricPill({
       <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
         {caption}
       </span>
-      <span className="ml-auto font-mono text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">
+      <span className="ml-auto text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">
         {value}
       </span>
     </div>
@@ -319,7 +318,7 @@ function EditablePill({
         value={draft}
         disabled={disabled}
         onChange={(e) => setDraft(e.target.value)}
-        className="ml-auto w-12 min-w-0 rounded border border-slate-200 bg-white px-1 py-0 text-right font-mono text-xs tabular-nums text-ink outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+        className="ml-auto w-12 min-w-0 rounded border border-slate-200 bg-white px-1 py-0 text-right text-xs tabular-nums text-ink outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
       />
       <span className="shrink-0 text-[10px] text-ink-subtle dark:text-slate-500">
         {unit}
@@ -429,6 +428,7 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   return (
     <TileShell
       snapshot={snapshot}
+      actionError={actionError}
       footerLeft={footerOverride}
       headerRight={
         <>
@@ -587,7 +587,6 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       {/* Inline error band: 412 / 423 / 409 from the last action.
           Auto-clears on next click or when the device transitions to
           ready + tempInBand + heaterOk. */}
-      <ActionErrorBand error={actionError} />
     </TileShell>
   );
 }

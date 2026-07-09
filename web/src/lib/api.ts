@@ -391,6 +391,23 @@ export async function postSetLights(
   return controlPost(equipmentId, "lights", { on });
 }
 
+// Lifecycle: `/control/startup` initialises/homes the robot; `/control/shutdown`
+// powers it down (the tile's ON toggle pairs these). `/control/pause` pauses a
+// running protocol — the closest thing the OT-2 has to a motion halt, wired to
+// the tile's STOP. All are claim-gated and require a signed-in session (unlike
+// lights, they are NOT a convenience-class bypass in the middleware).
+export async function postOt2Startup(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "startup", {});
+}
+
+export async function postOt2Shutdown(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "shutdown", {});
+}
+
+export async function postOt2Pause(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "pause", {});
+}
+
 // -- Sash (fume hood) control ----------------------------------------------
 //
 // As of STATUS_SPEC v1.1 the actuator exposes `/control/sash/{move,stop}`;
@@ -406,6 +423,44 @@ export async function postSashMove(
 
 export async function postSashStop(equipmentId: string): Promise<unknown> {
   return controlPost(equipmentId, "sash/stop", {});
+}
+
+// -- Robot arm (xArm) safety-floor actions ---------------------------------
+//
+// connect/disconnect (lifecycle) + move-stop/clear-errors live at the device
+// ROOT (siblings of /status, outside /control/*) and are claim-exempt, so
+// they can't go through controlPost. They ride the dashboard's /device/*
+// proxy (api/app/control.py) — auth + audit, no claim dance. TODO: fold back
+// into controlPost once the device exposes /control/* aliases.
+
+function devicePost<TResp = ControlAck>(
+  equipmentId: string,
+  action: string,
+): Promise<TResp> {
+  return fetchJson<TResp>(
+    `/api/equipment/${encodeURIComponent(equipmentId)}/device/${action}`,
+    { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } },
+  );
+}
+
+/** Connect the controller (INIT): requires_init → ready. */
+export async function postArmConnect(equipmentId: string): Promise<ControlAck> {
+  return devicePost(equipmentId, "connect");
+}
+
+/** Disconnect the controller (OFF): ready → requires_init. */
+export async function postArmDisconnect(equipmentId: string): Promise<ControlAck> {
+  return devicePost(equipmentId, "disconnect");
+}
+
+/** Halt current motion; stays connected. */
+export async function postArmStop(equipmentId: string): Promise<ControlAck> {
+  return devicePost(equipmentId, "move/stop");
+}
+
+/** Clear a fault so motion can resume. */
+export async function postArmClear(equipmentId: string): Promise<ControlAck> {
+  return devicePost(equipmentId, "clear/errors");
 }
 
 // -- Plate stacker (Agilent BioStack 4) control ----------------------------

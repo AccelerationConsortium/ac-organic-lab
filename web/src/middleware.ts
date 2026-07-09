@@ -22,7 +22,10 @@ const API_REF_UNLOCK = "/api-reference/unlock";
 // Escape hatch: set DASHBOARD_CONTROL_OPEN=true to disable the gate entirely
 // (local dev without the auth sidecar running). Default is closed.
 
-const CONTROL_PATH_RE = /^\/api\/equipment\/[^/]+\/(?:control|sash)(?:\/.*)?$/;
+// `device` covers the root-level, claim-exempt device actions proxied by
+// api/app/control.py's /device/* route (xArm connect/disconnect/stop/clear) —
+// gated exactly like /control/* so those writes always require a signed-in user.
+const CONTROL_PATH_RE = /^\/api\/equipment\/[^/]+\/(?:control|sash|device)(?:\/.*)?$/;
 const CONTROL_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 // -- /api/assistant/* gate (Phase 2) -----------------------------------------
