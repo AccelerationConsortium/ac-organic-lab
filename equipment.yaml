@@ -306,25 +306,19 @@ equipment:
         - { id: tele, label: Tele, rtsp_path: stream6 }
 
   # Second Opentrons OT-2 (robot `sdl2-ot2-complexation`, Tailscale
-  # 100.64.254.91) on the Echem bench for complexation work. Needs a SECOND
-  # `opentrons-server` gateway process fronting it — the gateway is
-  # multi-instance by design: one process per robot, on its own port, with
-  # its own robot host and its own state files (see the opentrons-server
-  # README "Running multiple OT-2 gateways"). Stays `mock` (placeholder
-  # envelope) until that gateway is deployed; then flip to:
-  #   adapter: http
-  #   protocol: "1.1"
-  #   base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8021
-  #   status_path: /status
-  # (gateway env: OT2_EQUIPMENT_ID=ot2_complexation,
-  #  OT2_HOST_ALIAS=sdl2-ot2-complexation,
-  #  OT2_HTTP_BASE_URL=http://sdl2-ot2-complexation.tail6a1dd7.ts.net:31950,
-  #  distinct OT2_PLATE_STATE_PATH / OT2_DECK_STATE_PATH, uvicorn --port 8021.)
+  # 100.64.254.91) on the Echem bench for complexation work. Fronted by the
+  # second `opentrons-server` gateway instance on sdl2-pc-03 port 8021
+  # (service `ot2-gateway-complexation`; deployed 2026-07-10). The gateway is
+  # multi-instance by design — one process per robot, own port, own state
+  # files; see the opentrons-server README "Running multiple OT-2 gateways".
   - id: ot2_complexation
     name: Opentrons OT-2 (Complexation)
     kind: liquid_handler
-    adapter: mock
+    adapter: http
+    protocol: "1.1"
+    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8021
     tailscale_ip: 100.64.254.91
+    status_path: /status
     poll_timeout_seconds: 8.0
     do_not_call_connect: true
     tiles:
