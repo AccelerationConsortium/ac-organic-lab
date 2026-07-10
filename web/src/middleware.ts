@@ -1,11 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// -- /api-reference page gate (pre-existing) --------------------------------
-
-const API_REF_COOKIE = "api_ref_auth";
-const API_REF_PREFIX = "/api-reference";
-const API_REF_UNLOCK = "/api-reference/unlock";
-
 // -- /api/equipment/*/{control,sash}/* gate (view-only until signed in) -----
 //
 // The dashboard is view-only until a user signs in. Every POST/PUT/PATCH/
@@ -77,24 +71,6 @@ async function verifySession(
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // ---- /api-reference page guard ----------------------------------------
-  if (
-    pathname.startsWith(API_REF_PREFIX) &&
-    !pathname.startsWith(API_REF_UNLOCK)
-  ) {
-    const password = process.env.API_REF_PASSWORD;
-    if (password) {
-      const cookie = request.cookies.get(API_REF_COOKIE)?.value;
-      if (cookie !== password) {
-        const url = request.nextUrl.clone();
-        url.pathname = API_REF_UNLOCK;
-        url.searchParams.set("next", pathname);
-        return NextResponse.redirect(url);
-      }
-    }
-    return NextResponse.next();
-  }
-
   // ---- Assistant guard (it reads all lab history — sign-in required) -----
   if (
     ASSISTANT_PATH_RE.test(pathname) &&
@@ -147,7 +123,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/api-reference/:path*",
     "/api/equipment/:path*",
     "/api/assistant/:path*",
   ],
