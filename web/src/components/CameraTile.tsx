@@ -31,30 +31,25 @@ import type {
 import { useActionError } from "@/lib/use-action-error";
 import { useUserAuth } from "@/lib/user-auth";
 
-import { ActionErrorBadge } from "./ActionErrorBadge";
 import { CameraPlayer } from "./CameraPlayer";
-import { MessageBand } from "./MessageBand";
 import { PtzPad } from "./PtzPad";
-import { StalenessIndicator } from "./StalenessIndicator";
 import { StatusPill } from "./StatusPill";
 import { TileButton } from "./TileButton";
+import { TileShell } from "./TileShell";
 
 type CameraStatusDetails = CameraDetails & Record<string, unknown>;
 
 /**
- * A self-contained camera tile.
+ * A camera tile on the shared <TileShell> template.
  *
- * Layout (top to bottom):
+ * Template mapping:
  *
- *   - header: name + status pill (lens tabs stack under pill, right-aligned)
- *   - <CameraPlayer> for the active lens's feed (MSE on desktop, WebRTC
- *     on iPhone; absorbs vertical slack)
- *   - control row, three columns side-by-side:
- *       1. <PtzPad> for live pan/tilt
- *       2. preset column: dropdown + "Save current view as..."
- *       3. capture column: snapshot, record/stop, "Recent captures ->"
- *   - toggle row: Streaming · Privacy · staleness
- *   - last-snapshot toast + status message banner (when present)
+ *   - lifecycle ON/OFF = streaming on/off (a camera's "power" from the
+ *     dashboard's perspective is whether it is streaming)
+ *   - banner extras: Privacy + Rolling toggles, lens tabs pushed right
+ *   - body: <CameraPlayer> (absorbs vertical slack), then the control row
+ *     (PtzPad · preset column · capture column)
+ *   - footer (message, latency, staleness) comes from the template
  */
 export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const queryClient = useQueryClient();
@@ -183,30 +178,48 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   });
 
   return (
-    <article className="flex h-full flex-col gap-3 rounded-xl border border-slate-200 bg-surface-raised p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      {/*
-        Header: name + id on the left; status pill and lens tabs stacked
-        right-aligned on the right. Putting the lens tabs under the
-        status pill keeps the header compact (one logical row) and lines
-        the secondary controls up vertically.
-      */}
-      <header className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="truncate text-base font-semibold text-ink dark:text-slate-100">
-            {snapshot.name}
-          </h3>
-          <p className="text-xs text-ink-subtle dark:text-slate-500">
-            <span className="font-mono">{snapshot.id}</span>
-            {snapshot.camera?.host ? <> · {snapshot.camera.host}</> : null}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <div className="flex items-center gap-1.5">
-            <ActionErrorBadge error={actionError} />
-            <StatusPill state={snapshot.status.equipment_status} />
-          </div>
+    <TileShell
+      snapshot={snapshot}
+      headerRight={<StatusPill state={snapshot.status.equipment_status} />}
+      actionError={actionError}
+      subtitleExtra={
+        snapshot.camera?.host ? (
+          <span className="font-mono">{snapshot.camera.host}</span>
+        ) : undefined
+      }
+      lifecycle={{
+        // The template's power toggle IS the streaming switch: a camera is
+        // "on" for the dashboard when it streams.
+        isOn: streamingEnabled,
+        onPowerToggle: () => streamingMutation.mutate(!streamingEnabled),
+        disabled: !authorized || streamingMutation.isPending,
+        powerTitle: !authorized
+          ? "Sign in to control this camera"
+          : streamingEnabled
+            ? "Streaming on — click to turn off"
+            : "Streaming off — click to turn on",
+      }}
+      bannerExtra={
+        <>
+          <Toggle
+            label="Privacy"
+            checked={privacyMode}
+            disabled={!authorized || !tapoReachable || privacyMutation.isPending}
+            onChange={(value) => privacyMutation.mutate(value)}
+          />
+          <Toggle
+            label="Rolling"
+            checked={rollingActive}
+            disabled={!authorized || rollingMutation.isPending}
+            title={
+              rollingActive
+                ? `${rollingSegmentCount} segment(s) on disk · click to stop`
+                : "Start rolling recorder (30 min segments, keep 96)"
+            }
+            onChange={(value) => rollingMutation.mutate(value)}
+          />
           {lenses.length > 1 && (
-            <div className="flex gap-1">
+            <div className="ml-auto flex gap-1">
               {lenses.map((lens) => {
                 const isActive = lens.id === activeLens?.id;
                 return (
@@ -231,15 +244,15 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
               })}
             </div>
           )}
-        </div>
-      </header>
-
+        </>
+      }
+    >
       {/*
         The grid that hosts this tile uses fixed-height rows (see
         `EquipmentGrid`), so the article reliably gets more vertical
         space than the natural content height. Letting the video absorb
         the surplus (`flex-1 min-h-0`) keeps the 16:9 frame centered and
-        the toggle row pinned to the bottom of the card - no awkward
+        the control row pinned above the template footer - no awkward
         gap below the controls.
       */}
       <CameraPlayer
@@ -373,43 +386,6 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           </Link>
         </div>
       </div>
-
-      <div className="flex items-center gap-4 border-t border-slate-100 pt-2 dark:border-slate-800">
-        <Toggle
-          label="Streaming"
-          checked={streamingEnabled}
-          disabled={streamingMutation.isPending}
-          onChange={(value) => streamingMutation.mutate(value)}
-        />
-        <Toggle
-          label="Privacy"
-          checked={privacyMode}
-          disabled={!tapoReachable || privacyMutation.isPending}
-          onChange={(value) => privacyMutation.mutate(value)}
-        />
-        <Toggle
-          label="Rolling"
-          checked={rollingActive}
-          disabled={rollingMutation.isPending}
-          title={rollingActive ? `${rollingSegmentCount} segment(s) on disk · click to stop` : "Start rolling recorder (30 min segments, keep 96)"}
-          onChange={(value) => rollingMutation.mutate(value)}
-        />
-        <span className="ml-auto flex items-center gap-2 text-[11px] text-ink-subtle dark:text-slate-500">
-          {snapshot.latency_ms != null && (
-            <span
-              className={
-                snapshot.latency_ms >= 500
-                  ? "text-amber-700 dark:text-amber-400"
-                  : undefined
-              }
-              title={snapshot.latency_ms >= 500 ? "Slow poll (>=500 ms)" : undefined}
-            >
-              {snapshot.latency_ms} ms
-            </span>
-          )}
-          <StalenessIndicator fetchedAt={snapshot.fetched_at} />
-        </span>
-      </div>
       </fieldset>
 
       {lastSnapshot && (
@@ -422,10 +398,6 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           ✓ Saved {lastSnapshot.lens} snapshot · {humanBytes(lastSnapshot.bytes)}
           <span className="ml-1 underline">open</span>
         </a>
-      )}
-
-      {snapshot.status.message && (
-        <MessageBand tone="amber">{snapshot.status.message}</MessageBand>
       )}
 
       {presetModalOpen && (
@@ -443,7 +415,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           }}
         />
       )}
-    </article>
+    </TileShell>
   );
 }
 
