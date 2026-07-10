@@ -409,10 +409,12 @@ per robot, own port, own robot host, own state files):
 - `ot2` — HTE bench robot `sdl2-ot2-hte` (100.64.254.90, robot name
   `ot2cytation`), gateway on `sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020`.
 - `ot2_complexation` — Echem bench robot `sdl2-ot2-complexation`
-  (100.64.254.91, robot name `ot2training`); its gateway will run on
-  `…:8021` (see `opentrons-server` README "Running multiple OT-2
-  gateways"). Stays `adapter: mock` in `equipment.yaml` until that
-  gateway is deployed.
+  (100.64.254.91, robot name `ot2training`), gateway on `…:8021`
+  (service `ot2-gateway-complexation`, deployed 2026-07-10; see
+  `opentrons-server` README "Running multiple OT-2 gateways" — note the
+  robot is reached over its lab-WiFi DHCP address, so if it goes
+  `requires_init` with SSH errors, check the lease via
+  `GET :31950/networking/status` and update `OT2_HOST_ALIAS`).
 
 Both are STATUS_SPEC v1.1. The kind-level skill catalog and tile apply to
 both automatically. Protocol-execution actions
@@ -508,14 +510,15 @@ data directory, written atomically under a lock. The tile loads it via
 `react-query` (`queryKey: ["deck", id]`, `enabled` **only when the device
 isn't migrated**), polls every 15 s, and writes optimistically.
 
-**Retirement plan.** This store is now the fallback path only. Once
-**both** OT-2 gateways (`ot2` and `ot2_complexation`) are deployed on the
-`opentrons-server` build that publishes the normalized deck (Phases 0–2)
-and verified live, `api/app/deck.py` + `deck_layouts.json` can be deleted
-and the legacy branch removed from `LiquidHandlerTile.tsx`. Migrate the
-two existing `deck_layouts.json` entries into each gateway's declared
-store (`POST /control/deck/declare`) at cutover. It is kept until then so
-an un-migrated or not-yet-deployed gateway still has a working picker.
+**Retirement plan — cutover done 2026-07-10.** Both OT-2 gateways run
+the deck-publishing build and were verified live, and the two
+`deck_layouts.json` entries were migrated into each gateway's declared
+store via `POST /control/deck/declare`. Both tiles therefore render from
+device state; this store is dormant for the OT-2s. Remaining cleanup
+(deliberately deferred): delete `api/app/deck.py` + `deck_layouts.json`
+and remove the legacy fallback branch from `LiquidHandlerTile.tsx` once
+the device-driven path has soaked. Until deleted, the store still serves
+any future not-yet-migrated liquid handler.
 
 > **Auth-gated (2026-07-09).** The `/deck` PUT is a control-class write, so
 > it is gated exactly like `/control/*`: `deck` is in the middleware's
@@ -567,13 +570,12 @@ operator-facing class as camera PTZ. See [`EQUIP_GUIDE.md`](EQUIP_GUIDE.md) §6b
   `aspirate`, `dispense`, `pick_up_tip`, `drop_tip`,
   `move_labware`, `pause`, `resume`, `reconcile`. These need labware-
   typed Pydantic args that the catalog has no shapes for yet.
-- **Deck from device state** — ✅ *done (2026-07)*: the tile reads
-  `details.snapshot.deck` when present and declares via the `deck.declare`
-  skill (`POST /control/deck/declare`), falling back to the `deck.py`
-  store otherwise. **Remaining:** once both gateways are deployed on the
-  deck-publishing build and verified, delete `api/app/deck.py` +
-  `deck_layouts.json` and the legacy branch in `LiquidHandlerTile.tsx`
-  (migrate the two `deck_layouts.json` entries into each gateway's
-  declared store first).
+- **Deck from device state** — ✅ *shipped and cut over 2026-07-10*: the
+  tile reads `details.snapshot.deck` and declares via the `deck.declare`
+  skill (`POST /control/deck/declare`); both gateways are live on the
+  deck-publishing build and the stopgap layouts were migrated into their
+  declared stores. **Remaining:** delete `api/app/deck.py` +
+  `deck_layouts.json` and the legacy fallback branch in
+  `LiquidHandlerTile.tsx` after a soak period.
 - **Gate the `/deck` PUT** behind the sign-in middleware if the shared
   layout needs write protection.
