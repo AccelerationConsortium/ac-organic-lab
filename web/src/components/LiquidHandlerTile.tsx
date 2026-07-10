@@ -4,12 +4,15 @@ import { useState, useTransition } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  deleteDeckDeclare,
   getDeckLayout,
+  postDeckDeclare,
   postOt2Pause,
   postOt2Shutdown,
   postOt2Startup,
   postSetLights,
   putDeckLayout,
+  type DeviceDeck,
 } from "@/lib/api";
 import type { EquipmentSnapshot } from "@/types/api";
 import { useActionError } from "@/lib/use-action-error";
@@ -63,27 +66,67 @@ const DECK_ROWS: number[][] = [
   [1, 2, 3],
 ];
 
-// Labware the operator can place on a slot. Client-side only for now; the deck
-// will later be driven by the device's own state (details.snapshot.deck.slots).
-interface LabwareType {
-  key: string;
+// Grid (rows × columns) per normalized labware `kind`. Used as a fallback when
+// the device doesn't send rows/columns, and for the legacy store's kind strings.
+const KIND_GRID: Record<string, { rows: number; columns: number }> = {
+  "96-well": { rows: 8, columns: 12 },
+  "384-well": { rows: 16, columns: 24 },
+  "48-well": { rows: 6, columns: 8 },
+  "24-well": { rows: 4, columns: 6 },
+  "12-well": { rows: 3, columns: 4 },
+  "6-well": { rows: 2, columns: 3 },
+  tiprack: { rows: 8, columns: 12 },
+  reservoir: { rows: 1, columns: 12 },
+  tuberack: { rows: 4, columns: 6 },
+};
+const TRASH_KINDS = new Set(["waste", "trash"]);
+
+// Picker options. Legacy (dashboard-store) devices only accept the three the
+// stopgap validates; a migrated gateway accepts the full normalized set.
+const LEGACY_PICKER: { key: string; label: string }[] = [
+  { key: "96-well", label: "96-well plate" },
+  { key: "24-well", label: "24-well plate" },
+  { key: "waste", label: "Waste bin" },
+];
+const DEVICE_PICKER: { key: string; label: string }[] = [
+  { key: "96-well", label: "96-well plate" },
+  { key: "384-well", label: "384-well plate" },
+  { key: "24-well", label: "24-well plate" },
+  { key: "tiprack", label: "Tip rack" },
+  { key: "reservoir", label: "Reservoir" },
+  { key: "tuberack", label: "Tube rack" },
+  { key: "waste", label: "Waste bin" },
+];
+
+// One slot's render info, sourced from either the device deck or the legacy store.
+interface SlotView {
+  kind?: string; // normalized kind (or legacy key)
   label: string;
   rows: number;
   columns: number;
+  state: "empty" | "declared" | "occupied" | "in_use" | "mismatch";
+  isTrash: boolean;
+  title: string;
 }
 
-const LABWARE_TYPES: LabwareType[] = [
-  { key: "96-well", label: "96-well plate", rows: 8, columns: 12 },
-  { key: "24-well", label: "24-well plate", rows: 4, columns: 6 },
-  // Waste bin: no wells — just greys out the slot.
-  { key: "waste", label: "Waste bin", rows: 0, columns: 0 },
-];
-
-function labwareType(key: string | undefined): LabwareType | undefined {
-  return LABWARE_TYPES.find((l) => l.key === key);
+// Read the device's normalized deck from /status, but ONLY the new shape:
+// { source, slots: { "1": { slot_state, labware, ... } } }. An un-migrated
+// gateway publishes the old loose deck ({ slots: {}, occupied_slots, ... }) or
+// nothing — in that case return null and the tile falls back to the legacy store.
+function deviceDeckFromStatus(status: EquipmentSnapshot["status"]): DeviceDeck | null {
+  const snap = status.details?.["snapshot"] as { deck?: unknown } | undefined;
+  const deck = snap?.deck as Partial<DeviceDeck> | undefined;
+  if (!deck || typeof deck !== "object") return null;
+  if (!("source" in deck) || !deck.slots) return null;
+  const first = Object.values(deck.slots)[0] as { slot_state?: unknown } | undefined;
+  if (!first || !("slot_state" in first)) return null; // old loose shape
+  return deck as DeviceDeck;
 }
-function labwareLabel(key: string | undefined): string {
-  return labwareType(key)?.label ?? key ?? "";
+
+function gridFor(kind: string | undefined, rows?: number | null, columns?: number | null) {
+  if (rows && columns) return { rows, columns };
+  if (kind && KIND_GRID[kind]) return KIND_GRID[kind];
+  return { rows: 0, columns: 0 };
 }
 
 // Miniature well grid drawn inside a deck slot once well-plate labware is
@@ -126,9 +169,6 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
   const { locked, noAccess, countdown, toggle } = useControlLock(snapshot.id);
   const [, startTransition] = useTransition();
   const [pending, setPending] = useState<boolean>(false);
-  // Keeps its own useTransition + `pending` (the On/Off buttons disable while
-  // in flight); error state comes from the shared hook so a refusal renders in
-  // the same <ActionErrorBand> as every other tile.
   const { actionError, setActionError, reportError } = useActionError();
 
   function setLights(on: boolean) {
@@ -160,31 +200,87 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
     status.equipment_status !== "requires_init" &&
     status.equipment_status !== "unknown";
 
-  // Deck labware is stored server-side (shared across users) via
-  // GET/PUT /api/equipment/<id>/deck, and polled so other operators' edits
-  // appear. TODO: replace with the device's own deck state
-  // (status.details.snapshot.deck.slots) once the OT-2 server publishes it.
+  // --- Deck source: prefer the device's own normalized deck (Phase 3); fall
+  // back to the shared dashboard store for gateways that don't publish it yet.
   const queryClient = useQueryClient();
+  const deviceDeck = deviceDeckFromStatus(status);
+  const migrated = deviceDeck != null;
+
   const deckKey = ["deck", snapshot.id] as const;
-  const { data: deckData } = useQuery({
+  const { data: legacyDeck } = useQuery({
     queryKey: deckKey,
     queryFn: () => getDeckLayout(snapshot.id),
     refetchInterval: 15000,
+    enabled: !migrated, // migrated devices are driven by /status, not this store
   });
-  const deckLabware = deckData?.slots ?? {};
+  const legacyLabware = legacyDeck?.slots ?? {};
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
+
+  const pickerOptions = migrated ? DEVICE_PICKER : LEGACY_PICKER;
+
+  // The operator-editable declared map. For a migrated device it is only the
+  // slots the operator actually declared (declared-only + the losing side of a
+  // mismatch) — observed labware is NOT re-declared. For a legacy device it is
+  // the whole store.
+  const declaredMap: Record<string, string> = {};
+  if (migrated && deviceDeck) {
+    for (const [slot, s] of Object.entries(deviceDeck.slots)) {
+      if (s.slot_state === "declared" && s.labware) declaredMap[slot] = s.labware.kind;
+      else if (s.slot_state === "mismatch" && s.declared) declaredMap[slot] = s.declared.kind;
+    }
+  } else {
+    Object.assign(declaredMap, legacyLabware);
+  }
+
+  function slotView(slot: number): SlotView {
+    if (migrated && deviceDeck) {
+      const s = deviceDeck.slots[String(slot)];
+      if (!s || s.slot_state === "empty") {
+        if (s?.module) {
+          return { label: s.module.module_name, rows: 0, columns: 0, state: "occupied", isTrash: false, title: `Slot ${slot} — ${s.module.module_name}` };
+        }
+        return { label: "", rows: 0, columns: 0, state: "empty", isTrash: false, title: `Slot ${slot} — empty` };
+      }
+      const kind = s.labware?.kind;
+      const { rows, columns } = gridFor(kind, s.labware?.rows, s.labware?.columns);
+      const name = s.labware?.display_name || s.labware?.load_name || kind || "";
+      const isTrash = !!kind && TRASH_KINDS.has(kind);
+      const stateWord =
+        s.slot_state === "in_use" ? "in use" : s.slot_state === "mismatch" ? "mismatch" : s.slot_state;
+      const title =
+        s.slot_state === "mismatch"
+          ? `Slot ${slot} — declared ${s.declared?.kind ?? "?"}, observed ${kind ?? "?"}`
+          : `Slot ${slot} — ${name} (${stateWord})`;
+      return { kind, label: name, rows, columns, state: s.slot_state, isTrash, title };
+    }
+    // Legacy store: pure intent, no lifecycle.
+    const key = legacyLabware[slot];
+    if (!key) return { label: "", rows: 0, columns: 0, state: "empty", isTrash: false, title: `Slot ${slot} — empty` };
+    const { rows, columns } = gridFor(key);
+    const isTrash = TRASH_KINDS.has(key);
+    return { kind: key, label: key, rows, columns, state: "declared", isTrash, title: `Slot ${slot} — ${key}` };
+  }
 
   function setSlotLabware(slot: number, labware: string) {
     // Changing the deck layout is gated to admins / authorized users of this
-    // device — the same `locked` the control affordances use (backed by
-    // /authz/mine). The picker below is disabled when locked, so this is the
-    // belt-and-suspenders guard; the backend PUT enforces the same 403.
+    // device — the same `locked` the control affordances use. The picker is
+    // disabled when locked; this is the belt-and-suspenders guard.
     if (locked) return;
-    const next = { ...deckLabware };
+    if (migrated) {
+      // Send the full declared map (the gateway replaces the declaration). Only
+      // operator-declared slots travel; observed labware is left to /status.
+      const next: Record<string, string> = { ...declaredMap };
+      if (labware) next[String(slot)] = labware;
+      else delete next[String(slot)];
+      postDeckDeclare(snapshot.id, next)
+        .then(() => queryClient.invalidateQueries({ queryKey: ["equipment"] }))
+        .catch((e: unknown) => reportError(e, "deck.declare"));
+      return;
+    }
+    // Legacy dashboard store: optimistic update then persist.
+    const next = { ...legacyLabware };
     if (labware) next[String(slot)] = labware;
     else delete next[String(slot)];
-    // Optimistic: reflect immediately, then persist. On failure, refetch the
-    // authoritative server copy and surface the error.
     queryClient.setQueryData(deckKey, { slots: next });
     putDeckLayout(snapshot.id, next)
       .then((res) => queryClient.setQueryData(deckKey, res))
@@ -236,9 +332,6 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
           : "Halt: pause the running protocol (does not disconnect)",
       }}
       bannerExtra={
-        // Light toggle (convenience-class, no lock chip) + pipette pills,
-        // grouped right so the Light button never crowds the INIT/STOP
-        // group on narrow tiles.
         <div className="ml-auto flex items-center gap-1.5">
           <TileButton
             onClick={() => setLights(!isOn)}
@@ -284,49 +377,68 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
 
 
       {/* Deck — 12 slots (1 bottom-left … 12 top-right), 3 per row. Blocks are a
-          fixed 160×120 px with a fixed 10px gap both horizontally and
-          vertically (total 3×160 + 2×10 = 500px wide). Scrolls if the tile is
-          narrower. Click a slot to select it, then assign labware via "Select
-          Labware" below. */}
+          fixed 160×120 px. For a migrated gateway the contents come from the
+          device's own /status deck (observed + declared, with mismatch flagged);
+          otherwise from the shared dashboard store. Click a slot then assign
+          labware via "Select Labware" below. */}
       <div
         className="grid justify-center gap-[10px] overflow-x-auto"
         style={{ gridTemplateColumns: "repeat(3, 160px)" }}
       >
         {DECK_ROWS.flat().map((slot) => {
-          const lw = deckLabware[slot];
-          const lwType = labwareType(lw);
+          const v = slotView(slot);
           const selected = selectedSlot === slot;
+          const mismatch = v.state === "mismatch";
           return (
             <button
               key={slot}
               type="button"
               onClick={() => setSelectedSlot((s) => (s === slot ? null : slot))}
-              title={`Slot ${slot}${lw ? ` — ${labwareLabel(lw)}` : " — empty"}`}
+              title={v.title}
               className={[
                 "relative h-[120px] w-[160px] overflow-hidden rounded border transition-colors",
                 selected
                   ? "border-sky-500 bg-sky-50 dark:border-sky-500 dark:bg-sky-950/40"
-                  : "border-slate-200 bg-white hover:border-slate-400 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-slate-500",
+                  : mismatch
+                    ? "border-amber-500 bg-amber-50 dark:border-amber-500 dark:bg-amber-950/30"
+                    : "border-slate-200 bg-white hover:border-slate-400 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-slate-500",
               ].join(" ")}
             >
-              {lwType ? (
-                lwType.key === "waste" ? (
-                  // Waste bin: grey the whole slot, no wells.
-                  <div className="flex h-full w-full items-center justify-center bg-slate-300/70 dark:bg-slate-700/60">
-                    <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
-                      waste
-                    </span>
-                  </div>
-                ) : (
-                  <MiniPlate rows={lwType.rows} columns={lwType.columns} />
-                )
+              {v.isTrash ? (
+                <div className="flex h-full w-full items-center justify-center bg-slate-300/70 dark:bg-slate-700/60">
+                  <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+                    waste
+                  </span>
+                </div>
+              ) : v.rows > 0 && v.columns > 0 ? (
+                <MiniPlate rows={v.rows} columns={v.columns} />
+              ) : v.state !== "empty" ? (
+                // Occupied by something without a grid (module, unknown kind).
+                <div className="flex h-full w-full items-center justify-center px-1 text-center">
+                  <span className="text-[10px] font-medium text-ink-subtle dark:text-slate-400">
+                    {v.label || v.kind}
+                  </span>
+                </div>
               ) : (
-                // Empty: large light-grey watermark slot number.
                 <div className="flex h-full w-full items-center justify-center">
                   <span className="select-none text-4xl font-semibold text-slate-200 dark:text-slate-700">
                     {slot}
                   </span>
                 </div>
+              )}
+              {/* State badge for migrated devices (top-right corner). */}
+              {migrated && (v.state === "in_use" || v.state === "mismatch") && (
+                <span
+                  className={[
+                    "absolute right-1 top-1 rounded px-1 text-[8px] font-semibold uppercase tracking-wide",
+                    v.state === "mismatch"
+                      ? "bg-amber-500 text-white"
+                      : "bg-sky-500 text-white",
+                  ].join(" ")}
+                  aria-hidden
+                >
+                  {v.state === "mismatch" ? "≠" : "busy"}
+                </span>
               )}
             </button>
           );
@@ -334,15 +446,13 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
       </div>
 
       {/* Select Labware (assigns to the highlighted slot) on the left; SSH /
-          Protocol status pills pushed to the right. The pills show status by
-          dot colour only (green = connected/ready, else grey) — no state
-          text; the raw state is in the hover title. */}
+          Protocol status pills pushed to the right. */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
           Select Labware
         </span>
         <select
-          value={selectedSlot != null ? deckLabware[selectedSlot] ?? "" : ""}
+          value={selectedSlot != null ? declaredMap[String(selectedSlot)] ?? "" : ""}
           onChange={(e) => {
             if (selectedSlot == null) return;
             setSlotLabware(selectedSlot, e.target.value);
@@ -353,7 +463,9 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
               ? noAccess
                 ? "No access — only authorized users of this device can change its deck layout"
                 : "Sign in to change the deck layout"
-              : undefined
+              : migrated
+                ? "Declares operator intent; merged with the device's observed deck"
+                : undefined
           }
           aria-label="Select labware for the highlighted slot"
           className="min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-ink disabled:bg-slate-50 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900 dark:disabled:text-slate-600"
@@ -367,7 +479,7 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
                 ? "Select a slot first"
                 : "Empty"}
           </option>
-          {LABWARE_TYPES.map((l) => (
+          {pickerOptions.map((l) => (
             <option key={l.key} value={l.key}>
               {l.label}
             </option>

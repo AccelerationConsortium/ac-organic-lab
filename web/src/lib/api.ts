@@ -799,3 +799,53 @@ export async function putDeckLayout(
     },
   );
 }
+
+// -- Device-published deck state (retires the deck_layouts.json stopgap) ------
+//
+// A migrated OT-2 gateway publishes its own normalized deck on
+// `status.details.snapshot.deck` (see DeviceDeck below), and accepts the
+// operator-declared layout via `POST /control/deck/declare` (a claim-gated
+// control action, so it routes through the dashboard passthrough and is
+// audited like any other control write). The tile prefers this over the
+// legacy get/putDeckLayout store and falls back to it for un-migrated devices.
+
+/** One slot of the gateway's normalized deck (details.snapshot.deck.slots). */
+export interface DeviceDeckSlot {
+  labware: {
+    kind: string;
+    load_name: string;
+    display_name?: string | null;
+    is_tiprack?: boolean;
+    rows?: number | null;
+    columns?: number | null;
+    plate_id?: string | null;
+  } | null;
+  module: { module_name: string; status?: string | null } | null;
+  slot_state: "empty" | "declared" | "occupied" | "in_use" | "mismatch";
+  source: "run" | "repl" | "declared" | "empty";
+  declared?: { kind: string; load_name: string } | null;
+}
+
+export interface DeviceDeck {
+  source: "run" | "repl" | "declared" | "empty";
+  slots: Record<string, DeviceDeckSlot>;
+  timestamp?: string;
+}
+
+/** Declare the operator/recipe layout on a migrated gateway. Values are
+ *  load_names or legacy kind strings; `null`/absent clears a slot. */
+export async function postDeckDeclare(
+  equipmentId: string,
+  slots: Record<string, string | null>,
+): Promise<DeviceDeck> {
+  return controlPost<{ slots: Record<string, string | null> }, DeviceDeck>(
+    equipmentId,
+    "deck/declare",
+    { slots },
+  );
+}
+
+/** Clear the whole declared layout on a migrated gateway. */
+export async function deleteDeckDeclare(equipmentId: string): Promise<DeviceDeck> {
+  return controlDelete<DeviceDeck>(equipmentId, "deck/declare");
+}
