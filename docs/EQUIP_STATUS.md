@@ -401,9 +401,23 @@ state, track position).
 
 ## 11) Liquid handler (`kind: liquid_handler`) — OT-2
 
-The Opentrons OT-2 (`ot2`, STATUS_SPEC v1.1 via `opentrons-server` on
-`sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020`) renders as the
-kind-specific `LiquidHandlerTile`. Protocol-execution actions
+The Opentrons OT-2 renders as the kind-specific `LiquidHandlerTile`.
+There are **two** OT-2s, each fronted by its own `opentrons-server`
+gateway process (the gateway is multi-instance by design — one process
+per robot, own port, own robot host, own state files):
+
+- `ot2` — HTE bench robot `sdl2-ot2-hte` (100.64.254.90, robot name
+  `ot2cytation`), gateway on `sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020`.
+- `ot2_complexation` — Echem bench robot `sdl2-ot2-complexation`
+  (100.64.254.91, robot name `ot2training`), gateway on `…:8021`
+  (service `ot2-gateway-complexation`, deployed 2026-07-10; see
+  `opentrons-server` README "Running multiple OT-2 gateways" — note the
+  robot is reached over its lab-WiFi DHCP address, so if it goes
+  `requires_init` with SSH errors, check the lease via
+  `GET :31950/networking/status` and update `OT2_HOST_ALIAS`).
+
+Both are STATUS_SPEC v1.1. The kind-level skill catalog and tile apply to
+both automatically. Protocol-execution actions
 (`setup`, `home`, `aspirate`, `dispense`, `pick_up_tip`, `drop_tip`,
 `move_labware`, `pause`) are advertised by the device today but the
 catalog has no typed protocol-arg shapes for them yet — those land in
@@ -432,19 +446,42 @@ fixed columns and distributes extra width between them
 (`justify-content: space-between`), so resizing the window only spaces
 the blocks out horizontally rather than stretching them (scrolls if the
 tile is narrower than three blocks). Click a slot to select it
-(highlights sky-blue; click again to deselect). Rendering by slot
-contents:
+(highlights sky-blue; click again to deselect).
+
+**Deck source (2026-07 — device-driven, with fallback).** The tile
+prefers the gateway's *own* normalized deck published at
+`status.details.snapshot.deck` (see `opentrons-server`
+`docs/DECK_STATE_PLAN.md`): each slot carries `{ labware: { kind,
+load_name, rows, columns, … } | null, module, slot_state, source,
+declared }`. `deviceDeckFromStatus()` accepts only this **new** shape
+(deck-level `source` present *and* per-slot `slot_state`); a gateway
+still on the old loose `deck` (or none) falls back to the shared
+dashboard store (below). This is a graceful, per-device migration — no
+flag day. Rendering by slot:
 
 - **Empty** — a large, light-grey *watermark* slot number (centred).
-- **96-well / 24-well** — a miniature well grid of round wells (**8×12**
-  / **4×6**); the inner grid takes the plate's own aspect ratio so cells
-  are square and the wells render as true circles. No number.
-- **Waste bin** — the slot is simply greyed out (no wells), labelled
-  `waste`.
+- **Any well-plate / tip-rack / reservoir / tube-rack** — a miniature
+  well grid drawn from the payload's `rows`/`columns` (falls back to a
+  per-`kind` grid table when the device omits them), so the tile renders
+  any grid generically rather than switching on a fixed enum.
+- **Waste / trash** — the slot is greyed out (no wells), labelled `waste`.
+- **Module / unknown-grid labware** — a small centred label.
+- **State badges (migrated only, top-right):** `busy` when
+  `slot_state == "in_use"`; `≠` (amber, with an amber slot border) when
+  `slot_state == "mismatch"` — the operator declared one labware but the
+  device observed another (hover shows both).
 
 **Select Labware** — a picker at the bottom, disabled until a slot is
-selected; then choose **96-well plate** / **24-well plate** / **Waste
-bin** (or **Empty** to clear). Assigns to the highlighted slot.
+selected. It sets **operator-declared intent**, not observed state.
+- On a **migrated** gateway it offers the fuller normalized set
+  (96/384/24-well, tip rack, reservoir, tube rack, waste) and writes via
+  `POST /control/deck/declare` (the `deck.declare` skill) through the
+  control passthrough — claim-gated and audited like any control write.
+  Only operator-declared slots are sent; observed labware is left to the
+  device. Declaring a slot that the device observes differently surfaces
+  as a `mismatch`.
+- On a **legacy** device it offers 96-well / 24-well / waste and writes
+  the shared dashboard store (below).
 
 **SSH + Protocol pills** — `components.ssh` and `components.protocol`
 render as two side-by-side pills (dot green when `connected` / `ready`,
@@ -458,11 +495,11 @@ class, see [`EQUIP_GUIDE.md`](EQUIP_GUIDE.md) §6b "Two layers, two bypass point
 (they're claim-gated lifecycle writes, not a middleware bypass), so the
 header lock chip is now load-bearing.
 
-### Deck-layout store (shared, server-persisted — stopgap)
+### Deck-layout store (shared, server-persisted — legacy fallback)
 
-The deck labware assignment is **shared across users**, not per-browser.
-It is stored server-side and served by a small store in
-`api/app/deck.py`:
+For gateways that do **not** yet publish `details.snapshot.deck` (see the
+device-source note above), the deck picker falls back to a shared,
+server-persisted store in `api/app/deck.py`:
 
 - `GET /api/equipment/{id}/deck` → `{ slots: { "<1..12>": "96-well" | "24-well" | "waste" } }`
 - `PUT /api/equipment/{id}/deck` → replaces the layout (validates slot
@@ -470,13 +507,18 @@ It is stored server-side and served by a small store in
 
 Persistence is a JSON file (`deck_layouts.json`) next to `lab.db` in the
 data directory, written atomically under a lock. The tile loads it via
-`react-query` (`queryKey: ["deck", id]`), polls every 15 s so other
-operators' edits appear, and writes optimistically on each change.
-`equipment.yaml` is deliberately **not** touched (pyyaml would strip its
-comments). This whole store is a stopgap: once `opentrons-server`
-publishes real deck state on `/status`
-(`details.snapshot.deck.slots`, currently all `null`), the tile should
-read that instead and this store can be retired.
+`react-query` (`queryKey: ["deck", id]`, `enabled` **only when the device
+isn't migrated**), polls every 15 s, and writes optimistically.
+
+**Retirement plan — cutover done 2026-07-10.** Both OT-2 gateways run
+the deck-publishing build and were verified live, and the two
+`deck_layouts.json` entries were migrated into each gateway's declared
+store via `POST /control/deck/declare`. Both tiles therefore render from
+device state; this store is dormant for the OT-2s. Remaining cleanup
+(deliberately deferred): delete `api/app/deck.py` + `deck_layouts.json`
+and remove the legacy fallback branch from `LiquidHandlerTile.tsx` once
+the device-driven path has soaked. Until deleted, the store still serves
+any future not-yet-migrated liquid handler.
 
 > **Auth-gated (2026-07-09).** The `/deck` PUT is a control-class write, so
 > it is gated exactly like `/control/*`: `deck` is in the middleware's
@@ -528,10 +570,12 @@ operator-facing class as camera PTZ. See [`EQUIP_GUIDE.md`](EQUIP_GUIDE.md) §6b
   `aspirate`, `dispense`, `pick_up_tip`, `drop_tip`,
   `move_labware`, `pause`, `resume`, `reconcile`. These need labware-
   typed Pydantic args that the catalog has no shapes for yet.
-- **Deck from device state** — retire the `api/app/deck.py` stopgap once
-  `opentrons-server` publishes real deck contents on `/status`
-  (`details.snapshot.deck.slots`); the tile should read that (and push
-  assignments through a `plate.load`-style skill) instead of the shared
-  JSON store.
+- **Deck from device state** — ✅ *shipped and cut over 2026-07-10*: the
+  tile reads `details.snapshot.deck` and declares via the `deck.declare`
+  skill (`POST /control/deck/declare`); both gateways are live on the
+  deck-publishing build and the stopgap layouts were migrated into their
+  declared stores. **Remaining:** delete `api/app/deck.py` +
+  `deck_layouts.json` and the legacy fallback branch in
+  `LiquidHandlerTile.tsx` after a soak period.
 - **Gate the `/deck` PUT** behind the sign-in middleware if the shared
   layout needs write protection.

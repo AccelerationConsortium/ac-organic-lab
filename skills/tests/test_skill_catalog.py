@@ -37,7 +37,7 @@ def test_plate_reader_catalog_registered() -> None:
 
 
 def test_liquid_handler_catalog_registered() -> None:
-    """OT-2 deck-light toggle (convenience control)."""
+    """OT-2 deck-light toggle + deck-layout declaration (convenience controls)."""
 
     from lab_skills.skill_catalog import SKILL_REGISTRY
 
@@ -49,6 +49,14 @@ def test_liquid_handler_catalog_registered() -> None:
     # Convenience control: no state precondition.
     assert lights.requires_states == []
     assert not lights.requires_components
+
+    assert "deck.declare" in by_name
+    deck = by_name["deck.declare"]
+    assert deck.endpoint == "/control/deck/declare"
+    assert deck.method == "POST"
+    # Metadata-only; declarable in any reachable state (incl. requires_init).
+    assert deck.requires_states == []
+    assert not deck.requires_components
 
 
 def test_robot_arm_graph_control_surface() -> None:
