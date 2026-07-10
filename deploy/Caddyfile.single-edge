@@ -180,6 +180,18 @@ http://100.64.254.6 {
 		}
 	}
 
+	# ---- PyPoe React preview (parallel-deploy migration) — banner-only -------
+	# The new React UI runs as pypoe-web-next on :8007 alongside the Jinja UI on
+	# :8006, sharing the DB. Its base path is BAKED INTO the Vite build
+	# (VITE_BASE=/pypoe-next/), so no X-Forwarded-Prefix is needed — handle_path
+	# just strips /pypoe-next and the backend serves /assets, /api, /status at
+	# root. No forward_auth (banner-only, same as /pypoe). Retire this block at
+	# cutover, when /pypoe/ is flipped to :8007. See pypoe docs/REACT_UI_MIGRATION.md.
+	redir /pypoe-next /pypoe-next/ 308
+	handle_path /pypoe-next/* {
+		reverse_proxy 100.64.254.6:8007
+	}
+
 	# ---- dashboard (Next.js) at root ---------------------------------------
 	# Next.js serves / and /api/* (it rewrites /api/* to FastAPI on :8001) and
 	# enforces its own control/assistant gate via web/src/middleware.ts against
