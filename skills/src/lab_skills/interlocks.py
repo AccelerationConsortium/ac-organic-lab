@@ -5,19 +5,26 @@ before any step of a :class:`Plan` is executed. Interlocks are the place to
 encode rules that no individual device can know about - cross-device
 spatial constraints, project chemistry, and operator-defined invariants.
 
-v0.3 surface:
+Surface:
 
-- :func:`register_interlock` registers a sync callable
-  ``fn(plan, step, session) -> list[Violation] | None``.
+- :func:`register_interlock` registers a callable
+  ``fn(plan, step, session) -> list[Violation] | None``. As of v0.4 the
+  callable may be **async** (``async def``) — such interlocks may read live
+  device state (``await session.role(...).status()``).
 - :class:`Violation` is a typed, serialisable result row.
 - :func:`registered_interlocks` introspects the current registry (mostly
   for tests / agent introspection).
 - :func:`clear_interlocks` resets the registry to the built-ins (tests).
 
-Async interlocks that read live device state are deferred to v0.4, where
-``execute_plan`` will call them between every step. v0.3 keeps the surface
-**offline only** so :func:`lab_skills.plan.validate_plan` is a pure CPU
-check that workflow code can run in tight loops.
+Two runners, one registry (v0.4):
+
+- :func:`run_interlocks` is **sync and offline**. It runs only the sync
+  interlocks and *skips* async ones, so :func:`lab_skills.plan.validate_plan`
+  stays a pure-CPU check safe to run in tight notebook loops. Async
+  interlocks are simply not evaluated there (they need I/O).
+- :func:`run_interlocks_async` runs **both** sync and async interlocks and
+  is what :func:`lab_skills.plan.execute_plan` calls immediately before each
+  step, so live-state (layer-4) rules are enforced at execution time.
 
 Built-in interlocks
 -------------------
@@ -35,7 +42,9 @@ Built-in interlocks
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Literal
+import asyncio
+import inspect
+from typing import TYPE_CHECKING, Awaitable, Callable, Literal, Union
 
 from pydantic import BaseModel
 
@@ -66,16 +75,44 @@ class Violation(BaseModel):
     interlock_name: str
 
 
-InterlockFn = Callable[["Plan", "Step", "LabSession"], "list[Violation] | None"]
+_Result = "list[Violation] | None"
+SyncInterlockFn = Callable[["Plan", "Step", "LabSession"], "list[Violation] | None"]
+AsyncInterlockFn = Callable[
+    ["Plan", "Step", "LabSession"], Awaitable["list[Violation] | None"]
+]
+InterlockFn = Union[SyncInterlockFn, AsyncInterlockFn]
 
 
 _INTERLOCKS: dict[str, InterlockFn] = {}
+
+
+def _is_async(fn: InterlockFn) -> bool:
+    return inspect.iscoroutinefunction(fn)
+
+
+def _error_violation(ilk_name: str, step: "Step", exc: BaseException) -> Violation:
+    """Turn a raising interlock into a critical Violation so one buggy rule
+    cannot take the whole check down."""
+
+    return Violation(
+        step_id=step.id or f"step_{step.index or 0}",
+        step_index=step.index,
+        code="interlock_error",
+        message=f"interlock {ilk_name!r} raised {type(exc).__name__}: {exc}",
+        severity="critical",
+        interlock_name=ilk_name,
+    )
 
 
 def register_interlock(
     fn: InterlockFn | None = None, *, name: str | None = None
 ) -> InterlockFn | Callable[[InterlockFn], InterlockFn]:
     """Register ``fn`` as a plan-validation interlock.
+
+    ``fn`` may be sync or ``async def``. Sync rules run in both
+    :func:`run_interlocks` (offline validate_plan) and
+    :func:`run_interlocks_async` (execute_plan); async rules run only in
+    the latter, where awaiting live device state is allowed.
 
     Usable as ``@register_interlock`` or
     ``@register_interlock(name="...")``. The default name is
@@ -106,7 +143,10 @@ def registered_interlocks() -> list[str]:
 def run_interlocks(
     plan: "Plan", step: "Step", session: "LabSession"
 ) -> list[Violation]:
-    """Run every registered interlock against ``step`` and aggregate violations.
+    """Run every registered **sync** interlock against ``step`` and aggregate
+    violations. Async interlocks are skipped (this path is offline, used by
+    :func:`lab_skills.plan.validate_plan`); they run in
+    :func:`run_interlocks_async`.
 
     Each interlock is wrapped in its own try/except so a buggy rule cannot
     take the whole validator down. A raising interlock surfaces as a
@@ -115,19 +155,42 @@ def run_interlocks(
 
     out: list[Violation] = []
     for ilk_name, fn in list(_INTERLOCKS.items()):
+        if _is_async(fn):
+            continue
         try:
             result = fn(plan, step, session)
         except Exception as exc:  # noqa: BLE001 - any rule bug surfaces here
-            out.append(
-                Violation(
-                    step_id=step.id,
-                    step_index=step.index,
-                    code="interlock_error",
-                    message=f"interlock {ilk_name!r} raised {type(exc).__name__}: {exc}",
-                    severity="critical",
-                    interlock_name=ilk_name,
-                )
-            )
+            out.append(_error_violation(ilk_name, step, exc))
+            continue
+        if result:
+            out.extend(result)
+    return out
+
+
+async def run_interlocks_async(
+    plan: "Plan", step: "Step", session: "LabSession"
+) -> list[Violation]:
+    """Run **every** registered interlock (sync + async) against ``step``.
+
+    This is the execution-time runner used by
+    :func:`lab_skills.plan.execute_plan` immediately before each step, so
+    async interlocks that read live device state (layer 4) are enforced at
+    the moment of execution — closing the validate-then-execute race
+    (``docs/INTERLOCKS.md``). Each interlock is isolated in its own
+    try/except; a raising rule becomes a critical Violation.
+    """
+
+    out: list[Violation] = []
+    for ilk_name, fn in list(_INTERLOCKS.items()):
+        try:
+            if _is_async(fn):
+                result = await fn(plan, step, session)  # type: ignore[misc]
+            else:
+                result = fn(plan, step, session)
+                if inspect.isawaitable(result):  # sync fn returning a coroutine
+                    result = await result
+        except Exception as exc:  # noqa: BLE001 - any rule bug surfaces here
+            out.append(_error_violation(ilk_name, step, exc))
             continue
         if result:
             out.extend(result)
@@ -266,13 +329,16 @@ _register_builtins()
 
 
 __all__ = [
+    "AsyncInterlockFn",
     "InterlockFn",
     "Severity",
+    "SyncInterlockFn",
     "Violation",
     "clear_interlocks",
     "disallow_step_to_offline_role",
     "register_interlock",
     "registered_interlocks",
     "run_interlocks",
+    "run_interlocks_async",
     "warn_if_skill_duration_unknown",
 ]

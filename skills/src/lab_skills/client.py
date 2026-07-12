@@ -104,6 +104,7 @@ class EquipmentClient:
         body: BaseModel | Mapping[str, Any] | None = None,
         *,
         response_schema: type[BaseModel] | None = None,
+        claim_token: str | None = None,
     ) -> Any:
         """POST ``body`` to ``path`` on this device and return the response.
 
@@ -112,6 +113,13 @@ class EquipmentClient:
         ``response_schema`` is provided the response JSON is validated against
         it and the resulting model is returned; otherwise the raw decoded JSON
         is returned (or ``None`` for empty bodies).
+
+        ``claim_token`` (STATUS_SPEC v1.1) is sent as the ``X-Claim-Token``
+        header when provided, so a command issued while holding a
+        :class:`~lab_skills.ClaimManager` claim passes a hard-enforcing
+        device's check (HTTP 423 otherwise). ``None`` (the default) sends no
+        header — correct for v1.0 devices and advisory-claim v1.1 devices.
+        ``execute_plan`` threads the active claim's token through here.
 
         HTTP error mapping
         ------------------
@@ -129,11 +137,13 @@ class EquipmentClient:
 
         url = self._url(path)
         payload = self._prepare_body(body)
+        headers = {"X-Claim-Token": claim_token} if claim_token else None
 
         try:
             response = await self._http.post(
                 url,
                 json=payload,
+                headers=headers,
                 timeout=self._entry.poll_timeout_seconds,
             )
         except httpx.TimeoutException as exc:

@@ -23,17 +23,27 @@ device is v1.0 and does not support claims; the workflow will be unable
 to enforce mutual exclusion"). The plan is still considered ``ok`` as
 long as no error / critical Violations are present.
 
-execute_plan(plan) is intentionally **not** in v0.3 - it lands in v0.4
-together with async interlocks that read live device state.
+:func:`execute_plan` (v0.4) runs a validated plan against live hardware:
+it re-checks each step against the device's live ``/status`` and the
+async interlocks (layer 4) *immediately before* executing it — closing
+the validate-then-execute race — wraps the step in a
+:class:`~lab_skills.ClaimManager`, and POSTs the SkillDef's endpoint with
+the claim token attached. It is fail-fast and sequential: the first
+failed / blocked step aborts the run and the rest are reported
+``skipped``. Pass ``dry_run=True`` for a live preflight that does
+everything except the ClaimManager + command POST.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
-from .interlocks import Violation, run_interlocks
+from .claims import ClaimManager
+from .exceptions import LabError
+from .interlocks import Violation, run_interlocks, run_interlocks_async
+from .session import _availability
 from .skill_catalog import SkillDef, skills_for
 
 if TYPE_CHECKING:
@@ -117,6 +127,54 @@ class PlanReport(BaseModel):
         for s in self.steps:
             out.extend(s.warnings)
         return out
+
+
+StepRunStatus = Literal["succeeded", "failed", "blocked", "skipped", "dry_run"]
+
+
+class StepRunReport(BaseModel):
+    """Per-step outcome of :func:`execute_plan`.
+
+    ``status``:
+
+    * ``succeeded`` — the control command returned 2xx.
+    * ``dry_run`` — the step passed the live re-check but was not executed
+      (``execute_plan(..., dry_run=True)``).
+    * ``blocked`` — a layer-3 (device does not currently allow the skill) or
+      layer-4 (interlock) check failed; ``violations`` explains why. No
+      command was sent.
+    * ``failed`` — the command (or claim acquisition) raised; ``error`` holds
+      the message.
+    * ``skipped`` — an earlier step aborted the run before this one.
+    """
+
+    step_id: str
+    step_index: int
+    role: str
+    skill: str
+    status: StepRunStatus
+    equipment_id: str | None = None
+    claimed: bool = False
+    response: Any = None
+    error: str | None = None
+    violations: list[Violation] = []
+
+
+class PlanRunReport(BaseModel):
+    """Aggregated outcome of :func:`execute_plan`.
+
+    ``ok`` is ``True`` iff the offline validation passed **and** every step
+    ended ``succeeded`` (or ``dry_run`` in a dry run). ``validation`` carries
+    the up-front :class:`PlanReport`; on a validation failure the run stops
+    before touching hardware and ``steps`` is empty. ``claims_acquired`` lists
+    the equipment ids for which a real (non-degraded) claim was held.
+    """
+
+    ok: bool
+    dry_run: bool = False
+    validation: PlanReport
+    steps: list[StepRunReport] = []
+    claims_acquired: list[str] = []
 
 
 # Severities that block plan execution.
@@ -249,6 +307,152 @@ def validate_plan(plan: Plan, session: LabSession) -> PlanReport:
     )
 
 
+async def execute_plan(
+    plan: Plan,
+    session: LabSession,
+    *,
+    owner: str,
+    ttl_s: float = 30.0,
+    dry_run: bool = False,
+) -> PlanRunReport:
+    """Execute a validated :class:`Plan` against live hardware, sequentially.
+
+    Flow:
+
+    1. Run the offline :func:`validate_plan` once. If it is not ``ok``, return
+       immediately without touching any device (inspect ``report.validation``).
+    2. For each step, in order:
+
+       a. Resolve the role to its live :class:`~lab_skills.EquipmentClient`.
+       b. Re-run layer-4 interlocks against **live** state
+          (:func:`run_interlocks_async`); a blocking violation blocks the step.
+       c. Re-read the device's ``/status`` and confirm the skill is currently
+          allowed (layer 3, via the same ``_availability`` used by
+          ``session.skills()``); if not, block the step.
+       d. Unless ``dry_run``: acquire a per-step
+          :class:`~lab_skills.ClaimManager`, POST the SkillDef's endpoint with
+          ``step.args`` and the claim token, and assert the claim is still
+          alive.
+
+    Fail-fast: the first ``failed`` / ``blocked`` step aborts the run; the
+    remaining steps are reported ``skipped``. This mirrors
+    ``docs/INTERLOCKS.md`` (re-validate layer 3 + layer 4 immediately before
+    each step) and design decision #1 in ``docs/ARCHITECTURE.md`` (the device
+    is the authority; every write competes for the same cooperative claim).
+
+    ``owner`` is stamped into each claim (surfaced in ``details.claimed_by``).
+    ``dry_run=True`` performs every check but skips the claim + command POST,
+    marking each passing step ``dry_run`` — a live preflight that never
+    actuates hardware.
+    """
+
+    validation = validate_plan(plan, session)
+    if not validation.ok:
+        return PlanRunReport(ok=False, dry_run=dry_run, validation=validation)
+
+    steps_out: list[StepRunReport] = []
+    claims_acquired: list[str] = []
+    aborted = False
+
+    for index, raw_step in enumerate(plan.steps):
+        step = raw_step.with_index(index)
+        base = dict(
+            step_id=step.id or f"step_{index}",
+            step_index=index,
+            role=step.role,
+            skill=step.skill,
+        )
+
+        if aborted:
+            steps_out.append(StepRunReport(status="skipped", **base))
+            continue
+
+        # (a) resolve the live client. validate_plan already proved the role is
+        # bound and not in maintenance, but live state can change under us.
+        try:
+            client = session.role(step.role)
+        except LabError as exc:
+            steps_out.append(StepRunReport(status="failed", error=str(exc), **base))
+            aborted = True
+            continue
+        base["equipment_id"] = client.equipment_id
+        sd = _find_skill_def(client.entry.kind, step.skill)  # not None post-validation
+
+        # (b) layer-4 interlocks against live state.
+        interlock_violations = await run_interlocks_async(plan, step, session)
+        blocking = [v for v in interlock_violations if v.severity in _BLOCKING_SEVERITIES]
+        if blocking:
+            steps_out.append(
+                StepRunReport(status="blocked", violations=blocking, **base)
+            )
+            aborted = True
+            continue
+
+        # (c) layer-3 live re-check: does the device allow this skill right now?
+        try:
+            status = await client.status()
+        except LabError as exc:
+            steps_out.append(StepRunReport(status="failed", error=str(exc), **base))
+            aborted = True
+            continue
+        if sd is not None:
+            available, reason = _availability(sd, status, None, None)
+            if not available:
+                steps_out.append(
+                    StepRunReport(
+                        status="blocked",
+                        violations=[
+                            _violation(
+                                step,
+                                "not_allowed_live",
+                                f"device does not currently allow {step.skill!r}: {reason}",
+                                severity="error",
+                                interlock_name="execute_plan",
+                            )
+                        ],
+                        **base,
+                    )
+                )
+                aborted = True
+                continue
+
+        if dry_run:
+            steps_out.append(StepRunReport(status="dry_run", **base))
+            continue
+
+        # (d) execute under a per-step claim.
+        endpoint = sd.endpoint if sd is not None else f"/control/{step.skill}"
+        try:
+            async with ClaimManager(client, owner=owner, ttl_s=ttl_s) as claim:
+                claimed = not claim.degraded
+                if claimed:
+                    claims_acquired.append(client.equipment_id)
+                response = await client.command(
+                    endpoint, step.args, claim_token=claim.token
+                )
+                claim.assert_alive()
+        except LabError as exc:
+            steps_out.append(StepRunReport(status="failed", error=str(exc), **base))
+            aborted = True
+            continue
+
+        steps_out.append(
+            StepRunReport(
+                status="succeeded", response=response, claimed=claimed, **base
+            )
+        )
+
+    terminal_ok = {"succeeded", "dry_run"}
+    ok = all(s.status in terminal_ok for s in steps_out)
+    return PlanRunReport(
+        ok=ok,
+        dry_run=dry_run,
+        validation=validation,
+        steps=steps_out,
+        claims_acquired=claims_acquired,
+    )
+
+
 # -- helpers ------------------------------------------------------------------
 
 
@@ -296,7 +500,10 @@ def _validate_args(step: Step, sd: SkillDef) -> Violation | None:
 __all__ = [
     "Plan",
     "PlanReport",
+    "PlanRunReport",
     "Step",
     "StepReport",
+    "StepRunReport",
+    "execute_plan",
     "validate_plan",
 ]

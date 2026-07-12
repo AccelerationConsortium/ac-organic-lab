@@ -45,6 +45,7 @@ from .skill_catalog import Skill
 from .client import EquipmentClient as _AsyncEquipmentClient
 from .lab import Lab as _AsyncLab
 from .models import EquipmentStatus, HealthResponse, ProbeResponse
+from .plan import Plan, PlanReport, PlanRunReport, execute_plan, validate_plan
 from .registry import EquipmentEntry, Registry
 from .session import LabSession as _AsyncLabSession
 
@@ -150,6 +151,35 @@ class SyncLabSession:
                 "SyncLabSession is not active; use `with Lab.connect(...) as lab:`"
             )
         return loop.run_until_complete(self._async_session.skills())
+
+    def validate_plan(self, plan: Plan) -> PlanReport:
+        """Offline plan validation (no HTTP). Sync mirror of
+        :func:`lab_skills.validate_plan`; needs no running loop."""
+
+        return validate_plan(plan, self._async_session)
+
+    def execute_plan(
+        self,
+        plan: Plan,
+        *,
+        owner: str,
+        ttl_s: float = 30.0,
+        dry_run: bool = False,
+    ) -> PlanRunReport:
+        """Execute a plan against live hardware. Sync mirror of
+        :func:`lab_skills.execute_plan`; the whole run happens inside one
+        ``run_until_complete`` so per-step claim heartbeats fire normally."""
+
+        loop = self._loop
+        if loop is None:
+            raise RuntimeError(
+                "SyncLabSession is not active; use `with Lab.connect(...) as lab:`"
+            )
+        return loop.run_until_complete(
+            execute_plan(
+                plan, self._async_session, owner=owner, ttl_s=ttl_s, dry_run=dry_run
+            )
+        )
 
     def _wrap(self, async_client: _AsyncEquipmentClient) -> _SyncEquipmentClient:
         if self._loop is None:

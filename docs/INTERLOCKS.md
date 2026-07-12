@@ -1,6 +1,6 @@
 # Interlocks Design
 
-**Status:** sync interlocks + offline `validate_plan` shipped in `skills/` v0.3 (`lab_skills.interlocks`, `lab_skills.plan`). Async interlocks that read live device state and `execute_plan` are deferred to v0.4. The shapes shown below remain authoritative for the async layer; the v0.3 shapes are the simpler `fn(plan, step, session) -> list[Violation] | None` form documented in `lab_skills/interlocks.py`.
+**Status:** sync interlocks + offline `validate_plan` shipped in `skills/` v0.3. **v0.4 (shipped)** adds **async interlocks** that read live device state and **`execute_plan`** (`lab_skills.execute_plan`, sync façade `lab_skills.sync.SyncLabSession.execute_plan`). The interlock model is unified on the per-step form `fn(plan, step, session) -> list[Violation] | None` — `fn` may now be `async def`. Sync rules run in both `validate_plan` (offline) and `execute_plan`; async rules run only in `execute_plan` (via `run_interlocks_async`), which re-checks layer 3 (live `allowed_actions`) + layer 4 (interlocks) immediately before each step. The `InterlockResult` / whole-plan `(plan, lab)` shape sketched below is **not** what shipped — it is retained as an aspirational richer form; the shipped surface returns `list[Violation]` per step, matching `validate_plan`.
 
 This document specifies the interlock model used to keep the lab safe during multi-device workflows. It defines the four layers of safety enforcement, where each one lives, and the API project repos use to register their own rules.
 
