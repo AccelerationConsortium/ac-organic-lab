@@ -52,13 +52,15 @@ each):
 | Kind | n | Notes |
 |------|---|-------|
 | `fume_hood` | 2 | `sash.move`, `sash.stop` |
-| `liquid_handler` | 1 | `lights.set` (OT-2 deck-light convenience control) |
+| `hplc` | 6 | `run.{submit,abort}`, `queue.cancel`, `instrument.standby`, `workflow.{start,end}` (Agilent UPLC-MS sidecar) |
+| `liquid_handler` | 16 | OT-2 full `/control/*` surface: lifecycle (`startup`/`shutdown`), protocol exec (`setup`/`home`/`pick_up_tip`/`aspirate`/`dispense`/`drop_tip`/`move_labware`/`pause`/`resume`), plate tracking (`plate.{load,unload}`/`well.update`), convenience (`lights.set`/`deck.declare`). Typed args added 2026-07-12 |
 | `plate_reader` | 11 | Mirrors `agilent-cytation-server` `/control/*` surface |
 | `plate_sealer` | 8 | Includes 412-precondition skills with `requires_components` (heater + stage) |
+| `plate_stacker` | 6 | Agilent BioStack `/control/*` surface |
 | `press` | 6 | `init`, `stop`, `press.{up,down}`, `plate.{in,out}` |
 | `robot_arm` | 4 | `graph.{move_to,recover_to,record,mode}` — xArm motion-graph control surface (v1.1, claim-gated); added 2026-05-31 |
 | `shaker` | 6 | `startup`, `shutdown`, `shake.{start,stop,set_temperature,set_speed}` with motor/heater AND-gates so a heater-side `degraded` doesn't block shaking |
-| `solid_doser` | 12 | `dose.{well,multiple,row,column}` etc.; all endpoints moved under `/control/*` for dose v1.1 (2026-05-31) |
+| `solid_doser` | 13 | `dose.{well,multiple,row,column}` etc.; all endpoints moved under `/control/*` for dose v1.1 (2026-05-31) |
 
 **Cross-repo changes since the last sweep** (outcomes only; detail in the
 respective repos):
@@ -244,10 +246,19 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
 
 #### `ot2`
 
-- [ ] SkillDefs + typed args for the protocol-execution actions
+- [x] SkillDefs + typed args for the protocol-execution actions
   (`setup`, `home`, `aspirate`, `dispense`, `pick_up_tip`, `drop_tip`,
-  `move_labware`). These need labware-typed parameters the catalog has
-  no shapes for yet.
+  `move_labware`) — shipped 2026-07-12 in `skill_catalog/liquid_handler.py`
+  with typed `args_schema`s (labware/instrument/module specs, well
+  locations, per-call `flow_rate`). Also cataloged the lifecycle
+  (`startup`/`shutdown`/`pause`/`resume`) and plate-tracking
+  (`plate.{load,unload}`/`well.update`) verbs, so `lab.skills()` now
+  mirrors the gateway's full `allowed_actions` surface (16 SkillDefs). A
+  parity test pins the names to the gateway's advertised strings.
+- [ ] Follow-ups now unblocked: `execute_plan` can drive a typed OT-2
+  `Plan` (v0.4 PR-1); the setup sub-models could tighten the
+  `ot_default`-conditional required fields (`loadname` / `config`) with
+  validators once a real recipe exercises custom labware.
 
 #### `cytation_5`
 
@@ -347,7 +358,7 @@ The MCP milestone resumes when **all** of the following are true:
 3. **`lab.skills()` returns a non-empty catalog with `available=True`
    entries against at least one v1.1 device.** ✅ **met** — every
    v1.1 device reports non-empty `allowed_actions` live, and the
-   SkillDef registry spans 8 kinds, all non-empty (50 SkillDefs total).
+   SkillDef registry spans 10 kinds, all non-empty (78 SkillDefs total).
 4. **A workflow can run a five-step `Plan` against `agilent-plateloc-server`
    (dry-run is fine) using `validate_plan` + an executor.**
    🔴 **blocked** on the v0.3 carry-overs (`execute_plan`, async
