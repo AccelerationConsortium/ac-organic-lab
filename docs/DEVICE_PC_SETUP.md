@@ -221,6 +221,27 @@ After install + smoke, register the service in the monorepo's `equipment.yaml` w
 | Logs grow without bound | `AppRotateBytes` not set | `nssm set <svc> AppRotateFiles 1; nssm set <svc> AppRotateBytes 10485760`. |
 | Service starts but `curl http://127.0.0.1:<port>/` hangs | Windows Defender Firewall blocking loopback (rare) | `New-NetFirewallRule -DisplayName "<svc>" -Direction Inbound -Action Allow -LocalPort <port> -Protocol TCP`. |
 | `uv run` reports "no project found" under NSSM | `--project <path>` not specified | NSSM does not change directory unless `AppDirectory` is set; either set it (preferred) or always pass `--project`. |
+| Service crash-loops with `error: Project virtual environment directory ...\.venv cannot be used ... (no Python executable was found)`; the `.venv` has only a `Lib\` folder (no `Scripts\python.exe` / `pyvenv.cfg`) | A `uv` venv rebuild (Python upgrade or a fleet-wide `uv sync`) **aborted mid-delete** on a hardlinked package file. uv hardlinks wheels from its global cache into every venv, so a shared `.pyd` (e.g. `httptools\...\parser.cp3XX-win_amd64.pyd`) is one physical file across many venvs; when another running uvicorn service has it memory-mapped, the delete hits a sharing violation and leaves the venv with no interpreter. | Rename or remove the corrupt `.venv`, then re-`sync`. See the note below — `Remove-Item`/`takeown` will **not** clear the image-locked hardlink. |
+
+> **Corrupt-venv / hardlink-lock recovery (all uv device PCs).** The trap:
+> the corrupt `.venv` can't be deleted because its `.pyd` files are uv
+> hardlinks to the same inode a *different* running service still has loaded,
+> and Windows refuses to delete an image-mapped file through *any* of its
+> hardlinks. Elevated PowerShell + `takeown` does **not** help (it's a lock,
+> not ownership). Two things that work:
+>
+> - **`Rename-Item .venv .venv.broken-<stamp>`** — NTFS lets you rename a
+>   directory that contains a loaded DLL; you just can't delete the DLL.
+> - **Git Bash `rm -rf .venv`** — POSIX-semantics `unlink` removes just that
+>   hardlink (decrementing the link count) while the inode stays alive via the
+>   other service's open link. This cleans even the leftover `.venv.broken`.
+>
+> Then `C:\SDL_Tools\uv.exe sync` rebuilds a fresh venv (re-hardlinking from
+> the unlocked cache) and `sc start <svc>; sc resume <svc>` brings it back.
+> Because the trigger is fleet-wide, a bulk `uv sync` / Python upgrade can
+> corrupt several device venvs at once — check every service, not just the one
+> that paged you. (First hit live 2026-07-13: `xarm` and `opentrons-server`
+> both landed in this state after a Python 3.14 rebuild.)
 
 ## 9. Uninstall
 
