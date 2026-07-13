@@ -20,7 +20,7 @@ Cursor plan UI.
 | **v0.2** | `EquipmentClient.command`, sync wrapper, control exceptions, skill catalog, `LabSession.skills()`, typed per-kind clients | ✅ shipped on `main` |
 | **v0.3** | STATUS_SPEC v1.1 spec doc, `ClaimManager`, `Plan` / `validate_plan` / `PlanReport`, `Violation` + `register_interlock`, two built-in interlocks, graceful degradation for v1.0 devices | ✅ shipped on `main` |
 | **v0.4 PR-1** | `execute_plan` (sequential live executor, per-step ClaimManager, layer-3 + layer-4 re-check, bounded `wait_timeout_s` for time-clearing preconditions, `PlanRunReport`), async interlocks (`run_interlocks_async`), sync façades (`SyncLabSession.validate_plan` / `execute_plan`), `command(claim_token=...)` | ✅ shipped on branch `feature-xarm-ot2` (2026-07-12) |
-| **v0.4 PR-2** | MCP server companion (catalog → tools, `/status` → resources, CLI `lab-skills mcp serve`) | ▶ unblocked by PR-1; not started |
+| **v0.4 PR-2** | MCP server companion — `lab_skills.mcp` (catalog → tools, `/status` → resources) + `lab-skills mcp serve` CLI; control gated behind `--allow-control` | ✅ shipped on branch `feature-xarm-ot2` (2026-07-12) |
 | **v0.4 PR-3** | Live agent acceptance: run a 5-step `Plan` against PlateLoc via `execute_plan` | ▶ unblocked by PR-1; not started |
 | **v0.5** | Standalone `lab-skills serve` CLI exposing the aggregator as a long-lived HTTP service | not started |
 
@@ -118,8 +118,12 @@ whole run is one `run_until_complete`). The richer `InterlockResult` /
 whole-plan `(plan, lab)` interlock shape was **not** adopted — the shipped
 model is per-step returning `list[Violation]`, matching `validate_plan`.
 
-**Remaining for v0.4:** PR-2 (`lab_skills.mcp` + `lab-skills mcp serve` CLI) and
-PR-3 (live agent acceptance against PlateLoc). Both now unblocked.
+**Remaining for v0.4:** PR-2 (`lab_skills.mcp` + CLI) shipped 2026-07-12 —
+tools `list_equipment` / `list_skills` / `get_status` / `validate_plan` /
+`preflight_plan` always on; the actuating `execute_plan` tool + resources
+(`lab://equipment`, `lab://status/{target}`) gated behind `--allow-control`;
+`mcp` is an optional extra so the SDK/aggregator need no MCP deps. Only **PR-3**
+(live agent acceptance against real PlateLoc, on the bench) is left.
 
 ## Equipment migration plan
 

@@ -352,6 +352,8 @@ Taking a device offline for maintenance is a one-line `enabled: false` flip with
 
 Future agent repos do not import the SDK directly. They speak [Model Context Protocol](https://modelcontextprotocol.io) against an MCP server the SDK exposes. This keeps prompt engineering, LLM clients, and eval frameworks out of the platform layer, and lets any MCP-aware agent (Claude Desktop, Cursor, custom) plug in without per-agent glue.
 
+Shipped in v0.4 (`skills/src/lab_skills/mcp.py`, launched via `lab-skills mcp serve`): the catalog becomes MCP tools (`list_skills`, `validate_plan`, `preflight_plan`, and — behind `--allow-control` — `execute_plan`), device `/status` becomes MCP resources, and agent control runs through the same `execute_plan` path (per-step claims, layer-3 + layer-4 re-checks) as any workflow. This is the SDK's control-capable server; keep it distinct from the dashboard's read-only *history* MCP server (decision #10).
+
 ### 8. STATUS_SPEC ships before code
 
 Every contract change is a doc PR first (`docs/STATUS_SPEC_v*.md`), then a reference implementation in one device repo, then SDK support, then rollout to remaining devices. Spec is the negotiated artifact; code follows.

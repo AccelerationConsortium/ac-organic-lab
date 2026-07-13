@@ -1,6 +1,6 @@
 # Skill Catalog Design
 
-**Status:** shipped — the static catalog landed in `skills/` v0.2 and runtime availability (via STATUS_SPEC v1.1 `allowed_actions`) in v0.3; the registry now spans 8 kinds / 50 `SkillDef`s (see `ROADMAP.md` for the live inventory). Auto-derivation from OpenAPI and the MCP server remain future work (v0.4).
+**Status:** shipped — the static catalog landed in `skills/` v0.2, runtime availability (via STATUS_SPEC v1.1 `allowed_actions`) in v0.3, and the MCP server (`lab_skills.mcp`, `lab-skills mcp serve`) in v0.4. The registry now spans 10 kinds / 78 `SkillDef`s (see `ROADMAP.md` for the live inventory). Auto-derivation from OpenAPI remains future work.
 
 This document specifies how the SDK describes "what the lab can do right now" — the `Skill` data model, where the catalog lives, how availability is computed, and how it evolves from a hard-coded table to a self-describing protocol.
 
@@ -199,7 +199,7 @@ We revisit OpenAPI derivation when the device count grows past ~10 or when a thi
 - **`await lab.skills()`** — a list of typed, currently-available capabilities, used by workflows and the dashboard.
 - **`lab.role("sealer").seal_start(...)`** — typed methods on `EquipmentClient` are *generated* from the catalog, not hand-written per device repo (avoids drift).
 - **Plan validation** (`docs/INTERLOCKS.md`) — `validate_plan` consults the catalog to verify each step's args match the schema before any side-effects.
-- **MCP server** (v0.4) — tools listed to agents are `Skill` objects converted to MCP tool descriptors. Adding a new equipment kind to the lab automatically extends the agent's toolbelt.
+- **MCP server** (`lab_skills.mcp`, shipped v0.4) — the catalog is surfaced to agents as MCP tools (`list_skills` returns the `Skill` objects with JSON-Schema args; `validate_plan` / `preflight_plan` / the control-gated `execute_plan` act on them). Adding a new equipment kind to the lab automatically extends the agent's toolbelt.
 - **Dashboard skill panels** — UI can render "what can be done now" by reading the catalog instead of hard-coding buttons per device.
 
 ## Versioning the catalog
