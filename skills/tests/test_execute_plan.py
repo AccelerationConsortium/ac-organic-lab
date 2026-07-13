@@ -256,6 +256,56 @@ async def test_v10_device_degrades_claims_but_still_commands() -> None:
 
 
 @respx.mock
+@pytest.mark.asyncio
+async def test_wait_timeout_polls_until_precondition_clears() -> None:
+    # Models PlateLoc's heater ramp: the skill is disallowed on the first
+    # /status poll, then allowed on the next. execute_plan should wait, not block.
+    # Non-empty allowed_actions that omit stage.in (heater warming), then one
+    # that includes it. (An empty list would trip the v1.0 requires_states
+    # fallback, not "nothing allowed" — mirrors how PlateLoc lists other verbs
+    # while omitting seal.start until the heater is stable.)
+    status_route = respx.get(f"{BASE}/status").mock(
+        side_effect=[
+            httpx.Response(200, json=_status_body(["stage.out"])),    # heater warming
+            httpx.Response(200, json=_status_body(["stage.in"])),     # now stable
+        ]
+    )
+    _mock_claim_lifecycle()
+    in_route = respx.post(f"{BASE}/control/stage/in").mock(return_value=httpx.Response(200))
+
+    async with Lab.connect(registry=_registry(), binding={"sealer": "plateloc"}) as lab:
+        report = await execute_plan(
+            Plan(steps=[Step(role="sealer", skill="stage.in")]),
+            lab, owner="tester", wait_timeout_s=5.0, poll_interval_s=0.01,
+        )
+
+    assert report.ok
+    assert report.steps[0].status == "succeeded"
+    assert status_route.call_count == 2  # polled twice: warming, then stable
+    assert in_route.called
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_wait_timeout_blocks_when_precondition_never_clears() -> None:
+    _mock_status(["stage.out"])  # non-empty but never allows stage.in
+    _mock_claim_lifecycle()
+    in_route = respx.post(f"{BASE}/control/stage/in").mock(return_value=httpx.Response(200))
+
+    async with Lab.connect(registry=_registry(), binding={"sealer": "plateloc"}) as lab:
+        report = await execute_plan(
+            Plan(steps=[Step(role="sealer", skill="stage.in")]),
+            lab, owner="tester", wait_timeout_s=0.05, poll_interval_s=0.01,
+        )
+
+    assert not report.ok
+    assert report.steps[0].status == "blocked"
+    assert report.steps[0].violations[0].code == "not_allowed_live"
+    assert "after waiting" in report.steps[0].violations[0].message
+    assert not in_route.called
+
+
+@respx.mock
 def test_sync_facade_execute_and_validate_plan() -> None:
     _mock_status(["stage.in"])
     _mock_claim_lifecycle()

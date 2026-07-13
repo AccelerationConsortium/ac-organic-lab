@@ -19,7 +19,7 @@ Cursor plan UI.
 | **v0.1** | Monorepo + skills SDK foundation + aggregator move | ✅ shipped on `main` |
 | **v0.2** | `EquipmentClient.command`, sync wrapper, control exceptions, skill catalog, `LabSession.skills()`, typed per-kind clients | ✅ shipped on `main` |
 | **v0.3** | STATUS_SPEC v1.1 spec doc, `ClaimManager`, `Plan` / `validate_plan` / `PlanReport`, `Violation` + `register_interlock`, two built-in interlocks, graceful degradation for v1.0 devices | ✅ shipped on `main` |
-| **v0.4 PR-1** | `execute_plan` (sequential live executor, per-step ClaimManager, layer-3 + layer-4 re-check, `PlanRunReport`), async interlocks (`run_interlocks_async`), sync façades (`SyncLabSession.validate_plan` / `execute_plan`), `command(claim_token=...)` | ✅ shipped on branch `feature-xarm-ot2` (2026-07-12) |
+| **v0.4 PR-1** | `execute_plan` (sequential live executor, per-step ClaimManager, layer-3 + layer-4 re-check, bounded `wait_timeout_s` for time-clearing preconditions, `PlanRunReport`), async interlocks (`run_interlocks_async`), sync façades (`SyncLabSession.validate_plan` / `execute_plan`), `command(claim_token=...)` | ✅ shipped on branch `feature-xarm-ot2` (2026-07-12) |
 | **v0.4 PR-2** | MCP server companion (catalog → tools, `/status` → resources, CLI `lab-skills mcp serve`) | ▶ unblocked by PR-1; not started |
 | **v0.4 PR-3** | Live agent acceptance: run a 5-step `Plan` against PlateLoc via `execute_plan` | ▶ unblocked by PR-1; not started |
 | **v0.5** | Standalone `lab-skills serve` CLI exposing the aggregator as a long-lived HTTP service | not started |
@@ -97,7 +97,11 @@ live on v1.1). The v0.3 SDK carry-overs that blocked the executor are now
   (async interlocks), wraps the step in a per-step `ClaimManager`, POSTs the
   SkillDef endpoint with the claim token, fail-fast with the rest reported
   `skipped`. Returns `PlanRunReport` (with `claims_acquired`). `dry_run=True`
-  is a live preflight that skips the claim + command POST.
+  is a live preflight that skips the claim + command POST. `wait_timeout_s`
+  polls the layer-3 re-check so a plan can wait out a **time-clearing
+  precondition** — e.g. PlateLoc omitting `seal.start` from `allowed_actions`
+  during the heater ramp — instead of blocking (this is what PR-3's PlateLoc
+  acceptance needs).
 - ✅ **Async interlocks** — `register_interlock` now accepts `async def`;
   `run_interlocks_async` runs sync + async rules before each step;
   `run_interlocks` stays sync/offline for `validate_plan`. Unified on the

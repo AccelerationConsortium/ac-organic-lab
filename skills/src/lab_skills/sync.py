@@ -165,6 +165,8 @@ class SyncLabSession:
         owner: str,
         ttl_s: float = 30.0,
         dry_run: bool = False,
+        wait_timeout_s: float = 0.0,
+        poll_interval_s: float = 1.0,
     ) -> PlanRunReport:
         """Execute a plan against live hardware. Sync mirror of
         :func:`lab_skills.execute_plan`; the whole run happens inside one
@@ -177,7 +179,13 @@ class SyncLabSession:
             )
         return loop.run_until_complete(
             execute_plan(
-                plan, self._async_session, owner=owner, ttl_s=ttl_s, dry_run=dry_run
+                plan,
+                self._async_session,
+                owner=owner,
+                ttl_s=ttl_s,
+                dry_run=dry_run,
+                wait_timeout_s=wait_timeout_s,
+                poll_interval_s=poll_interval_s,
             )
         )
 

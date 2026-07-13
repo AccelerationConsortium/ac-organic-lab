@@ -36,6 +36,7 @@ everything except the ClaimManager + command POST.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ValidationError
@@ -314,6 +315,8 @@ async def execute_plan(
     owner: str,
     ttl_s: float = 30.0,
     dry_run: bool = False,
+    wait_timeout_s: float = 0.0,
+    poll_interval_s: float = 1.0,
 ) -> PlanRunReport:
     """Execute a validated :class:`Plan` against live hardware, sequentially.
 
@@ -344,6 +347,18 @@ async def execute_plan(
     ``dry_run=True`` performs every check but skips the claim + command POST,
     marking each passing step ``dry_run`` — a live preflight that never
     actuates hardware.
+
+    ``wait_timeout_s`` handles **time-clearing preconditions** (layer 3 only):
+    when > 0, step (c) polls ``/status`` every ``poll_interval_s`` for up to
+    ``wait_timeout_s`` seconds, proceeding as soon as the skill becomes
+    allowed and only ``blocked`` if it is still disallowed at the deadline.
+    This is what lets a plan drive a device with a warm-up interlock — e.g.
+    PlateLoc omits ``seal.start`` from ``allowed_actions`` until the heater is
+    ``stable``; a ``set_temperature`` step followed by a ``seal.start`` step
+    with ``wait_timeout_s`` set will wait out the ramp instead of blocking. The
+    default (``0.0``) is a single-shot check — no waiting. Layer-4 interlocks
+    (step b) are **not** waited on: they are the "should we attempt this at
+    all" gate, checked once, not a precondition that clears with time.
     """
 
     validation = validate_plan(plan, session)
@@ -389,32 +404,37 @@ async def execute_plan(
             continue
 
         # (c) layer-3 live re-check: does the device allow this skill right now?
+        # Optionally wait out a time-clearing precondition (e.g. heater ramp).
         try:
-            status = await client.status()
+            available, reason = await _await_live_availability(
+                client,
+                sd,
+                wait_timeout_s=wait_timeout_s,
+                poll_interval_s=poll_interval_s,
+            )
         except LabError as exc:
             steps_out.append(StepRunReport(status="failed", error=str(exc), **base))
             aborted = True
             continue
-        if sd is not None:
-            available, reason = _availability(sd, status, None, None)
-            if not available:
-                steps_out.append(
-                    StepRunReport(
-                        status="blocked",
-                        violations=[
-                            _violation(
-                                step,
-                                "not_allowed_live",
-                                f"device does not currently allow {step.skill!r}: {reason}",
-                                severity="error",
-                                interlock_name="execute_plan",
-                            )
-                        ],
-                        **base,
-                    )
+        if not available:
+            waited = f" after waiting {wait_timeout_s:g}s" if wait_timeout_s > 0 else ""
+            steps_out.append(
+                StepRunReport(
+                    status="blocked",
+                    violations=[
+                        _violation(
+                            step,
+                            "not_allowed_live",
+                            f"device does not allow {step.skill!r}{waited}: {reason}",
+                            severity="error",
+                            interlock_name="execute_plan",
+                        )
+                    ],
+                    **base,
                 )
-                aborted = True
-                continue
+            )
+            aborted = True
+            continue
 
         if dry_run:
             steps_out.append(StepRunReport(status="dry_run", **base))
@@ -454,6 +474,37 @@ async def execute_plan(
 
 
 # -- helpers ------------------------------------------------------------------
+
+
+async def _await_live_availability(
+    client: Any,
+    sd: SkillDef | None,
+    *,
+    wait_timeout_s: float,
+    poll_interval_s: float,
+) -> tuple[bool, str | None]:
+    """Poll ``client``'s ``/status`` until ``sd`` is allowed or the timeout
+    elapses. Returns ``(available, reason)``; ``reason`` is the last failing
+    explanation when it times out.
+
+    ``wait_timeout_s <= 0`` is a single-shot check (one ``/status`` read, no
+    sleep) — the default, backward-compatible behaviour. Propagates
+    :class:`LabError` from an unreachable device to the caller.
+    """
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, wait_timeout_s)
+    while True:
+        status = await client.status()
+        if sd is None:
+            return True, None
+        available, reason = _availability(sd, status, None, None)
+        if available:
+            return True, reason
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return False, reason
+        await asyncio.sleep(min(max(poll_interval_s, 0.0), remaining))
 
 
 def _violation(
