@@ -47,6 +47,25 @@ Companion services on the same host from sibling repos:
 The AnaliticaDB record service is separate infrastructure on the data
 server (`100.64.254.6:8010`, own repo).
 
+## Working with coding agents
+
+This repo is the **canonical base** for how coding agents (Hermes, Codex,
+Claude Code, others) work across the lab. Three files, in precedence order:
+
+- **[`AGENTS.md`](AGENTS.md)** — shared, model-agnostic instructions for
+  *every* agent: working conventions, commands, layout, the memory policy.
+  Read this first.
+- **[`CLAUDE.md`](CLAUDE.md)** — Claude-Code-specific notes only; imports
+  `AGENTS.md`. Other agents keep their own equivalent.
+- **[`docs/AGENT_RULES.md`](docs/AGENT_RULES.md)** + [`docs/STATUS_SPEC.md`](docs/STATUS_SPEC.md)
+  — the **binding contract** (lab operating rules + device contract). Agents
+  reference it; they never weaken or bypass it.
+
+Every other repo layers its own `AGENTS.md` / thin `CLAUDE.md` / `AGENT_RULES.md`
+on this base (see [`organic-hte-template`](https://github.com/AccelerationConsortium/organic-hte-template)).
+Durable repo-wide facts go in `AGENTS.md` (git is the source of truth, portable
+to any machine); cross-repo/machine facts go in each agent's own global memory.
+
 ## Documentation
 
 All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](docs/STATUS_SPEC.md) if you are bringing a new piece of equipment online, and [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) if you want to understand how the platform fits together.
@@ -63,6 +82,7 @@ All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](doc
 | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Logging tiers (journald → events.jsonl → central SQLite), the history DB schema, dashboard history endpoints, retention guidance. |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Per-device migration status (`legacy_http` → v1.0 → v1.1), SDK milestones (v0.1 → v0.5), and live operational regressions. |
 | [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md) | **Canonical auth doc.** Email-code login (`ac_auth`), roster allow-list, per-scope grants, claim-before-control, data isolation, and the phased rollout (Phase 0 shipped). |
+| [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md) | **Agent entry point.** Shared working instructions for all agents (`AGENTS.md`) + Claude-Code specifics (`CLAUDE.md`). See [Working with coding agents](#working-with-coding-agents). |
 | [`docs/AGENT_RULES.md`](docs/AGENT_RULES.md) | Lab-wide rules for agents operating on lab infrastructure (safety, records, change control, escalation). Project repos link here from their own `AGENT_RULES.md`. |
 | [`docs/ANALITICADB_ELN_LIMS_DESIGN.md`](docs/ANALITICADB_ELN_LIMS_DESIGN.md) | Design for generalizing AnaliticaDB into the lab's ELN+LIMS record layer (mirror — the canonical copy lives in the AnaliticaDB repo). |
 | [`deploy/README.md`](deploy/README.md) | Linux server deployment, systemd units, Caddy + Tailscale TLS, day-to-day operations. |
