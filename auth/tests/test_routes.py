@@ -452,3 +452,98 @@ def test_authz_mine_lists_own_equipment_roles(tmp_path):
         body = c.get("/authz/mine").json()
         assert body["user"] == "larry@utoronto.ca" and body["role"] == "none"
         assert body["equipment"] == {"ot2": None, "xarm_translocation": "user"}
+
+
+# ---------------------------------------------------------------------------
+# auth_events stamping + /admin/* endpoints
+# ---------------------------------------------------------------------------
+
+
+def _signin(c: TestClient, mailer: FakeMailer, email: str) -> None:
+    assert c.post("/auth/login", json={"email": email}).status_code == 202
+    code = mailer.sent[-1][1]
+    assert c.post("/auth/verify-code", json={"email": email, "code": code}).status_code == 200
+
+
+def test_login_flow_records_auth_events(tmp_path):
+    app, db, mailer = _ctx(tmp_path)
+    with TestClient(app) as c:
+        # unknown address -> login_rejected
+        assert c.post("/auth/login", json={"email": "mallory@x.com"}).status_code == 403
+        # real flow: code_requested -> login_failed (bad code) -> login_success -> logout
+        assert c.post("/auth/login", json={"email": "alice@utoronto.ca"}).status_code == 202
+        assert (
+            c.post(
+                "/auth/verify-code", json={"email": "alice@utoronto.ca", "code": "000000"}
+            ).status_code
+            == 401
+        )
+        code = mailer.sent[-1][1]
+        assert (
+            c.post(
+                "/auth/verify-code", json={"email": "alice@utoronto.ca", "code": code}
+            ).status_code
+            == 200
+        )
+        assert c.post("/auth/logout").status_code == 200
+
+        # read inside the client context — lifespan exit closes the DB
+        events = {(e.event, e.email) for e in db.list_auth_events()}
+        assert ("login_rejected", "mallory@x.com") in events
+        assert ("code_requested", "alice@utoronto.ca") in events
+        assert ("login_failed", "alice@utoronto.ca") in events
+        assert ("login_success", "alice@utoronto.ca") in events
+        assert ("logout", "alice@utoronto.ca") in events
+
+
+def test_admin_endpoints_require_admin(tmp_path):
+    app, _, mailer = _ctx(
+        tmp_path,
+        users=(("alice@utoronto.ca", "operator"), ("root@utoronto.ca", "admin")),
+    )
+    paths = [
+        "/admin/accounts",
+        "/admin/auth-events",
+        "/admin/sessions",
+        "/admin/api-keys",
+        "/admin/state",
+    ]
+    with TestClient(app) as c:
+        for p in paths:
+            assert c.get(p).status_code == 401  # anonymous
+        _signin(c, mailer, "alice@utoronto.ca")
+        for p in paths:
+            assert c.get(p).status_code == 403  # signed in, not admin
+        # switch principals inside one client (lifespan exit closes the DB)
+        assert c.post("/auth/logout").status_code == 200
+        _signin(c, mailer, "root@utoronto.ca")
+        for p in paths:
+            assert c.get(p).status_code == 200  # admin
+
+
+def test_admin_accounts_and_state_shape(tmp_path):
+    app, db, mailer = _ctx(
+        tmp_path,
+        users=(("root@utoronto.ca", "admin"), ("alice@utoronto.ca", "operator")),
+        automation=(("robot@lab.local", False),),  # pending approval
+    )
+    with TestClient(app) as c:
+        _signin(c, mailer, "root@utoronto.ca")
+
+        accounts = c.get("/admin/accounts").json()
+        by_email = {u["email"]: u for u in accounts["users"]}
+        root = by_email["root@utoronto.ca"]
+        assert root["last_login_at"] is not None  # the sign-in above
+        assert root["active_sessions"] >= 1
+        assert accounts["automation"][0]["approved"] is False
+
+        state = c.get("/admin/state").json()
+        assert state["roster"]["users"] == 2
+        assert state["pending_automation"] == ["robot@lab.local"]
+        assert state["last_reload"] is None  # no SIGHUP yet
+
+        sessions = c.get("/admin/sessions").json()["sessions"]
+        assert any(s["email"] == "root@utoronto.ca" for s in sessions)
+
+        events = c.get("/admin/auth-events", params={"email": "root@utoronto.ca"}).json()
+        assert any(e["event"] == "login_success" for e in events["events"])

@@ -199,6 +199,24 @@ def build_history_router() -> APIRouter:
         )
         return {"device_id": device_id, "events": rows}
 
+    @router.get("/history/control-actions")
+    async def control_actions(
+        limit: int = 100,
+        device_id: str | None = None,
+        request: Request = ...,
+    ):
+        """Operator control-write audit feed across all devices — one row per
+        dashboard-mediated `/control/*` call (actor, action, outcome). Backs
+        the admin page's audit panel."""
+        import asyncio
+        loop = asyncio.get_event_loop()
+        db = _db(request)
+        rows = await loop.run_in_executor(
+            None,
+            lambda: db.get_control_actions(limit=min(limit, 500), device_id=device_id),
+        )
+        return {"actions": rows}
+
     # ------------------------------------------------------------------ sensors
 
     @router.get("/history/sensors/latest")

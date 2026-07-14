@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { usePlatforms } from "@/lib/use-platforms";
+import { useUserAuth } from "@/lib/user-auth";
 
 const STATIC_BEFORE = [{ href: "/", label: "Overview" }];
 const STATIC_AFTER = [
@@ -13,12 +14,17 @@ const STATIC_AFTER = [
 export function Nav() {
   const pathname = usePathname();
   const { data: platforms } = usePlatforms();
+  const { identity } = useUserAuth();
 
   const platformTabs = (platforms?.sections ?? [])
     .filter((s) => s.href != null)
     .map((s) => ({ href: s.href as string, label: s.title }));
 
-  const tabs = [...STATIC_BEFORE, ...platformTabs, ...STATIC_AFTER];
+  // Visibility only — the /admin route is enforced by the middleware + sidecar.
+  const adminTabs =
+    identity?.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [];
+
+  const tabs = [...STATIC_BEFORE, ...platformTabs, ...STATIC_AFTER, ...adminTabs];
 
   return (
     <nav className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-800">

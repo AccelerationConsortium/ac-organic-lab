@@ -21,6 +21,11 @@ Endpoints:
 - ``GET  /authz/scope``               — project-based data scope for a principal.
 - ``GET  /authz/mine``                — the caller's own equipment→role map (for the UI).
 - ``GET  /authz/matrix``              — admin-only users × equipment → role matrix.
+- ``GET  /admin/accounts``            — admin-only roster view + last-login/session counts.
+- ``GET  /admin/auth-events``         — admin-only sign-in audit log (auth_events).
+- ``GET  /admin/sessions``            — admin-only live session list.
+- ``GET  /admin/api-keys``            — admin-only key inventory (incl. last_used_at).
+- ``GET  /admin/state``               — admin-only roster/reload/housekeeping state.
 
 Allow-list management + the first admin: ``python -m ac_auth.cli`` (see cli.py).
 Run: ``uvicorn ac_auth.main:app --host 127.0.0.1 --port 8009``.
@@ -130,6 +135,15 @@ def _email_from_login_id(roster: Roster, login_id: Optional[str]) -> Optional[st
     return None
 
 
+def _client_meta(request: Request) -> tuple[str, str]:
+    """(ip, user_agent) for the audit log. Behind the Next middleware / Caddy
+    the direct peer is the proxy, so prefer the first X-Forwarded-For hop; on
+    the Tailnet that IP identifies the calling machine."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")
+    return ip, request.headers.get("user-agent", "")
+
+
 def _lookup_principal(roster: Roster, email: Optional[str]) -> Optional[User]:
     """Resolve an email to its principal from the roster, or None if not listed."""
     if not email:
@@ -169,6 +183,12 @@ def create_app(
             app.state.settings = load_settings()
         if getattr(app.state, "db", None) is None:
             app.state.db = Db(app.state.settings.db_path)
+            # Housekeeping on the DB we own (production path — injected test DBs
+            # are left alone): expired sessions / stale codes are safe to drop
+            # now that auth_events is the durable login record.
+            purged = app.state.db.purge_expired()
+            if any(purged):
+                logger.info("purged %d expired sessions, %d stale login codes", *purged)
         if getattr(app.state, "mailer", None) is None:
             app.state.mailer = build_mailer()
         if getattr(app.state, "roster", None) is None:
@@ -180,6 +200,11 @@ def create_app(
             # simply don't resolve; global/equipment grants still do).
             app.state.membership = load_membership()
 
+        app.state.roster_loaded_at = time.time()
+        # Last SIGHUP reload outcome, surfaced on /admin/state — keep-last-good
+        # rejections are otherwise invisible outside the journal.
+        app.state.last_roster_reload = None
+
         # SIGHUP → hot-reload the roster + membership, keeping the last-good copy
         # on any validation failure or mass-change breach (never drops to a broken
         # list).
@@ -187,12 +212,24 @@ def create_app(
 
         def _reload_roster() -> None:
             result = reload_roster(None, app.state.roster)
+            app.state.last_roster_reload = {
+                "ts": time.time(),
+                "applied": result.applied,
+                "errors": result.errors,
+            }
             if result.applied:
                 app.state.roster = result.roster
                 app.state.membership = load_membership()
                 logger.info("roster reloaded (%d users)", len(result.roster.users))
+                app.state.db.record_auth_event(
+                    "roster_reload_applied",
+                    detail=f"{len(result.roster.users)} users",
+                )
             else:
                 logger.error("roster reload REJECTED, keeping last-good: %s", "; ".join(result.errors))
+                app.state.db.record_auth_event(
+                    "roster_reload_rejected", detail="; ".join(result.errors)
+                )
 
         try:
             loop.add_signal_handler(signal.SIGHUP, _reload_roster)
@@ -298,15 +335,24 @@ def create_app(
             email = _email_from_login_id(roster, body.id.strip()) or ""
         if "@" not in email:
             raise HTTPException(status_code=422, detail="invalid account")
+        ip, ua = _client_meta(request)
         user = _lookup_principal(roster, email)
         # Clear 403 for an unknown email (internal tool, small allow-list). For a
         # fully public deployment, return a generic 202 here to avoid enumeration.
         if user is None or user.status != "active":
+            await asyncio.to_thread(
+                db.record_auth_event, "login_rejected", email,
+                detail="not on the allow-list or inactive", ip=ip, user_agent=ua,
+            )
             raise HTTPException(
                 status_code=403,
                 detail="This email is not authorized. Ask an admin to add you.",
             )
         if user.is_expired():
+            await asyncio.to_thread(
+                db.record_auth_event, "login_rejected", email,
+                detail="account expired", ip=ip, user_agent=ua,
+            )
             raise HTTPException(
                 status_code=403,
                 detail="This account has expired. Ask an admin to extend it.",
@@ -341,6 +387,9 @@ def create_app(
         except MailSendError as exc:
             logger.error("send_login_code failed for %s: %s", email, exc)
             raise HTTPException(status_code=502, detail="Could not send the code email; try again.")
+        await asyncio.to_thread(
+            db.record_auth_event, "code_requested", email, ip=ip, user_agent=ua
+        )
         return {"sent": True, "message": f"A sign-in code was emailed to {email}."}
 
     @app.post("/auth/verify-code")
@@ -352,15 +401,21 @@ def create_app(
             email = _email_from_login_id(roster, body.id.strip()) or ""
         if "@" not in email:
             raise HTTPException(status_code=422, detail="invalid account")
+        ip, ua = _client_meta(request)
         ok = await asyncio.to_thread(db.verify_login_code, email, body.code.strip(), s.code_max_attempts)
         if not ok:
+            await asyncio.to_thread(
+                db.record_auth_event, "login_failed", email,
+                detail="invalid or expired code", ip=ip, user_agent=ua,
+            )
             raise HTTPException(status_code=401, detail="Invalid or expired code.")
         user = _lookup_principal(roster, email)
         if user is None or user.status != "active" or user.is_expired():
             raise HTTPException(status_code=403, detail="This email is not authorized.")
-        # The session row IS the login record — last-login derives from it; no
-        # separate touch_login write (the users table is retired in Phase 0).
         token = await asyncio.to_thread(db.create_session, email, s.session_ttl_s)
+        await asyncio.to_thread(
+            db.record_auth_event, "login_success", email, ip=ip, user_agent=ua
+        )
         response.set_cookie(
             s.cookie_name, token, max_age=s.session_ttl_s, httponly=True,
             secure=s.cookie_secure, samesite="lax", path="/",
@@ -556,6 +611,150 @@ def create_app(
             )
         return {"equipment": equipment, "users": rows}
 
+    # ---- admin read endpoints (back the dashboard's /admin page) -----------
+
+    async def _require_admin(request: Request) -> User:
+        """401 without a valid principal, 403 unless it resolves to admin —
+        the same gate as /authz/matrix (these enumerate the allow-list and
+        the sign-in history)."""
+        caller = await _session_user(request) or await _api_key_user(request)
+        if caller is None:
+            raise HTTPException(status_code=401, detail="not authenticated")
+        if not data_scope(caller, member_projects=(), pi_projects=()).is_admin:
+            raise HTTPException(status_code=403, detail="admin only")
+        return caller
+
+    _MAX_EVENT_LIMIT = 500
+
+    @app.get("/admin/accounts")
+    async def admin_accounts(request: Request) -> dict:
+        """Full roster view (including disabled/expired accounts, unlike
+        /auth/users) decorated with last-login and live-session counts."""
+        await _require_admin(request)
+        db, roster = _db(request), _roster(request)
+
+        def _collect() -> dict:
+            humans = []
+            for u in roster.users:
+                humans.append(
+                    {
+                        "email": u.email,
+                        "name": u.name,
+                        "role": u.role,
+                        "status": u.status,
+                        "lab_account": u.lab_account,
+                        "notes": u.notes,
+                        "expires_at": u.expires_at,
+                        "is_expired": u.is_expired,
+                        "disabled_reason": u.disabled_reason,
+                        "grants": [g.model_dump(exclude_none=True) for g in u.grants],
+                        "last_login_at": db.last_login_at(u.email),
+                        "active_sessions": db.count_active_sessions(u.email),
+                    }
+                )
+            automation = [
+                {
+                    "email": a.email,
+                    "name": a.name,
+                    "approved": a.approved,
+                    "platform": a.platform,
+                    "expires_at": a.expires_at,
+                    "is_expired": a.is_expired,
+                    "notes": a.notes,
+                    "api_keys": len([k for k in db.list_api_keys(a.email) if not k.revoked]),
+                }
+                for a in roster.automation
+            ]
+            return {"users": humans, "automation": automation}
+
+        return await asyncio.to_thread(_collect)
+
+    @app.get("/admin/auth-events")
+    async def admin_auth_events(request: Request, limit: int = 100, email: str = "") -> dict:
+        """Newest-first sign-in audit log (code requests, successes, failures,
+        rejections, logouts, roster reloads)."""
+        await _require_admin(request)
+        db = _db(request)
+        rows = await asyncio.to_thread(
+            db.list_auth_events, email=email or None, limit=min(limit, _MAX_EVENT_LIMIT)
+        )
+        return {
+            "events": [
+                {
+                    "ts": e.ts,
+                    "email": e.email,
+                    "event": e.event,
+                    "detail": e.detail,
+                    "ip": e.ip,
+                    "user_agent": e.user_agent,
+                }
+                for e in rows
+            ]
+        }
+
+    @app.get("/admin/sessions")
+    async def admin_sessions(request: Request) -> dict:
+        """Live (unexpired) sessions — who holds a signed-in browser right now."""
+        await _require_admin(request)
+        rows = await asyncio.to_thread(_db(request).list_active_sessions)
+        return {
+            "sessions": [
+                {"email": s.email, "created_at": s.created_at, "expires_at": s.expires_at}
+                for s in rows
+            ]
+        }
+
+    @app.get("/admin/api-keys")
+    async def admin_api_keys(request: Request) -> dict:
+        """Key inventory across all machine principals, incl. last_used_at so
+        dead keys are distinguishable from load-bearing ones before revoking."""
+        await _require_admin(request)
+        keys = await asyncio.to_thread(_db(request).list_all_api_keys)
+        return {
+            "keys": [
+                {
+                    "id": k.id,
+                    "email": k.email,
+                    "label": k.label,
+                    "created_at": k.created_at,
+                    "expires_at": k.expires_at,
+                    "revoked": k.revoked,
+                    "last_used_at": k.last_used_at,
+                }
+                for k in keys
+            ]
+        }
+
+    @app.get("/admin/state")
+    async def admin_state(request: Request) -> dict:
+        """Operational state for the admin page: roster shape, the last SIGHUP
+        reload outcome (keep-last-good rejections are otherwise invisible
+        outside the journal), pending automation approvals, and accounts
+        expiring within 30 days."""
+        await _require_admin(request)
+        roster = _roster(request)
+        now = time.time()
+        soon = now + 30 * 86400
+        expiring = [
+            {"email": u.email, "expires_at": u.expires_at}
+            for u in [*roster.users, *roster.automation]
+            if u.expires_at is not None and now < u.expires_at < soon
+        ]
+        return {
+            "roster": {
+                "users": len(roster.users),
+                "automation": len(roster.automation),
+                "projects": len(roster.projects),
+                "active_accounts": len(_active_principals(roster)),
+            },
+            "roster_loaded_at": getattr(request.app.state, "roster_loaded_at", None),
+            "last_reload": getattr(request.app.state, "last_roster_reload", None),
+            "pending_automation": [
+                a.email for a in roster.automation if not a.approved
+            ],
+            "expiring_soon": sorted(expiring, key=lambda e: e["expires_at"]),
+        }
+
     @app.get("/auth/users")
     async def users(request: Request) -> dict:
         """Active human accounts for the dashboard's login dropdown, as
@@ -592,7 +791,14 @@ def create_app(
         s, db = _s(request), _db(request)
         token = request.cookies.get(s.cookie_name)
         if token:
+            # Resolve the email before revoking so the audit row names the account.
+            email = await asyncio.to_thread(db.session_email, token)
             await asyncio.to_thread(db.revoke_session, token)
+            if email:
+                ip, ua = _client_meta(request)
+                await asyncio.to_thread(
+                    db.record_auth_event, "logout", email, ip=ip, user_agent=ua
+                )
         response.delete_cookie(s.cookie_name, path="/")
         return {"ok": True}
 

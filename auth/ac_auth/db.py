@@ -1,7 +1,10 @@
 """SQLite storage for the v1 email-code auth flow.
 
-Three tables — the allow-list (``users``), one-time login codes
-(``login_codes``), and opaque ``sessions``. Process-wide single connection with
+Runtime-state tables — one-time login codes (``login_codes``), opaque
+``sessions``, machine ``api_keys``, and the append-only ``auth_events`` audit
+log (the durable login history; sessions/codes are prunable working state).
+The legacy ``users`` table remains for the CLI export bootstrap only — the
+allow-list lives in ``roster.yaml``. Process-wide single connection with
 WAL + a write lock (see AUTH_DESIGN.md: SQLite serializes writers
 DB-wide). Methods are synchronous and fast; the FastAPI routes call them via
 ``asyncio.to_thread`` so the event loop never blocks.
@@ -71,7 +74,35 @@ CREATE TABLE IF NOT EXISTS api_keys (
     revoked    INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_email ON api_keys(email);
+-- Append-only audit log — the durable login history (AUTH_DESIGN: SQLite is
+-- runtime state; this table is what makes sessions/login_codes safely prunable).
+-- Never updated or deleted by the service; retention is an operator decision.
+CREATE TABLE IF NOT EXISTS auth_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         REAL NOT NULL,
+    email      TEXT NOT NULL DEFAULT '',
+    event      TEXT NOT NULL,
+    detail     TEXT NOT NULL DEFAULT '',
+    ip         TEXT NOT NULL DEFAULT '',   -- Tailnet source identifies the machine
+    user_agent TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_auth_events_ts ON auth_events(ts);
+CREATE INDEX IF NOT EXISTS idx_auth_events_email ON auth_events(email, ts);
 """
+
+# The audit vocabulary (STATUS_SPEC best-practice #6 style: one frozen taxonomy,
+# every write validated against it, so readers can branch on `event`).
+AUTH_EVENTS = frozenset(
+    {
+        "code_requested",         # a sign-in code was emailed
+        "login_rejected",         # /auth/login refused (not allow-listed / inactive / expired)
+        "login_success",          # code verified, session issued
+        "login_failed",           # bad, expired, or attempt-exhausted code
+        "logout",                 # session revoked by the user
+        "roster_reload_applied",  # SIGHUP hot-reload accepted
+        "roster_reload_rejected", # SIGHUP hot-reload kept last-good
+    }
+)
 
 
 def _now() -> float:
@@ -153,6 +184,29 @@ class ApiKeyInfo:
     created_at: float
     expires_at: Optional[float]
     revoked: bool
+    last_used_at: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class AuthEvent:
+    """One audit-log row (see :data:`AUTH_EVENTS` for the vocabulary)."""
+
+    id: int
+    ts: float
+    email: str
+    event: str
+    detail: str
+    ip: str
+    user_agent: str
+
+
+@dataclass(frozen=True)
+class SessionInfo:
+    """A live session's metadata (the token itself is never exposed)."""
+
+    email: str
+    created_at: float
+    expires_at: float
 
 
 def _row_to_user(row: sqlite3.Row) -> User:
@@ -210,6 +264,22 @@ class Db:
         for col, decl in _ADDED_USER_COLUMNS.items():
             if col not in cols:
                 self._conn.execute(f"ALTER TABLE users ADD COLUMN {col} {decl}")
+        # api_keys.last_used_at — key hygiene: lets an admin tell a dead key
+        # from a load-bearing one before revoking.
+        key_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(api_keys)").fetchall()}
+        if "last_used_at" not in key_cols:
+            self._conn.execute("ALTER TABLE api_keys ADD COLUMN last_used_at REAL")
+        # One-time backfill: DBs that predate auth_events carry their login
+        # history only as never-purged session rows. Project each session into
+        # a login_success event so history survives session purging. Runs only
+        # while auth_events is empty (idempotent across restarts).
+        n_events = self._conn.execute("SELECT COUNT(*) FROM auth_events").fetchone()[0]
+        if n_events == 0:
+            self._conn.execute(
+                "INSERT INTO auth_events (ts, email, event, detail)"
+                " SELECT created_at, email, 'login_success', 'backfilled from sessions'"
+                " FROM sessions ORDER BY created_at"
+            )
 
     # ---- users (the allow-list) -------------------------------------------
 
@@ -447,37 +517,133 @@ class Db:
             row = self._conn.execute(
                 "SELECT email, expires_at, revoked FROM api_keys WHERE key_hash=?", (_hash(token),)
             ).fetchone()
-        if row is None or row["revoked"]:
-            return None
-        if row["expires_at"] is not None and _now() > row["expires_at"]:
-            return None
+            if row is None or row["revoked"]:
+                return None
+            if row["expires_at"] is not None and _now() > row["expires_at"]:
+                return None
+            self._conn.execute(
+                "UPDATE api_keys SET last_used_at=? WHERE key_hash=?", (_now(), _hash(token))
+            )
+            self._conn.commit()
         return row["email"]
 
     def last_login_at(self, email: str) -> Optional[float]:
-        """Most recent successful sign-in for an email = newest session row's
-        ``created_at`` (the session IS the login record; no separate column)."""
+        """Most recent successful sign-in for an email, from the audit log
+        (pre-audit-log history was backfilled from sessions in _migrate)."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT MAX(created_at) AS t FROM sessions WHERE email=?", (norm_email(email),)
+                "SELECT MAX(ts) AS t FROM auth_events WHERE email=? AND event='login_success'",
+                (norm_email(email),),
             ).fetchone()
         return row["t"] if row and row["t"] is not None else None
+
+    def _rows_to_keys(self, rows) -> list[ApiKeyInfo]:
+        return [
+            ApiKeyInfo(
+                r["id"], r["email"], r["label"], r["created_at"],
+                r["expires_at"], bool(r["revoked"]), r["last_used_at"],
+            )
+            for r in rows
+        ]
 
     def list_api_keys(self, email: str) -> list[ApiKeyInfo]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, email, label, created_at, expires_at, revoked FROM api_keys"
-                " WHERE email=? ORDER BY id",
+                "SELECT id, email, label, created_at, expires_at, revoked, last_used_at"
+                " FROM api_keys WHERE email=? ORDER BY id",
                 (norm_email(email),),
             ).fetchall()
-        return [
-            ApiKeyInfo(r["id"], r["email"], r["label"], r["created_at"], r["expires_at"], bool(r["revoked"]))
-            for r in rows
-        ]
+        return self._rows_to_keys(rows)
+
+    def list_all_api_keys(self) -> list[ApiKeyInfo]:
+        """Every key across all principals — the admin page's key-hygiene view."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, email, label, created_at, expires_at, revoked, last_used_at"
+                " FROM api_keys ORDER BY email, id"
+            ).fetchall()
+        return self._rows_to_keys(rows)
 
     def revoke_api_key(self, key_id: int) -> None:
         with self._lock:
             self._conn.execute("UPDATE api_keys SET revoked=1 WHERE id=?", (key_id,))
             self._conn.commit()
+
+    # ---- audit log (auth_events) --------------------------------------------
+
+    def record_auth_event(
+        self,
+        event: str,
+        email: str = "",
+        *,
+        detail: str = "",
+        ip: str = "",
+        user_agent: str = "",
+    ) -> None:
+        """Append one audit row. ``event`` must be in :data:`AUTH_EVENTS` so the
+        vocabulary can't drift silently."""
+        if event not in AUTH_EVENTS:
+            raise ValueError(f"unknown auth event {event!r} (add it to AUTH_EVENTS)")
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO auth_events (ts, email, event, detail, ip, user_agent)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (_now(), norm_email(email) if email else "", event, detail, ip, user_agent[:200]),
+            )
+            self._conn.commit()
+
+    def list_auth_events(
+        self, *, email: Optional[str] = None, limit: int = 100
+    ) -> list[AuthEvent]:
+        """Newest-first audit rows, optionally filtered to one account."""
+        sql = "SELECT id, ts, email, event, detail, ip, user_agent FROM auth_events"
+        params: tuple = ()
+        if email:
+            sql += " WHERE email=?"
+            params = (norm_email(email),)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params += (max(1, limit),)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [
+            AuthEvent(r["id"], r["ts"], r["email"], r["event"], r["detail"], r["ip"], r["user_agent"])
+            for r in rows
+        ]
+
+    def list_active_sessions(self) -> list[SessionInfo]:
+        """Live (unexpired) sessions, newest first — "who is signed in right now"."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT email, created_at, expires_at FROM sessions"
+                " WHERE expires_at > ? ORDER BY created_at DESC",
+                (_now(),),
+            ).fetchall()
+        return [SessionInfo(r["email"], r["created_at"], r["expires_at"]) for r in rows]
+
+    def count_active_sessions(self, email: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM sessions WHERE email=? AND expires_at > ?",
+                (norm_email(email), _now()),
+            ).fetchone()
+        return row["n"]
+
+    # ---- housekeeping --------------------------------------------------------
+
+    def purge_expired(self, *, older_than_days: float = 7.0) -> tuple[int, int]:
+        """Delete expired sessions and stale login codes older than the grace
+        window. Safe now that auth_events is the durable login record (sessions
+        and codes are working state). Returns (sessions_purged, codes_purged)."""
+        cutoff = _now() - older_than_days * 86400.0
+        with self._lock:
+            c1 = self._conn.execute(
+                "DELETE FROM sessions WHERE expires_at < ?", (cutoff,)
+            ).rowcount
+            c2 = self._conn.execute(
+                "DELETE FROM login_codes WHERE created_at < ?", (cutoff,)
+            ).rowcount
+            self._conn.commit()
+        return (c1, c2)
 
     def close(self) -> None:
         with self._lock:

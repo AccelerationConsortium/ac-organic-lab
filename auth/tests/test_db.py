@@ -205,3 +205,89 @@ def test_migration_renames_legacy_service_account_column(tmp_path):
     u = db.get_user("robot@x.com")
     assert u is not None and u.is_automation is True  # value preserved through rename
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# auth_events audit log
+# ---------------------------------------------------------------------------
+
+
+def test_auth_events_record_and_list(tmp_path):
+    db = _db(tmp_path)
+    db.record_auth_event("code_requested", "A@X.com", ip="100.64.0.1", user_agent="curl")
+    db.record_auth_event("login_success", "a@x.com", ip="100.64.0.1")
+    db.record_auth_event("login_failed", "b@y.com", detail="invalid or expired code")
+    db.record_auth_event("roster_reload_applied", detail="3 users")  # no email
+
+    events = db.list_auth_events()
+    assert [e.event for e in events] == [
+        "roster_reload_applied", "login_failed", "login_success", "code_requested",
+    ]  # newest first
+    assert events[-1].email == "a@x.com"  # normalized
+    assert events[-1].ip == "100.64.0.1"
+
+    only_a = db.list_auth_events(email="A@X.com")
+    assert {e.event for e in only_a} == {"code_requested", "login_success"}
+    assert db.list_auth_events(limit=2)[0].event == "roster_reload_applied"
+    db.close()
+
+
+def test_auth_events_rejects_unknown_vocabulary(tmp_path):
+    db = _db(tmp_path)
+    try:
+        db.record_auth_event("something_new", "a@x.com")
+        raise AssertionError("expected ValueError for an event outside AUTH_EVENTS")
+    except ValueError:
+        pass
+    db.close()
+
+
+def test_auth_events_backfilled_from_sessions(tmp_path):
+    """A DB that predates auth_events carries its login history as session
+    rows; the first open with the new schema projects them into the log."""
+    path = str(tmp_path / "t.db")
+    db = Db(path)
+    db.create_session("a@x.com", ttl_s=3600)
+    db.create_session("b@y.com", ttl_s=3600)
+    # simulate the pre-audit-log era: drop the events the schema just created
+    with db._lock:
+        db._conn.execute("DELETE FROM auth_events")
+        db._conn.commit()
+    db.close()
+
+    db = Db(path)  # reopen -> _migrate backfills
+    events = db.list_auth_events()
+    assert len(events) == 2
+    assert all(e.event == "login_success" for e in events)
+    assert db.last_login_at("a@x.com") is not None
+    db.close()
+
+
+def test_api_key_last_used_stamped_on_verify(tmp_path):
+    db = _db(tmp_path)
+    token = db.create_api_key("robot@lab.local", label="robot")
+    assert db.list_api_keys("robot@lab.local")[0].last_used_at is None
+    assert db.verify_api_key(token) == "robot@lab.local"
+    stamped = db.list_all_api_keys()[0].last_used_at
+    assert stamped is not None
+    db.close()
+
+
+def test_purge_expired_keeps_live_state_and_history(tmp_path):
+    db = _db(tmp_path)
+    db.create_session("live@x.com", ttl_s=3600)
+    db.create_session("stale@x.com", ttl_s=-8 * 86400)  # expired past the grace window
+    db.create_login_code("live@x.com", "123456", 600)
+    with db._lock:  # backdate a code beyond the grace window
+        db._conn.execute(
+            "UPDATE login_codes SET created_at = created_at - 10*86400 WHERE email='live@x.com'"
+        )
+        db._conn.commit()
+    db.record_auth_event("login_success", "stale@x.com")
+
+    sessions_purged, codes_purged = db.purge_expired(older_than_days=7)
+    assert (sessions_purged, codes_purged) == (1, 1)
+    assert [s.email for s in db.list_active_sessions()] == ["live@x.com"]
+    # the audit log is untouched — it is the durable record
+    assert db.last_login_at("stale@x.com") is not None
+    db.close()

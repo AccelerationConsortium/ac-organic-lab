@@ -410,6 +410,42 @@ class LabDatabase:
             result.append(d)
         return result
 
+    def get_control_actions(
+        self, *, limit: int = 100, device_id: Optional[str] = None
+    ) -> list[dict]:
+        """Operator control-write audit rows (event_type='control_action',
+        written by api/app/control.py) across all devices, newest first.
+        The payload JSON {action, method, status_code, outcome, owner} is
+        flattened into the row for direct table rendering."""
+        sql = (
+            "SELECT ts, device_id, message, payload FROM equipment_events"
+            " WHERE event_type = 'control_action'"
+        )
+        params: tuple = ()
+        if device_id:
+            sql += " AND device_id = ?"
+            params = (device_id,)
+        sql += " ORDER BY ts DESC LIMIT ?"
+        rows = self._fetchall(sql, params + (limit,))
+        result = []
+        for r in rows:
+            d = dict(r)
+            raw = d.get("payload")
+            payload = json.loads(raw) if raw else {}
+            result.append(
+                {
+                    "ts": d["ts"],
+                    "device_id": d["device_id"],
+                    "message": d["message"],
+                    "action": payload.get("action"),
+                    "method": payload.get("method"),
+                    "status_code": payload.get("status_code"),
+                    "outcome": payload.get("outcome"),
+                    "owner": payload.get("owner"),
+                }
+            )
+        return result
+
     def get_sensor_readings(
         self,
         sensor_id: str,

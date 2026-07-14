@@ -39,6 +39,19 @@ const CONTROL_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const ASSISTANT_PATH_RE = /^\/api\/assistant(?:\/.*)?$/;
 const ASSISTANT_PUBLIC_PATHS = new Set(["/api/assistant/health"]);
 
+// -- /admin page + /api/admin/* proxy gate (admin role required) --------------
+//
+// The admin page enumerates the allow-list, sign-in history, and the control
+// audit trail, so both the page navigation and its XHR proxy require a valid
+// session whose role resolves to `admin` (from the sidecar's X-Auth-Role).
+// Page navigations by non-admins are redirected to the Overview; XHR gets a
+// JSON 401/403. The sidecar independently enforces admin on every /admin/*
+// endpoint (defense in depth — this gate is UX, that one is authority).
+// DASHBOARD_CONTROL_OPEN opens it for local dev without the sidecar.
+
+const ADMIN_PAGE_RE = /^\/admin(?:\/.*)?$/;
+const ADMIN_API_RE = /^\/api\/admin(?:\/.*)?$/;
+
 const AUTH_SERVICE_BASE =
   process.env.AUTH_SERVICE_BASE ?? "http://127.0.0.1:8009";
 const CONTROL_OPEN = process.env.DASHBOARD_CONTROL_OPEN === "true";
@@ -95,6 +108,24 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next({ request: { headers } });
   }
 
+  // ---- Admin page / proxy guard (admin role required) --------------------
+  if (ADMIN_PAGE_RE.test(pathname) || ADMIN_API_RE.test(pathname)) {
+    if (CONTROL_OPEN) return NextResponse.next();
+    const v = await verifySession(request);
+    if (!v.ok || v.role !== "admin") {
+      if (ADMIN_API_RE.test(pathname)) {
+        return NextResponse.json(
+          { detail: v.ok ? "Admin only." : "Sign in as an admin." },
+          { status: v.ok ? 403 : 401 },
+        );
+      }
+      const url = request.nextUrl.clone();
+      url.pathname = "/";
+      return NextResponse.redirect(url);
+    }
+    return NextResponse.next();
+  }
+
   // ---- Control-surface guard (view-only until signed in) ----------------
   if (CONTROL_METHODS.has(request.method) && CONTROL_PATH_RE.test(pathname)) {
     // Never trust a client-supplied identity header; we set it only after
@@ -125,5 +156,7 @@ export const config = {
   matcher: [
     "/api/equipment/:path*",
     "/api/assistant/:path*",
+    "/admin/:path*",
+    "/api/admin/:path*",
   ],
 };
