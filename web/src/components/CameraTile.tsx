@@ -28,6 +28,7 @@ import type {
   SnapshotResponse,
 } from "@/types/api";
 
+import { ackFailureMessage } from "@/lib/control-ack";
 import { useActionError } from "@/lib/use-action-error";
 import { useUserAuth } from "@/lib/user-auth";
 
@@ -94,31 +95,57 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   // / cancel calls fall back to the camera's only active recording.
   const recordingActive = activeLens?.recording_active === true;
 
-  const { actionError, reportError } = useActionError();
+  const { actionError, reportError, clearError } = useActionError();
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["equipment"] });
   // Surface control failures in the shared inline band (same as every other
   // tile) instead of a blocking window.alert.
   const onError = (err: unknown) => reportError(err);
+  // The gateway can soft-fail with 200 + ok:false (e.g. "pan limit reached"
+  // when the PTZ head is at its physical limit). controlPost only throws on
+  // non-2xx, so success handlers must check the ack; returns true when the
+  // action really succeeded. On a genuine success we also clear any stale
+  // band — otherwise a limit warning would linger after the operator moves
+  // the head back off the limit.
+  const guardAck = (ack: unknown): boolean => {
+    const failure = ackFailureMessage(ack);
+    if (failure !== null) {
+      reportError(new Error(failure));
+      return false;
+    }
+    clearError();
+    return true;
+  };
 
   const ptzMutation = useMutation({
     mutationFn: (direction: PtzDirection) =>
       direction === "stop"
         ? postPtz(snapshot.id, { pan: 0, tilt: 0, zoom: 0 })
         : postPtz(snapshot.id, { direction, speed: 0.5, duration_ms: 1500 }),
+    // Clear the band the instant a new move starts (matches useActionError's
+    // exec pattern), so pressing away from a limit drops the warning without
+    // waiting for the nudge to finish.
+    onMutate: clearError,
+    onSuccess: guardAck,
     onError,
   });
   const stopMutation = useMutation({
     mutationFn: () => postPtz(snapshot.id, { pan: 0, tilt: 0, zoom: 0 }),
+    onMutate: clearError,
+    onSuccess: guardAck,
     onError,
   });
   const gotoMutation = useMutation({
     mutationFn: (preset_id: string) => gotoPreset(snapshot.id, { preset_id }),
-    onSuccess: invalidate,
+    onSuccess: (ack) => {
+      guardAck(ack);
+      invalidate();
+    },
     onError,
   });
   const saveMutation = useMutation({
     mutationFn: (name: string) => savePreset(snapshot.id, { name }),
-    onSuccess: () => {
+    onSuccess: (ack) => {
+      if (!guardAck(ack)) return; // keep the modal open so the user can retry
       setPresetModalOpen(false);
       setPresetName("");
       invalidate();
@@ -127,7 +154,8 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   });
   const deleteMutation = useMutation({
     mutationFn: (preset_id: string) => deletePreset(snapshot.id, preset_id),
-    onSuccess: () => {
+    onSuccess: (ack) => {
+      if (!guardAck(ack)) return;
       setPresetSelection("");
       invalidate();
     },
@@ -135,12 +163,18 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   });
   const privacyMutation = useMutation({
     mutationFn: (enabled: boolean) => setPrivacy(snapshot.id, { enabled }),
-    onSuccess: invalidate,
+    onSuccess: (ack) => {
+      guardAck(ack);
+      invalidate();
+    },
     onError,
   });
   const streamingMutation = useMutation({
     mutationFn: (enabled: boolean) => setStreaming(snapshot.id, { enabled }),
-    onSuccess: invalidate,
+    onSuccess: (ack) => {
+      guardAck(ack);
+      invalidate();
+    },
     onError,
   });
 
@@ -149,7 +183,10 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       enable
         ? startRolling(snapshot.id, { lens: activeLens?.id, segment_duration_s: 1800, max_segments: 96 })
         : stopRolling(snapshot.id),
-    onSuccess: invalidate,
+    onSuccess: (ack) => {
+      guardAck(ack);
+      invalidate();
+    },
     onError,
   });
 
