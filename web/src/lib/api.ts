@@ -820,7 +820,7 @@ export interface DeviceDeckSlot {
     columns?: number | null;
     plate_id?: string | null;
   } | null;
-  module: { module_name: string; status?: string | null } | null;
+  module: { module_name: string; status?: string | null; serial_number?: string | null } | null;
   slot_state: "empty" | "declared" | "occupied" | "in_use" | "mismatch";
   source: "run" | "repl" | "declared" | "empty";
   declared?: { kind: string; load_name: string } | null;
@@ -830,6 +830,20 @@ export interface DeviceDeck {
   source: "run" | "repl" | "declared" | "empty";
   slots: Record<string, DeviceDeckSlot>;
   timestamp?: string;
+}
+
+/** One attached hardware module from `details.robot.modules` — live telemetry
+ *  straight off the robot (refreshes ~5 s whenever the module is powered,
+ *  independent of any run). Distinct from the deck's declared module, which is
+ *  operator intent; the tile pairs the two by serial or module family. */
+export interface RobotModule {
+  model: string; // e.g. "temperatureModuleV2"
+  type: string; // e.g. "temperatureModuleType"
+  serial?: string | null;
+  id?: string | null;
+  status?: string | null; // e.g. "idle" | "heating" | "cooling" | "holding at target"
+  current_temperature?: number | null;
+  target_temperature?: number | null;
 }
 
 /** Declare the operator/recipe layout on a migrated gateway. Values are

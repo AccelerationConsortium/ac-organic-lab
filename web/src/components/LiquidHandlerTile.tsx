@@ -13,6 +13,7 @@ import {
   postSetLights,
   putDeckLayout,
   type DeviceDeck,
+  type RobotModule,
 } from "@/lib/api";
 import type { EquipmentSnapshot } from "@/types/api";
 import { useActionError } from "@/lib/use-action-error";
@@ -122,6 +123,7 @@ interface SlotView {
   state: "empty" | "declared" | "occupied" | "in_use" | "mismatch";
   isTrash: boolean;
   title: string;
+  moduleName?: string; // set when a hardware module occupies this slot (labware may sit on it)
 }
 
 // Read the device's normalized deck from /status, but ONLY the new shape:
@@ -142,6 +144,88 @@ function gridFor(kind: string | undefined, rows?: number | null, columns?: numbe
   if (rows && columns) return { rows, columns };
   if (kind && KIND_GRID[kind]) return KIND_GRID[kind];
   return { rows: 0, columns: 0 };
+}
+
+// Live attached-module telemetry from `details.robot.modules` (populated by the
+// gateway whenever the module is powered — independent of any run, refreshes on
+// the normal /status poll). Defensive: an un-migrated gateway omits it.
+function robotModulesFromStatus(status: EquipmentSnapshot["status"]): RobotModule[] {
+  const robot = status.details?.["robot"] as { modules?: unknown } | undefined;
+  const mods = robot?.modules;
+  if (!Array.isArray(mods)) return [];
+  return mods.filter(
+    (m): m is RobotModule => !!m && typeof m === "object" && typeof (m as RobotModule).type === "string",
+  );
+}
+
+// Module family keyword shared by the deck's `module_name` ("temperature module
+// gen2") and the live module's `type`/`model` ("temperatureModuleType"), used to
+// pair the declared deck module with its live telemetry when serials don't match
+// (a declared module has no serial until the robot observes it).
+function moduleFamily(s: string | null | undefined): string | null {
+  const t = (s ?? "").toLowerCase();
+  if (t.includes("temperature")) return "temperature";
+  if (t.includes("magnetic")) return "magnetic";
+  if (t.includes("heater")) return "heater_shaker";
+  if (t.includes("thermocycler")) return "thermocycler";
+  return null;
+}
+
+// Module families that report temperatures (magnetic modules don't).
+const TEMP_FAMILIES = new Set(["temperature", "heater_shaker", "thermocycler"]);
+
+function moduleShortLabel(name: string): string {
+  switch (moduleFamily(name)) {
+    case "temperature":
+      return "Temp module";
+    case "magnetic":
+      return "Mag module";
+    case "heater_shaker":
+      return "Heater-shaker";
+    case "thermocycler":
+      return "Thermocycler";
+    default:
+      return name;
+  }
+}
+
+function formatTemp(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return "—";
+  return Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1);
+}
+
+// Compact live readout for a temperature-capable module: current temp, target
+// (when set), and the module's own status word. Renders gracefully with no
+// telemetry (module declared but unpowered / not yet observed): "— °C · offline".
+function ModuleReadout({ live, compact }: { live: RobotModule | null; compact?: boolean }) {
+  const cur = live?.current_temperature;
+  const tgt = live?.target_temperature;
+  const status = live?.status ?? "offline";
+  const active = status === "heating" || status === "cooling";
+  return (
+    <div className="flex min-w-0 flex-col items-center gap-0.5">
+      <span
+        className={[
+          compact ? "text-sm" : "text-xl",
+          "font-semibold tabular-nums",
+          cur == null ? "text-slate-400 dark:text-slate-500" : "text-ink dark:text-slate-100",
+        ].join(" ")}
+      >
+        {formatTemp(cur)} °C
+        {tgt != null && (
+          <span className="font-medium text-amber-600 dark:text-amber-400"> → {formatTemp(tgt)} °C</span>
+        )}
+      </span>
+      <span
+        className={[
+          "text-[9px] uppercase tracking-wider",
+          active ? "text-amber-600 dark:text-amber-400" : "text-ink-subtle dark:text-slate-400",
+        ].join(" ")}
+      >
+        {status}
+      </span>
+    </div>
+  );
 }
 
 // Miniature well grid drawn inside a deck slot once well-plate labware is
@@ -251,12 +335,62 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
     Object.assign(declaredMap, legacyLabware);
   }
 
+  // --- Live module telemetry, paired to the deck's module slots.
+  // `details.robot.modules` is live whenever the module is powered (refreshes
+  // with the normal /status poll, independent of any run); the deck slot only
+  // says a module is THERE. Pair by serial first, then by module family (a
+  // declared module usually has no serial yet).
+  const robotModules = robotModulesFromStatus(status);
+  const moduleSlots = new Map<number, { name: string; live: RobotModule | null }>();
+  if (migrated && deviceDeck) {
+    const used = new Set<RobotModule>();
+    for (const [slotStr, s] of Object.entries(deviceDeck.slots)) {
+      if (!s.module) continue;
+      const serial = s.module.serial_number;
+      const family = moduleFamily(s.module.module_name);
+      const live =
+        robotModules.find((m) => !used.has(m) && serial != null && m.serial === serial) ??
+        robotModules.find((m) => !used.has(m) && family != null && moduleFamily(m.type) === family) ??
+        null;
+      if (live) used.add(live);
+      moduleSlots.set(Number(slotStr), { name: s.module.module_name, live });
+    }
+  }
+
+  // Overhang readout cell. The OT-2 temperature module is physically LONG: it
+  // is bolted at its slot (11 in this lab) and overhangs ~half of the slot to
+  // its left (10), while the plate sits ON the module above the module's own
+  // slot. Mirror that footprint: render the live readout in the empty left-
+  // neighbor cell so the module's own slot stays free for its plate.
+  // Left neighbor exists when the slot isn't first in its deck row (slots
+  // 1/4/7/10, i.e. slot % 3 === 1).
+  const overhangReadout = new Map<
+    number,
+    { moduleSlot: number; name: string; live: RobotModule | null }
+  >();
+  for (const [slot, m] of moduleSlots) {
+    if (moduleFamily(m.name) !== "temperature") continue;
+    if (slot % 3 === 1) continue;
+    const left = slot - 1;
+    const leftSlot = deviceDeck?.slots[String(left)];
+    const leftIsFree = !leftSlot || (!leftSlot.module && !leftSlot.labware);
+    if (!leftIsFree) continue;
+    overhangReadout.set(left, { moduleSlot: slot, name: m.name, live: m.live });
+  }
+  // Module slots whose readout renders in an overhang cell — their own cell
+  // then shows only the module name (or the plate sitting on it).
+  const exportedReadouts = new Set(
+    Array.from(overhangReadout.values(), (o) => o.moduleSlot),
+  );
+
   function slotView(slot: number): SlotView {
     if (migrated && deviceDeck) {
       const s = deviceDeck.slots[String(slot)];
-      // A module occupies the slot regardless of slot_state — render it as its
-      // own kind of cell (declared = sticky fixture, else live/occupied).
-      if (s?.module) {
+      // A module WITHOUT labware renders as its own kind of cell (declared =
+      // sticky fixture, else live/occupied). When labware sits ON the module
+      // the plate wins the cell — the module must never hide its plate — and
+      // the module shows up as `moduleName` (accent strip + title).
+      if (s?.module && !s.labware) {
         const isDeclared = s.slot_state === "declared";
         const stateWord = isDeclared ? "declared" : s.slot_state === "in_use" ? "in use" : "occupied";
         return {
@@ -267,6 +401,7 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
           state: isDeclared ? "declared" : "occupied",
           isTrash: false,
           title: `Slot ${slot} — ${s.module.module_name} (${stateWord})`,
+          moduleName: s.module.module_name,
         };
       }
       if (!s || s.slot_state === "empty") {
@@ -278,11 +413,21 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
       const isTrash = !!kind && TRASH_KINDS.has(kind);
       const stateWord =
         s.slot_state === "in_use" ? "in use" : s.slot_state === "mismatch" ? "mismatch" : s.slot_state;
+      const onModule = s.module ? ` on ${s.module.module_name}` : "";
       const title =
         s.slot_state === "mismatch"
           ? `Slot ${slot} — declared ${s.declared?.kind ?? "?"}, observed ${kind ?? "?"}`
-          : `Slot ${slot} — ${name} (${stateWord})`;
-      return { kind, label: name, rows, columns, state: s.slot_state, isTrash, title };
+          : `Slot ${slot} — ${name}${onModule} (${stateWord})`;
+      return {
+        kind,
+        label: name,
+        rows,
+        columns,
+        state: s.slot_state,
+        isTrash,
+        title,
+        moduleName: s.module?.module_name,
+      };
     }
     // Legacy store: pure intent, no lifecycle.
     const key = legacyLabware[slot];
@@ -427,12 +572,29 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
           const v = slotView(slot);
           const selected = selectedSlot === slot;
           const mismatch = v.state === "mismatch";
+          // Module presentation: `overhang` puts the paired live readout in
+          // this (empty) cell because the long temperature module physically
+          // overhangs it from the slot to the right; `paired` is this slot's
+          // own module telemetry (shown inline only when no overhang cell
+          // exported it and the family reports temperatures).
+          const overhang = overhangReadout.get(slot);
+          const paired = moduleSlots.get(slot);
+          const inlineReadout =
+            v.kind === "module" &&
+            v.moduleName != null &&
+            !exportedReadouts.has(slot) &&
+            TEMP_FAMILIES.has(moduleFamily(v.moduleName) ?? "");
+          const moduleAccent = overhang != null || v.moduleName != null;
           return (
             <button
               key={slot}
               type="button"
               onClick={() => setSelectedSlot((s) => (s === slot ? null : slot))}
-              title={v.title}
+              title={
+                overhang
+                  ? `Slot ${slot} — overhang of the ${overhang.name} at slot ${overhang.moduleSlot}`
+                  : v.title
+              }
               className={[
                 "relative h-[120px] w-[160px] overflow-hidden rounded border transition-colors",
                 selected
@@ -442,7 +604,14 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
                     : "border-slate-200 bg-white hover:border-slate-400 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-slate-500",
               ].join(" ")}
             >
-              {v.isTrash ? (
+              {overhang ? (
+                <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-1">
+                  <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+                    {moduleShortLabel(overhang.name)} · slot {overhang.moduleSlot}
+                  </span>
+                  <ModuleReadout live={overhang.live} />
+                </div>
+              ) : v.isTrash ? (
                 <div className="flex h-full w-full items-center justify-center bg-slate-300/70 dark:bg-slate-700/60">
                   <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
                     waste
@@ -452,10 +621,11 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
                 <MiniPlate rows={v.rows} columns={v.columns} />
               ) : v.state !== "empty" ? (
                 // Occupied by something without a grid (module, unknown kind).
-                <div className="flex h-full w-full items-center justify-center px-1 text-center">
+                <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-1 text-center">
                   <span className="text-[10px] font-medium text-ink-subtle dark:text-slate-400">
                     {v.label || v.kind}
                   </span>
+                  {inlineReadout && <ModuleReadout live={paired?.live ?? null} compact />}
                 </div>
               ) : (
                 <div className="flex h-full w-full items-center justify-center">
@@ -463,6 +633,15 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
                     {slot}
                   </span>
                 </div>
+              )}
+              {/* Amber strip ties the module's cells together: the overhang
+                  readout cell and the module's own slot (module name or the
+                  plate sitting on it) read as one 1.5-slot fixture. */}
+              {moduleAccent && (
+                <span
+                  className="absolute inset-x-0 top-0 h-[3px] bg-amber-400/90 dark:bg-amber-500/80"
+                  aria-hidden
+                />
               )}
               {/* State badge for migrated devices (top-right corner). */}
               {migrated && (v.state === "in_use" || v.state === "mismatch") && (
