@@ -12,6 +12,7 @@ Pydantic ``args_schema``s:
   ``pause`` / ``resume``.
 * **Plate / well tracking** — ``plate.load`` / ``plate.unload`` /
   ``well.update`` (orchestrator-owned per-well state).
+* **Tip tracking** — ``tips.reset`` (physical rack swap; metadata only).
 * **Convenience** — ``lights.set`` (deck light) and ``deck.declare``
   (operator/recipe deck layout, metadata only).
 
@@ -24,7 +25,7 @@ a breaking change (``SKILLS_CATALOG.md`` §versioning).
 
 ``startup`` opens the OT-2's SSH / run-engine session. It is a real, listed
 skill (advertised in ``requires_init``), but the SDK must **never** call it
-automatically — the ``ot2`` / ``ot2_complexation`` registry entries carry
+automatically — the ``ot2_hte`` / ``ot2_complexation`` registry entries carry
 ``do_not_call_connect: true``. Auto-connect and cataloging are separate
 concerns; listing the skill lets an operator/workflow invoke it explicitly.
 
@@ -174,14 +175,36 @@ class TipArgs(BaseModel):
 
     On ``pick_up_tip`` pass ``labware_nickname`` (a loaded tiprack) +
     ``position`` (its well) to name the exact tip — the HTTP run-engine
-    transport requires it (the SSH transport picks the next tip when omitted).
-    On ``drop_tip`` those name an explicit drop well (e.g. return the tip to
+    transport requires it. On the SSH transport, omitting ``position`` on a
+    tracked rack auto-picks the next available tip (column-major). On
+    ``drop_tip`` those name an explicit drop well (e.g. return the tip to
     the rack); omit both to drop in the gateway's default trash.
+
+    ``sample_id`` / ``force`` drive the gateway's cross-contamination guard
+    on ``pick_up_tip``: a fresh tip is always free, a tip that previously
+    touched the same ``sample_id`` is reusable, and ``force`` overrides the
+    guard (never an empty well). Refusals return HTTP 412 with a structured
+    body (STATUS_SPEC §6.1) and never mutate ``last_error`` (§6.3).
     """
 
     pipette: str
     labware_nickname: Optional[str] = None
     position: Optional[str] = None
+    sample_id: Optional[str] = None
+    force: bool = False
+
+
+class TipsResetArgs(BaseModel):
+    """Body for ``POST /control/tips/reset`` — (re)register a tip rack with
+    every tip fresh, marking a physical rack swap. Racks named in
+    ``/control/setup`` labware register automatically and keep their used-tip
+    statuses across restarts; this endpoint is for swapping in a fresh rack or
+    tracking one loaded out-of-band. Metadata only — no robot motion — so,
+    like ``plate.*``, it works in ``ready`` and ``dry_run``. ``wells`` defaults
+    to the 96-tip column-major grid when omitted."""
+
+    nickname: str = Field(..., min_length=1)
+    wells: Optional[list[str]] = None
 
 
 class MoveLabwareArgs(BaseModel):
@@ -273,7 +296,10 @@ register(
             kind="liquid_handler",
             description=(
                 "Pick up a tip. Pass labware_nickname + position for an explicit "
-                "tip (required on the HTTP transport)."
+                "tip (required on the HTTP transport). Omit position on a tracked "
+                "rack to auto-pick the next available tip (column-major). The "
+                "gateway's contamination guard refuses cross-sample reuse "
+                "(HTTP 412) unless sample_id matches the prior use or force=True."
             ),
             endpoint="/control/pick-up-tip",
             args_schema=TipArgs,
@@ -372,6 +398,21 @@ register(
             requires_states=["ready", "dry_run"],
             estimated_duration_s=0.2,
         ),
+        SkillDef(
+            name="tips.reset",
+            kind="liquid_handler",
+            description=(
+                "(Re)register a tip rack with every tip fresh — marks a physical "
+                "rack swap. Racks named in setup register automatically and keep "
+                "used-tip statuses across restarts; this is for swapping in a "
+                "fresh rack or tracking one loaded out-of-band. Metadata only."
+            ),
+            endpoint="/control/tips/reset",
+            args_schema=TipsResetArgs,
+            # Advertised in ready and dry_run (not requires_init/error).
+            requires_states=["ready", "dry_run"],
+            estimated_duration_s=0.2,
+        ),
         # ---- convenience -------------------------------------------------
         SkillDef(
             name="lights.set",
@@ -417,6 +458,7 @@ __all__ = [
     "SetupArgs",
     "StartupArgs",
     "TipArgs",
+    "TipsResetArgs",
     "WellLocation",
     "WellUpdateArgs",
 ]

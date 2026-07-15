@@ -406,7 +406,7 @@ There are **two** OT-2s, each fronted by its own `opentrons-server`
 gateway process (the gateway is multi-instance by design — one process
 per robot, own port, own robot host, own state files):
 
-- `ot2` — HTE bench robot `sdl2-ot2-hte` (100.64.254.90, robot name
+- `ot2_hte` — HTE bench robot `sdl2-ot2-hte` (100.64.254.90, robot name
   `ot2cytation`), gateway on `sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020`.
 - `ot2_complexation` — Echem bench robot `sdl2-ot2-complexation`
   (100.64.254.91, robot name `ot2training`), gateway on `…:8021`
@@ -417,12 +417,15 @@ per robot, own port, own robot host, own state files):
   `GET :31950/networking/status` and update `OT2_HOST_ALIAS`).
 
 Both are STATUS_SPEC v1.1. The kind-level skill catalog and tile apply to
-both automatically. Protocol-execution actions
-(`setup`, `home`, `aspirate`, `dispense`, `pick_up_tip`, `drop_tip`,
-`move_labware`, `pause`) are advertised by the device today but the
-catalog has no typed protocol-arg shapes for them yet — those land in
-a follow-up. **What ships now is the deck-light toggle, the pipette
-pills, and a shared deck-layout picker.**
+both automatically. The catalog ships typed Pydantic ``args_schema``s for
+every advertised action: session lifecycle (``startup`` / ``shutdown``),
+protocol execution (``setup`` / ``home`` / ``pick_up_tip`` / ``aspirate``
+/ ``dispense`` / ``drop_tip`` / ``move_labware`` / ``pause`` / ``resume``),
+plate/well tracking (``plate.load`` / ``plate.unload`` / ``well.update``),
+tip tracking (``tips.reset`` — physical rack swap), and convenience
+(``lights.set`` / ``deck.declare``). ``pick_up_tip`` carries a
+cross-contamination guard (``sample_id`` / ``force`` on the args); refusals
+return HTTP 412 and never mutate ``last_error``.
 
 ### Tile behaviour
 
@@ -544,7 +547,7 @@ in `ready`.
 
 ### Control passthrough and claim handling
 
-`POST /api/equipment/ot2/control/lights` flows through the generic
+`POST /api/equipment/ot2_hte/control/lights` flows through the generic
 passthrough in `api/app/control.py`, which handles claim acquire /
 `X-Claim-Token` attach / release per request (the device enforces
 `X-Claim-Token` on `/control/*`).
@@ -559,9 +562,9 @@ operator-facing class as camera PTZ. See [`EQUIP_GUIDE.md`](EQUIP_GUIDE.md) §6b
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Buttons render but POST returns HTTP 423 | Another workflow holds a longer-lived claim on the OT-2 | `details.claimed_by.owner` on `/api/equipment/ot2/status` shows who. Release via the SDK, then retry. |
+| Buttons render but POST returns HTTP 423 | Another workflow holds a longer-lived claim on the OT-2 | `details.claimed_by.owner` on `/api/equipment/ot2_hte/status` shows who. Release via the SDK, then retry. |
 | Buttons render but POST returns HTTP 404 | `opentrons-server` predates the `lights` endpoint | Update the gateway on `sdl2-pc-03-cytation:8020`. |
-| Lights dot stuck on `—` | Device repo isn't publishing `components.lights` yet | Check `/api/equipment/ot2/status` — if the component is missing, the gateway version is too old. |
+| Lights dot stuck on `—` | Device repo isn't publishing `components.lights` yet | Check `/api/equipment/ot2_hte/status` — if the component is missing, the gateway version is too old. |
 | Lights dot reflects the wrong state | Browser tab has a stale `react-query` cache | Status refreshes on the next aggregator poll (~2 s); a hard refresh is also fine. |
 
 ### Open work

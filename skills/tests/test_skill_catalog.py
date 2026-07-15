@@ -113,6 +113,7 @@ def test_liquid_handler_names_match_gateway_allowed_actions() -> None:
         "startup", "shutdown", "home", "setup", "pause", "resume",
         "pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware",
         "plate.load", "plate.unload", "well.update",
+        "tips.reset",
         "lights.set", "deck.declare",
     }
     catalog_names = {d.name for d in SKILL_REGISTRY["liquid_handler"]}
