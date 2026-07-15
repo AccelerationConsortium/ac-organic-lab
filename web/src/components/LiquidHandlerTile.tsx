@@ -96,7 +96,22 @@ const DEVICE_PICKER: { key: string; label: string }[] = [
   { key: "reservoir", label: "Reservoir" },
   { key: "tuberack", label: "Tube rack" },
   { key: "waste", label: "Waste bin" },
+  // Sticky (declared) module fixtures. The picker sends the kind KEY; the gateway
+  // maps it to a module (deck.py _MODULE_KINDS). Movable modules aren't declared —
+  // they flow through the live run deck.
+  { key: "temperature_module", label: "Temperature module" },
 ];
+
+// Inverse of the gateway's module kind -> module_name map, so a declared module
+// read back from /status round-trips to its picker key on the next full-PUT
+// declare (otherwise editing another slot would drop it). Keep in sync with
+// deck.py `_MODULE_KINDS`.
+const MODULE_NAME_TO_KEY: Record<string, string> = {
+  "temperature module gen2": "temperature_module",
+  "magnetic module gen2": "magnetic_module",
+  "heater-shaker module gen1": "heater_shaker_module",
+  "thermocycler module gen2": "thermocycler_module",
+};
 
 // One slot's render info, sourced from either the device deck or the legacy store.
 interface SlotView {
@@ -225,7 +240,11 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
   const declaredMap: Record<string, string> = {};
   if (migrated && deviceDeck) {
     for (const [slot, s] of Object.entries(deviceDeck.slots)) {
-      if (s.slot_state === "declared" && s.labware) declaredMap[slot] = s.labware.kind;
+      if (s.slot_state === "declared" && s.module) {
+        // A declared (sticky) module → round-trip via its picker key.
+        const key = MODULE_NAME_TO_KEY[s.module.module_name];
+        if (key) declaredMap[slot] = key;
+      } else if (s.slot_state === "declared" && s.labware) declaredMap[slot] = s.labware.kind;
       else if (s.slot_state === "mismatch" && s.declared) declaredMap[slot] = s.declared.kind;
     }
   } else {
@@ -235,10 +254,22 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
   function slotView(slot: number): SlotView {
     if (migrated && deviceDeck) {
       const s = deviceDeck.slots[String(slot)];
+      // A module occupies the slot regardless of slot_state — render it as its
+      // own kind of cell (declared = sticky fixture, else live/occupied).
+      if (s?.module) {
+        const isDeclared = s.slot_state === "declared";
+        const stateWord = isDeclared ? "declared" : s.slot_state === "in_use" ? "in use" : "occupied";
+        return {
+          kind: "module",
+          label: s.module.module_name,
+          rows: 0,
+          columns: 0,
+          state: isDeclared ? "declared" : "occupied",
+          isTrash: false,
+          title: `Slot ${slot} — ${s.module.module_name} (${stateWord})`,
+        };
+      }
       if (!s || s.slot_state === "empty") {
-        if (s?.module) {
-          return { label: s.module.module_name, rows: 0, columns: 0, state: "occupied", isTrash: false, title: `Slot ${slot} — ${s.module.module_name}` };
-        }
         return { label: "", rows: 0, columns: 0, state: "empty", isTrash: false, title: `Slot ${slot} — empty` };
       }
       const kind = s.labware?.kind;
