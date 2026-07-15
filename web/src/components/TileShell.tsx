@@ -89,6 +89,17 @@ export interface TileShellProps {
     powerTitle?: string;
     stopTitle?: string;
     /**
+     * Optional label overrides for the lifecycle buttons. Default to
+     * "ON"/"OFF"/"STOP". Set these when a device's toggle is not literal power
+     * — e.g. the OT-2's toggle connects/disconnects the gateway session rather
+     * than powering the robot, and its stop is a protocol pause, so it uses
+     * CONNECTED/DISCONNECTED/PAUSE. Power-strip tiles (literal outlet power)
+     * keep the defaults.
+     */
+    onLabel?: string;
+    offLabel?: string;
+    stopLabel?: string;
+    /**
      * When set, clicking the toggle in the ON→off direction opens a small
      * confirm popover with this question (e.g. "Switch all outlets off?")
      * before `onPowerToggle` fires — for tiles whose "off" is destructive
@@ -204,7 +215,9 @@ export function TileShell({
                   ].join(" ")}
                   aria-hidden
                 />
-                {lifecycle.isOn ? "ON" : "OFF"}
+                {lifecycle.isOn
+                  ? (lifecycle.onLabel ?? "ON")
+                  : (lifecycle.offLabel ?? "OFF")}
               </TileButton>
               {confirmOff && (
                 <div className="absolute left-0 top-full z-20 mt-1 w-44 rounded-md border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">
@@ -237,7 +250,7 @@ export function TileShell({
               variant="danger"
               title={lifecycle.stopTitle}
             >
-              STOP
+              {lifecycle.stopLabel ?? "STOP"}
             </TileButton>
           )}
           {bannerExtra}

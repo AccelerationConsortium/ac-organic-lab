@@ -312,6 +312,13 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
       }
       lifecycle={{
         isOn: deviceOn,
+        // The OT-2 toggle connects/disconnects the GATEWAY control session —
+        // it does NOT power the robot on/off. Labelled CONNECTED/DISCONNECTED
+        // (not ON/OFF) so operators don't read it as robot power. Stop is a
+        // protocol PAUSE, not an e-stop.
+        onLabel: "CONNECTED",
+        offLabel: "DISCONNECTED",
+        stopLabel: "PAUSE",
         onPowerToggle: () =>
           deviceOn
             ? runControl("shutdown", () => postOt2Shutdown(snapshot.id))
@@ -323,13 +330,13 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
             ? "No access"
             : "Sign in to control"
           : deviceOn
-            ? "Device is on — click to shut down"
-            : "Device is off — click to start up",
+            ? "Gateway session connected — click to disconnect (does NOT power off the robot)"
+            : "Click to connect & initialize the gateway session",
         stopTitle: locked
           ? noAccess
             ? "No access"
             : "Sign in to control"
-          : "Halt: pause the running protocol (does not disconnect)",
+          : "Pause a running protocol — not an emergency stop (use the robot's physical e-stop); does not disconnect",
       }}
       bannerExtra={
         <div className="ml-auto flex items-center gap-1.5">
