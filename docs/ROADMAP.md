@@ -21,7 +21,7 @@ Cursor plan UI.
 | **v0.3** | STATUS_SPEC v1.1 spec doc, `ClaimManager`, `Plan` / `validate_plan` / `PlanReport`, `Violation` + `register_interlock`, two built-in interlocks, graceful degradation for v1.0 devices | ✅ shipped on `main` |
 | **v0.4 PR-1** | `execute_plan` (sequential live executor, per-step ClaimManager, layer-3 + layer-4 re-check, bounded `wait_timeout_s` for time-clearing preconditions, `PlanRunReport`), async interlocks (`run_interlocks_async`), sync façades (`SyncLabSession.validate_plan` / `execute_plan`), `command(claim_token=...)` | ✅ shipped on branch `feature-xarm-ot2` (2026-07-12) |
 | **v0.4 PR-2** | MCP server companion — `lab_skills.mcp` (catalog → tools, `/status` → resources) + `lab-skills mcp serve` CLI; control gated behind `--allow-control` | ✅ shipped on branch `feature-xarm-ot2` (2026-07-12) |
-| **v0.4 PR-3** | Live agent acceptance: run a 5-step `Plan` against PlateLoc via `execute_plan` | ▶ unblocked by PR-1; not started |
+| **v0.4 PR-3** | Live agent acceptance: run a 5-step `Plan` against PlateLoc via `execute_plan` | ◑ executor validated live 2026-07-15; a *successful* seal is blocked by a PlateLoc compressed-air fault (facilities), retry pending |
 | **v0.5** | Standalone `lab-skills serve` CLI exposing the aggregator as a long-lived HTTP service | not started |
 
 **Fleet snapshot (live, all on `adapter: http`).** Zero `legacy_http`,
@@ -187,8 +187,14 @@ is the remaining work per device.
 
 #### `agilent-plateloc-server`
 
-- [ ] Cosmetic only: bump `equipment_version` / `pyproject` / CHANGELOG
-  off 1.3.1 to match the shipped v1.1 state.
+- [x] `last_error.code` taxonomy extended (v1.3.2, PR
+  [#1](https://github.com/cyrilcaoyang/agilent-plateloc-server/pull/1)):
+  `no_plate` + `vacuum_error` added and classified in `_classify_error`.
+  Both surfaced live on the bench 2026-07-15 (previously fell through to
+  `com_other`); deployed to the device and verified live. `pyproject` /
+  CHANGELOG bumped 1.3.1 → 1.3.2.
+- [ ] Cosmetic: `equipment_version` on `/status` is still `null` (config
+  unset); populate it to match the shipped state.
 
 #### `dose_every_well`
 
@@ -311,6 +317,16 @@ Active watch items (not regressions; behavioural notes):
   shaker fails fast under contention rather than dragging the fleet.
   Restore to ~10 s once the device-repo `_build_status` read-off-
   lock fix ships.
+- **`plateloc` compressed-air supply** — during the 2026-07-15 PR-3
+  bench run the seal cycle failed on Low Air Pressure / vacuum faults
+  (`stage.out` was also refused with "Low Air Pressure Error"),
+  leaving a plate trapped in a hot chamber with no software recovery
+  path (both actuation and retract are pneumatic). Root cause is
+  facilities (shop air off / below regulator setpoint), not the SDK or
+  driver. Restore air and confirm `stage.out` succeeds before
+  re-attempting PR-3. Follow-up worth considering: a device-side
+  low-air interlock that refuses `seal.start` / `stage.in` up front,
+  rather than discovering it mid-cycle.
 
 ## Control-surface exposure (known security / safety risk)
 
@@ -387,12 +403,20 @@ The MCP milestone resumes when **all** of the following are true:
    (dry-run is fine) using `validate_plan` + an executor.**
    ✅ **met (code)** — `execute_plan` shipped in PR-1 with offline + `dry_run`
    coverage (respx-mocked v1.1 device, sequential claim/command/blocking/skip
-   paths). The five-step-against-real-PlateLoc *acceptance* is PR-3 (needs the
-   device on the bench).
+   paths). The five-step-against-real-PlateLoc *acceptance* (PR-3) was
+   **exercised live 2026-07-15**: `execute_plan` drove real PlateLoc
+   end-to-end — per-step `ClaimManager`, `wait_timeout_s` waiting out the
+   heater ramp, `seal.start` through hard-enforced claims, and faithful
+   `last_error` surfacing of device faults (500 → `equipment_status: error`,
+   fail-fast with the rest `skipped`). A *successful* seal did **not**
+   complete: the cycle failed on a PlateLoc compressed-air / vacuum fault
+   (facilities, not the SDK — see watch items). A green run awaits air-supply
+   restoration and a bench retry with the corrected workflow (heat/cool happen
+   **outside** the per-plate cycle; the plate is in only for the seal itself).
 
-All four criteria are green, so v0.4 PR-1 (`execute_plan` + async interlocks +
-sync façades) has landed. Next: PR-2 (`lab_skills.mcp` + CLI) is the headline
-feature, then PR-3 (live agent acceptance against PlateLoc) is the gate.
+All four criteria are green, and PR-1 + PR-2 have landed. PR-3 is the remaining
+gate: its `execute_plan` path is now validated live (above); only a
+successful seal is outstanding, blocked on the PlateLoc air supply.
 
 ## Out of scope for this whole roadmap
 
