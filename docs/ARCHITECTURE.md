@@ -286,7 +286,7 @@ sections:
     title: HTE Platform
     href: /platforms/hte         # presence of href → tab appears in Nav
     kind: platform
-    equipment: [cam_hte_tapo_c245, ot2, ...]
+    equipment: [cam_hte_tapo_c245, ot2_hte, ...]
 
   - id: web_services
     title: Web Services

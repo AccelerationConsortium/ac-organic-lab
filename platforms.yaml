@@ -29,7 +29,7 @@ sections:
       - cam_hte_tapo_c245
       - xarm_translocation
       - fume_hood_actuator
-      - ot2
+      - ot2_hte
       - dose_every_well
       - torry_pines_shaker
       - filter_every_well

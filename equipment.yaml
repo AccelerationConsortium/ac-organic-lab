@@ -138,8 +138,8 @@ equipment:
       hte: { w: 2, h: 1 }
     pills: {}
 
-  - id: ot2
-    name: Opentrons OT-2
+  - id: ot2_hte
+    name: Opentrons OT-2 (HTE)
     kind: liquid_handler
     adapter: http
     protocol: "1.1"

@@ -27,7 +27,7 @@ Cursor plan UI.
 **Fleet snapshot (live, all on `adapter: http`).** Zero `legacy_http`,
 zero `mock` left in `equipment.yaml`. Thirteen devices respond live
 from real hardware (`cam_hte_tapo_c245`, both `plug_hte_strip_*`,
-`fume_hood_actuator`, `xarm_translocation`, `ot2`, `dose_every_well`,
+`fume_hood_actuator`, `xarm_translocation`, `ot2_hte`, `dose_every_well`,
 `torry_pines_shaker`, `filter_every_well`, `plateloc`, `cytation_5`,
 `agilent_uplc_ms`, `agilent_biostack`, `pypoe_web`); the four `env_*`
 environmental sensors are still synthesised pending the `env_sensors`
@@ -43,7 +43,7 @@ repo is being generalized into the lab's ELN+LIMS record layer — see
 
 **Protocol mix.** Eight devices reach `protocol_version: "1.1"` on
 their live `/status` envelope (`fume_hood_actuator`,
-`xarm_translocation`, `ot2`, `torry_pines_shaker`, `filter_every_well`,
+`xarm_translocation`, `ot2_hte`, `torry_pines_shaker`, `filter_every_well`,
 `plateloc`, `cytation_5`, `pypoe_web`); the rest are v1.0. The
 `lab-status-contract` shared-package threshold ("3+ repos cleanly on
 v1.1 for ~1 month") is comfortably cleared.
@@ -143,7 +143,7 @@ host. Spec is what the device's live `/status` envelope reports.
 | `plug_hte_strip_right` / `_left` | `http` | 1.0 | ✅ `ready` | HS300 power strips; `on`/`off`/`toggle`; per-outlet safety decided client-side (`outletIsSafe()`). |
 | `fume_hood_actuator` | `http` | 1.1 | ✅ `ready` | `sash.move`/`sash.stop`; deployed on the Pi at `100.64.254.100:5000`; round-trip verified from `FumeHoodTile`. |
 | `xarm_translocation` | `http` | 1.1 | ✅ `requires_init` | Claim protocol + `/control/graph/*` deployed 2026-05-31; claims gated behind `POST /connect`. Open items in the sub-tasks below. |
-| `ot2` | `http` | 1.1 | ✅ `ready` | Protocol actions + `lights.set` advertised; deck snapshot pulled over SSH. Protocol-action SkillDefs pending (typed labware args). |
+| `ot2_hte` | `http` | 1.1 | ✅ `ready` | Protocol actions + `lights.set` advertised; deck snapshot pulled over SSH. Protocol-action SkillDefs pending (typed labware args). |
 | `dose_every_well` | `http` | 1.1 | ✅ `requires_init` | Full v1.1 verified live 2026-05-31: hard `X-Claim-Token` (423), `/control/*` consolidation (breaking), state-driven `allowed_actions`. |
 | `torry_pines_shaker` | `http` | 1.1 | ✅ `ready` | 2026-05-09 `cal3` degrade cleared. Poll capped at 2.5 s pending the device-repo read-off-lock fix (watch item below). |
 | `filter_every_well` | `http` | 1.1 | ✅ `ready` | v1.1 deployed on the Pi at `100.64.254.104`; PressTile per-direction `hold_time` inputs verified (EQUIP_STATUS.md §8). |
@@ -274,7 +274,7 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   `poll_timeout_seconds` (OpenLab WMI introspection is the cost). Raise
   to 8 s if it ever errors.
 
-#### `ot2`
+#### `ot2_hte`
 
 - [x] SkillDefs + typed args for the protocol-execution actions
   (`setup`, `home`, `aspirate`, `dispense`, `pick_up_tip`, `drop_tip`,
@@ -349,7 +349,7 @@ out-of-band, un-audited?"):
 | Device(s) | Tailnet-direct? | Claims enforced? | Out-of-band move risk |
 |---|---|---|---|
 | cameras, plugs | **No** — gateway is loopback (`127.0.0.1:8002`) | n/a | **Low** — dashboard is the only network path |
-| press, fume hood, ot2, cytation | Yes | **Yes** (X-Claim-Token → 423) | Rejected *if* a workflow holds the claim; cooperative + un-audited |
+| press, fume hood, ot2_hte, cytation | Yes | **Yes** (X-Claim-Token → 423) | Rejected *if* a workflow holds the claim; cooperative + un-audited |
 | `plateloc`, `dose_every_well` | Yes | **Yes** (hard-enforced since 2026-05-31) | Rejected if a claim is held; cooperative + un-audited via direct `curl` |
 | `xarm_translocation` | Yes | **Yes** on `/control/*`; native `/web/` claim-awareness **unverified** | The `/web/` side-door is still advertised by the tile deep-link — the single most exposed control path in the lab |
 | `agilent_uplc_ms` | Yes | **Yes** (X-Claim-Token → 423) | Rejected if a claim is held. A run can still start out-of-band in OpenLab CDS on the instrument PC — surfaced as `busy`, not preventable. |

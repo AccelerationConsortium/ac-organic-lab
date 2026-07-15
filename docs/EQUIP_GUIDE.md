@@ -92,7 +92,7 @@ sections:
     equipment:
       - cam_hte_tapo_c245
       - xarm_translocation   # ← add here, in desired display order
-      - ot2
+      - ot2_hte
       - ...
 ```
 

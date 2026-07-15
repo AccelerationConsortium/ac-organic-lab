@@ -278,7 +278,7 @@ An invariant, with the claim doubling as the per-user gate:
 
 1. **Hard claim enforcement on every device** — `X-Claim-Token` required on all
    `/control/*` → **423** without. (Done on plateloc, dose, uplc, fume-hood,
-   press, cytation, ot2; finish the rest.)
+   press, cytation, ot2_hte; finish the rest.)
 2. **The claim is authorized, not merely exclusive.** On `POST /control/claim`,
    the device checks its roster: `owner` must have `operator`+ on this device,
    else **403**. Acquiring the claim *is* the authorization check; holding it is
@@ -466,7 +466,7 @@ platform/equipment key. Granting platform access is then a user entry like:
       - { scope: platform, id: hte, role: operator }              # all HTE devices
   - email: felix@…
     grants:
-      - { scope: equipment, id: ot2, role: operator }             # ONLY this device
+      - { scope: equipment, id: ot2_hte, role: operator }             # ONLY this device
 ```
 
 **Three grant scopes:** `global` (everywhere), `platform` (every device the
@@ -480,7 +480,7 @@ device = the highest of the flat global role + applicable global/platform/equipm
 grants. The flat `role` is itself an implicit *global* grant, so to **restrict**
 someone to specific equipment set **`role: none`** (no global access) and grant
 only the scopes they should reach — e.g. `role: none` + `{scope: equipment, id:
-ot2, role: operator}` = "may operate only the OT-2." A `none` account can still
+ot2_hte, role: operator}` = "may operate only the OT-2." A `none` account can still
 sign in (it's on the allow-list) but is **excluded from the roster of any device
 it has no grant for**, and `/authz/check` returns `allowed: false` there. There
 is deliberately no "deny one device out of a platform" primitive (negative grants
