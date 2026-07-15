@@ -57,7 +57,6 @@ pnpm-debug.log*
 # Claude Code (CLAUDE.md and .claude/settings.json are committed; only personal overrides are ignored)
 .claude/settings.local.json
 CLAUDE.local.md
-CLAUDE.md
 
 # pytest --basetemp scratch dir
 .tmp_pytest/

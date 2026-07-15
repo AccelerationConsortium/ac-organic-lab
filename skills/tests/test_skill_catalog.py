@@ -59,6 +59,71 @@ def test_liquid_handler_catalog_registered() -> None:
     assert not deck.requires_components
 
 
+def test_liquid_handler_protocol_surface_endpoints() -> None:
+    """The OT-2 protocol-execution + lifecycle + plate-tracking verbs are
+    cataloged with the gateway's ``/control/*`` paths."""
+
+    by_name = {d.name: d for d in SKILL_REGISTRY["liquid_handler"]}
+    expected = {
+        "startup": "/control/startup",
+        "shutdown": "/control/shutdown",
+        "setup": "/control/setup",
+        "home": "/control/home",
+        "pick_up_tip": "/control/pick-up-tip",
+        "aspirate": "/control/aspirate",
+        "dispense": "/control/dispense",
+        "drop_tip": "/control/drop-tip",
+        "move_labware": "/control/move-labware",
+        "pause": "/control/pause",
+        "resume": "/control/resume",
+        "plate.load": "/control/plate/load",
+        "plate.unload": "/control/plate/unload",
+        "well.update": "/control/well/update",
+    }
+    for name, endpoint in expected.items():
+        assert name in by_name, f"missing liquid_handler skill {name!r}"
+        assert by_name[name].endpoint == endpoint
+        assert by_name[name].method == "POST"
+
+    # aspirate/dispense carry a volume + optional flow_rate; pick_up_tip an
+    # explicit-tip location (required by the HTTP run-engine transport).
+    move_fields = by_name["aspirate"].args_schema.model_fields
+    assert {"pipette", "volume_ul", "location", "flow_rate"} <= set(move_fields)
+    assert by_name["dispense"].args_schema is by_name["aspirate"].args_schema
+    tip_fields = by_name["pick_up_tip"].args_schema.model_fields
+    assert {"pipette", "labware_nickname", "position"} <= set(tip_fields)
+
+    # startup is the only init-state action; motion verbs run from ready.
+    assert "requires_init" in by_name["startup"].requires_states
+    for name in ("pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware"):
+        assert by_name[name].requires_states == ["ready"]
+
+
+def test_liquid_handler_names_match_gateway_allowed_actions() -> None:
+    """Availability is ``def.name in allowed_actions`` (session.py), so every
+    OT-2 skill name must be one the gateway actually advertises. This encodes
+    the union of ``opentrons-server`` ``service.allowed_actions`` across states
+    (ready / requires_init / dry_run / paused) as the contract — a rename on
+    either side breaks ``lab.skills()`` matching and must fail here.
+    """
+
+    # The exact strings opentrons-server gateway/service.py::allowed_actions
+    # can emit, plus the two convenience controls it appends unconditionally.
+    gateway_advertised = {
+        "startup", "shutdown", "home", "setup", "pause", "resume",
+        "pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware",
+        "plate.load", "plate.unload", "well.update",
+        "lights.set", "deck.declare",
+    }
+    catalog_names = {d.name for d in SKILL_REGISTRY["liquid_handler"]}
+    # Every cataloged skill is something the gateway will honor by name.
+    orphans = catalog_names - gateway_advertised
+    assert not orphans, f"catalog names the gateway never advertises: {orphans}"
+    # And we cover the whole advertised surface (reconcile is intentionally
+    # excluded — it is an operator recovery hook, never in allowed_actions).
+    assert catalog_names == gateway_advertised
+
+
 def test_robot_arm_graph_control_surface() -> None:
     """xArm migrated to STATUS_SPEC v1.1 with a claim-gated motion-graph
     control surface; the catalog mirrors the device's ``/control/graph/*``

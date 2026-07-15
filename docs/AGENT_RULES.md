@@ -12,6 +12,12 @@ hard check (interlocks, claims, CI validation, human approval gates,
 protected branches). The absence of a rule is not permission; when a
 situation isn't covered, stop and ask a human.
 
+> **See also (non-normative):** this file is the *binding rules*. Day-to-day
+> *working instructions* for agents — commands, repo layout, conventions, the
+> memory policy — live in the repo-root [`AGENTS.md`](../AGENTS.md) (Claude
+> specifics in [`CLAUDE.md`](../CLAUDE.md)). Those files reference these rules
+> and may not weaken them.
+
 ## 1. Safety and hardware
 
 1. **Never drive hardware directly.** All equipment use goes through the

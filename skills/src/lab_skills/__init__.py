@@ -79,7 +79,16 @@ from .registry import (
     Tile,
     load_registry,
 )
-from .plan import Plan, PlanReport, Step, StepReport, validate_plan
+from .plan import (
+    Plan,
+    PlanReport,
+    PlanRunReport,
+    Step,
+    StepReport,
+    StepRunReport,
+    execute_plan,
+    validate_plan,
+)
 from .session import LabSession
 from .waiting import wait_until_state
 
@@ -121,6 +130,7 @@ __all__ = [
     "PillConfig",
     "Plan",
     "PlanReport",
+    "PlanRunReport",
     "PlateSealerClient",
     "PlatformSection",
     "PlatformsConfig",
@@ -138,11 +148,13 @@ __all__ = [
     "SolidDoserClient",
     "Step",
     "StepReport",
+    "StepRunReport",
     "Tile",
     "Violation",
     "WaitTimeout",
     "__version__",
     "clear_interlocks",
+    "execute_plan",
     "load_platforms",
     "load_registry",
     "register_interlock",

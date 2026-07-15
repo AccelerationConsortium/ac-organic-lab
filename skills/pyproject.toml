@@ -15,12 +15,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The control-capable MCP server (lab_skills.mcp / `lab-skills mcp serve`).
+# Optional so importing the SDK, or running the aggregator, needs no MCP deps.
+mcp = [
+    "mcp>=1.0",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
     "respx>=0.21",
     "ruff>=0.5",
+    "mcp>=1.0",
 ]
+
+[project.scripts]
+lab-skills = "lab_skills.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

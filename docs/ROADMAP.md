@@ -19,7 +19,9 @@ Cursor plan UI.
 | **v0.1** | Monorepo + skills SDK foundation + aggregator move | ✅ shipped on `main` |
 | **v0.2** | `EquipmentClient.command`, sync wrapper, control exceptions, skill catalog, `LabSession.skills()`, typed per-kind clients | ✅ shipped on `main` |
 | **v0.3** | STATUS_SPEC v1.1 spec doc, `ClaimManager`, `Plan` / `validate_plan` / `PlanReport`, `Violation` + `register_interlock`, two built-in interlocks, graceful degradation for v1.0 devices | ✅ shipped on `main` |
-| **v0.4** | MCP server companion (catalog → tools, `/status` → resources, CLI `lab-skills mcp serve`) | ⏸ paused on the v0.3 SDK carry-overs; fleet readiness comfortably cleared |
+| **v0.4 PR-1** | `execute_plan` (sequential live executor, per-step ClaimManager, layer-3 + layer-4 re-check, bounded `wait_timeout_s` for time-clearing preconditions, `PlanRunReport`), async interlocks (`run_interlocks_async`), sync façades (`SyncLabSession.validate_plan` / `execute_plan`), `command(claim_token=...)` | ✅ shipped on branch `feature-xarm-ot2` (2026-07-12) |
+| **v0.4 PR-2** | MCP server companion — `lab_skills.mcp` (catalog → tools, `/status` → resources) + `lab-skills mcp serve` CLI; control gated behind `--allow-control` | ✅ shipped on branch `feature-xarm-ot2` (2026-07-12) |
+| **v0.4 PR-3** | Live agent acceptance: run a 5-step `Plan` against PlateLoc via `execute_plan` | ▶ unblocked by PR-1; not started |
 | **v0.5** | Standalone `lab-skills serve` CLI exposing the aggregator as a long-lived HTTP service | not started |
 
 **Fleet snapshot (live, all on `adapter: http`).** Zero `legacy_http`,
@@ -52,13 +54,15 @@ each):
 | Kind | n | Notes |
 |------|---|-------|
 | `fume_hood` | 2 | `sash.move`, `sash.stop` |
-| `liquid_handler` | 1 | `lights.set` (OT-2 deck-light convenience control) |
+| `hplc` | 6 | `run.{submit,abort}`, `queue.cancel`, `instrument.standby`, `workflow.{start,end}` (Agilent UPLC-MS sidecar) |
+| `liquid_handler` | 16 | OT-2 full `/control/*` surface: lifecycle (`startup`/`shutdown`), protocol exec (`setup`/`home`/`pick_up_tip`/`aspirate`/`dispense`/`drop_tip`/`move_labware`/`pause`/`resume`), plate tracking (`plate.{load,unload}`/`well.update`), convenience (`lights.set`/`deck.declare`). Typed args added 2026-07-12 |
 | `plate_reader` | 11 | Mirrors `agilent-cytation-server` `/control/*` surface |
 | `plate_sealer` | 8 | Includes 412-precondition skills with `requires_components` (heater + stage) |
+| `plate_stacker` | 6 | Agilent BioStack `/control/*` surface |
 | `press` | 6 | `init`, `stop`, `press.{up,down}`, `plate.{in,out}` |
 | `robot_arm` | 4 | `graph.{move_to,recover_to,record,mode}` — xArm motion-graph control surface (v1.1, claim-gated); added 2026-05-31 |
 | `shaker` | 6 | `startup`, `shutdown`, `shake.{start,stop,set_temperature,set_speed}` with motor/heater AND-gates so a heater-side `degraded` doesn't block shaking |
-| `solid_doser` | 12 | `dose.{well,multiple,row,column}` etc.; all endpoints moved under `/control/*` for dose v1.1 (2026-05-31) |
+| `solid_doser` | 13 | `dose.{well,multiple,row,column}` etc.; all endpoints moved under `/control/*` for dose v1.1 (2026-05-31) |
 
 **Cross-repo changes since the last sweep** (outcomes only; detail in the
 respective repos):
@@ -79,25 +83,47 @@ respective repos):
 - `uv run pytest -q` passes end-to-end: `api/tests` 24/24, skill-catalog
   tests 10/10, `kasa_tapo_services/tests` 70/70.
 
-## Why v0.4 is paused
+## v0.4 status
 
-v0.3 shipped the *SDK side* of the v1.1 contract. The agent-facing payoff —
-"an MCP-aware agent calls a tool, hardware moves with claim semantics
-intact" — needs devices that implement `/control/{claim,heartbeat,release}`
-and populate `allowed_actions`. That bar is **comfortably cleared**: eight
-devices are live on v1.1 with populated `allowed_actions` (see the fleet
-table below). What blocks now is purely SDK-internal — the v0.3 carry-overs:
+v0.3 shipped the *SDK side* of the v1.1 contract. The device bar for the
+agent-facing payoff — devices implementing `/control/{claim,heartbeat,release}`
+and populating `allowed_actions` — is **comfortably cleared** (eight devices
+live on v1.1). The v0.3 SDK carry-overs that blocked the executor are now
+**done** (PR-1, branch `feature-xarm-ot2`, 2026-07-12):
 
-- `execute_plan(plan)` — sequential executor that wraps each step in
-  `ClaimManager`, re-runs interlocks before each step, emits
-  `PlanRunReport`. Cannot be acceptance-tested without claim semantics on
-  at least one real device (now available).
-- **Async interlocks** — current `fn(plan, step, session) -> list[Violation]
-  | None` is sync. Live-status interlocks (`docs/INTERLOCKS.md`'s
-  long-form async signature) come with `execute_plan`.
-- **Sync façades** for `ClaimManager` and `validate_plan` in
-  `lab_skills.sync` so notebooks / sync CLIs / the MCP stdio loop can
-  use them without async plumbing.
+- ✅ `execute_plan(plan, session, *, owner, dry_run=False)` — sequential live
+  executor: offline `validate_plan` up front, then per step re-checks layer 3
+  (live `allowed_actions` via the same `_availability` as `skills()`) + layer 4
+  (async interlocks), wraps the step in a per-step `ClaimManager`, POSTs the
+  SkillDef endpoint with the claim token, fail-fast with the rest reported
+  `skipped`. Returns `PlanRunReport` (with `claims_acquired`). `dry_run=True`
+  is a live preflight that skips the claim + command POST. `wait_timeout_s`
+  polls the layer-3 re-check so a plan can wait out a **time-clearing
+  precondition** — e.g. PlateLoc omitting `seal.start` from `allowed_actions`
+  during the heater ramp — instead of blocking (this is what PR-3's PlateLoc
+  acceptance needs).
+- ✅ **Async interlocks** — `register_interlock` now accepts `async def`;
+  `run_interlocks_async` runs sync + async rules before each step;
+  `run_interlocks` stays sync/offline for `validate_plan`. Unified on the
+  per-step `list[Violation]` form (see `docs/INTERLOCKS.md`).
+- ✅ **Sync façades** — `SyncLabSession.validate_plan` / `execute_plan`, plus
+  `EquipmentClient.command(claim_token=...)` (the plumbing that lets a claimed
+  command pass a hard-enforcing device's `X-Claim-Token` check).
+
+**Deferred from PR-1 (documented, low priority):** a *standalone* sync
+`ClaimManager` façade for holding a claim across manual sync calls needs a
+background-thread event loop (its heartbeat can't fire between
+`run_until_complete` calls); `execute_plan`'s sync façade doesn't need it (the
+whole run is one `run_until_complete`). The richer `InterlockResult` /
+whole-plan `(plan, lab)` interlock shape was **not** adopted — the shipped
+model is per-step returning `list[Violation]`, matching `validate_plan`.
+
+**Remaining for v0.4:** PR-2 (`lab_skills.mcp` + CLI) shipped 2026-07-12 —
+tools `list_equipment` / `list_skills` / `get_status` / `validate_plan` /
+`preflight_plan` always on; the actuating `execute_plan` tool + resources
+(`lab://equipment`, `lab://status/{target}`) gated behind `--allow-control`;
+`mcp` is an optional extra so the SDK/aggregator need no MCP deps. Only **PR-3**
+(live agent acceptance against real PlateLoc, on the bench) is left.
 
 ## Equipment migration plan
 
@@ -244,10 +270,19 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
 
 #### `ot2`
 
-- [ ] SkillDefs + typed args for the protocol-execution actions
+- [x] SkillDefs + typed args for the protocol-execution actions
   (`setup`, `home`, `aspirate`, `dispense`, `pick_up_tip`, `drop_tip`,
-  `move_labware`). These need labware-typed parameters the catalog has
-  no shapes for yet.
+  `move_labware`) — shipped 2026-07-12 in `skill_catalog/liquid_handler.py`
+  with typed `args_schema`s (labware/instrument/module specs, well
+  locations, per-call `flow_rate`). Also cataloged the lifecycle
+  (`startup`/`shutdown`/`pause`/`resume`) and plate-tracking
+  (`plate.{load,unload}`/`well.update`) verbs, so `lab.skills()` now
+  mirrors the gateway's full `allowed_actions` surface (16 SkillDefs). A
+  parity test pins the names to the gateway's advertised strings.
+- [ ] Follow-ups now unblocked: `execute_plan` can drive a typed OT-2
+  `Plan` (v0.4 PR-1); the setup sub-models could tighten the
+  `ot_default`-conditional required fields (`loadname` / `config`) with
+  validators once a real recipe exercises custom labware.
 
 #### `cytation_5`
 
@@ -347,17 +382,17 @@ The MCP milestone resumes when **all** of the following are true:
 3. **`lab.skills()` returns a non-empty catalog with `available=True`
    entries against at least one v1.1 device.** ✅ **met** — every
    v1.1 device reports non-empty `allowed_actions` live, and the
-   SkillDef registry spans 8 kinds, all non-empty (50 SkillDefs total).
+   SkillDef registry spans 10 kinds, all non-empty (78 SkillDefs total).
 4. **A workflow can run a five-step `Plan` against `agilent-plateloc-server`
    (dry-run is fine) using `validate_plan` + an executor.**
-   🔴 **blocked** on the v0.3 carry-overs (`execute_plan`, async
-   interlocks, sync façades) — there is still no executor to run the
-   plan with. The device-side blocker is cleared.
+   ✅ **met (code)** — `execute_plan` shipped in PR-1 with offline + `dry_run`
+   coverage (respx-mocked v1.1 device, sequential claim/command/blocking/skip
+   paths). The five-step-against-real-PlateLoc *acceptance* is PR-3 (needs the
+   device on the bench).
 
-Once those are green, v0.4 PR-1 (`execute_plan` + async interlocks +
-sync façades) is the unblocking change, then PR-2 (`lab_skills.mcp` +
-CLI) is the headline feature, then PR-3 (live agent acceptance against
-PlateLoc) is the gate.
+All four criteria are green, so v0.4 PR-1 (`execute_plan` + async interlocks +
+sync façades) has landed. Next: PR-2 (`lab_skills.mcp` + CLI) is the headline
+feature, then PR-3 (live agent acceptance against PlateLoc) is the gate.
 
 ## Out of scope for this whole roadmap
 
