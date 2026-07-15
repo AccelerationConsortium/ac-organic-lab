@@ -95,7 +95,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   // / cancel calls fall back to the camera's only active recording.
   const recordingActive = activeLens?.recording_active === true;
 
-  const { actionError, reportError } = useActionError();
+  const { actionError, reportError, clearError } = useActionError();
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["equipment"] });
   // Surface control failures in the shared inline band (same as every other
   // tile) instead of a blocking window.alert.
@@ -103,13 +103,16 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   // The gateway can soft-fail with 200 + ok:false (e.g. "pan limit reached"
   // when the PTZ head is at its physical limit). controlPost only throws on
   // non-2xx, so success handlers must check the ack; returns true when the
-  // action really succeeded.
+  // action really succeeded. On a genuine success we also clear any stale
+  // band — otherwise a limit warning would linger after the operator moves
+  // the head back off the limit.
   const guardAck = (ack: unknown): boolean => {
     const failure = ackFailureMessage(ack);
     if (failure !== null) {
       reportError(new Error(failure));
       return false;
     }
+    clearError();
     return true;
   };
 
@@ -118,11 +121,16 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       direction === "stop"
         ? postPtz(snapshot.id, { pan: 0, tilt: 0, zoom: 0 })
         : postPtz(snapshot.id, { direction, speed: 0.5, duration_ms: 1500 }),
+    // Clear the band the instant a new move starts (matches useActionError's
+    // exec pattern), so pressing away from a limit drops the warning without
+    // waiting for the nudge to finish.
+    onMutate: clearError,
     onSuccess: guardAck,
     onError,
   });
   const stopMutation = useMutation({
     mutationFn: () => postPtz(snapshot.id, { pan: 0, tilt: 0, zoom: 0 }),
+    onMutate: clearError,
     onSuccess: guardAck,
     onError,
   });
