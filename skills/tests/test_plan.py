@@ -190,17 +190,29 @@ def test_step_id_auto_assigned_from_index() -> None:
 # -- built-in interlocks -----------------------------------------------------
 
 
-def test_builtin_disallow_step_to_offline_role_for_do_not_call_connect() -> None:
-    entry = _entry(do_not_call_connect=True, kind="plate_sealer", protocol="1.1")
-    session = _session(entry)
-    plan = Plan(steps=[Step(role="sealer", skill="seal.start", args={"temperature_c": 170, "seconds": 3.0})])
+def test_do_not_call_connect_allows_explicit_plan_steps() -> None:
+    """The flag suppresses auto-connect; it must not block explicit skills."""
 
+    entry = _entry(
+        id="ot2_hte",
+        do_not_call_connect=True,
+        kind="liquid_handler",
+        protocol="1.1",
+    )
+    session = _session(entry, role="robot")
+    plan = Plan(
+        steps=[
+            Step(
+                role="robot",
+                skill="tips.reset",
+                args={"nickname": "tips_300"},
+            )
+        ]
+    )
     report = validate_plan(plan, session)
 
-    blockers = [v for v in report.violations if v.severity == "critical"]
-    assert any(v.code == "do_not_call_connect" for v in blockers)
-    v = next(v for v in blockers if v.code == "do_not_call_connect")
-    assert v.interlock_name == "disallow_step_to_offline_role"
+    assert report.ok is True
+    assert report.violations == []
 
 
 def test_builtin_disallow_step_to_offline_role_when_disabled() -> None:

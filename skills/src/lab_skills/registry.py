@@ -142,6 +142,9 @@ class EquipmentEntry(BaseModel):
     tailscale_ip: str | None = None
     status_path: str = "/status"
     poll_timeout_seconds: float = 2.0
+    # Suppress automatic connection/startup for this device. Explicit,
+    # validated plan steps remain governed by live allowed_actions, claims,
+    # and interlocks; this flag is not a blanket control prohibition.
     do_not_call_connect: bool = False
 
     tiles: dict[str, Tile] = Field(default_factory=dict)

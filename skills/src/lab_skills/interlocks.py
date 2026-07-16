@@ -30,10 +30,10 @@ Built-in interlocks
 -------------------
 
 * :func:`disallow_step_to_offline_role` (severity: ``critical``) - rejects
-  steps whose target equipment is disabled, in maintenance, or has the
-  registry flag ``do_not_call_connect: true`` set (xArm today). The flag's
-  whole purpose is "do not POST control to this device"; this interlock
-  enforces it at plan time so the violation surfaces before any HTTP call.
+  steps whose target equipment is disabled or in maintenance.
+  ``do_not_call_connect`` is intentionally not considered here: it suppresses
+  automatic connection/startup, while explicit plan steps remain governed by
+  live ``allowed_actions``, claims, and the other interlock layers.
 * :func:`warn_if_skill_duration_unknown` (severity: ``info``) - advisory
   warning when a step's :class:`SkillDef` has no
   ``estimated_duration_s``. Workflows that surface ETA to operators benefit
@@ -42,7 +42,6 @@ Built-in interlocks
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 from typing import TYPE_CHECKING, Awaitable, Callable, Literal, Union
 
@@ -203,14 +202,12 @@ async def run_interlocks_async(
 def disallow_step_to_offline_role(
     plan: "Plan", step: "Step", session: "LabSession"
 ) -> list[Violation] | None:
-    """Reject steps whose target equipment is offline / in maintenance / no-control.
+    """Reject steps whose target equipment is disabled or in maintenance.
 
-    ``do_not_call_connect: true`` in ``equipment.yaml`` is read as the
-    operator's standing instruction "do not POST control to this device".
-    The xArm is the canonical example today (it lives on a private subnet
-    behind a gateway PC). This interlock surfaces such a violation at
-    plan time rather than at execution time so agents/operators see
-    *why* a plan was rejected without having to chase an HTTP failure.
+    ``do_not_call_connect`` only prevents automatic connection/startup; it
+    does not forbid an explicit, validated plan step. Explicit commands are
+    still gated at execution time by live ``allowed_actions``, claims, and
+    every registered layer-4 interlock.
     """
 
     binding = session.binding
@@ -237,24 +234,6 @@ def disallow_step_to_offline_role(
                 ),
                 severity="critical",
                 actionable="re-enable the device or rebind the role",
-                interlock_name="disallow_step_to_offline_role",
-            )
-        ]
-    if entry.do_not_call_connect:
-        return [
-            Violation(
-                step_id=step.id,
-                step_index=step.index,
-                code="do_not_call_connect",
-                message=(
-                    f"role {step.role!r} -> {equipment_id!r} is marked "
-                    f"do_not_call_connect: true; control commands are forbidden"
-                ),
-                severity="critical",
-                actionable=(
-                    "use a different role for this skill, or remove "
-                    "do_not_call_connect from equipment.yaml"
-                ),
                 interlock_name="disallow_step_to_offline_role",
             )
         ]
