@@ -59,7 +59,7 @@
     // because those few properties inherit across the shadow boundary. No
     // :host{all:initial} — it would fight a host slot's positioning classes.
     "*{box-sizing:border-box;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}" +
-    ".bar{display:flex;align-items:center;gap:.6rem;min-height:44px;padding:.35rem 1rem;" +
+    ".bar{display:flex;flex-wrap:wrap;align-items:center;gap:.25rem .6rem;min-height:44px;padding:.35rem 1rem;" +
     "background:#ffffff;color:#0f172a;border-bottom:1px solid #e2e8f0;font-size:14px;" +
     "box-shadow:0 1px 2px rgba(15,23,42,.04)}" +
     ".brand{font-weight:600;letter-spacing:.02em;color:#0f172a;margin-right:.4rem}" +
@@ -70,14 +70,29 @@
     "display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px}" +
     ".who{display:flex;flex-direction:column;line-height:1.15;text-align:right}" +
     ".who .email{color:#0f172a}.who .role{color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.04em}" +
-    "button{font:inherit;border-radius:7px;border:1px solid #cbd5e1;background:#ffffff;color:#0f172a;" +
-    "padding:.3rem .7rem;cursor:pointer}button:hover{background:#f1f5f9}button:disabled{opacity:.5;cursor:default}" +
+    // font-family:inherit (not the font: shorthand) so form controls pick up
+    // the banner's own sans stack from the * rule, never the host page's font.
+    "button{font-family:inherit;font-size:inherit;border-radius:7px;border:1px solid #cbd5e1;background:#ffffff;color:#0f172a;" +
+    "padding:.3rem .7rem;cursor:pointer;white-space:nowrap}button:hover{background:#f1f5f9}button:disabled{opacity:.5;cursor:default}" +
     "button.primary{background:#2563eb;border-color:#2563eb;color:#fff}button.primary:hover{background:#1d4ed8}" +
     "button.ghost{background:transparent;color:#475569}button.ghost:hover{background:#f1f5f9}" +
-    "select,input{font:inherit;border-radius:7px;border:1px solid #cbd5e1;background:#ffffff;color:#0f172a;padding:.3rem .5rem}" +
-    "input{width:7.5rem;letter-spacing:.2em}" +
+    "select,input{font-family:inherit;font-size:inherit;border-radius:7px;border:1px solid #cbd5e1;background:#ffffff;color:#0f172a;padding:.3rem .5rem;min-width:0}" +
+    "select{max-width:13rem}" +
+    // 6-digit code entry: monospace + tabular digits so typed characters space
+    // evenly; 16px stops iOS Safari from zoom-jumping when the field focuses.
+    "input.code{width:7.5rem;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;" +
+    "font-size:16px;font-variant-numeric:tabular-nums;letter-spacing:.18em;text-align:center;padding:.25rem .4rem}" +
+    "input.code::placeholder{font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px;letter-spacing:normal;color:#94a3b8}" +
     ".msg{color:#2563eb;font-size:12px}.msg.err{color:#dc2626}" +
-    ".hide{display:none!important}";
+    ".hide{display:none!important}" +
+    // Narrow screens: tighten padding, cap wide items, and drop the status
+    // message onto its own full-width row instead of squeezing the bar.
+    "@media (max-width:640px){" +
+    ".bar{padding:.35rem .6rem}" +
+    "select{max-width:40vw}" +
+    ".who .email{max-width:38vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+    ".msg{flex-basis:100%;order:10;text-align:right}" +
+    "}";
 
   function el(tag, props, kids) {
     var e = document.createElement(tag);
@@ -123,10 +138,10 @@
     // signed-out cluster (login)
     var sel = el("select");
     var sendBtn = el("button", { class: "primary", text: "Send code" });
-    var code = el("input", { class: "hide", placeholder: "code", inputmode: "numeric", maxlength: "12" });
+    var code = el("input", { class: "code hide", placeholder: "code", inputmode: "numeric", maxlength: "12", autocomplete: "one-time-code" });
     var verifyBtn = el("button", { class: "primary hide", text: "Log in" });
     var login = el("div", {}, [sel, sendBtn, code, verifyBtn]);
-    login.style.cssText = "display:flex;align-items:center;gap:.4rem";
+    login.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:.4rem;min-width:0";
     var signedOut = el("div", { class: "hide" }, [login]);
 
     var msg = el("span", { class: "msg" });
