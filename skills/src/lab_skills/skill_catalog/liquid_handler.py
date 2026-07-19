@@ -170,6 +170,31 @@ class LiquidMoveArgs(BaseModel):
     flow_rate: Optional[float] = Field(default=None, gt=0.0)
 
 
+class CoordinateLocation(BaseModel):
+    """Absolute deck coordinates in mm (the robot's deck reference frame)."""
+
+    x: float
+    y: float
+    z: float
+
+
+class MoveToArgs(BaseModel):
+    """Body for ``POST /control/move-to`` (pipette motion, no liquid).
+
+    Exactly one of ``location`` (well-addressed) or ``coordinates`` (absolute
+    deck frame, mm) must be given; the gateway 422s otherwise. ``force_direct``
+    moves in a straight line instead of the arced safe path — the caller owns
+    collision avoidance when set.
+    """
+
+    pipette: str
+    location: Optional[WellLocation] = None
+    coordinates: Optional[CoordinateLocation] = None
+    speed: Optional[float] = Field(default=None, gt=0.0, description="mm/s")
+    force_direct: bool = False
+    minimum_z_height: Optional[float] = Field(default=None, ge=0.0)
+
+
 class TipArgs(BaseModel):
     """Body for ``POST /control/pick-up-tip`` and ``POST /control/drop-tip``.
 
@@ -290,6 +315,19 @@ register(
             args_schema=_NoArgs,
             requires_states=["ready", "dry_run"],
             estimated_duration_s=10.0,
+        ),
+        SkillDef(
+            name="move_to",
+            kind="liquid_handler",
+            description=(
+                "Move a pipette to a well or to absolute deck coordinates "
+                "(no liquid handling). Idempotent: safe to re-issue after a "
+                "transport loss."
+            ),
+            endpoint="/control/move-to",
+            args_schema=MoveToArgs,
+            requires_states=["ready"],
+            estimated_duration_s=3.0,
         ),
         SkillDef(
             name="pick_up_tip",
