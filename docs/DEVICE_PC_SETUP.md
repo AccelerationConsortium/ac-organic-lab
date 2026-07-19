@@ -204,8 +204,9 @@ Planned, not yet deployed (placeholder names/ports — confirm at install time):
 | `bmg_platereader`         | `platereader`  | 8001 | `platereader-pc.<tailnet>` |
 | `agilent_platestacker`    | `platestacker` | 8002 | `platestacker-pc.<tailnet>` |
 
-> **Windows quirk:** after every `nssm start <svc>`, run `sc resume <svc>` to clear
+> **Windows quirk:** after every `nssm start <svc>`, run `sc continue <svc>` to clear
 > the unexpected `SERVICE_PAUSED` state. This is an NSSM quirk; the service otherwise works correctly.
+> (`sc resume` is not a real `sc` verb — it errors with "Unrecognized command"; `continue` is the resume verb.)
 
 When multiple services share one PC, every service gets a distinct port; when each service has its own PC, the same port is fine across PCs (Tailscale's hostname is what disambiguates).
 
@@ -237,7 +238,7 @@ After install + smoke, register the service in the monorepo's `equipment.yaml` w
 >   other service's open link. This cleans even the leftover `.venv.broken`.
 >
 > Then `C:\SDL_Tools\uv.exe sync` rebuilds a fresh venv (re-hardlinking from
-> the unlocked cache) and `sc start <svc>; sc resume <svc>` brings it back.
+> the unlocked cache) and `sc start <svc>; sc continue <svc>` brings it back.
 > Because the trigger is fleet-wide, a bulk `uv sync` / Python upgrade can
 > corrupt several device venvs at once — check every service, not just the one
 > that paged you. (First hit live 2026-07-13: `xarm` and `opentrons-server`
