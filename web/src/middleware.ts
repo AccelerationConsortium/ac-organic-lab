@@ -27,6 +27,11 @@ import { NextRequest, NextResponse } from "next/server";
 const CONTROL_PATH_RE = /^\/api\/equipment\/[^/]+\/(?:control|sash|device|deck)(?:\/.*)?$/;
 const CONTROL_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+// The central labware store: reads are public, but saving/deleting shared
+// definitions is a write (admin-enforced in the FastAPI handler via the
+// X-Auth-Role we inject here after verifying the session).
+const LABWARE_PATH_RE = /^\/api\/labware(?:\/.*)?$/;
+
 // -- /api/assistant/* gate (Phase 2) -----------------------------------------
 //
 // The lab assistant is read-only for hardware but can read ALL lab history,
@@ -127,7 +132,10 @@ export async function middleware(request: NextRequest) {
   }
 
   // ---- Control-surface guard (view-only until signed in) ----------------
-  if (CONTROL_METHODS.has(request.method) && CONTROL_PATH_RE.test(pathname)) {
+  if (
+    CONTROL_METHODS.has(request.method) &&
+    (CONTROL_PATH_RE.test(pathname) || LABWARE_PATH_RE.test(pathname))
+  ) {
     // Never trust a client-supplied identity header; we set it only after
     // verifying a session, so control.py's audit owner can't be forged.
     const headers = new Headers(request.headers);
@@ -156,6 +164,7 @@ export const config = {
   matcher: [
     "/api/equipment/:path*",
     "/api/assistant/:path*",
+    "/api/labware/:path*",
     "/admin/:path*",
     "/api/admin/:path*",
   ],

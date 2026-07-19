@@ -32,6 +32,7 @@ from .control import build_control_router
 from .db import LabDatabase, resolve_db_path
 from .deck import build_deck_router
 from .history import build_history_router
+from .labware import build_labware_router
 from .presentation import (
     AggregatorHealth,
     EquipmentList,
@@ -423,6 +424,8 @@ app.add_middleware(
 app.include_router(build_control_router())
 
 app.include_router(build_deck_router())
+# Central custom-labware definition store (repo-committed + admin uploads).
+app.include_router(build_labware_router())
 # History + ingest endpoints (SQLite-backed).
 app.include_router(build_history_router())
 # Read-only Claude assistant -- streams chat over SSE, has tool access to

@@ -48,7 +48,10 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
       // (2×262 + one 16px gap); columns still compress below that on narrower
       // screens. Grid left-aligns and stops growing on very wide monitors.
       className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:[grid-template-columns:repeat(4,minmax(0,262px))]"
-      style={{ gridAutoRows: `${ROW_HEIGHT_PX}px` }}
+      // Rows snap to the 220px module but grow to fit content, so a tile
+      // whose content is taller than its yaml h never clips — its height
+      // snaps up and the grid reflows.
+      style={{ gridAutoRows: `minmax(${ROW_HEIGHT_PX}px, auto)` }}
     >
       {snapshots.map((snapshot) => {
         const w = snapshot.tile?.w ?? 2;

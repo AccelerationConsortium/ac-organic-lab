@@ -8,6 +8,7 @@ import type {
   LensStatusEntry,
 } from "@/types/api";
 import { kindLabel } from "@/lib/format";
+import { AuthGatedLink } from "./AuthGatedLink";
 import { CameraPlayer } from "./CameraPlayer";
 import { StatusPill } from "./StatusPill";
 
@@ -72,7 +73,7 @@ function PlatformCameraPreview({ camera }: { camera: EquipmentSnapshot }) {
         </div>
         <Link
           href={`/platforms/${camera.platform}`}
-          className="pointer-events-auto rounded-md bg-slate-900/70 px-2 py-0.5 text-[10px] font-medium text-sky-200 backdrop-blur-sm hover:text-sky-100"
+          className="pointer-events-auto rounded-md bg-slate-900/70 px-2 py-0.5 text-[10px] font-medium text-orange-300 backdrop-blur-sm hover:text-orange-200"
         >
           PTZ →
         </Link>
@@ -105,24 +106,24 @@ function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {showLink && (
-          <a
+          <AuthGatedLink
             href={linkHref!}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] font-medium text-sky-700 hover:underline dark:text-sky-400"
+            equipmentId={snapshot.id}
+            external
+            className="text-[10px] font-medium text-orange-600 hover:underline dark:text-orange-400"
           >
             {linkLabel} ↗
-          </a>
+          </AuthGatedLink>
         )}
         {showOpen && (
-          <a
+          <AuthGatedLink
             href={snapshot.base_url!}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] font-medium text-sky-700 hover:underline dark:text-sky-400"
+            equipmentId={snapshot.id}
+            external
+            className="text-[10px] font-medium text-orange-600 hover:underline dark:text-orange-400"
           >
             Open ↗
-          </a>
+          </AuthGatedLink>
         )}
         <StatusPill state={snapshot.status.equipment_status} />
       </div>
@@ -184,7 +185,7 @@ export function PlatformCard({
           {href && (
             <Link
               href={href}
-              className="text-xs font-medium text-sky-700 hover:underline dark:text-sky-400"
+              className="text-xs font-medium text-orange-600 hover:underline dark:text-orange-400"
             >
               Open →
             </Link>

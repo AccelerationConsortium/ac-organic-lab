@@ -863,3 +863,62 @@ export async function postDeckDeclare(
 export async function deleteDeckDeclare(equipmentId: string): Promise<DeviceDeck> {
   return controlDelete<DeviceDeck>(equipmentId, "deck/declare");
 }
+
+// -- Central custom-labware store (/api/labware) -----------------------------
+//
+// Two merged sources served by api/app/labware.py: repo-committed
+// (<repo>/labware/*.json, PR-reviewed) and admin-uploaded (data/labware/).
+// Reads are public; POST/DELETE are session-gated at the middleware and
+// admin-enforced server-side.
+
+export interface LabwareSummary {
+  load_name: string;
+  display_name: string;
+  display_category: string;
+  is_tiprack: boolean;
+  rows: number;
+  columns: number;
+  well_count: number;
+  well_volume_ul?: number | null;
+  version?: number | null;
+  namespace?: string | null;
+  source: "repo" | "uploaded" | "standard";
+}
+
+export async function getLabwareList(): Promise<{ definitions: LabwareSummary[] }> {
+  return fetchJson<{ definitions: LabwareSummary[] }>("/api/labware");
+}
+
+/** Every official Opentrons definition (latest schema-2 version each),
+ *  served from the opentrons-shared-data package on the dashboard host. */
+export async function getStandardLabwareList(): Promise<{ definitions: LabwareSummary[] }> {
+  return fetchJson<{ definitions: LabwareSummary[] }>("/api/labware/standard");
+}
+
+export async function getStandardLabwareDefinition(
+  loadName: string,
+): Promise<{ source: string; definition: Record<string, unknown> }> {
+  return fetchJson(`/api/labware/standard/${encodeURIComponent(loadName)}`);
+}
+
+export async function getLabwareDefinition(
+  loadName: string,
+): Promise<{ source: string; definition: Record<string, unknown> }> {
+  return fetchJson(`/api/labware/${encodeURIComponent(loadName)}`);
+}
+
+export async function postLabware(
+  definition: Record<string, unknown>,
+): Promise<LabwareSummary> {
+  return fetchJson<LabwareSummary>("/api/labware", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ definition }),
+  });
+}
+
+export async function deleteLabware(loadName: string): Promise<void> {
+  return fetchJson<void>(`/api/labware/${encodeURIComponent(loadName)}`, {
+    method: "DELETE",
+  });
+}

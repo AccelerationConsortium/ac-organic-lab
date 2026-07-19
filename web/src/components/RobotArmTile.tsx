@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
+import { AuthGatedLink } from "./AuthGatedLink";
 import { LockButton } from "./ControlLock";
 import { FetchErrorBand } from "./FetchErrorBand";
 import { StatusPill } from "./StatusPill";
@@ -183,37 +184,24 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       ? `${snapshot.base_url.replace(/\/+$/, "")}/web`
       : null);
 
-  // Deep-link to the device's own /web panel. Disabled (not a link) while
-  // locked, matching the rest of the tile's controls. Lives in the top banner,
-  // pushed to the right of STOP / CLEAR.
-  const panelLink = !controlPanelUrl ? null : locked ? (
-    <button
-      type="button"
-      disabled
-      title={`${lockTitle} to open the xArm control panel`}
-      className={[
-        "inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md border px-2.5 text-xs font-semibold",
-        "cursor-not-allowed opacity-40",
-        "border-slate-200 bg-white text-ink-muted",
-        "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300",
-      ].join(" ")}
-    >
-      Open control panel ↗
-    </button>
-  ) : (
-    <a
+  // Deep-link to the device's own /web panel. Lives in the top banner, pushed
+  // to the right of STOP / CLEAR. AuthGatedLink swallows unauthorized clicks
+  // and pops a transient "Not authorized" bubble instead of navigating.
+  const panelLink = !controlPanelUrl ? null : (
+    <AuthGatedLink
       href={controlPanelUrl}
-      target="_blank"
-      rel="noopener noreferrer"
+      equipmentId={snapshot.id}
+      external
+      title={locked ? `${lockTitle} to open the xArm control panel` : undefined}
       className={[
         "inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md border px-2.5 text-xs font-semibold transition-colors",
-        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500",
-        "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100",
-        "dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200 dark:hover:bg-emerald-900/60",
+        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500",
+        "border-orange-300 bg-orange-50 text-orange-800 hover:bg-orange-100",
+        "dark:border-orange-700 dark:bg-orange-950/40 dark:text-orange-200 dark:hover:bg-orange-900/60",
       ].join(" ")}
     >
       Open control panel ↗
-    </a>
+    </AuthGatedLink>
   );
 
   return (

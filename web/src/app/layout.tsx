@@ -5,6 +5,7 @@ import { QueryProvider } from "@/lib/query-client";
 import { UserAuthProvider } from "@/lib/user-auth";
 import { AssistantBubble } from "@/components/AssistantBubble";
 import { Nav } from "@/components/Nav";
+import { StateReferencePanel } from "@/components/StateReferencePanel";
 
 export const metadata: Metadata = {
   title: "Organic Self-driving Lab",
@@ -46,10 +47,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </header>
             <main>{children}</main>
             <footer className="pt-6 text-xs text-ink-subtle dark:text-slate-500">
-              Live dashboard · sign in to control · v1
+              Live dashboard · sign in to control · v2
             </footer>
           </div>
           <AssistantBubble />
+          <StateReferencePanel />
          </UserAuthProvider>
         </QueryProvider>
       </body>

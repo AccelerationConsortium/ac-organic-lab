@@ -59,7 +59,7 @@ export function PlatformSummary({
         {href && (
           <a
             href={href}
-            className="text-sm text-sky-700 hover:underline dark:text-sky-400"
+            className="text-sm text-orange-600 hover:underline dark:text-orange-400"
           >
             Open platform →
           </a>

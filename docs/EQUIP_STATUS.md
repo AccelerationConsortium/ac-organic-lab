@@ -402,6 +402,10 @@ state, track position).
 ## 11) Liquid handler (`kind: liquid_handler`) — OT-2
 
 The Opentrons OT-2 renders as the kind-specific `LiquidHandlerTile`.
+Each OT-2 also has a dedicated **full-page interface** at
+`/equipment/<id>/control` (aliases `/ot2_hte`, `/ot2_complexation`) with the
+full deck, declared-vs-observed state, module telemetry, tip tracking and
+claim visibility — see [`OT2_INTERFACE.md`](OT2_INTERFACE.md).
 There are **two** OT-2s, each fronted by its own `opentrons-server`
 gateway process (the gateway is multi-instance by design — one process
 per robot, own port, own robot host, own state files):
@@ -427,19 +431,22 @@ tip tracking (``tips.reset`` — physical rack swap), and convenience
 cross-contamination guard (``sample_id`` / ``force`` on the args); refusals
 return HTTP 412 and never mutate ``last_error``.
 
-### Tile behaviour
+### Tile behaviour (read-only since 2026-07-15)
 
-A top row with the lifecycle/light controls + pipette pills, a 12-slot
-deck grid, a "Select Labware" picker, then the SSH / Protocol status
-pills (and any leftover `MetricList` / `ComponentList`).
+The tile is a **read-only summary**: a top row with a "Control interface →"
+link + read-only light/pipette pills, a non-interactive 12-slot deck grid,
+then the SSH / Protocol status pills (and any leftover `MetricList` /
+`ComponentList`). **All control** — session lifecycle, lights toggle,
+declaring deck intent — lives on the dedicated full-page interface at
+`/equipment/<id>/control` (see [`OT2_INTERFACE.md`](OT2_INTERFACE.md));
+the tile carries no lock chip because it has nothing to gate.
 
-**Top row** — `Init` / `Stop` / `Light` controls + two pipette pills:
+**Top row** — the control-page link + three read-only pills:
 
 | Element | Source | Behaviour |
 |---|---|---|
-| **Init** button | `POST /control/startup` | Initialise / home the robot. Lock-gated (requires sign-in), disabled while a control call is in flight. |
-| **Stop** button | `POST /control/shutdown` | Danger-styled. The OT-2 has **no motion-stop endpoint**, so "Stop" maps to `shutdown` (power down; re-`Init` required afterward). Lock-gated. |
-| **Light** button with a state dot | `components.lights.state` (`on` / `off` / `unknown`) | One button that toggles (POSTs the opposite of the current state). Dot is **amber (glowing)** when on, **black** when off. Convenience-class: no lock chip, but disabled + hinted when signed out. |
+| **Control interface →** link | — | Navigates to `/equipment/<id>/control`, where all OT-2 controls live. |
+| **Light pill** with a state dot | `components.lights.state` (`on` / `off` / `unknown`) | Read-only indicator: dot is **amber (glowing)** when on, **black** when off, grey when unknown. The toggle is on the control page. |
 | Left / right **pipette pills** | `components.pipette_left.state` / `pipette_right.state` | Model formatted (`p300_multi_gen2` → `P300 Multi`); left mount rendered first (position implies the mount, so no caption). Hover shows mount + raw model; empty mount shows `—`. |
 
 **Deck grid** — 12 slots, 3 columns × 4 rows, numbered to match the
@@ -448,8 +455,9 @@ top-right**). Blocks are a **fixed 160×120 px**; the grid keeps three
 fixed columns and distributes extra width between them
 (`justify-content: space-between`), so resizing the window only spaces
 the blocks out horizontally rather than stretching them (scrolls if the
-tile is narrower than three blocks). Click a slot to select it
-(highlights sky-blue; click again to deselect).
+tile is narrower than three blocks). On the tile the grid is
+non-interactive (hover tooltips only); slot selection happens on the
+control page, where the same `DeckPanel` renders with a click handler.
 
 **Deck source (2026-07 — device-driven, with fallback).** The tile
 prefers the gateway's *own* normalized deck published at
@@ -474,17 +482,17 @@ flag day. Rendering by slot:
   `slot_state == "mismatch"` — the operator declared one labware but the
   device observed another (hover shows both).
 
-**Select Labware** — a picker at the bottom, disabled until a slot is
-selected. It sets **operator-declared intent**, not observed state.
-- On a **migrated** gateway it offers the fuller normalized set
-  (96/384/24-well, tip rack, reservoir, tube rack, waste) and writes via
-  `POST /control/deck/declare` (the `deck.declare` skill) through the
-  control passthrough — claim-gated and audited like any control write.
-  Only operator-declared slots are sent; observed labware is left to the
-  device. Declaring a slot that the device observes differently surfaces
-  as a `mismatch`.
-- On a **legacy** device it offers 96-well / 24-well / waste and writes
-  the shared dashboard store (below).
+**Declare deck intent** — lives on the **control page** (searchable,
+grouped picker over the central authored catalog: exact Opentrons
+load_names, the four module keys, and the legacy generic kinds —
+`web/src/lib/ot2-catalog.ts`). It sets **operator-declared intent**, not
+observed state (it does not load labware or run setup — see
+[`OT2_INTERFACE.md`](OT2_INTERFACE.md)), and writes via
+`POST /control/deck/declare` (the `deck.declare` skill) through the
+control passthrough — auth-gated, claim-danced and audited like any
+control write. Only operator-declared slots are sent; observed labware is
+left to the device. Declaring a slot that the device observes differently
+surfaces as a `mismatch`.
 
 **SSH + Protocol pills** — `components.ssh` and `components.protocol`
 render as two side-by-side pills (dot green when `connected` / `ready`,
@@ -493,10 +501,11 @@ else grey; state text alongside). These plus `lights` /
 (`LiquidHandlerTile.tsx`), so they're filtered out of the generic
 `ComponentList` to avoid duplication.
 
-The Light control does NOT respect the in-tile lock chip (convenience-
-class, see [`EQUIP_GUIDE.md`](EQUIP_GUIDE.md) §6b "Two layers, two bypass points"); `Init` / `Stop` **do**
-(they're claim-gated lifecycle writes, not a middleware bypass), so the
-header lock chip is now load-bearing.
+The lifecycle (`startup` / `shutdown` / `pause`) and lights controls that
+used to live on the tile moved to the control page with the same gating:
+lifecycle writes are lock-gated (sign-in + per-device role), lights stays
+convenience-class (sign-in only; see [`EQUIP_GUIDE.md`](EQUIP_GUIDE.md)
+§6b "Two layers, two bypass points").
 
 ### Deck-layout store (shared, server-persisted — legacy fallback)
 

@@ -526,7 +526,7 @@ function PresetModal({
       <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-surface-raised p-4 shadow-xl dark:border-slate-800 dark:bg-slate-900">
         <h4 className="text-sm font-semibold text-ink dark:text-slate-100">Save preset</h4>
         <p className="mt-1 text-xs text-ink-muted dark:text-slate-400">
-          Captures the camera's current pan/tilt/zoom under the given name.
+          Captures the camera&apos;s current pan/tilt/zoom under the given name.
         </p>
         <input
           autoFocus
