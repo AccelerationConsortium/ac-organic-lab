@@ -80,6 +80,7 @@ All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](doc
 | [`docs/INTERLOCKS.md`](docs/INTERLOCKS.md) | Four-layer safety model (hardware limits → device state machine → skill preconditions → project plan interlocks); `validate_plan` / `execute_plan` API. |
 | [`docs/DEVICE_PC_SETUP.md`](docs/DEVICE_PC_SETUP.md) | Canonical install recipe for a Windows device PC (uv + NSSM + Tailscale). Linked from every device repo's README rather than duplicated per-repo. |
 | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Logging tiers (journald → events.jsonl → central SQLite), the history DB schema, dashboard history endpoints, retention guidance. |
+| [`docs/ALERTING.md`](docs/ALERTING.md) | How alerting works end-to-end — Uptime Kuma (services) + the aggregator notifier (devices) → PyPoe → Slack + Claude investigation. Overview, runbook, troubleshooting. |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Per-device migration status (`legacy_http` → v1.0 → v1.1), SDK milestones (v0.1 → v0.5), and live operational regressions. |
 | [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md) | **Canonical auth doc.** Email-code login (`ac_auth`), roster allow-list, per-scope grants, claim-before-control, data isolation, and the phased rollout (Phase 0 shipped). |
 | [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md) | **Agent entry point.** Shared working instructions for all agents (`AGENTS.md`) + Claude-Code specifics (`CLAUDE.md`). See [Working with coding agents](#working-with-coding-agents). |

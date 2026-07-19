@@ -352,6 +352,26 @@ equipment:
       link_label: "Open"
       link_href: http://100.64.254.6/pypoe/
 
+  # Uptime Kuma — the alerting watchdog (docker, host network, :8005). It
+  # doesn't speak STATUS_SPEC itself, so PyPoe gateway-fronts it (same
+  # pattern as kasa-tapo-services): GET /kuma/status on pypoe_web serves a
+  # v1.0 envelope with one ComponentStatus per Kuma monitor, read from
+  # Kuma's public status page (slug "lab"). Kuma unreachable → "unknown"
+  # per STATUS_SPEC §2.1; the tile then renders "unreachable".
+  - id: uptime_kuma
+    name: Uptime Kuma
+    kind: other
+    adapter: http
+    protocol: "1.0"
+    base_url: http://100.64.254.6:8006
+    status_path: /kuma/status
+    poll_timeout_seconds: 3.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills:
+      link_label: "Open"
+      link_href: http://100.64.254.6:8005/
+
   # LaAgenteAnalitica — the agent chat UI (React/Vite) on a separate PC,
   # fronted by the edge at /agente/ (the built Vite base) so it shows the shared
   # auth banner and one sign-in. Displayed as "AnaliticaChat" on the dashboard.

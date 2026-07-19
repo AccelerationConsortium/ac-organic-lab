@@ -201,6 +201,7 @@ readers don't have to reverse-engineer it from the table:
 | `state_transition` | **Aggregator** 60 s poll (`api/app/main.py`) on an observed `equipment_status` change; **device-pushed** by exporters (xArm) for fine-grained transitions | The poll path misses any transition that begins and ends inside one 60 s window; device-pushed rows close that gap. Both use `from_state` / `to_state`. |
 | `control_action` | Dashboard control passthrough (`api/app/control.py`) | One audit row per operator write: `payload: {action, method, status_code, outcome, owner}`. |
 | `agent_observation` | PyPoe read-only journaling | Free-form agent notes via `/api/ingest/events`. |
+| `alert_emitted` | Device-alert notifier (`api/app/alert_notifier.py`) | One audit row per device alert pushed to PyPoe's `/alerts/device` webhook: `payload: {event, devices, outcome, target}`. Enabled by `PYPOE_ALERT_URL`. |
 | `error` | **Device-pushed** (xArm exporter, from the SDK error/warn callbacks) | `payload.extra: {severity: "error"\|"warning", error_code, warn_code, xarm_state, graph_node}`. |
 | `startup` / `shutdown` | **Device-pushed** (xArm exporter, on connect / disconnect) | Marks controller lifecycle, not process lifecycle (that's `service_uptime`). |
 | `calibration`, `claim_acquired` | *reserved — not yet emitted* | Kept in the vocabulary for future device exporters. |
@@ -299,6 +300,43 @@ SELECT
     ) AS uptime_pct
 FROM events;
 ```
+
+### 6b. Device alerting — the alert notifier
+
+Recording transitions is passive; **alerting** on them is the job of
+`api/app/alert_notifier.py`, fed by the same 60 s loop (one `observe()`
+per device per sweep, one `flush()` per sweep). It POSTs device alerts
+to PyPoe's `POST /alerts/device` webhook, which posts to Slack and
+spawns a read-only Claude investigation (see PyPoe's
+`docs/LAB_INTEGRATION.md`).
+
+Division of labor: **Uptime Kuma** (dashboard host, `:8005`) watches
+the *platform services* (aggregator, dashboard, PyPoe, gateways, auth,
+AnaliticaDB) and alerts through PyPoe's `/alerts/kuma`; the **aggregator
+notifier** watches the *devices* and alerts through `/alerts/device`.
+The aggregator stays the single authority on device state — do not add
+device monitors to Kuma. Kuma itself is visible on the dashboard as the
+`uptime_kuma` tile, gateway-fronted by PyPoe (`/kuma/status`).
+
+Rules (all in `alert_notifier.py`, unit-tested in
+`api/tests/test_alert_notifier.py`):
+
+- `unreachable` only after **2 consecutive failed sweeps** — a single
+  missed poll never alerts. Gateway-fronted kinds (`camera`,
+  `smart_plug`, `power_strip`) reporting `unknown` count as unreachable
+  per STATUS_SPEC §2.1.
+- `error` / `e_stop` alert **immediately** on the state edge, carrying
+  the device's `last_error`.
+- `recovered` is sent only for devices that previously alerted.
+- Devices with `enabled: false`, a `maintenance:` block, or
+  `adapter: mock` are suppressed.
+- **30-min per-device cooldown**; ≥3 devices tripping in one sweep
+  collapse into a single storm alert (shared-cause heuristic).
+- Delivery is best-effort (never blocks the poll loop); every emitted
+  alert writes an `alert_emitted` audit row (§4 registry).
+
+Enabled by `PYPOE_ALERT_URL` in the repo-root `.env`
+(e.g. `http://100.64.254.6:8006/alerts/device`); unset = off.
 
 ---
 

@@ -182,6 +182,11 @@ Owns:
   - `runs` + `well_results` — dosing run records and per-well outcomes
 - **Background uptime poll task** (`main.py`): runs every 60 s, writes to
   `service_uptime` only on reachability *transitions* (not every poll)
+- **Device-alert notifier** (`alert_notifier.py`): fed by the same 60 s
+  sweep; pushes debounced device alerts (unreachable / error / e_stop /
+  recovered, with cooldown + storm collapse) to PyPoe's `/alerts/device`
+  webhook for Slack + investigation. Enabled by `PYPOE_ALERT_URL`; audits
+  each alert as an `alert_emitted` event. See [`ALERTING.md`](ALERTING.md).
 - **History API** (`history.py`): `GET /api/history/*` read endpoints for
   the dashboard; `POST /api/ingest/*` write endpoints for device services
 - **Operator control passthrough** (`control.py`): mirrors each device's
@@ -421,6 +426,7 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 - `docs/SKILLS_CATALOG.md` — skill catalog design (`SkillDef` / `Skill`, runtime availability, evolution from hard-coded → device-declared)
 - `docs/INTERLOCKS.md` — four-layer safety model and the project interlock API (`add_interlock`, `validate_plan`, `PlanReport`)
 - `docs/OBSERVABILITY.md` — logging, events, and the central history DB
+- `docs/ALERTING.md` — how Kuma, the aggregator notifier, and PyPoe alert together (overview + runbook)
 - `docs/AUTH_DESIGN.md` — identity, authorization, and the data-isolation `can_read` policy AnaliticaDB shares
 - `docs/ANALITICADB_ELN_LIMS_DESIGN.md` — the experiment-data record layer (ELN + LIMS results catalog)
 - `docs/EQUIP_GUIDE.md` — onboarding and maintenance guideline (§1–§6b)
