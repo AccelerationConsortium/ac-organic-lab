@@ -188,7 +188,7 @@ The lab account also needs the "Log on as a service" right. NSSM grants this aut
 |---------------------------|----------------|------|-------------------------------------------|---------------------|
 | `xarm-translocation`      | `xarm`         | 8000 | `run pyxarm api` (NOT `pyxarm web`)       | `sdl2-pc-03-cytation.<tailnet>` |
 | `agilent-plateloc-server` | `plateloc`     | 8010 | `run --extra api agilent-plateloc-serve`  | `sdl2-pc-03-cytation.<tailnet>` |
-| `agilent-cytation-server` | `cytation`     | 9333 | `run agilent-cytation-serve`              | `sdl2-pc-03-cytation.<tailnet>` |
+| `agilent-cytation-server` | `cytation`     | 8040 | `run agilent-cytation-serve`              | `sdl2-pc-03-cytation.<tailnet>` |
 | `opentrons-server`        | `ot2-gateway`  | 8020 | `run uvicorn opentrons_server.gateway.api:app --host 0.0.0.0 --port 8020` | `sdl2-pc-03-cytation.<tailnet>` |
 | `torry-pines-shaker-server` | `torry-pines-shaker` | 8030 | `run --extra api torry-pines-shaker-serve` | `sdl2-pc-03-cytation.<tailnet>` |
 | `agilent-biostack4-standalone` | `biostack4`     | 8050 | `run --extra api agilent-biostack4-serve --dry-run` (set `[service].port = 8050` in `config.toml`: the 8030 default is taken by `torry-pines-shaker` on this shared PC) | `sdl2-pc-03-cytation.<tailnet>` |
