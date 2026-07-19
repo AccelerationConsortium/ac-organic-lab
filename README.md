@@ -86,6 +86,7 @@ All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](doc
 | [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md) | **Agent entry point.** Shared working instructions for all agents (`AGENTS.md`) + Claude-Code specifics (`CLAUDE.md`). See [Working with coding agents](#working-with-coding-agents). |
 | [`docs/AGENT_RULES.md`](docs/AGENT_RULES.md) | Lab-wide rules for agents operating on lab infrastructure (safety, records, change control, escalation). Project repos link here from their own `AGENT_RULES.md`. |
 | [`docs/ANALITICADB_ELN_LIMS_DESIGN.md`](docs/ANALITICADB_ELN_LIMS_DESIGN.md) | Design for generalizing AnaliticaDB into the lab's ELN+LIMS record layer (mirror — the canonical copy lives in the AnaliticaDB repo). |
+| [`docs/ELN_UI_PLAN.md`](docs/ELN_UI_PLAN.md) | Cross-repo plan for the ELN *user experience* — the design → execute → analyze (DMTA) loop made operable from one UI. Spans LaAgenteAnalitica, `lab-skills`, organic-solubility, and AnaliticaDB. |
 | [`deploy/README.md`](deploy/README.md) | Linux server deployment, systemd units, Caddy + Tailscale TLS, day-to-day operations. |
 
 ## Local development
