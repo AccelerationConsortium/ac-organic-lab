@@ -123,10 +123,14 @@ async def _list_equipment_now() -> str:
     return json.dumps({"equipment": rows})
 
 
-async def _query_equipment_events(device_id: str | None, limit: int) -> str:
+async def _query_equipment_events(
+    device_id: str | None, limit: int, event_type: str | None = None
+) -> str:
     if not device_id:
         return json.dumps({"error": "device_id is required"})
-    events = _db().get_equipment_events(device_id, limit=_clamp_limit(limit))
+    events = _db().get_equipment_events(
+        device_id, limit=_clamp_limit(limit), event_type=event_type
+    )
     return json.dumps({"device_id": device_id, "events": events}, default=str)
 
 
@@ -246,12 +250,18 @@ def _build_server():
         return await _list_equipment_now()
 
     @mcp.tool()
-    async def query_equipment_events(device_id: str, limit: int = 50) -> str:
+    async def query_equipment_events(
+        device_id: str, limit: int = 50, event_type: str | None = None
+    ) -> str:
         """State-change events from the history DB (startup, shutdown,
         error, state_transition) for one device, newest first. Use for
-        questions like "has plateloc had errors today"."""
+        questions like "has plateloc had errors today".
 
-        return await _query_equipment_events(device_id, limit)
+        Pass event_type="agent_observation" to read back prior findings the
+        PyPoe alert investigator journaled about this device — useful for
+        "has anything been noted about ot2_hte before"."""
+
+        return await _query_equipment_events(device_id, limit, event_type)
 
     @mcp.tool()
     async def query_service_uptime(device_id: str, days: int = 7) -> str:

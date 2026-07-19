@@ -394,14 +394,26 @@ class LabDatabase:
         return [dict(r) for r in rows]
 
     def get_equipment_events(
-        self, device_id: str, *, limit: int = 50
+        self, device_id: str, *, limit: int = 50, event_type: Optional[str] = None
     ) -> list[dict]:
-        rows = self._fetchall(
+        """Recent events for one device, newest first.
+
+        ``event_type`` optionally narrows to a single kind (e.g.
+        ``"agent_observation"`` to read back prior agent findings, or
+        ``"state_transition"``). ``None`` returns every kind, unchanged.
+        The ``(device_id, ts)`` index carries the scan; the event_type
+        predicate is a cheap in-scan filter at these row counts.
+        """
+        sql = (
             "SELECT ts, event_type, from_state, to_state, message, payload"
             " FROM equipment_events WHERE device_id = ?"
-            " ORDER BY ts DESC LIMIT ?",
-            (device_id, limit),
         )
+        params: tuple = (device_id,)
+        if event_type:
+            sql += " AND event_type = ?"
+            params += (event_type,)
+        sql += " ORDER BY ts DESC LIMIT ?"
+        rows = self._fetchall(sql, params + (limit,))
         result = []
         for r in rows:
             d = dict(r)

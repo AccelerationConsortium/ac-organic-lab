@@ -55,7 +55,7 @@ each):
 |------|---|-------|
 | `fume_hood` | 2 | `sash.move`, `sash.stop` |
 | `hplc` | 6 | `run.{submit,abort}`, `queue.cancel`, `instrument.standby`, `workflow.{start,end}` (Agilent UPLC-MS sidecar) |
-| `liquid_handler` | 16 | OT-2 full `/control/*` surface: lifecycle (`startup`/`shutdown`), protocol exec (`setup`/`home`/`pick_up_tip`/`aspirate`/`dispense`/`drop_tip`/`move_labware`/`pause`/`resume`), plate tracking (`plate.{load,unload}`/`well.update`), convenience (`lights.set`/`deck.declare`). Typed args added 2026-07-12 |
+| `liquid_handler` | 18 | OT-2 full `/control/*` surface: lifecycle (`startup`/`shutdown`), protocol exec (`setup`/`home`/`move_to`/`pick_up_tip`/`aspirate`/`dispense`/`drop_tip`/`move_labware`/`pause`/`resume`), plate + tip tracking (`plate.{load,unload}`/`well.update`/`tips.reset`), convenience (`lights.set`/`deck.declare`). Typed args added 2026-07-12; `move_to` (well or absolute-XYZ pipette motion) added 2026-07-18 |
 | `plate_reader` | 11 | Mirrors `agilent-cytation-server` `/control/*` surface |
 | `plate_sealer` | 8 | Includes 412-precondition skills with `requires_components` (heater + stage) |
 | `plate_stacker` | 6 | Agilent BioStack `/control/*` surface |
@@ -398,7 +398,7 @@ The MCP milestone resumes when **all** of the following are true:
 3. **`lab.skills()` returns a non-empty catalog with `available=True`
    entries against at least one v1.1 device.** ✅ **met** — every
    v1.1 device reports non-empty `allowed_actions` live, and the
-   SkillDef registry spans 10 kinds, all non-empty (78 SkillDefs total).
+   SkillDef registry spans 10 kinds, all non-empty (80 SkillDefs total).
 4. **A workflow can run a five-step `Plan` against `agilent-plateloc-server`
    (dry-run is fine) using `validate_plan` + an executor.**
    ✅ **met (code)** — `execute_plan` shipped in PR-1 with offline + `dry_run`

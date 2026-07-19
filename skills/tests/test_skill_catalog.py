@@ -73,6 +73,7 @@ def test_liquid_handler_protocol_surface_endpoints() -> None:
         "aspirate": "/control/aspirate",
         "dispense": "/control/dispense",
         "drop_tip": "/control/drop-tip",
+        "move_to": "/control/move-to",
         "move_labware": "/control/move-labware",
         "pause": "/control/pause",
         "resume": "/control/resume",
@@ -95,8 +96,14 @@ def test_liquid_handler_protocol_surface_endpoints() -> None:
 
     # startup is the only init-state action; motion verbs run from ready.
     assert "requires_init" in by_name["startup"].requires_states
-    for name in ("pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware"):
+    for name in ("move_to", "pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware"):
         assert by_name[name].requires_states == ["ready"]
+
+    # move_to targets a well OR absolute deck coordinates (exactly one).
+    move_to_fields = by_name["move_to"].args_schema.model_fields
+    assert {"pipette", "location", "coordinates", "speed", "force_direct"} <= set(
+        move_to_fields
+    )
 
 
 def test_liquid_handler_names_match_gateway_allowed_actions() -> None:
@@ -111,7 +118,7 @@ def test_liquid_handler_names_match_gateway_allowed_actions() -> None:
     # can emit, plus the two convenience controls it appends unconditionally.
     gateway_advertised = {
         "startup", "shutdown", "home", "setup", "pause", "resume",
-        "pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware",
+        "move_to", "pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware",
         "plate.load", "plate.unload", "well.update",
         "tips.reset",
         "lights.set", "deck.declare",

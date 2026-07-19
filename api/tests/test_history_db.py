@@ -62,3 +62,23 @@ def test_get_control_actions_tolerates_missing_payload(tmp_path):
     rows = db.get_control_actions()
     assert rows[0]["action"] is None and rows[0]["message"] == "startup"
     db.close()
+
+
+def test_get_equipment_events_filters_by_event_type(tmp_path):
+    db = _db(tmp_path)
+    db.record_equipment_event("ot2_hte", "state_transition", from_state="ready", to_state="busy")
+    db.record_equipment_event(
+        "ot2_hte",
+        "agent_observation",
+        message="Blocking lights read in /status caused the flap",
+        payload={"severity": "warning", "source": "claude-agent"},
+    )
+    db.record_equipment_event("ot2_hte", "agent_observation", message="recurrence #2")
+    # unfiltered returns every kind
+    assert len(db.get_equipment_events("ot2_hte")) == 3
+    # filtered returns only the agent observations, newest first
+    obs = db.get_equipment_events("ot2_hte", event_type="agent_observation")
+    assert len(obs) == 2
+    assert all(o["event_type"] == "agent_observation" for o in obs)
+    assert obs[0]["message"] == "recurrence #2"
+    db.close()

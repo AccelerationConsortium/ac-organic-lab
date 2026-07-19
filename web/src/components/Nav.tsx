@@ -8,7 +8,9 @@ import { useUserAuth } from "@/lib/user-auth";
 const STATIC_BEFORE = [{ href: "/", label: "Overview" }];
 const STATIC_AFTER = [
   { href: "/history", label: "History" },
-  { href: "/api-reference", label: "API Reference" },
+  // Operator tools (API reference, labware builder, …) — pills inside,
+  // one route per tool.
+  { href: "/utils", label: "Utils" },
 ];
 
 export function Nav() {
@@ -16,9 +18,12 @@ export function Nav() {
   const { data: platforms } = usePlatforms();
   const { identity } = useUserAuth();
 
-  const platformTabs = (platforms?.sections ?? [])
-    .filter((s) => s.href != null)
-    .map((s) => ({ href: s.href as string, label: s.title }));
+  // One "Platforms" tab groups every `kind: platform` section — the page's
+  // pill row switches between them (the old per-platform routes still exist
+  // and are linked from there). The tab renders only when platforms exist.
+  const platformTabs = (platforms?.sections ?? []).some((s) => s.kind === "platform")
+    ? [{ href: "/platforms", label: "Platforms" }]
+    : [];
 
   // Visibility only — the /admin route is enforced by the middleware + sidecar.
   const adminTabs =

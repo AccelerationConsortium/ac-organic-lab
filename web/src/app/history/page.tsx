@@ -9,6 +9,8 @@ import {
 } from "@/lib/use-history";
 import type { EquipmentSnapshot } from "@/types/api";
 import type { SensorPoint } from "@/lib/history-api";
+import { pillClass } from "@/lib/pill";
+import { STATE_COLORS, STATE_META, type StateName } from "@/lib/state-meta";
 
 // ---------------------------------------------------------------------------
 // Shared primitives
@@ -24,14 +26,7 @@ function SectionPill({
   onClick: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
-      className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
-        active
-          ? "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300"
-          : "text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
-      }`}
-    >
+    <button onClick={onClick} aria-pressed={active} className={pillClass(active)}>
       {label}
     </button>
   );
@@ -52,43 +47,8 @@ function LoadingRow() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// State metadata — colour + label + description for every API state
-// ---------------------------------------------------------------------------
-
-type StateName =
-  | "ready" | "busy" | "requires_init" | "degraded"
-  | "dry_run" | "error" | "e_stop" | "unknown" | "unreachable";
-
-// Hex colours used for bar segments and legend dots (inline styles — safe from Tailwind purge)
-const STATE_COLORS: Record<StateName, string> = {
-  ready:         "#10b981", // emerald-500
-  busy:          "#0ea5e9", // sky-500
-  requires_init: "#fbbf24", // amber-400
-  degraded:      "#f97316", // orange-500
-  dry_run:       "#8b5cf6", // violet-500
-  error:         "#f43f5e", // rose-500
-  e_stop:        "#b91c1c", // red-700
-  unknown:       "#94a3b8", // slate-400
-  unreachable:   "#fb7185", // rose-400
-};
-
-const STATE_META: Record<StateName, {
-  label: string;
-  dot: string;
-  badge: string;
-  desc: string;
-}> = {
-  ready:         { label: "Ready",        dot: "bg-emerald-500",  badge: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300", desc: "Idle and ready to accept commands." },
-  busy:          { label: "Busy",         dot: "bg-sky-500",      badge: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300",                 desc: "Executing a protocol or operation." },
-  requires_init: { label: "Needs Init",   dot: "bg-amber-400",    badge: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",         desc: "Requires initialization before use." },
-  degraded:      { label: "Degraded",     dot: "bg-orange-500",   badge: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",     desc: "Reachable but operating in reduced capacity." },
-  dry_run:       { label: "Dry Run",      dot: "bg-violet-500",   badge: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300",     desc: "Simulating operations without physical actuation." },
-  error:         { label: "Error",        dot: "bg-rose-500",     badge: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",             desc: "Device reported an internal error — check device logs." },
-  e_stop:        { label: "E-Stop",       dot: "bg-red-700",      badge: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",                 desc: "Emergency stop active — physical inspection required." },
-  unknown:       { label: "Unknown",      dot: "bg-slate-400",    badge: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",            desc: "State genuinely undetermined — cold start before the first successful poll, or unobserved time before the aggregator began monitoring. NOT a failure on its own; counted as up for uptime %. (A device known to be offline shows as Unreachable instead.)" },
-  unreachable:   { label: "Unreachable",  dot: "bg-rose-400",     badge: "bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-400",             desc: "Device is offline — either the aggregator's /status poll failed at the transport layer (timeout / connection refused), or a gateway reports it cannot reach the backing hardware (camera / plug). This is what 'offline' means here, not Unknown. Counted as down." },
-};
+// State metadata (colour/label/desc per state) now lives in lib/state-meta.ts,
+// shared with the global auto-hiding State Reference panel in the left rail.
 
 // Kinds reached over a secondary link behind a shared gateway
 // (kasa-tapo-services fronts cameras + Kasa plugs). When the backing hardware
@@ -424,7 +384,7 @@ function UptimeSection({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
       {snapshots.length === 0 ? (
         <EmptyState message="No devices found in registry." />
       ) : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 lg:[grid-template-columns:repeat(2,minmax(0,540px))]">
           {platforms.map((p) => (
             <PlatformGroup
               key={p}
@@ -486,49 +446,8 @@ function DeviceEventsList({ deviceId }: { deviceId: string }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// State legend — compact sidebar, CSS tooltip on hover (no title attr)
-// ---------------------------------------------------------------------------
-
-function StateLegend() {
-  return (
-    <aside className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
-      <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-ink-subtle dark:text-slate-500">
-        State Reference
-      </p>
-      <ul className="flex flex-col gap-2">
-        {(Object.entries(STATE_META) as [StateName, typeof STATE_META[StateName]][]).map(
-          ([key, meta]) => (
-            <li key={key} className="group relative flex cursor-default items-center gap-2">
-              {/* Dot — inline style so it's never purged */}
-              <span
-                className="inline-block h-2 w-2 shrink-0 rounded-full"
-                style={{ backgroundColor: STATE_COLORS[key] }}
-              />
-              <span className="text-xs font-medium text-ink dark:text-slate-200">
-                {meta.label}
-              </span>
-
-              {/* CSS tooltip — appears to the left of the sidebar */}
-              <div className="pointer-events-none invisible absolute right-full top-1/2 z-50 mr-3 w-48 -translate-y-1/2 rounded-lg bg-slate-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 dark:bg-slate-700">
-                {meta.desc}
-                {/* arrow */}
-                <span className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-full border-4 border-transparent border-l-slate-900 dark:border-l-slate-700" />
-              </div>
-            </li>
-          ),
-        )}
-      </ul>
-      <p className="mt-4 text-[10px] leading-relaxed text-ink-subtle dark:text-slate-500">
-        Hover a label for details.
-        <br />
-        Bar and uptime % reflect observed time only. Periods before tracking
-        started aren't counted. Uptime % covers everything except{" "}
-        <span className="font-medium">Unreachable</span>.
-      </p>
-    </aside>
-  );
-}
+// The State Reference legend moved to the global auto-hiding panel on the
+// left edge of the site (components/StateReferencePanel.tsx).
 
 // ---------------------------------------------------------------------------
 // Sensors section
@@ -652,7 +571,7 @@ function SensorsSection({ sensors }: { sensors: EquipmentSnapshot[] }) {
           sub="Add entries with kind: environmental_sensor in equipment.yaml."
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 lg:[grid-template-columns:repeat(2,minmax(0,540px))]">
           {sensors.map((s) => (
             <SensorCard key={s.id} sensor={s} />
           ))}
@@ -826,7 +745,7 @@ function SwitchesSection({ powerBars }: { powerBars: EquipmentSnapshot[] }) {
           sub="Add entries with kind: power_strip or smart_plug in equipment.yaml."
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 lg:[grid-template-columns:repeat(2,minmax(0,540px))]">
           {powerBars.map((s) => (
             <SwitchTile key={s.id} snapshot={s} />
           ))}
@@ -840,7 +759,7 @@ function SwitchesSection({ powerBars }: { powerBars: EquipmentSnapshot[] }) {
 // History page
 // ---------------------------------------------------------------------------
 
-type Section = "uptime" | "sensors" | "switches";
+type Section = "uptime" | "sensors" | "switches" | "none";
 
 export default function HistoryPage() {
   const [section, setSection] = useState<Section>("uptime");
@@ -864,13 +783,14 @@ export default function HistoryPage() {
         </p>
       </header>
 
-      {/* Section tabs */}
-      <div className="flex gap-1 border-b border-slate-200 pb-2 dark:border-slate-800">
+      {/* Section tabs — same pill format as the Platforms tab. */}
+      <div className="flex flex-wrap items-center gap-1.5">
         {(
           [
             { id: "uptime",   label: `Uptime (${modules.length})`    },
             { id: "sensors",  label: `Sensors (${sensors.length})`   },
             { id: "switches", label: `Switches (${powerBars.length})` },
+            { id: "none",     label: "None" },
           ] as { id: Section; label: string }[]
         ).map((tab) => (
           <SectionPill
@@ -882,18 +802,12 @@ export default function HistoryPage() {
         ))}
       </div>
 
-      {/* Main content + right legend sidebar */}
-      <div className="flex items-start gap-6">
-        <div className="min-w-0 flex-1">
-          {section === "uptime"   && <UptimeSection snapshots={modules} />}
-          {section === "sensors"  && <SensorsSection sensors={sensors} />}
-          {section === "switches" && <SwitchesSection powerBars={powerBars} />}
-        </div>
-        {section !== "switches" && (
-          <div className="w-44 shrink-0">
-            <StateLegend />
-          </div>
-        )}
+      {/* Main content — the state legend lives in the global left-edge
+          State Reference panel now. */}
+      <div className="min-w-0">
+        {section === "uptime"   && <UptimeSection snapshots={modules} />}
+        {section === "sensors"  && <SensorsSection sensors={sensors} />}
+        {section === "switches" && <SwitchesSection powerBars={powerBars} />}
       </div>
     </div>
   );

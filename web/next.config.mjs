@@ -15,6 +15,22 @@ const go2rtcBase = process.env.GO2RTC_BASE ?? "http://127.0.0.1:1984";
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
+  async redirects() {
+    return [
+      // The labware builder moved under the Utils section (2026-07-16).
+      {
+        source: "/labware_builder",
+        destination: "/utils/labware_builder",
+        permanent: false,
+      },
+      // API Reference moved under Utils too (2026-07-16).
+      {
+        source: "/api-reference",
+        destination: "/utils/api_reference",
+        permanent: false,
+      },
+    ];
+  },
   async rewrites() {
     return [
       {

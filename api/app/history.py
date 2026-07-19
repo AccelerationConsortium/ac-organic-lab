@@ -188,14 +188,23 @@ def build_history_router() -> APIRouter:
     async def equipment_events(
         device_id: str,
         limit: int = 50,
+        event_type: str | None = None,
         request: Request = ...,
     ):
-        """State transitions, errors, startup/shutdown events for one device."""
+        """State transitions, errors, startup/shutdown events for one device.
+
+        Pass ``event_type`` to narrow to one kind — e.g.
+        ``event_type=agent_observation`` to read back prior agent findings
+        (what PyPoe's investigator journals via ``append_observation``).
+        """
         import asyncio
         loop = asyncio.get_event_loop()
         db = _db(request)
         rows = await loop.run_in_executor(
-            None, lambda: db.get_equipment_events(device_id, limit=limit)
+            None,
+            lambda: db.get_equipment_events(
+                device_id, limit=limit, event_type=event_type
+            ),
         )
         return {"device_id": device_id, "events": rows}
 

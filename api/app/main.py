@@ -18,7 +18,7 @@ import socket
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 import httpx
 from lab_skills import EquipmentAggregator, PlatformsConfig, load_platforms, load_registry
@@ -28,10 +28,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
 from .assistant import build_assistant_router
+from .alert_notifier import AlertNotifier
 from .control import build_control_router
 from .db import LabDatabase, resolve_db_path
 from .deck import build_deck_router
 from .history import build_history_router
+from .labware import build_labware_router
 from .presentation import (
     AggregatorHealth,
     EquipmentList,
@@ -65,7 +67,17 @@ _last_state: dict[str, str] = {}
 _plug_energy_accum: dict[str, dict[str, float]] = {}
 
 
-async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase, registry) -> None:
+#: Gateway-fronted kinds whose ``unknown`` means "unreachable" per
+#: STATUS_SPEC §2.1 — folded into the alert notifier's reachability.
+_GATEWAY_FRONTED_KINDS = {"camera", "smart_plug", "power_strip"}
+
+
+async def _uptime_poll_loop(
+    aggregator: EquipmentAggregator,
+    db: LabDatabase,
+    registry,
+    notifier=None,
+) -> None:
     """Poll all devices every 60 s and write uptime transition events to SQLite.
 
     Only writes a new transition row when reachability *changes* (plus one row
@@ -175,6 +187,30 @@ async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase, re
                 # Sensor readings — real devices expose them in status.details;
                 # mock environmental sensors get synthetic readings generated here.
                 reg_entry = _registry_map.get(device_id)
+
+                # Device-alert notifier (best-effort; suppressed for
+                # maintenance/disabled/mock entries). The notifier owns the
+                # debounce/cooldown/storm logic — see alert_notifier.py.
+                if (
+                    notifier is not None
+                    and notifier.enabled
+                    and reg_entry is not None
+                    and reg_entry.enabled
+                    and reg_entry.maintenance is None
+                    and reg_entry.adapter != "mock"
+                ):
+                    effective_reachable = reachable and not (
+                        reg_entry.kind in _GATEWAY_FRONTED_KINDS
+                        and current_state == "unknown"
+                    )
+                    notifier.observe(
+                        device_id,
+                        reachable=effective_reachable,
+                        state=current_state,
+                        message=_snap_message(snap),
+                        last_error=_snap_last_error(snap),
+                    )
+
                 if (
                     reg_entry is not None
                     and reg_entry.kind == "environmental_sensor"
@@ -189,6 +225,9 @@ async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase, re
                 else:
                     _write_sensor_readings(db, snap)
 
+            if notifier is not None:
+                await notifier.flush()
+
         except asyncio.CancelledError:
             break
         except Exception as exc:
@@ -201,6 +240,26 @@ async def _uptime_poll_loop(aggregator: EquipmentAggregator, db: LabDatabase, re
             pass
 
         await asyncio.sleep(60)
+
+
+def _snap_message(snap) -> Optional[str]:
+    """Best human-readable line for an alert: fetch_error, else status.message."""
+    try:
+        if snap.fetch_error is not None:
+            return str(snap.fetch_error)
+        return snap.status.message
+    except Exception:
+        return None
+
+
+def _snap_last_error(snap) -> Optional[dict]:
+    try:
+        last_error = snap.status.last_error
+        if last_error is None:
+            return None
+        return last_error.model_dump(mode="json") if hasattr(last_error, "model_dump") else dict(last_error)
+    except Exception:
+        return None
 
 
 def _state_str(snap) -> str:
@@ -380,10 +439,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         db = None  # type: ignore[assignment]
     app.state.db = db
 
-    # Background uptime poll
+    # Background uptime poll (+ device-alert notifier, enabled only when
+    # PYPOE_ALERT_URL is set — see alert_notifier.py).
     poll_task = None
     if db is not None:
-        poll_task = asyncio.create_task(_uptime_poll_loop(aggregator, db, registry))
+        notifier = AlertNotifier(db=db, client=app.state.control_client)
+        if notifier.enabled:
+            logger.info("Device-alert notifier enabled → %s", notifier.url)
+        poll_task = asyncio.create_task(
+            _uptime_poll_loop(aggregator, db, registry, notifier=notifier)
+        )
 
     try:
         yield
@@ -423,6 +488,8 @@ app.add_middleware(
 app.include_router(build_control_router())
 
 app.include_router(build_deck_router())
+# Central custom-labware definition store (repo-committed + admin uploads).
+app.include_router(build_labware_router())
 # History + ingest endpoints (SQLite-backed).
 app.include_router(build_history_router())
 # Read-only Claude assistant -- streams chat over SSE, has tool access to
