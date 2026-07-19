@@ -198,3 +198,29 @@ http://100.64.254.6 {
 	# the same sidecar — so no forward_auth wrapper is needed here.
 	reverse_proxy 100.64.254.6:8000
 }
+
+# ---- Uptime Kuma (admin watchdog) — SSO edge on its own PORT ---------------
+# Kuma cannot be served under a sub-path (upstream limitation), so it gets its
+# own port on the canonical host instead: cookies are port-agnostic, so the
+# ac_auth_session cookie set on http://100.64.254.6/ rides along to :8005.
+# The container binds 127.0.0.1:8005 (UPTIME_KUMA_HOST); this edge site owns
+# 100.64.254.6:8005, so the dashboard's existing "Open" link keeps working.
+# Admins only: any lab account can authenticate, but only role=admin passes
+# (X-Auth-Role is set by forward_auth from the verify response — a client-
+# supplied copy is overwritten, so the matcher below is trustworthy). Kuma's
+# internal auth is disabled (Settings → Advanced) — this edge IS its auth.
+# PyPoe keeps reading the anonymous status-page API on loopback, under this
+# gate. Requires AUTH_LOGIN_URL to be ABSOLUTE in the sidecar env, or the
+# logged-out redirect would loop on this origin.
+http://100.64.254.6:8005 {
+	# Bind the Tailnet IP specifically — Caddy's default wildcard listener
+	# (*:8005) would block the Kuma container from binding 127.0.0.1:8005.
+	bind 100.64.254.6
+	forward_auth 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
+	@nonadmin not header X-Auth-Role admin
+	respond @nonadmin "Uptime Kuma is admins-only." 403
+	reverse_proxy 127.0.0.1:8005
+}

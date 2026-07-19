@@ -122,6 +122,9 @@ export interface PillConfig {
   /** Href for the labelled pill; a root-relative path (e.g. "/xarm5/web/")
    *  resolves against the edge origin so it is forward-auth gated. */
   link_href?: string | null;
+  /** Hide the pill links entirely from users without a role on this
+   *  equipment (instead of showing a click-blocked link). */
+  authorized_only?: boolean;
 }
 
 export interface PlatformSection {

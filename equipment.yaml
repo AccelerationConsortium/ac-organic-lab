@@ -352,6 +352,23 @@ equipment:
       link_label: "Open"
       link_href: http://100.64.254.6/pypoe/
 
+  # kasa-tapo-services — the camera + plug gateway process itself (loopback
+  # :8002 on this host, reverse-proxied by Caddy for streams/controls). The
+  # per-camera and per-plug entries above poll its per-device envelopes;
+  # this row is the service-level GET /status (added for the Overview
+  # Services card) answering "is the gateway process up at all".
+  - id: kasa_tapo_gateway
+    name: Camera & Plug Gateway
+    kind: other
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8002
+    status_path: /status
+    poll_timeout_seconds: 2.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
   # Uptime Kuma — the alerting watchdog (docker, host network, :8005). It
   # doesn't speak STATUS_SPEC itself, so PyPoe gateway-fronts it (same
   # pattern as kasa-tapo-services): GET /kuma/status on pypoe_web serves a
@@ -371,6 +388,10 @@ equipment:
     pills:
       link_label: "Open"
       link_href: http://100.64.254.6:8005/
+      # Kuma's admin UI has its own login and sits outside the SSO edge
+      # (Kuma can't be served under a sub-path) — only show the link to
+      # accounts holding a role on this equipment (admin, per roster).
+      authorized_only: true
 
   # LaAgenteAnalitica — the agent chat UI (React/Vite) on a separate PC,
   # fronted by the edge at /agente/ (the built Vite base) so it shows the shared

@@ -96,6 +96,9 @@ function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const linkLabel = snapshot.pill?.link_label;
   const linkHref = snapshot.pill?.link_href;
   const showLink = !!linkLabel && !!linkHref;
+  // authorized_only pills vanish for viewers without a role on this
+  // equipment instead of rendering a click-blocked link.
+  const hideUnauthorized = snapshot.pill?.authorized_only === true;
   return (
     <li className="flex items-center justify-between gap-2 rounded-md border border-slate-100 bg-white/60 px-2.5 py-1.5 dark:border-slate-800 dark:bg-slate-950/40">
       <div
@@ -110,6 +113,7 @@ function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
             href={linkHref!}
             equipmentId={snapshot.id}
             external
+            hideUnauthorized={hideUnauthorized}
             className="text-[10px] font-medium text-orange-600 hover:underline dark:text-orange-400"
           >
             {linkLabel} ↗
@@ -120,6 +124,7 @@ function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
             href={snapshot.base_url!}
             equipmentId={snapshot.id}
             external
+            hideUnauthorized={hideUnauthorized}
             className="text-[10px] font-medium text-orange-600 hover:underline dark:text-orange-400"
           >
             Open ↗
