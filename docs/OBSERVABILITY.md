@@ -200,7 +200,7 @@ readers don't have to reverse-engineer it from the table:
 |---|---|---|
 | `state_transition` | **Aggregator** 60 s poll (`api/app/main.py`) on an observed `equipment_status` change; **device-pushed** by exporters (xArm) for fine-grained transitions | The poll path misses any transition that begins and ends inside one 60 s window; device-pushed rows close that gap. Both use `from_state` / `to_state`. |
 | `control_action` | Dashboard control passthrough (`api/app/control.py`) | One audit row per operator write: `payload: {action, method, status_code, outcome, owner}`. |
-| `agent_observation` | PyPoe read-only journaling | Free-form agent notes via `/api/ingest/events`. |
+| `agent_observation` | PyPoe read-only journaling | Free-form agent notes via `/api/ingest/events`. Read back with `GET /api/history/events/{device_id}?event_type=agent_observation` (PyPoe's `recent_observations` tool, and the assistant's `query_equipment_events(event_type=…)`) so an investigation recognises a recurrence and builds on the prior root cause instead of starting cold. |
 | `alert_emitted` | Device-alert notifier (`api/app/alert_notifier.py`) | One audit row per device alert pushed to PyPoe's `/alerts/device` webhook: `payload: {event, devices, outcome, target}`. Enabled by `PYPOE_ALERT_URL`. |
 | `error` | **Device-pushed** (xArm exporter, from the SDK error/warn callbacks) | `payload.extra: {severity: "error"\|"warning", error_code, warn_code, xarm_state, graph_node}`. |
 | `startup` / `shutdown` | **Device-pushed** (xArm exporter, on connect / disconnect) | Marks controller lifecycle, not process lifecycle (that's `service_uptime`). |
@@ -387,7 +387,7 @@ via Next's built-in proxy (`/api/...` → `http://127.0.0.1:8001/api/...`).
 |---|---|---|---|
 | `GET /api/history/uptime` | `days=7` | `{devices: {id: {uptime_pct, last_event, days}}}` | History / Uptime section |
 | `GET /api/history/uptime/{device_id}` | `days=7` | `{uptime_pct, events: [{ts, event, ...}]}` | Per-device drill-down |
-| `GET /api/history/events/{device_id}` | `limit=50` | `{events: [{ts, event_type, from_state, to_state, message}]}` | Event timeline |
+| `GET /api/history/events/{device_id}` | `limit=50`, `event_type=` | `{events: [{ts, event_type, from_state, to_state, message}]}` | Event timeline; `event_type` narrows to one kind (e.g. `agent_observation`) |
 | `GET /api/history/sensors/latest` | — | `{readings: [{sensor_id, metric, value, unit, ts}]}` | Live sensor tile |
 | `GET /api/history/sensors/{sensor_id}/{metric}` | `since_hours=1`, `limit=500` | `{readings: [{ts, value, unit}]}` | Sensor line chart |
 | `GET /api/history/runs` | `limit=20`, `device_id=` | `{runs: [RunRecord]}` | Run history table |
