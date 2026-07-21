@@ -154,8 +154,15 @@ equipment:
     do_not_call_connect: true
     tiles:
       hte: { w: 2, h: 3}
-    pills: {}
-
+    # "Open UI" pill -> the edge-gated OT-2 gateway operator SPA at
+    # /ot2/hte/ui/ (Caddy: forward_auth @ot2_hte -> ac_auth, header_up
+    # X-Edge-Key). ABSOLUTE edge URL (port 80) so it lands on the Caddy edge,
+    # NOT the device's directly-reachable :8020/ui side-door (which 404s
+    # without X-Edge-Key anyway). base_url stays the direct device port —
+    # the aggregator polls /status there, unaffected by the edge route.
+    pills:
+      link_label: "Open UI"
+      link_href: http://100.64.254.6/ot2/hte/ui/
   - id: dose_every_well
     name: Dose Every Well
     kind: solid_doser
@@ -323,7 +330,16 @@ equipment:
     do_not_call_connect: true
     tiles:
       echem: { w: 2, h: 3 }
-    pills: {}
+    # "Open UI" pill -> the edge-gated OT-2 gateway operator SPA at
+    # /ot2/complexation/ui/ (Caddy: forward_auth @ot2_complexation -> ac_auth,
+    # header_up X-Edge-Key). ABSOLUTE edge URL (port 80) so it lands on the
+    # Caddy edge, NOT the device's directly-reachable :8021/ui side-door
+    # (which 404s without X-Edge-Key anyway). base_url stays the direct
+    # device port — the aggregator polls /status there, unaffected by the
+    # edge route.
+    pills:
+      link_label: "Open UI"
+      link_href: http://100.64.254.6/ot2/complexation/ui/
 
   # ---------------------------------------------------------------------
   # Web Services
