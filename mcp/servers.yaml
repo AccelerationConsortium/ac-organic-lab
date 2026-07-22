@@ -1,0 +1,49 @@
+# Canonical, client-neutral registry of MCP servers approved for this repo.
+# Agent-specific installation files remain local; never put credentials here.
+version: 1
+
+servers:
+  pubchem:
+    description: >-
+      Read-only PubChem discovery for compound identity, properties,
+      cross-references, bioactivity, assays, and entity summaries.
+    transport: streamable-http
+    url: https://pubchem.caseyjhand.com/mcp
+    optional: true
+
+    provenance:
+      repository: https://github.com/cyanheads/pubchem-mcp-server
+      license: Apache-2.0
+      reviewed_version: 0.4.1
+      reviewed_commit: 309ce0479867825dbd73a41265e7dde12503f0a8
+      reviewed_at: 2026-07-22
+
+    tools:
+      include:
+        - pubchem_search_compounds
+        - pubchem_get_compound_details
+        - pubchem_get_compound_xrefs
+        - pubchem_get_bioactivity
+        - pubchem_search_assays
+        - pubchem_get_summary
+      exclude:
+        - pubchem_get_compound_safety
+
+    sampling:
+      enabled: false
+
+    data_policy:
+      confidential_data: prohibited
+      authoritative_inventory_source: false
+      authoritative_safety_source: false
+      notes:
+        - >-
+          Use for research and database discovery only; do not submit
+          proprietary structures, unpublished targets, or secret project data.
+        - >-
+          PubChem depositor data is not the SDS for the actual supplier,
+          formulation, concentration, or inventory lot.
+        - >-
+          The excluded safety tool merges classifications from multiple
+          depositors and must not guide handling, PPE, storage, disposal, or
+          protocol approval.
