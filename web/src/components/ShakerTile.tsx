@@ -13,7 +13,6 @@ import type { Parse412 } from "@/lib/action-error";
 import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
 import { LockButton } from "./ControlLock";
-import { StatusPill } from "./StatusPill";
 import { TileButton } from "./TileButton";
 import { TileShell } from "./TileShell";
 
@@ -252,7 +251,11 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const [waitForTemp, setWaitForTemp] = useState<boolean>(false);
 
   const status = snapshot.status.equipment_status;
-  const isBusy = status === "busy";
+  const motorActive =
+    shaker.motorState === "running" || shaker.motorState === "shaking";
+  // Activity and health are independent: a heater fault can keep the
+  // canonical device status `degraded` while the healthy motor is shaking.
+  const isBusy = status === "busy" || motorActive;
   const isReady = status === "ready";
   const isRequiresInit = status === "requires_init";
   const isDryRun = status === "dry_run";
@@ -292,6 +295,7 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   return (
     <TileShell
       snapshot={snapshot}
+      displayStatus={isBusy ? "busy" : status}
       actionError={actionError}
       lifecycle={{
         // ON toggles startup/shutdown; STOP is the halt (shake.stop aborts
@@ -309,15 +313,12 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         stopTitle: "Halt: abort the current cycle (motor and heating)",
       }}
       headerRight={
-        <>
-          <LockButton
-            locked={locked}
-            countdown={countdown}
-            onToggle={toggle}
-            noun="shaker"
-          />
-          <StatusPill state={status} />
-        </>
+        <LockButton
+          locked={locked}
+          countdown={countdown}
+          onToggle={toggle}
+          noun="shaker"
+        />
       }
     >
       {/* One metric row: Temp (actual reading + editable setpoint in a single

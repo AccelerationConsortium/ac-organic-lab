@@ -191,42 +191,20 @@ http://100.64.254.6 {
 		}
 	}
 
-	# ---- LaAgenteAnalitica UI (agent chat, separate PC) --------------------
-	# The agent's Node server (serves the built React frontend + API + WS) runs
-	# at 100.64.254.21:3000 in GRAPHCHAT_AUTH_MODE=forward_auth. Same pattern as
-	# the AnaliticaDB block below: forward_auth gates the path against ac_auth and
-	# injects X-Auth-User/Role; header_up stamps the shared proxy secret so the
-	# app trusts that identity (it verifies x-graphchat-proxy-secret against its
-	# GRAPHCHAT_TRUSTED_PROXY_SECRET — direct callers can't forge it) and shows no
-	# in-app login (loginHandledHere:false). The shared /auth/banner.js top bar
-	# rides on top. We STRIP /agente (handle_path): the backend serves the SPA
-	# + API at its root, and the frontend was built with a matching base so the
-	# browser-side URLs carry the prefix the edge strips back off.
-	#   edge:    GRAPHCHAT_EDGE_SECRET=…       in caddy's systemd env
-	#   service: GRAPHCHAT_TRUSTED_PROXY_SECRET=… on the :3000 host (must match)
-	# The frontend build MUST use the SAME slug as this route (VITE_BASE=/agente/,
-	# VITE_API_URL=/agente, VITE_WS_URL=ws://100.64.254.6/agente/…). The URL slug
-	# is /agente (the built base); the dashboard pill is still labelled "Analitica".
-	# Distinct path from /analytica (AnaliticaDB results catalog, :8010).
-	# HTTP under /agente is edge-gated; WebSocket upgrades are NOT — the app
-	# authenticates the socket itself via its short-lived ws_token, so excluding
-	# Upgrade requests from forward_auth lets the handshake reach the app (101,
-	# then app-level ws_token check) instead of Caddy 403-ing it at the edge.
-	# handle_path still strips /agente and proxies both HTTP and WS (Caddy
-	# reverse_proxy auto-handles the Upgrade) and stamps the proxy secret.
-	@agente_http {
-		path /agente /agente/*
-		not header Connection *Upgrade*
-	}
-	forward_auth @agente_http 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
-	}
+	# ---- LaAgenteAnalitica UI (agent chat, on THIS host: gaia) --------------
+	# GraphChat now runs locally at 127.0.0.1:3000 in GRAPHCHAT_AUTH_MODE=ac_auth,
+	# so the app verifies the shared ac_auth_session cookie itself (it is NOT
+	# edge-gated here, unlike the old separate-PC forward_auth setup). The cookie
+	# rides along because /agente shares this 100.64.254.6 origin; the shared
+	# /auth/banner.js top bar rides on top. handle_path STRIPS /agente: the
+	# backend serves the SPA + API at its root and the frontend was built with a
+	# matching base (VITE_BASE=/agente/) so browser URLs carry the prefix the edge
+	# strips back off. WebSocket upgrades proxy through the same handle_path
+	# (Caddy auto-handles Upgrade); the app authenticates the socket via its own
+	# short-lived ws_token. Distinct path from /analytica (AnaliticaDB, :8010).
 	redir /agente /agente/ 308
 	handle_path /agente/* {
-		reverse_proxy 100.64.254.21:3000 {
-			header_up X-Graphchat-Proxy-Secret {env.GRAPHCHAT_EDGE_SECRET}
-		}
+		reverse_proxy 127.0.0.1:3000
 	}
 
 	# ---- PyPoe web UI, path-routed ONTO this origin (banner only, NOT gated) --
