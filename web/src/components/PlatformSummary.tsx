@@ -61,7 +61,7 @@ export function PlatformSummary({
             href={href}
             className="text-sm text-orange-600 hover:underline dark:text-orange-400"
           >
-            Open platform →
+            GO →
           </a>
         )}
       </header>

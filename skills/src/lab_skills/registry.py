@@ -55,6 +55,10 @@ class PillConfig(BaseModel):
     can't use. Presentation-only — the click was already blocked client-side
     and the edge enforces server-side regardless.
 
+    ``internal: true`` marks ``link_href`` as a dashboard route. Internal
+    monitoring links use normal same-tab navigation and do not require an
+    equipment control role.
+
     Extensible: add ``icon``, etc. without breaking older entries.
     """
 
@@ -62,6 +66,7 @@ class PillConfig(BaseModel):
     link_label: str | None = None
     link_href: str | None = None
     authorized_only: bool = False
+    internal: bool = False
 
 
 # Protocol version a device claims to implement. Drives client-side behavior

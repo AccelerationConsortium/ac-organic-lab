@@ -125,6 +125,8 @@ export interface PillConfig {
   /** Hide the pill links entirely from users without a role on this
    *  equipment (instead of showing a click-blocked link). */
   authorized_only?: boolean;
+  /** Navigate within the dashboard without requiring an equipment control role. */
+  internal?: boolean;
 }
 
 export interface PlatformSection {

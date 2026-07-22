@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import yaml
 
 from lab_skills import load_registry
 from lab_skills.registry import Maintenance
@@ -35,6 +36,39 @@ def test_lookup_by_id() -> None:
     assert entry.adapter == "http"
     assert entry.kind == "solid_doser"
     assert registry.by_id("does-not-exist") is None
+
+
+def test_bambu_gateway_and_printers_are_registered() -> None:
+    registry = load_registry(REPO_ROOT / "equipment.yaml")
+
+    gateway = registry.by_id("bambu_gateway")
+    assert gateway is not None
+    assert gateway.name == "Bambu Printers"
+    assert gateway.base_url == "http://127.0.0.1:8012"
+    assert gateway.status_path == "/status"
+    assert gateway.pills.link_label == "GO"
+    assert gateway.pills.link_href == "/utils/bambu_printer"
+    assert gateway.pills.internal is True
+
+    assert registry.by_id("bambu_p1s_01") is not None
+    assert registry.by_id("bambu_h2d_01") is not None
+
+
+def test_overview_link_labels_match_navigation_behavior() -> None:
+    registry = load_registry(REPO_ROOT / "equipment.yaml")
+
+    linked = [entry for entry in registry.equipment if entry.pills.link_label]
+    assert linked
+    for entry in linked:
+        expected = "GO" if entry.pills.internal else "Open"
+        assert entry.pills.link_label == expected, entry.id
+
+
+def test_bambu_gateway_is_in_services_section() -> None:
+    config = yaml.safe_load((REPO_ROOT / "platforms.yaml").read_text(encoding="utf-8"))
+    services = next(section for section in config["sections"] if section["id"] == "web_services")
+
+    assert "bambu_gateway" in services["equipment"]
 
 
 def test_committed_registry_has_no_tail_placeholder_hostnames() -> None:
