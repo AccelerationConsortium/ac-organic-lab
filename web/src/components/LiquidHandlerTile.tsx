@@ -40,7 +40,7 @@ const TILE_OWNED_COMPONENTS = new Set([
  * Read-only OT-2 tile. All control (session lifecycle, lights, declaring
  * deck intent) lives on the dedicated full-page interface at
  * `/equipment/<id>/control` (aliases /ot2_hte, /ot2_complexation) — the
- * tile just summarizes state and links there. See docs/OT2_INTERFACE.md.
+ * tile just summarizes state and links there. See docs/UI_DESIGN.md §1.
  */
 export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const { status } = snapshot;

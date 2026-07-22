@@ -1,6 +1,6 @@
 # AC Organic Self-driving Lab — Architecture
 
-**Status:** living document. Last revised after the platforms.yaml refactor (schema v2).
+**Status:** living document. Last revised to record the `AGENTS.md`-based agent memory policy (design decision #11).
 
 This document describes the long-term architecture of the AC Organic Self-driving Lab software stack — what each piece is for, why it exists, and how the pieces fit together. For step-by-step implementation milestones see the working plan in `.cursor/plans/`.
 
@@ -14,6 +14,7 @@ This document describes the long-term architecture of the AC Organic Self-drivin
 - The Python SDK that workflows, agents, and the dashboard use to drive the lab (`skills/`)
 - The dashboard's web server (`api/`) and Next.js UI (`web/`)
 - Deployment and operations docs (`deploy/`, `docs/`)
+- The canonical agent-instruction base (`AGENTS.md` + `CLAUDE.md`) — shared working instructions and the agent memory policy that every other lab repo inherits (see design decision #11)
 
 It does **not** house:
 
@@ -72,7 +73,7 @@ Three responsibilities, three layers:
 2. **Platform layer** (this repo) — the SDK aggregates device state, provides typed control, manages claims/leases, and exposes the runtime skill catalog. The dashboard's web server is a thin SDK client for *reads*; for operator-initiated *writes* it proxies single `/control/*` actions to devices directly (per-request claim, bypassing the SDK — see design decision #1). The Next.js UI calls the dashboard server.
 3. **Application layer** — project workflows and agents consume the SDK to run experiments. Each project lives in its own repo with its own data model, recipes, and interlocks.
 
-Alongside these three sits the **experiment-data record layer — AnaliticaDB**, the lab's analytical-chemistry results catalog being generalized into an ELN + LIMS record store (a separate FastAPI service on the data server at `100.64.254.6:8010`, backed by Postgres; its data API lives under `/experiments`, `/samples`, `/measurements`, `/files`). It is deliberately **not** part of the platform monorepo and is **distinct from the platform's operational history DB** (`data/lab.db`, owned by `api/`): `lab.db` holds public lab telemetry (uptime, events, sensors, dosing runs), whereas AnaliticaDB holds **project-scoped scientific results** — application-layer workflows and agents write their results there, and reads are governed by the data-isolation `can_read(project, caller)` policy shared with `ac_auth` (see [`AUTH_DESIGN.md`](AUTH_DESIGN.md) and [`ANALITICADB_ELN_LIMS_DESIGN.md`](ANALITICADB_ELN_LIMS_DESIGN.md)). Because it also serves a STATUS_SPEC `/status` envelope, the dashboard registers it (`analytica_db` in `equipment.yaml`) and the aggregator polls it for a "Services" tile like any other endpoint — the dotted edge in the diagram above.
+Alongside these three sits the **experiment-data record layer — AnaliticaDB**, the lab's analytical-chemistry results catalog being generalized into an ELN + LIMS record store (a separate FastAPI service on the data server at `100.64.254.6:8010`, backed by Postgres; its data API lives under `/experiments`, `/samples`, `/measurements`, `/files`). It is deliberately **not** part of the platform monorepo and is **distinct from the platform's operational history DB** (`data/lab.db`, owned by `api/`): `lab.db` holds public lab telemetry (uptime, events, sensors, dosing runs), whereas AnaliticaDB holds **project-scoped scientific results** — application-layer workflows and agents write their results there, and reads are governed by the data-isolation `can_read(project, caller)` policy shared with `ac_auth` (see [`AUTH_DESIGN.md`](AUTH_DESIGN.md) and [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md)). Because it also serves a STATUS_SPEC `/status` envelope, the dashboard registers it (`analytica_db` in `equipment.yaml`) and the aggregator polls it for a "Services" tile like any other endpoint — the dotted edge in the diagram above.
 
 ## Why a monorepo
 
@@ -94,6 +95,8 @@ The pieces *outside* are deliberately separate repos because they have different
 ```
 ac-organic-lab/
 ├── pyproject.toml                  # uv workspace declaration
+├── AGENTS.md                       # shared agent instructions + memory policy (canonical base)
+├── CLAUDE.md                       # Claude-Code-specific notes (imports AGENTS.md)
 ├── equipment.yaml                  # inventory (root)
 ├── platforms.yaml                  # Overview layout / section config (root)
 ├── data/
@@ -101,7 +104,7 @@ ac-organic-lab/
 ├── docs/
 │   ├── STATUS_SPEC.md              # combined v1.0 baseline + v1.1 (claims, allowed_actions)
 │   ├── ARCHITECTURE.md             # this document
-│   ├── OBSERVABILITY.md            # logging, events, history DB schema
+│   ├── LAB_MONITORING.md           # logging, events, history DB schema, alerting
 │   └── ROADMAP.md                  # milestone tracking
 ├── deploy/
 │   ├── ac-organic-lab-api.service    # systemd unit (FastAPI)
@@ -186,7 +189,7 @@ Owns:
   sweep; pushes debounced device alerts (unreachable / error / e_stop /
   recovered, with cooldown + storm collapse) to PyPoe's `/alerts/device`
   webhook for Slack + investigation. Enabled by `PYPOE_ALERT_URL`; audits
-  each alert as an `alert_emitted` event. See [`ALERTING.md`](ALERTING.md).
+  each alert as an `alert_emitted` event. See [`LAB_MONITORING.md`](LAB_MONITORING.md) §6b.
 - **History API** (`history.py`): `GET /api/history/*` read endpoints for
   the dashboard; `POST /api/ingest/*` write endpoints for device services
 - **Operator control passthrough** (`control.py`): mirrors each device's
@@ -324,7 +327,7 @@ There are **two** classes of writer, distinguished by privilege and lifetime —
 
 What this buys, and what it costs:
 
-- **Audit.** Because the dashboard is now a writer, every passthrough call is recorded to `equipment_events` (`event_type: "control_action"`, with the actor, action, and outcome) so "who moved the sash, when" is answerable. See [`OBSERVABILITY.md`](OBSERVABILITY.md).
+- **Audit.** Because the dashboard is now a writer, every passthrough call is recorded to `equipment_events` (`event_type: "control_action"`, with the actor, action, and outcome) so "who moved the sash, when" is answerable. See [`LAB_MONITORING.md`](LAB_MONITORING.md).
 - **Auth.** Operator writes are gated by `CONTROL_PASSWORD` today; the [`AUTH_DESIGN.md`](AUTH_DESIGN.md) auth module (email one-time-code login, `ac_auth`) will replace the generic `ac-organic-lab-dashboard` owner with a per-user identity, stamped into both the claim and the audit row.
 - **No SDK safety net.** The passthrough skips skill-catalog preconditions and project interlocks — those run only in the workflow path. The dashboard tiles compensate client-side (disabling buttons when they can compute a precondition), and the device's 412/423 is the backstop. This is an accepted trade-off for keeping the operator path a one-hop proxy; destructive cross-device coordination must go through a workflow, not the dashboard.
 
@@ -376,6 +379,16 @@ Two choices are worth recording:
 - **Subprocess, not SDK.** `assistant.py` shells out to the `claude` CLI instead of calling the Anthropic API. This keeps `ANTHROPIC_API_KEY` out of the dashboard environment — billing and rate limits ride the operator's existing Claude Code OAuth login — and lets the same MCP server serve both the bubble and a developer's own `claude mcp add`. The cost is an operational dependency: the `claude` binary must be installed on the dashboard host, and the bubble silently hides itself (`/api/assistant/health` → `configured: false`) when it isn't.
 - **A separate MCP server from decision #7.** This is the *history/observability* MCP server (read-only, lives in `api/`), not the SDK's *skill-catalog* MCP server (control, lives in `skills/`). They are intentionally different servers with different trust levels: an operator-facing assistant gets read-only history tools; a control-capable agent gets the claim-gated skill catalog. Keep them apart.
 
+### 11. Agent memory lives in committed instruction files, anchored on `AGENTS.md`
+
+Coding agents (Hermes, Codex, Claude Code, and any future agent) keep their durable knowledge about this codebase in **committed, human-reviewable instruction files**, not in opaque per-agent stores. The repo-root [`AGENTS.md`](../AGENTS.md) is the single shared memory surface: model-agnostic conventions, commands, architecture facts, and recurring pitfalls learned while working here are written back to it, so every agent — regardless of vendor — reads the same accumulated knowledge. Per-agent files (e.g. `CLAUDE.md`) stay thin and hold only what is specific to that agent's tooling; nothing another agent would need may live there.
+
+The policy itself (what goes where, and what never gets stored) is normatively specified in `AGENTS.md` §5; the load-bearing consequences for the architecture are:
+
+- **This repo is the canonical base.** Every other repo in the workspace inherits the `AGENTS.md` + `CLAUDE.md` structure from here and layers only its own specifics on top — the same inheritance pattern the binding contract (`docs/AGENT_RULES.md`, `docs/STATUS_SPEC.md`) already follows. Fixing a shared convention means fixing it here once.
+- **Memory changes are diffs.** Because agent memory is ordinary committed markdown, it goes through the same review, history, and rollback as code. There is no hidden state that silently steers agent behavior.
+- **Scope boundaries are explicit.** Repo-specific knowledge → that repo's `AGENTS.md`; cross-repo / machine-wide facts → the agent's global memory, *proposed for human approval*, never silently written into a repo; the binding contract files change only on explicit human request; temporary debugging notes and one-off observations go nowhere.
+
 ## Long-term goals
 
 These are non-binding directional commitments — not a roadmap.
@@ -422,15 +435,17 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 
 ## See also
 
+- `AGENTS.md` — shared agent working instructions + memory policy (canonical base for all lab repos; see design decision #11)
+- `docs/AGENT_RULES.md` — the binding lab operating rules agents must not weaken
 - `docs/STATUS_SPEC.md` — combined device contract (v1.0 baseline + v1.1 additions + SiLA comparison appendix)
 - `docs/SKILLS_CATALOG.md` — skill catalog design (`SkillDef` / `Skill`, runtime availability, evolution from hard-coded → device-declared)
 - `docs/INTERLOCKS.md` — four-layer safety model and the project interlock API (`add_interlock`, `validate_plan`, `PlanReport`)
-- `docs/OBSERVABILITY.md` — logging, events, and the central history DB
-- `docs/ALERTING.md` — how Kuma, the aggregator notifier, and PyPoe alert together (overview + runbook)
+- `docs/LAB_MONITORING.md` — logging, events, the central history DB, and alerting (Kuma + the aggregator notifier + PyPoe; overview + runbook)
 - `docs/AUTH_DESIGN.md` — identity, authorization, and the data-isolation `can_read` policy AnaliticaDB shares
-- `docs/ANALITICADB_ELN_LIMS_DESIGN.md` — the experiment-data record layer (ELN + LIMS results catalog)
+- `docs/DATABASE_DESIGN.md` — the experiment-data record layer (ELN + LIMS results catalog)
 - `docs/EQUIP_GUIDE.md` — onboarding and maintenance guideline (§1–§6b)
 - `docs/EQUIP_STATUS.md` — current per-device tile implementations (§7–§11)
+- `docs/UI_DESIGN.md` — dashboard UI design & decisions (one numbered section per shipped interface; §1 is the OT-2 full-page interface)
 - `docs/DEVICE_PC_SETUP.md` — canonical install recipe for a Windows device PC
 - `docs/ROADMAP.md` — per-device migration status
 - `equipment.yaml` — the lab's equipment inventory (schema v2)

@@ -1,12 +1,15 @@
-# AnaliticaDB → ELN + LIMS generalization — design analysis
+# Database Design — AnaliticaDB as the ELN + LIMS record layer
 
-> **Status:** design-analysis note (2026-07-03). **Canonical copy:**
+> **Status:** design analysis (2026-07-03; consolidated under this name
+> 2026-07-22, formerly `ANALITICADB_ELN_LIMS_DESIGN.md`). **Canonical copy:**
 > `AnaliticaDB/docs/eln-lims-generalization.md` — edit there; this copy lives
 > in `ac-organic-lab/docs/` because this repo is the central place lab-stack
-> context is kept (like `LAAGENTEANALITICA_ASSESSMENT.md`). AnaliticaDB is a
-> separate project (the durable record system); this platform stack remains
-> the real-time layer. Companion note in that repo:
-> `docs/dmta-analysis-layering.md` (the analysis/report layering).
+> context is kept. AnaliticaDB is a separate project (the durable record
+> system); this platform stack remains the real-time layer. Companion note in
+> that repo: `docs/dmta-analysis-layering.md` (the analysis/report layering).
+> How this record layer is consumed by the agentic ELN is designed in
+> [`AGENTIC_ELN_DESIGN.md`](AGENTIC_ELN_DESIGN.md) and sequenced in
+> [`AGENTIC_ELN_PLAN.md`](AGENTIC_ELN_PLAN.md).
 
 ## The vision under analysis
 
@@ -89,6 +92,15 @@ conversation converges on, with a link back to where it was negotiated:
   exactly the shape the DMTA note recommends (`prov:Plan`, ESCALATE's
   template→object split, nominal-vs-actual).
 
+> **Note (2026-07-22):** the agentic-ELN design keeps this decision and adds
+> two companions: a git-side *decision record*
+> (`planning/<session>/decisions.md` in the project repo) as the
+> human-readable rationale artifact, and a durable *interaction record* in
+> `bitacora`'s own conversation store (separate `conversations` Postgres
+> database on the AnaliticaDB instance, project-scoped rows). Transcripts are
+> stored **only** there — not in git (resolved), and never in this database.
+> See [`AGENTIC_ELN_DESIGN.md`](AGENTIC_ELN_DESIGN.md) §13.
+
 ## 2. In-experiment observations → append-only `Note`, anchored to steps
 
 A single append-only table covers lab-notebook narration, metadata captured
@@ -125,16 +137,16 @@ so instrument data is step-correlated the same way notes are.
 
 ## 4. Analysis and reports — already settled
 
-Per [`dmta-analysis-research.md`](dmta-analysis-research.md): `Analysis` as a
-first-class entity (M2M to measurements, typed results, `supersedes`,
-insert-not-update), reports as experiment-level artifacts (`role="report"`)
-generated from analyses. `Analysis` additionally carries an optional
-`source_commit` (+ repo reference) pinning the exact analysis code that
-produced it — see the project-repo blueprint section below. Nothing in this note changes that; the `Plan` and
-`Note` layers complete the same pattern on the front end of the cycle. The
-full loop then reads: **Plan (intent) → Notes (execution actuals) →
-Measurements (instrument observations) → Analyses (interpretations) → Report
-(derived artifact) → next Plan.**
+Per the DMTA analysis note (`AnaliticaDB/docs/dmta-analysis-research.md`):
+`Analysis` as a first-class entity (M2M to measurements, typed results,
+`supersedes`, insert-not-update), reports as experiment-level artifacts
+(`role="report"`) generated from analyses. `Analysis` additionally carries an
+optional `source_commit` (+ repo reference) pinning the exact analysis code
+that produced it — see the project-repo blueprint section below. Nothing in
+this note changes that; the `Plan` and `Note` layers complete the same
+pattern on the front end of the cycle. The full loop then reads: **Plan
+(intent) → Notes (execution actuals) → Measurements (instrument observations)
+→ Analyses (interpretations) → Report (derived artifact) → next Plan.**
 
 ## 5. Chemical inventory — right requirement, wrong shape
 
@@ -405,7 +417,7 @@ the protocol file. Terminology (2026-07-03): **"protocol"** chosen over
 and over "workflow" (already means the *execution* side in this stack — the
 engine code, the workflow host, `lab.db workflow_runs`).
 
-**Layout** (published as the `organic-hte-template` starter repo — a GitHub
+**Layout** (published as the `bitacora/templates/hte` starter — a GitHub
 template repository under `AccelerationConsortium`, science-free):
 
 ```
@@ -463,6 +475,20 @@ schema in `docs/workflow_design.md` gets a machine-checkable
 unchanged except that it registers the Plan (rendered steps +
 `source_commit`) at run start; the `lab.db` real-time path stays as-is per
 the mapping above.
+
+## Run-authorization linkage (2026-07-22, from the agentic-ELN design)
+
+The **Run Authorization** gate ([`AGENTIC_ELN_DESIGN.md`](AGENTIC_ELN_DESIGN.md)
+§12) adds one requirement on this schema: execution records must link the
+five pins that make a run reproducible from the record alone — repository
+URL, exact commit SHA, protocol path/identifier, `authorization_id`, and
+compiled-execution-package digest. `Plan.source_commit`/`protocol_path`
+already carry two; the rest need **new nullable columns on `Plan` or a small
+`RunAuthorization` entity** (immutable once authorized; lifecycle
+`requested → validated → authorized → executed | expired | revoked`), plus a
+contract (`SCHEMA_VERSION`) bump. Shape choice is deferred to the phase that
+builds the run authorizer ([`AGENTIC_ELN_PLAN.md`](AGENTIC_ELN_PLAN.md)
+Track 2 Phase E).
 
 ## Cross-cutting consequences
 
@@ -561,6 +587,9 @@ Critique accepted after the hh merge; filed here so they don't evaporate:
    it actually happened.
 
 ## Open questions (deliberately not settled here)
+
+Tracked as decisions D-13/D-14/D-15 in
+[`AGENTIC_ELN_PLAN.md`](AGENTIC_ELN_PLAN.md) §4:
 
 - Units handling for the ledger (free string + convention vs a `unit` enum vs
   pint-style canonicalization at the boundary). Recommend: enum of the ~10

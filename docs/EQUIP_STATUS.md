@@ -405,7 +405,7 @@ The Opentrons OT-2 renders as the kind-specific `LiquidHandlerTile`.
 Each OT-2 also has a dedicated **full-page interface** at
 `/equipment/<id>/control` (aliases `/ot2_hte`, `/ot2_complexation`) with the
 full deck, declared-vs-observed state, module telemetry, tip tracking and
-claim visibility — see [`OT2_INTERFACE.md`](OT2_INTERFACE.md).
+claim visibility — see [`UI_DESIGN.md`](UI_DESIGN.md) §1.
 There are **two** OT-2s, each fronted by its own `opentrons-server`
 gateway process (the gateway is multi-instance by design — one process
 per robot, own port, own robot host, own state files):
@@ -438,7 +438,7 @@ link + read-only light/pipette pills, a non-interactive 12-slot deck grid,
 then the SSH / Protocol status pills (and any leftover `MetricList` /
 `ComponentList`). **All control** — session lifecycle, lights toggle,
 declaring deck intent — lives on the dedicated full-page interface at
-`/equipment/<id>/control` (see [`OT2_INTERFACE.md`](OT2_INTERFACE.md));
+`/equipment/<id>/control` (see [`UI_DESIGN.md`](UI_DESIGN.md) §1);
 the tile carries no lock chip because it has nothing to gate.
 
 **Top row** — the control-page link + three read-only pills:
@@ -487,7 +487,7 @@ grouped picker over the central authored catalog: exact Opentrons
 load_names, the four module keys, and the legacy generic kinds —
 `web/src/lib/ot2-catalog.ts`). It sets **operator-declared intent**, not
 observed state (it does not load labware or run setup — see
-[`OT2_INTERFACE.md`](OT2_INTERFACE.md)), and writes via
+[`UI_DESIGN.md`](UI_DESIGN.md) §1), and writes via
 `POST /control/deck/declare` (the `deck.declare` skill) through the
 control passthrough — auth-gated, claim-danced and audited like any
 control write. Only operator-declared slots are sent; observed labware is

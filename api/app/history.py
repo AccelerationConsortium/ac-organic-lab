@@ -18,7 +18,7 @@ POST /api/ingest/runs         Create or update a run record
 POST /api/ingest/wells        Append per-well results to a run
 
 All SQLite calls are dispatched via ``run_in_executor`` so the async event loop
-is never blocked.  See ``db.py`` for schema and ``OBSERVABILITY.md`` for design
+is never blocked.  See ``db.py`` for schema and ``LAB_MONITORING.md`` for design
 rationale, direct-query examples, and retention guidelines.
 """
 

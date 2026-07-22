@@ -1,0 +1,168 @@
+# Agentic ELN — Implementation Plan
+
+**Status:** consolidated plan (2026-07-22). Sequencing and open decisions for
+the design in [`AGENTIC_ELN_DESIGN.md`](AGENTIC_ELN_DESIGN.md); the record
+layer it builds against is [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md). This
+document merges the former `ELN_UI_PLAN.md` Part C (Steps 0–7) and the
+former `AGENT_ASSISTED_HTE_WORKFLOW.md` phases (A–G) into one track, and
+collects every open decision in one place (§4).
+
+Ordering principles: smallest-change-first, each step independently useful,
+everything reversible or behind a default-off flag, actuation always behind
+both a control gate and a human approval.
+
+---
+
+## 1. Ground rules for the build
+
+- **Vocabulary is pinned** (do not conflate): **protocol** (git template) ≠
+  **Plan** (rendered, versioned run record in AnaliticaDB) ≠ **workflow**
+  (execution engine) ≠ **AnalysisPlan** (LaAgente's post-hoc analysis
+  pipeline).
+- **Nothing here requires new device code.** Execution visualization is a
+  read-model over surfaces that already emit (`PlanRunReport`,
+  `/api/equipment`, OT-2 deck snapshot).
+- The binding contracts gate everything: only `main`-merged, human-approved,
+  validated, authorized plans execute; all hardware through the `lab-skills`
+  SDK; no run data in git.
+
+## 2. Track 1 — ELN loop wiring (from the former ELN UI plan)
+
+The linchpin first; safety seams gated and reversible.
+
+### Step 0 — Terminology + canon registration — *docs only* ✅ superseded
+Register the consolidated docs in the README docs router; pin the vocabulary
+(§1). (This consolidation completes Step 0.)
+
+### Step 1 — Lab-MCP client toolset in the agent (**the linchpin**) — *LaAgenteAnalitica*
+A `domains/lab/` toolset that is a client of `lab-skills mcp serve`,
+mirroring how `domains/analytica_db/` consumes `ontology.json`:
+version-pinned, fail-fast, compact summaries. Start **read-only**
+(`list_equipment`, `list_skills`, `get_status`, `validate_plan`,
+`preflight_plan`) — no `--allow-control`. This alone lets the agent reason
+about the lab and draft validated plans. Reversible: registry-gated toolset,
+`enabled=false` default.
+
+### Step 2 — Experiment-plan-as-data + design surface — *LaAgenteAnalitica + AnaliticaDB (wiring only)*
+Generalize the dynamic-but-lockable `AnalysisPlan` pattern to an
+`ExperimentPlan` whose steps' `skill` comes from `list_skills` (Step 1).
+Tools: `add_step`/`edit_step`/`remove_step`/`preview_plan` (validated via
+`validate_plan`) + `register_plan` writing the AnaliticaDB `Plan` (draft).
+Frontend: a PlanPreview panel (step list + validation warnings + version
+diff). Approve = human-principal click → `Plan.approved`. Reversible: draft
+plans are just DB rows; nothing actuates.
+
+### Step 3 — Claim-safe `execute_plan` behind the approval gate — *LaAgenteAnalitica + ac-organic-lab (config)*
+Enable the `execute_plan` MCP tool via a `--allow-control` server instance,
+routed through the existing deferred-tool approval UI. `owner` = the
+authenticated user (audit + `details.claimed_by`). Resolve the **claim
+coupling seam**: agent actuation must acquire the lab claim (which
+`execute_plan` does per-step) so agent and dashboard mutually exclude; decide
+the Agilent path's relationship to the lab claim (§4 D-9). Reversible: gated
+by both `--allow-control` and the approval click; default-off.
+
+### Step 4 — Execution visualization panel — *LaAgenteAnalitica*
+A room panel streaming `PlanRunReport` step outcomes (timeline keyed by
+`step_id`, violations/errors surfaced) and polling `/api/equipment` for the
+live deck/plate heatmap + device tiles. Pure read-model; reuse the NPZ/heatmap
+machinery. The dashboard-side runner endpoint + SSE event contract is
+specified in [`UI_DESIGN.md`](UI_DESIGN.md) §3 and is the
+first build of its §3.7 list.
+
+### Step 5 — Step-anchored Notes — *LaAgenteAnalitica + AnaliticaDB (Note API)*
+Human- and agent-authored observations/deviations become append-only `Note`s
+anchored to (`experiment_id`, `plan_id`, `step_id`). This is what makes a run
+a notebook entry rather than a job log. Reversible: append-only rows.
+
+### Step 6 — Close the analysis loop — *LaAgenteAnalitica (wiring)*
+Committed `Analysis` rows M2M to the run's step-correlated Measurements; a
+generate-report action producing an experiment-level `role="report"`
+artifact; a "start next Plan from this report" affordance. Linkage, not new
+analysis.
+
+### Step 7 — Protocol-first path for campaigns — *organic-solubility + bitacora/templates/hte*
+For repo-backed campaigns the agent renders the git **protocol** into a Plan
+(`source_commit`/`protocol_path`) instead of free-composing; the design
+surface shows the PR/CODEOWNERS gate as the sign-off. Additive — the ad-hoc
+path from Steps 2–3 still works.
+
+## 3. Track 2 — Planning page & authorization pipeline (from the former workflow doc)
+
+Extends Track 1; phases note their dependencies.
+
+1. **Phase A — repository lifecycle.** Template-generate + ruleset + project
+   registry + server workspace service (bare clone + per-session worktrees).
+   No agent yet; the page shows repo + protocol read-only.
+2. **Phase B — canonical edit path + visual read view.** The protocol edit
+   service (typed edits, schema re-validation, attributed commits) and the
+   right-side tabs rendering the document. Direct visual edits land here.
+3. **Phase C — agent + AG-UI.** Project-scoped planning agent streaming over
+   AG-UI, editing through the same edit service; decision-record drafting.
+   Depends on Track 1 Step 1 (read-only lab toolset) for
+   `validate_plan`-aware drafting.
+4. **Phase D — PR + scientific diff.** PR open/update from the page; the
+   rendered scientific-diff CI job; the Review tab.
+5. **Phase E — run authorizer + compiler (dry-run first).** Authorization pins +
+   revalidation + package digest; compiler in dry-run (compile + simulate,
+   nothing actuates). Requires the AnaliticaDB contract bump for run-authorization
+   linkage ([`DATABASE_DESIGN.md`](DATABASE_DESIGN.md) §"Run-authorization linkage").
+6. **Phase F — authorized execution.** Wire run authorizations into the
+   [`UI_DESIGN.md`](UI_DESIGN.md) §3 runner (Track 1 Steps
+   3–5); orchestrated runs consume packages; records carry the five pins
+   (repo URL, commit SHA, protocol path, `authorization_id`, package digest).
+7. **Phase G — hardening.** Inventory-backed material validation (LIMS Phase
+   2 of [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md)), authorization TTLs,
+   conversation-store retention/redaction policy (D-17), template schema
+   growth.
+
+## 4. Action items — pending decisions
+
+Every open decision across the consolidated docs, in one list. Each blocks
+the phase noted; none blocks phases before it.
+
+| # | Decision | Recommendation | Blocks |
+|---|---|---|---|
+| **D-1** | ~~Sanitized transcript in git~~ — **RESOLVED (2026-07-22): no.** Interaction history lives in the chat layer's conversation store (single store, project-scoped rows); git carries only `decisions.md` with a deep link (`session_id`). See design §13. | — | — |
+| **D-2** | **Run-authorization TTL / staleness policy — RESOLVED (2026-07-22):** short, ~one working day. A run authorization that isn't executed within ~1 day must re-validate (schema, units, labware, device readiness, inventory) before execution. Re-validation is cheap; re-running a stale plan against a lab that drifted is the failure to avoid. Tighten-first; loosen later once the system is trusted. | ~1 working day; re-validate on expiry | Phase E |
+| **D-3** | **Which validation layers block merge vs. warn — RESOLVED (2026-07-22):** only the rock-solid checks block to start (schema validity, `step_id` uniqueness/permanence rules); heuristic checks (units, labware feasibility, device capability, scientific coherence, workflow completeness) warn and are visible to the reviewer but don't stall the merge. Promote a heuristic to blocking only after it proves stable (no false negatives in practice). Tighten-first on what you trust; earn the rest. | Block on schema + `step_id` rules; warn on the rest; promote to blocking as heuristics prove stable | Phase D |
+| **D-4** | **Session ↔ room mapping — RESOLVED (2026-07-22):** one room = one planning session = one branch = one draft Plan = one PR. The room's **starter is its owner** — the scientific reviewer who consents to the PR; others can join (labeled IDs) but the starter owns approval. Competing plans → separate rooms → separate PRs → CODEOWNER picks. Owner is always a human (agent can draft, not own). Branch minted lazily on first edit; see design §6/§15. **Worktree GC — RESOLVED (2026-07-22):** never-edited rooms (no branch minted) clean up silently and immediately. Edited rooms, after close: idle 0–7 days with no nudge; 7–30 days show a daily red reminder in the UI that the worktree is idle and will be cleaned on day 30; on day 30 the server worktree + git branch are deleted (merged branches already gone via GitHub auto-delete; abandoned branches deleted now). | 7-day silence → 23-day red daily reminder → day-30 cleanup; never-edited rooms GC silently on close | Phase A |
+| **D-5** | **GitHub org placement + App permission scope — RESOLVED (2026-07-22):** **Org:** the admin (the user) owns the repos, in their own org (not `AccelerationConsortium`). **App scope:** a GitHub App scoped to the lab org only, with `contents:repo` (read/write repo contents), `pull_requests:write`, `rulesets:write` (branch protection), and the repository-creation permission (to stamp new project repos from the template) — nothing else. Least privilege; private key in the platform's secret store, never in a workspace or the browser. Add permissions later only if a real need appears. | GitHub App scoped to the lab org; `contents:repo` + `pull_requests:write` + `rulesets:write` + repo-creation only | Phase A |
+| **D-6** | **Where the run authorizer and compiler live — RESOLVED (2026-07-22):** both start as modules inside `bitacora` beside the workflow runner (same repo, same deploy, one log stream). Split out into a separate service only if they grow. **Compiler:** core engine in `bitacora`; per-project chemistry configs and rules in the template repo (`scripts/` or `compile/` dir) so each campaign customizes its own vocabulary/units/rules without touching the core. **Renamed:** "release service" → "run authorizer"; the artifact it produces is a "run authorization" (was "a release"); the act is "authorizing a run" (was "releasing for execution"). | Run authorizer + compiler core in `bitacora`; per-project configs/rules in the template; split out only if they grow | Phase E |
+| **D-7** | **Protocol schema growth ownership — RESOLVED (2026-07-22):** `bitacora` hosts multiple templates (one per experiment type), and the **HTE template** is one of them — it contains the core structural blocks (design matrix, plate map, step list, QC, materials). Other templates (synthesis, characterization, etc.) can be added alongside it later. Per-project chemistry extensions stay in the project repo (chemistry-specific vocabulary, validated alongside the core template schema in CI). **Template repo absorbed (Option B):** the existing `organic-hte-template` repo is folded into `bitacora` as `bitacora/templates/hte/` (skeleton + schema together); new projects are stamped from `bitacora` directly; no separate template repo. `pins.yaml` in each project repo pins the bitacora template version it conforms to (same cross-repo pin pattern as the AnaliticaDB ontology pin). | Core structural blocks in `bitacora/templates/hte/`; chemistry-specific vocabularies per-project; `organic-hte-template` absorbed into `bitacora` | Phase B |
+| **D-8** | **Agent backend runtime — RESOLVED (2026-07-22):** new project-scoped agent in the `bitacora` repo, inspired by LaAgenteAnalitica's patterns but not depending on it. The ELN agent needs capabilities LaAgenteAnalitica doesn't have (Undermind literature search, protocol editing, git workflow, authorization pipeline, lab-skills MCP) whose shapes don't fit its abstractions; building fresh lets the abstractions fit the domain. The AG-UI seam stays clean by construction. See design §1/§6. | — | — |
+| **D-9** | **Agilent claim reconciliation** — front `agilent-hplcms-server` behind the lab claim, or keep the agent's direct read-only path and document the split as an accepted exception. | Front it behind the lab claim before Step 3 ships actuation | Track 1 Step 3 |
+| **D-10** | **Where `--allow-control` runs and who may trigger it** — one shared control-MCP for all rooms, or per-run/per-user instances. Ties to AUTH_DESIGN + the control-surface-exposure risk in ROADMAP. | Per-deployment single instance, allow-listed users, every call audited | Track 1 Step 3 |
+| **D-11** | **Live step streaming transport** — `execute_plan` returns a final report; the panel needs intermediate progress. Poll `/api/equipment` + history events, or add a per-step event stream. | Start with the dashboard runner's SSE (already specified in UI_DESIGN §3); revisit if latency hurts | Track 1 Step 4 |
+| **D-12** | **Plan step granularity vs. the OT-2** — visualize at Plan-step granularity or drill into the gateway's deck/plate detail for sub-step progress. | Timeline at Plan-step granularity with an expandable OT-2 drill-down | Track 1 Step 4 |
+| **D-13** | **DB: ledger units handling** — free string vs. unit enum vs. pint-style canonicalization. | Enum of the ~10 units the lab uses; canonicalize per-substance at write time | DB Phase 2 |
+| **D-14** | **DB: `Plan.steps` JSONB vs. typed step blocks.** | Stay JSONB (required `step_id`) until the procedure vocabulary stabilizes, then type it | DB Phase 2 |
+| **D-15** | **DB: report generation location** — generate in the agent repo, store in AnaliticaDB (assumed), or generate server-side. | Keep generate-there, store-here | Track 1 Step 6 |
+| **D-16** | **Conversation-store engine + hosting — RESOLVED (2026-07-22):** greenfield Postgres JSONB, in a separate `conversations` database on the AnaliticaDB instance, as a thin persistence module inside `bitacora`. One engine to operate (same as AnaliticaDB), contract untouched, persistence boundary (§13) preserved. Not Mongo (no GraphChat to reuse — `bitacora` is its own platform), not inside the AnaliticaDB database/contract (would weld a redactable chat log onto an immutable record, force `SCHEMA_VERSION` bumps, double writes via `agent_actions`), not a second AnaliticaDB-style service (one writer = the agent backend persisting its own AG-UI stream; read surface = the chat UI's room history; no ontology export, no audit table, no public API until a concrete reader needs one). See design §13 for the three-tier record (conversation store / `decisions.md` / prose-free AnaliticaDB). | — | — |
+| **D-17** | **Conversation-record access + retention policy — RESOLVED (2026-07-22):** the room's participants (all project members) can read it; the room's owner (the starter, design §6) consents to the PR; the PI can always read; redaction requires PI sign-off (tombstone, never silent delete); retain ≥ campaign lifetime. Every message attributed to its author (`author_kind` + principal ID; agent never posts under a human's ID). See design §13. | — | — |
+| **D-18** | **Planning page frontend hosting — RESOLVED (2026-07-22):** the frontend lives in `bitacora` (its own Next.js app, adopting the GraphChat layout pattern from design §6). Not inside GraphChat (the platform is its own thing, not an extension of the analytical-chemistry agent), not in `ac-organic-lab/web/` (the dashboard is a projection layer, not the agent's home). `bitacora` is a peer of `ac-organic-lab`, reached over the tailnet. | — | — |
+
+### Recorded follow-ups already accepted (do, no decision needed)
+
+From the record-layer critique ([`DATABASE_DESIGN.md`](DATABASE_DESIGN.md)
+§"Recorded follow-ups"): `generated_by` provenance stamps on derived
+artifacts; remove or version `experiment_tables` PATCH; `analysis_inputs`
+M2M (analysis → analysis derivation chains). Plus, from the assessment:
+**agent regression evals** before the agent authors trusted records.
+
+## 5. Prioritization rationale
+
+Track 1 Steps 1–2 deliver the Design third with zero actuation risk and are
+the long pole (the missing lab-MCP bridge). Steps 3–5 deliver Execute + the
+notebook and hold the safety seams — hence gated, reversible,
+human-in-the-loop. Step 6 is linkage on a strong Analyze base. Step 7 and
+Track 2 are the production-grade path and shouldn't block the ad-hoc loop.
+Track 2's Phases A–D carry no actuation risk at all; E introduces the authorization
+machinery in dry-run; only F touches hardware, and only through the
+already-shipped `execute_plan` path.
+
+## See also
+
+- [`AGENTIC_ELN_DESIGN.md`](AGENTIC_ELN_DESIGN.md) — the design this plan builds.
+- [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md) — the record layer (ELN core shipped; LIMS phased here as "DB Phase 2/3").
+- [`UI_DESIGN.md`](UI_DESIGN.md) §3 — dashboard runner endpoint, SSE contract, run view (its §3.7 build order slots into Track 1 Steps 3–4).
+- [`ROADMAP.md`](ROADMAP.md) — SDK milestones and operational regressions this plan depends on.

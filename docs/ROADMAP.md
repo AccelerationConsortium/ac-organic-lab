@@ -39,7 +39,7 @@ under **Web Services** (`kind: other`, `adapter: http`, `protocol: "1.0"`,
 no `open` pill) and serves a STATUS_SPEC `/status` envelope (`ready`, or
 `degraded` if its Postgres is unreachable); the tile reads `ready`. That
 repo is being generalized into the lab's ELN+LIMS record layer — see
-[`ANALITICADB_ELN_LIMS_DESIGN.md`](ANALITICADB_ELN_LIMS_DESIGN.md).
+[`DATABASE_DESIGN.md`](DATABASE_DESIGN.md).
 
 **Protocol mix.** Eight devices reach `protocol_version: "1.1"` on
 their live `/status` envelope (`fume_hood_actuator`,
@@ -217,7 +217,7 @@ Shipped 2026-07-03 (device repo + this monorepo):
   pushes fine-grained `state_transition` / `error` / `startup` /
   `shutdown` rows from the SDK callbacks to `POST /api/ingest/events`
   (best-effort, stdlib-only, disabled unless `XARM_INGEST_URL` is set).
-  Conventions documented in OBSERVABILITY.md §4 event_type registry.
+  Conventions documented in LAB_MONITORING.md §4 event_type registry.
   **Deploy step pending:** set `XARM_INGEST_URL` in the `xarm` NSSM
   service env on the device PC, pull + restart.
 - **`equipment_version`** populated on `/status` (was null).
@@ -424,7 +424,7 @@ successful seal is outstanding, blocked on the PlateLoc air supply.
   a future `ac-organic-lab-runner`.
 - **LLM / agent code** — future `ac-organic-lab-agents` repo.
 - **Run records / manifests** — project repos own these (see the
-  project-repo blueprint in `ANALITICADB_ELN_LIMS_DESIGN.md`).
+  project-repo blueprint in `DATABASE_DESIGN.md`).
 - **`lab-status-contract` shared package** — wait until 3+ device repos
   ship on v1.1 cleanly (per `docs/STATUS_SPEC.md`).
 - **Maintenance-tile UI rendering** — tracked separately; not blocking.
@@ -444,8 +444,8 @@ successful seal is outstanding, blocked on the PlateLoc air supply.
   boundaries.
 - [`docs/DEVICE_PC_SETUP.md`](DEVICE_PC_SETUP.md) — canonical install
   recipe for a Windows device PC (uv + NSSM).
-- [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) — logging tiers, central
-  history DB schema.
+- [`docs/LAB_MONITORING.md`](LAB_MONITORING.md) — logging tiers, central
+  history DB schema, alerting.
 - [`docs/EQUIP_GUIDE.md`](EQUIP_GUIDE.md) — onboarding / maintenance
   guideline; [`docs/EQUIP_STATUS.md`](EQUIP_STATUS.md) — current per-device
   tile implementations.

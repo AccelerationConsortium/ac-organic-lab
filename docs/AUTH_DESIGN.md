@@ -916,6 +916,6 @@ per-IP rate-limit, and the device-side roster pull in each device repo (e.g.
 - `docs/STATUS_SPEC.md §4.11` & §5 — Tailnet-as-boundary posture; the claim protocol.
 - `docs/ROADMAP.md` → *Control-surface exposure* — the direct-device side-door this design closes.
 - `docs/EQUIP_GUIDE.md §6b` — the `CONTROL_PASSWORD` gate this replaces.
-- `docs/OBSERVABILITY.md` — history DB schema that gains the `owner` column (data isolation).
+- `docs/LAB_MONITORING.md` — history DB schema that gains the `owner` column (data isolation).
 - `api/app/control.py` — claim/heartbeat/release passthrough that stamps the real `owner`.
 - Device side (`agilent-hplcms-server`): the roster + role gates (`user` / `automation` / `service`) this feeds.

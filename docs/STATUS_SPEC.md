@@ -230,7 +230,7 @@ class HealthResponse(BaseModel):
 
 8. **No secrets in `/status`.** No API keys, no PII, no auth tokens, no internal credentials.
 
-9. **`/status` is current state only.** Historical events go to the dashboard's history DB (see [`OBSERVABILITY.md`](OBSERVABILITY.md)) — never inflate the status response with logs.
+9. **`/status` is current state only.** Historical events go to the dashboard's history DB (see [`LAB_MONITORING.md`](LAB_MONITORING.md)) — never inflate the status response with logs.
 
 10. **CORS.** Allow `Access-Control-Allow-Origin` for the dashboard server's hostname. This keeps devices debuggable from a browser even when the aggregator is down.
 
@@ -892,5 +892,5 @@ The semantics line up well enough that this would be a few hundred lines of Pyth
 - [`INTERLOCKS.md`](INTERLOCKS.md) — four-layer safety model; claims are layer-3-adjacent, cross-device safety still goes through interlocks.
 - [`EQUIP_GUIDE.md`](EQUIP_GUIDE.md) — operational runbook for onboarding and maintenance.
 - [`DEVICE_PC_SETUP.md`](DEVICE_PC_SETUP.md) — canonical install recipe for a Windows device PC (uv + NSSM).
-- [`OBSERVABILITY.md`](OBSERVABILITY.md) — where state-history rows go (devices do not own them).
+- [`LAB_MONITORING.md`](LAB_MONITORING.md) — where state-history rows go (devices do not own them).
 - [`ROADMAP.md`](ROADMAP.md) — per-device migration status to v1.0 / v1.1.

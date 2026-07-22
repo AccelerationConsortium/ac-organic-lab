@@ -31,7 +31,7 @@ import { useUserAuth } from "@/lib/user-auth";
  * with live top-down preview and the OT-2 slot-envelope validation. Anyone
  * signed out can build + download; saving to the shared lab store
  * (POST /api/labware) is admin-only, and repo-committed definitions are
- * immutable here (change via PR). See docs/OT2_INTERFACE.md.
+ * immutable here (change via PR). See docs/UI_DESIGN.md §1.
  */
 
 function Field({
