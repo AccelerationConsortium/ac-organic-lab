@@ -23,11 +23,16 @@ const BUBBLE_MS = 1500;
  *
  * UX only — the edge (forward_auth) and the control passthrough enforce
  * the same answer server-side.
+ *
+ * With `hideUnauthorized`, an unauthorized viewer gets no link at all
+ * (renders null) instead of a click-blocked one — for admin-facing panels
+ * that shouldn't advertise themselves to everyone.
  */
 export function AuthGatedLink({
   href,
   equipmentId,
   external = false,
+  hideUnauthorized = false,
   className,
   title,
   children,
@@ -37,6 +42,8 @@ export function AuthGatedLink({
   equipmentId?: string;
   /** True for device panels / service UIs that open in a new tab. */
   external?: boolean;
+  /** Render nothing (instead of a click-blocked link) when unauthorized. */
+  hideUnauthorized?: boolean;
   className?: string;
   title?: string;
   children: ReactNode;
@@ -52,6 +59,8 @@ export function AuthGatedLink({
     },
     [],
   );
+
+  if (hideUnauthorized && !authorized) return null;
 
   function onClick(e: MouseEvent) {
     if (authorized) return;

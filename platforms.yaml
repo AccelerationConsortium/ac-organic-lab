@@ -9,7 +9,7 @@ sections:
     title: Services
     description: Lab web UIs and dashboards
     kind: platform
-    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, pypoe_web, uptime_kuma]
+    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, pypoe_web, kasa_tapo_gateway, bambu_gateway, uptime_kuma]
     
   - id: echem
     title: Echem Platform

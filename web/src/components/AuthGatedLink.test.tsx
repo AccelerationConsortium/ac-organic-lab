@@ -72,4 +72,37 @@ describe("AuthGatedLink", () => {
     expect(screen.getByText("Not authorized")).toBeTruthy();
     expect(auth.requestLogin).toHaveBeenCalledTimes(1);
   });
+
+  it("renders nothing for unauthorized viewers when hideUnauthorized is set", () => {
+    auth.authenticated = true;
+    auth.canControl = vi.fn(() => false);
+    render(
+      <AuthGatedLink
+        href="http://100.64.254.6:8005/"
+        equipmentId="uptime_kuma"
+        external
+        hideUnauthorized
+      >
+        Open ↗
+      </AuthGatedLink>,
+    );
+    expect(screen.queryByText("Open ↗")).toBeNull();
+  });
+
+  it("still renders for authorized viewers when hideUnauthorized is set", () => {
+    auth.authenticated = true;
+    auth.canControl = vi.fn(() => true);
+    render(
+      <AuthGatedLink
+        href="http://100.64.254.6:8005/"
+        equipmentId="uptime_kuma"
+        external
+        hideUnauthorized
+      >
+        Open ↗
+      </AuthGatedLink>,
+    );
+    const link = screen.getByText("Open ↗");
+    expect(fireEvent.click(link)).toBe(true);
+  });
 });

@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import type { EquipmentSnapshot } from "@/types/api";
+import type { EquipmentSnapshot, EquipmentState } from "@/types/api";
 import type { ActionError } from "@/lib/action-error";
 import { kindLabel } from "@/lib/format";
 import { StalenessIndicator } from "./StalenessIndicator";
 import { ActionErrorBadge } from "./ActionErrorBadge";
 import { LastErrorBadge, type LastErrorInterpret } from "./LastErrorBadge";
+import { DegradedHealthBadge } from "./DegradedHealthBadge";
+import { StatusPill } from "./StatusPill";
 import { TileButton } from "./TileButton";
 
 // Latency at or above this threshold paints the "_ ms" label amber,
@@ -38,8 +40,15 @@ const SLOW_LATENCY_MS = 500;
 
 export interface TileShellProps {
   snapshot: EquipmentSnapshot;
-  /** Right-aligned header slot. Almost always <LockButton /> + <StatusPill />. */
+  /** Right-aligned tile-specific controls, typically a <LockButton />. */
   headerRight: ReactNode;
+  /**
+   * Optional presentation state when activity and device health need separate
+   * surfaces. The canonical `snapshot.status.equipment_status` remains
+   * untouched; when it is `degraded`, the template adds a health-details badge
+   * beside this display status.
+   */
+  displayStatus?: EquipmentState;
   /** Body content. */
   children: ReactNode;
   /**
@@ -119,6 +128,7 @@ export interface TileShellProps {
 export function TileShell({
   snapshot,
   headerRight,
+  displayStatus,
   children,
   footerLeft,
   subtitleExtra,
@@ -188,6 +198,16 @@ export function TileShell({
             interpret={lastErrorInterpret}
           />
           {headerRight}
+          {displayStatus &&
+            !(status.equipment_status === "degraded" && displayStatus === "degraded") && (
+              <StatusPill state={displayStatus} />
+            )}
+          {displayStatus && status.equipment_status === "degraded" && (
+            <DegradedHealthBadge
+              components={status.components}
+              message={status.message}
+            />
+          )}
         </div>
       </header>
 

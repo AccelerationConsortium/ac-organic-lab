@@ -136,12 +136,15 @@ export default function PlatformsPage() {
           </button>
         </div>
         {selected?.href && (
-          <a
-            href={selected.href}
-            className="ml-auto text-xs text-orange-600 hover:underline dark:text-orange-400"
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = selected.href!;
+            }}
+            className="ml-auto rounded-md bg-orange-600 px-3 py-1 text-xs font-medium text-white shadow-sm hover:bg-orange-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 dark:bg-orange-500 dark:hover:bg-orange-600"
           >
-            Open page →
-          </a>
+            Workflow UI
+          </button>
         )}
       </div>
 

@@ -75,7 +75,7 @@ function PlatformCameraPreview({ camera }: { camera: EquipmentSnapshot }) {
           href={`/platforms/${camera.platform}`}
           className="pointer-events-auto rounded-md bg-slate-900/70 px-2 py-0.5 text-[10px] font-medium text-orange-300 backdrop-blur-sm hover:text-orange-200"
         >
-          PTZ →
+          GO →
         </Link>
       </div>
     </div>
@@ -96,6 +96,10 @@ function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const linkLabel = snapshot.pill?.link_label;
   const linkHref = snapshot.pill?.link_href;
   const showLink = !!linkLabel && !!linkHref;
+  const internalLink = snapshot.pill?.internal === true;
+  // authorized_only pills vanish for viewers without a role on this
+  // equipment instead of rendering a click-blocked link.
+  const hideUnauthorized = snapshot.pill?.authorized_only === true;
   return (
     <li className="flex items-center justify-between gap-2 rounded-md border border-slate-100 bg-white/60 px-2.5 py-1.5 dark:border-slate-800 dark:bg-slate-950/40">
       <div
@@ -105,21 +109,31 @@ function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
         {snapshot.name}
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        {showLink && (
-          <AuthGatedLink
-            href={linkHref!}
-            equipmentId={snapshot.id}
-            external
-            className="text-[10px] font-medium text-orange-600 hover:underline dark:text-orange-400"
-          >
-            {linkLabel} ↗
-          </AuthGatedLink>
-        )}
+        {showLink &&
+          (internalLink ? (
+            <Link
+              href={linkHref!}
+              className="text-[10px] font-medium text-orange-600 hover:underline dark:text-orange-400"
+            >
+              GO →
+            </Link>
+          ) : (
+            <AuthGatedLink
+              href={linkHref!}
+              equipmentId={snapshot.id}
+              external
+              hideUnauthorized={hideUnauthorized}
+              className="text-[10px] font-medium text-orange-600 hover:underline dark:text-orange-400"
+            >
+              Open ↗
+            </AuthGatedLink>
+          ))}
         {showOpen && (
           <AuthGatedLink
             href={snapshot.base_url!}
             equipmentId={snapshot.id}
             external
+            hideUnauthorized={hideUnauthorized}
             className="text-[10px] font-medium text-orange-600 hover:underline dark:text-orange-400"
           >
             Open ↗
@@ -187,7 +201,7 @@ export function PlatformCard({
               href={href}
               className="text-xs font-medium text-orange-600 hover:underline dark:text-orange-400"
             >
-              Open →
+              GO →
             </Link>
           )}
         </div>

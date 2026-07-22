@@ -11,7 +11,7 @@ import { usePlatforms } from "@/lib/use-platforms";
  * This route is reserved for running/monitoring workflows on a platform; the
  * old duplicate equipment-grid pages that lived here were removed — live
  * equipment tiles are on the Platforms tab. Every existing link
- * (platforms.yaml `href`, the Overview cards' "Open →", the camera "PTZ →")
+ * (platforms.yaml `href`, the Overview cards' "GO →", the camera "GO →")
  * already points here, so the workflow UI ships by replacing this file, with
  * no link churn.
  */

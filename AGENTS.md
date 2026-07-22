@@ -60,6 +60,9 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   shows (hardware identity, adapter, URLs, tiles). Edit it when hardware
   changes; `uvicorn --reload` picks up YAML via `--reload-include "*.yaml"`.
 - **`platforms.yaml`** — Overview layout config (sections, order, membership).
+- **`mcp/servers.yaml`** — reviewed, client-neutral MCP registry: provenance,
+  approved tool allowlists, and data/safety boundaries. Client installation
+  remains machine-local; never commit MCP credentials or local paths.
 - **`docs/`** — start at `docs/STATUS_SPEC.md` to bring up a device, or
   `docs/ARCHITECTURE.md` to understand the whole.
 

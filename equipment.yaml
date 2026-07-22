@@ -115,14 +115,14 @@ equipment:
     do_not_call_connect: true
     tiles:
       hte: { w: 2, h: 1 }
-    # "XArm5 UI" pill / tile deep-link -> the edge-gated canonical panel URL
+    # "Open" pill / tile deep-link -> the edge-gated canonical panel URL
     # (Caddy: forward_auth @xarm_ui -> ac_auth). ABSOLUTE edge URL (port 80) so
     # it always lands on the Caddy edge, NOT the device's directly-reachable
     # :8000/web side-door and NOT the dashboard's own :8000 origin (a
     # root-relative /xarm5/web/ would resolve to :8000/xarm5/web/ when the
     # dashboard is viewed on :8000). See docs/ROADMAP.md "Control-surface exposure".
     pills:
-      link_label: "UI"
+      link_label: "Open"
       link_href: http://100.64.254.6/xarm5/web/
 
   - id: fume_hood_actuator
@@ -154,8 +154,15 @@ equipment:
     do_not_call_connect: true
     tiles:
       hte: { w: 2, h: 3}
-    pills: {}
-
+    # "Open" pill -> the edge-gated OT-2 gateway operator SPA at
+    # /ot2/hte/ui/ (Caddy: forward_auth @ot2_hte -> ac_auth, header_up
+    # X-Edge-Key). ABSOLUTE edge URL (port 80) so it lands on the Caddy edge,
+    # NOT the device's directly-reachable :8020/ui side-door (which 404s
+    # without X-Edge-Key anyway). base_url stays the direct device port —
+    # the aggregator polls /status there, unaffected by the edge route.
+    pills:
+      link_label: "Open"
+      link_href: http://100.64.254.6/ot2/hte/ui/
   - id: dose_every_well
     name: Dose Every Well
     kind: solid_doser
@@ -323,11 +330,66 @@ equipment:
     do_not_call_connect: true
     tiles:
       echem: { w: 2, h: 3 }
-    pills: {}
+    # "Open" pill -> the edge-gated OT-2 gateway operator SPA at
+    # /ot2/complexation/ui/ (Caddy: forward_auth @ot2_complexation -> ac_auth,
+    # header_up X-Edge-Key). ABSOLUTE edge URL (port 80) so it lands on the
+    # Caddy edge, NOT the device's directly-reachable :8021/ui side-door
+    # (which 404s without X-Edge-Key anyway). base_url stays the direct
+    # device port — the aggregator polls /status there, unaffected by the
+    # edge route.
+    pills:
+      link_label: "Open"
+      link_href: http://100.64.254.6/ot2/complexation/ui/
 
   # ---------------------------------------------------------------------
   # Web Services
   # ---------------------------------------------------------------------
+
+  # Monitoring-only Bambu Lab gateway on the dashboard host. The service
+  # status summarizes local MQTT connectivity for its configured printers;
+  # the internal pill opens the read-only printer telemetry page under Utils.
+  - id: bambu_gateway
+    name: Bambu Printers
+    kind: other
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8012
+    status_path: /status
+    poll_timeout_seconds: 3.0
+    do_not_call_connect: true
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills:
+      link_label: "GO"
+      link_href: /utils/bambu_printer
+      internal: true
+
+  # Per-printer STATUS_SPEC surfaces served from the same gateway. They are
+  # intentionally omitted from Overview sections and rendered together on
+  # /utils/bambu_printer instead.
+  - id: bambu_p1s_01
+    name: Bambu P1S 01
+    kind: other
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8012
+    status_path: /printers/bambu_p1s_01/status
+    poll_timeout_seconds: 3.0
+    do_not_call_connect: true
+    tiles: {}
+    pills: {}
+
+  - id: bambu_h2d_01
+    name: Bambu H2D 01
+    kind: other
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8012
+    status_path: /printers/bambu_h2d_01/status
+    poll_timeout_seconds: 3.0
+    do_not_call_connect: true
+    tiles: {}
+    pills: {}
 
   - id: pypoe_web
     name: PyPoe Web
@@ -352,6 +414,23 @@ equipment:
       link_label: "Open"
       link_href: http://100.64.254.6/pypoe/
 
+  # kasa-tapo-services — the camera + plug gateway process itself (loopback
+  # :8002 on this host, reverse-proxied by Caddy for streams/controls). The
+  # per-camera and per-plug entries above poll its per-device envelopes;
+  # this row is the service-level GET /status (added for the Overview
+  # Services card) answering "is the gateway process up at all".
+  - id: kasa_tapo_gateway
+    name: Camera & Plug Gateway
+    kind: other
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8002
+    status_path: /status
+    poll_timeout_seconds: 2.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
   # Uptime Kuma — the alerting watchdog (docker, host network, :8005). It
   # doesn't speak STATUS_SPEC itself, so PyPoe gateway-fronts it (same
   # pattern as kasa-tapo-services): GET /kuma/status on pypoe_web serves a
@@ -371,6 +450,10 @@ equipment:
     pills:
       link_label: "Open"
       link_href: http://100.64.254.6:8005/
+      # Kuma's admin UI has its own login and sits outside the SSO edge
+      # (Kuma can't be served under a sub-path) — only show the link to
+      # accounts holding a role on this equipment (admin, per roster).
+      authorized_only: true
 
   # LaAgenteAnalitica — the agent chat UI (React/Vite) on a separate PC,
   # fronted by the edge at /agente/ (the built Vite base) so it shows the shared

@@ -94,6 +94,75 @@ http://100.64.254.6 {
 		}
 	}
 
+	# ---- Opentrons OT-2 gateway operator UIs, path-routed ONTO this origin --
+	# opentrons-server (device PC sdl2-pc-03-cytation) serves an operator SPA
+	# at /ui, edge-gated: /ui and /labware return 404 unless the request carries
+	# header X-Edge-Key matching the gateway's OT2_EDGE_SECRET. When the key is
+	# valid the gateway ALSO trusts header X-Auth-User and stamps it into the
+	# claim owner (details.claimed_by.owner), so a "Take control" in the browser
+	# records the logged-in person. /, /health, /status, /control/* are NOT
+	# gated — the aggregator keeps polling them DIRECTLY on the device port
+	# (equipment.yaml base_url → :8020 / :8021), so these routes do not change
+	# how the dashboard reaches the OT-2s.
+	#
+	# Two instances on the same device PC: ot2_hte on :8020, ot2_complexation
+	# on :8021. handle_path strips the /ot2/{hte,complexation} prefix so the
+	# upstream sees its OWN /ui, /labware paths (the SPA was built to live at
+	# /ui). Canonical URLs to publish: /ot2/hte/ui/ and /ot2/complexation/ui/.
+	#
+	# CAVEAT — absolute asset paths: the SPA's assets use ABSOLUTE paths
+	# (/ui/assets/...). Under the /ot2/hte/ prefix those resolve against the
+	# EDGE ROOT (/ui/assets/...), not back under /ot2/hte/, and a SHARED /ui/*
+	# edge route can't disambiguate the two instances — so a UI base-path
+	# rebuild (e.g. Vite base=/ot2/hte/ui/) is needed for assets to resolve
+	# through the edge for BOTH. The route below is correct and ready: it
+	# serves the SPA HTML at /ot2/hte/ui/ today and will serve assets too once
+	# the SPA is rebuilt with a per-instance base path. Do NOT rebuild the UI
+	# here (see task spec); this route is the recommended proxy-preserve setup.
+	#
+	# forward_auth gates the human at the edge (same ac_auth) and injects
+	# X-Auth-User via copy_headers. header_up in the reverse_proxy SETS
+	# X-Edge-Key (overwriting any client-supplied value with the shared
+	# secret), so a direct caller can't forge it — same overwrite pattern
+	# as the /xarm5 and /analytica blocks (which also strip nothing).
+	# We deliberately do NOT use `request_header -X-Auth-User` to strip a
+	# client-supplied value: Caddy's fixed directive order runs
+	# `request_header` AFTER `forward_auth`, so a strip there would remove
+	# the X-Auth-User forward_auth just injected. `copy_headers` overwrites
+	# the client value, which is the protection we want. Set the SAME secret
+	# on both sides:
+	#   edge:   OT2_EDGE_SECRET=…  in caddy's systemd EnvironmentFile
+	#   device: OT2_EDGE_SECRET=…  in the ot2-gateway NSSM AppEnvironmentExtra
+	#     (read it on the device PC with: nssm get ot2-gateway AppEnvironmentExtra)
+	# The secret is NOT in git. Direct device-port /ui stays 404 (no X-Edge-Key).
+	@ot2_hte path /ot2/hte /ot2/hte/*
+	forward_auth @ot2_hte 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
+	redir /ot2/hte /ot2/hte/ui/ 308
+	redir /ot2/hte/ /ot2/hte/ui/ 308
+	redir /ot2/hte/ui /ot2/hte/ui/ 308
+	handle_path /ot2/hte/* {
+		reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020 {
+			header_up X-Edge-Key {env.OT2_EDGE_SECRET}
+		}
+	}
+
+	@ot2_complexation path /ot2/complexation /ot2/complexation/*
+	forward_auth @ot2_complexation 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
+	redir /ot2/complexation /ot2/complexation/ui/ 308
+	redir /ot2/complexation/ /ot2/complexation/ui/ 308
+	redir /ot2/complexation/ui /ot2/complexation/ui/ 308
+	handle_path /ot2/complexation/* {
+		reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8021 {
+			header_up X-Edge-Key {env.OT2_EDGE_SECRET}
+		}
+	}
+
 	# ---- AnaliticaDB results catalog (this host), path-routed ONTO this origin
 	# AnaliticaDB (FastAPI) serves the analytical-results catalog + /docs at :8010
 	# on this host. handle_path strips /analytica so the service sees its own root
@@ -122,42 +191,20 @@ http://100.64.254.6 {
 		}
 	}
 
-	# ---- LaAgenteAnalitica UI (agent chat, separate PC) --------------------
-	# The agent's Node server (serves the built React frontend + API + WS) runs
-	# at 100.64.254.21:3000 in GRAPHCHAT_AUTH_MODE=forward_auth. Same pattern as
-	# the AnaliticaDB block below: forward_auth gates the path against ac_auth and
-	# injects X-Auth-User/Role; header_up stamps the shared proxy secret so the
-	# app trusts that identity (it verifies x-graphchat-proxy-secret against its
-	# GRAPHCHAT_TRUSTED_PROXY_SECRET — direct callers can't forge it) and shows no
-	# in-app login (loginHandledHere:false). The shared /auth/banner.js top bar
-	# rides on top. We STRIP /agente (handle_path): the backend serves the SPA
-	# + API at its root, and the frontend was built with a matching base so the
-	# browser-side URLs carry the prefix the edge strips back off.
-	#   edge:    GRAPHCHAT_EDGE_SECRET=…       in caddy's systemd env
-	#   service: GRAPHCHAT_TRUSTED_PROXY_SECRET=… on the :3000 host (must match)
-	# The frontend build MUST use the SAME slug as this route (VITE_BASE=/agente/,
-	# VITE_API_URL=/agente, VITE_WS_URL=ws://100.64.254.6/agente/…). The URL slug
-	# is /agente (the built base); the dashboard pill is still labelled "Analitica".
-	# Distinct path from /analytica (AnaliticaDB results catalog, :8010).
-	# HTTP under /agente is edge-gated; WebSocket upgrades are NOT — the app
-	# authenticates the socket itself via its short-lived ws_token, so excluding
-	# Upgrade requests from forward_auth lets the handshake reach the app (101,
-	# then app-level ws_token check) instead of Caddy 403-ing it at the edge.
-	# handle_path still strips /agente and proxies both HTTP and WS (Caddy
-	# reverse_proxy auto-handles the Upgrade) and stamps the proxy secret.
-	@agente_http {
-		path /agente /agente/*
-		not header Connection *Upgrade*
-	}
-	forward_auth @agente_http 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
-	}
+	# ---- LaAgenteAnalitica UI (agent chat, on THIS host: gaia) --------------
+	# GraphChat now runs locally at 127.0.0.1:3000 in GRAPHCHAT_AUTH_MODE=ac_auth,
+	# so the app verifies the shared ac_auth_session cookie itself (it is NOT
+	# edge-gated here, unlike the old separate-PC forward_auth setup). The cookie
+	# rides along because /agente shares this 100.64.254.6 origin; the shared
+	# /auth/banner.js top bar rides on top. handle_path STRIPS /agente: the
+	# backend serves the SPA + API at its root and the frontend was built with a
+	# matching base (VITE_BASE=/agente/) so browser URLs carry the prefix the edge
+	# strips back off. WebSocket upgrades proxy through the same handle_path
+	# (Caddy auto-handles Upgrade); the app authenticates the socket via its own
+	# short-lived ws_token. Distinct path from /analytica (AnaliticaDB, :8010).
 	redir /agente /agente/ 308
 	handle_path /agente/* {
-		reverse_proxy 100.64.254.21:3000 {
-			header_up X-Graphchat-Proxy-Secret {env.GRAPHCHAT_EDGE_SECRET}
-		}
+		reverse_proxy 127.0.0.1:3000
 	}
 
 	# ---- PyPoe web UI, path-routed ONTO this origin (banner only, NOT gated) --
@@ -197,4 +244,30 @@ http://100.64.254.6 {
 	# enforces its own control/assistant gate via web/src/middleware.ts against
 	# the same sidecar — so no forward_auth wrapper is needed here.
 	reverse_proxy 100.64.254.6:8000
+}
+
+# ---- Uptime Kuma (admin watchdog) — SSO edge on its own PORT ---------------
+# Kuma cannot be served under a sub-path (upstream limitation), so it gets its
+# own port on the canonical host instead: cookies are port-agnostic, so the
+# ac_auth_session cookie set on http://100.64.254.6/ rides along to :8005.
+# The container binds 127.0.0.1:8005 (UPTIME_KUMA_HOST); this edge site owns
+# 100.64.254.6:8005, so the dashboard's existing "Open" link keeps working.
+# Admins only: any lab account can authenticate, but only role=admin passes
+# (X-Auth-Role is set by forward_auth from the verify response — a client-
+# supplied copy is overwritten, so the matcher below is trustworthy). Kuma's
+# internal auth is disabled (Settings → Advanced) — this edge IS its auth.
+# PyPoe keeps reading the anonymous status-page API on loopback, under this
+# gate. Requires AUTH_LOGIN_URL to be ABSOLUTE in the sidecar env, or the
+# logged-out redirect would loop on this origin.
+http://100.64.254.6:8005 {
+	# Bind the Tailnet IP specifically — Caddy's default wildcard listener
+	# (*:8005) would block the Kuma container from binding 127.0.0.1:8005.
+	bind 100.64.254.6
+	forward_auth 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
+	@nonadmin not header X-Auth-Role admin
+	respond @nonadmin "Uptime Kuma is admins-only." 403
+	reverse_proxy 127.0.0.1:8005
 }

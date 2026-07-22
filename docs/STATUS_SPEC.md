@@ -154,6 +154,30 @@ These three are routinely confused. They are not interchangeable:
 
 **Net rule:** an `unknown` the reader can attribute to a known reachability failure (a transport `fetch_error`, or a gateway-fronted kind reporting `unknown`) renders as **"unreachable"** and counts as *down*; a bare `unknown` with no such attribution (cold start, not-yet-observed) stays **"unknown"** and counts as *up*. Devices should drive toward a precise state whenever they can — `unknown` is the answer of last resort, not a routine one.
 
+### 2.2 Top-level state must reflect run suitability (normative)
+
+`equipment_status` is the safety-relevant summary of the equipment, not merely
+the liveness of its service or supervisor process. A device **MUST NOT** report
+`ready` while it knows of an active fault that makes the equipment unsuitable
+for its normal primary operation:
+
+- Report **`error`** when a reachable device or required subsystem reports an
+  active fault that prevents a normal run.
+- Report **`degraded`** when a subsystem is unhealthy but the equipment retains
+  a safe, useful subset of its normal capability.
+- Report **`ready`** only when the equipment is initialized, idle, and has no
+  known run-blocking fault. A healthy service process or the absence of an
+  active run is not sufficient by itself.
+
+`components`, `metrics`, and `last_error` provide diagnosis; they must not be
+used to hide a run-blocking fault beneath a top-level `ready`. A historical
+`last_error` whose underlying fault is no longer active does not by itself make
+the equipment unsuitable; follow the clearing policy in §6.4.
+
+`allowed_actions` must agree with the top-level state. While a run-blocking
+fault is active, omit actions that start or enqueue a normal run. Recovery,
+abort, standby, and diagnostic actions may remain available when safe.
+
 ### v1.1 field semantics
 
 `allowed_actions`:
@@ -477,6 +501,7 @@ A repo is considered v1.0 conformant when:
 - [ ] `GET /` returns `ProbeResponse(equipment_id, equipment_name, protocol_version="1.0")`.
 - [ ] `GET /health` returns `HealthResponse(status="healthy")`.
 - [ ] `GET /status` returns `EquipmentStatus` with snake_case field names. **Side-effect-free.** Always 200 unless the process is broken.
+- [ ] Top-level `equipment_status` follows §2.2: an active fault in a required subsystem that makes the equipment unsuitable for a normal run is never reported as `ready`.
 - [ ] `GET /openapi.json` is served (FastAPI gives this for free; Flask repos either migrate to FastAPI or use `flask-openapi3`).
 - [ ] All control endpoints under `/control/*`, gated by Pydantic body schemas with `Field(ge=, le=)` ranges.
 - [ ] CORS allows the dashboard origin.

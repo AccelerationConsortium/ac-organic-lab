@@ -49,12 +49,24 @@ class PillConfig(BaseModel):
     canonical dashboard origin (the Caddy edge), which forward-auths it,
     instead of pointing at the device's directly-reachable Tailnet port.
 
+    ``authorized_only: true`` hides the pill links from users who hold no
+    role on this equipment (per the auth sidecar's ``/authz/mine`` map), so
+    admin-facing panels (e.g. Uptime Kuma) don't advertise a link the viewer
+    can't use. Presentation-only — the click was already blocked client-side
+    and the edge enforces server-side regardless.
+
+    ``internal: true`` marks ``link_href`` as a dashboard route. Internal
+    monitoring links use normal same-tab navigation and do not require an
+    equipment control role.
+
     Extensible: add ``icon``, etc. without breaking older entries.
     """
 
     open: bool = False
     link_label: str | None = None
     link_href: str | None = None
+    authorized_only: bool = False
+    internal: bool = False
 
 
 # Protocol version a device claims to implement. Drives client-side behavior
