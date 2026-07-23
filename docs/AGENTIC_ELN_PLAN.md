@@ -1,6 +1,7 @@
 # Agentic ELN — Implementation Plan
 
-**Status:** consolidated plan (2026-07-22). Sequencing and open decisions for
+**Status:** consolidated plan (2026-07-22), updated (2026-07-23). Phases A–C
+shipped in `bitacora`; Phase D pending. Sequencing and open decisions for
 the design in [`AGENTIC_ELN_DESIGN.md`](AGENTIC_ELN_DESIGN.md); the record
 layer it builds against is [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md). This
 document merges the former `ELN_UI_PLAN.md` Part C (Steps 0–7) and the
@@ -92,14 +93,18 @@ Extends Track 1; phases note their dependencies.
 
 1. **Phase A — repository lifecycle.** Template-generate + ruleset + project
    registry + server workspace service (bare clone + per-session worktrees).
-   No agent yet; the page shows repo + protocol read-only.
+   **Done (2026-07-23):** FastAPI lifecycle service shipped in `bitacora`. 
+   GitHub App integration (template stamping) deferred — depends on App setup.
 2. **Phase B — canonical edit path + visual read view.** The protocol edit
-   service (typed edits, schema re-validation, attributed commits) and the
-   right-side tabs rendering the document. Direct visual edits land here.
+   service (typed edits, schema re-validation, attributed commits). **Done
+   (2026-07-23):** editor + schema shipped. Visual read view (Next.js) deferred —
+   comes after API is stable.
 3. **Phase C — agent + AG-UI.** Project-scoped planning agent streaming over
-   AG-UI, editing through the same edit service; decision-record drafting.
-   Depends on Track 1 Step 1 (read-only lab toolset) for
-   `validate_plan`-aware drafting.
+   AG-UI, editing through the same edit service; conversation store; decision-record
+   drafting. **Done (2026-07-23):** lab-skills client, conversation store, agent
+   session, tool registry, AG-UI SSE streaming. Fable-reviewed (6 fixes applied),
+   native-async refactored. 73 tests passing. Lab client wiring (needs
+   `equipment.yaml`) is a deployment concern.
 4. **Phase D — PR + scientific diff.** PR open/update from the page; the
    rendered scientific-diff CI job; the Review tab.
 5. **Phase E — run authorizer + compiler (dry-run first).** Authorization pins +
