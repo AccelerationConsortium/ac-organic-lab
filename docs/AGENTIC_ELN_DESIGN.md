@@ -645,8 +645,9 @@ Two seams need deliberate closure (not just wiring):
 
 - **Claim coupling** — the analysis agent's direct Agilent path and the lab
   claim protocol do not share a lease today. Agent-issued execution must go
-  through the lab claim so dashboard and agent mutually exclude [OPEN:
-  reconcile or document the exception].
+  through the lab claim so dashboard and agent mutually exclude (**RESOLVED
+  D-9, 2026-07-22:** actuating paths go through the SDK claim — binding;
+  read-only status is a documented accepted exception).
 - **Approval identity** — an AnaliticaDB `Plan` enters `approved` only via a
   *human principal*; UI approval clicks must carry the authenticated user as
   `author_kind=human`; for git-authored protocols the approval is the merge.

@@ -591,11 +591,14 @@ Critique accepted after the hh merge; filed here so they don't evaporate:
 Tracked as decisions D-13/D-14/D-15 in
 [`AGENTIC_ELN_PLAN.md`](AGENTIC_ELN_PLAN.md) §4:
 
-- Units handling for the ledger (free string + convention vs a `unit` enum vs
-  pint-style canonicalization at the boundary). Recommend: enum of the ~10
-  units the lab actually uses (the solubility schema's `amount_unit_t` —
-  mg/g/µL/mL/mol/mmol — is a good seed); canonicalize per-substance at write
-  time.
+- **RESOLVED (D-13, 2026-07-22):** units handling for the ledger — a **named
+  enum** of the ~10 units the lab actually uses (the solubility schema's
+  `amount_unit_t` — mg/g/µL/mL/mol/mmol — is the seed, plus
+  count/dimensionless), **canonicalized per-substance at write time** (each
+  `Substance` declares a canonical amount unit; every `ContainerAction`
+  normalizes to it on write, so balances sum one column with no read-time
+  conversion). Not free string (balances must not drift on spelling), not
+  pint (a closed vocabulary, not arbitrary unit algebra).
 - Whether plan `steps` stay JSONB (flexible, ontology-opaque) or become typed
   step blocks in `params.py` style. Start JSONB with a required `step_id`;
   type the step vocabulary once the agent's procedure language stabilizes.
