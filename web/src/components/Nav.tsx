@@ -16,7 +16,7 @@ const STATIC_AFTER = [
 export function Nav() {
   const pathname = usePathname();
   const { data: platforms } = usePlatforms();
-  const { identity } = useUserAuth();
+  const { authenticated, identity } = useUserAuth();
 
   // One "Platforms" tab groups every `kind: platform` section — the page's
   // pill row switches between them (the old per-platform routes still exist
@@ -25,8 +25,12 @@ export function Nav() {
     ? [{ href: "/platforms", label: "Platforms" }]
     : [];
 
-  // Bitacora (agentic ELN), embedded same-origin under /workflows.
-  const workflowsTabs = [{ href: "/workflows", label: "Workflows" }];
+  // Bitacora (agentic ELN), embedded same-origin under /workflows. Hidden
+  // until sign-in — anonymous visitors would otherwise see Bitacora's own
+  // auth-gated dashboard nested inside the iframe (see middleware.ts).
+  const workflowsTabs = authenticated
+    ? [{ href: "/workflows", label: "Workflows" }]
+    : [];
 
   // Visibility only — the /admin route is enforced by the middleware + sidecar.
   const adminTabs =

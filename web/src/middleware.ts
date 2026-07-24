@@ -57,6 +57,18 @@ const ASSISTANT_PUBLIC_PATHS = new Set(["/api/assistant/health"]);
 const ADMIN_PAGE_RE = /^\/admin(?:\/.*)?$/;
 const ADMIN_API_RE = /^\/api\/admin(?:\/.*)?$/;
 
+// -- /workflows page gate (sign-in required) ----------------------------------
+//
+// /workflows embeds Bitácora (a separate app, own auth-gated route) in an
+// iframe. Bitácora renders its own full dashboard chrome — including its own
+// login/authorization screen — when the viewer isn't signed in to it. If an
+// anonymous ac-organic-lab visitor can reach /workflows, they see that whole
+// second dashboard nested inside this one (a "russian doll" of dashboards).
+// Gating the page itself on an ac-organic-lab session means an unauthorized
+// visitor never sees the iframe at all — same-cheap fix as /admin above, just
+// sign-in rather than the admin role.
+const WORKFLOWS_PAGE_RE = /^\/workflows(?:\/.*)?$/;
+
 const AUTH_SERVICE_BASE =
   process.env.AUTH_SERVICE_BASE ?? "http://127.0.0.1:8009";
 const CONTROL_OPEN = process.env.DASHBOARD_CONTROL_OPEN === "true";
@@ -131,6 +143,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // ---- Workflows page guard (sign-in required) ----------------------------
+  if (WORKFLOWS_PAGE_RE.test(pathname)) {
+    if (CONTROL_OPEN) return NextResponse.next();
+    const v = await verifySession(request);
+    if (!v.ok) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/";
+      return NextResponse.redirect(url);
+    }
+    return NextResponse.next();
+  }
+
   // ---- Control-surface guard (view-only until signed in) ----------------
   if (
     CONTROL_METHODS.has(request.method) &&
@@ -167,5 +191,6 @@ export const config = {
     "/api/labware/:path*",
     "/admin/:path*",
     "/api/admin/:path*",
+    "/workflows/:path*",
   ],
 };
