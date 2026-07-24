@@ -124,9 +124,41 @@ export function MsePlayer({
 
     open();
 
+    // Keep playback near the live edge. A live MSE stream plays at 1x from
+    // wherever decoding began, so any buffer accumulated at startup (or after a
+    // stall / backgrounded tab) becomes permanent latency. Ease the rate up on
+    // a small lead; hard-seek if we fall badly behind. Camera feeds have no
+    // audio, so the slight speedup is imperceptible. Bounds delay to
+    // ~LIVE_TARGET instead of letting it creep.
+    const LIVE_TARGET = 0.35; // sit this far behind the live edge (s)
+    const LIVE_NUDGE = 0.9; // ease toward live once the lead exceeds this (s)
+    const LIVE_RESYNC = 3.0; // hard-seek to live once the lead exceeds this (s)
+    const keepLiveEdge = () => {
+      if (!sourceBuffer) return;
+      const b = video.buffered;
+      if (!b.length) return;
+      const end = b.end(b.length - 1);
+      const lead = end - video.currentTime;
+      if (lead > LIVE_RESYNC) {
+        try {
+          video.currentTime = end - LIVE_TARGET;
+        } catch {
+          /* ignore */
+        }
+        video.playbackRate = 1.0;
+      } else if (lead > LIVE_NUDGE) {
+        video.playbackRate = 1.08; // smooth catch-up, no visible jump
+      } else if (video.playbackRate !== 1.0) {
+        video.playbackRate = 1.0;
+      }
+    };
+    video.addEventListener("timeupdate", keepLiveEdge);
+
     return () => {
       cancelled = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      video.removeEventListener("timeupdate", keepLiveEdge);
+      video.playbackRate = 1;
       try {
         socket?.close();
       } catch {
