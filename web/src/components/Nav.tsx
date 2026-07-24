@@ -25,11 +25,20 @@ export function Nav() {
     ? [{ href: "/platforms", label: "Platforms" }]
     : [];
 
+  // Bitacora (agentic ELN), embedded same-origin under /workflows.
+  const workflowsTabs = [{ href: "/workflows", label: "Workflows" }];
+
   // Visibility only — the /admin route is enforced by the middleware + sidecar.
   const adminTabs =
     identity?.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [];
 
-  const tabs = [...STATIC_BEFORE, ...platformTabs, ...STATIC_AFTER, ...adminTabs];
+  const tabs = [
+    ...STATIC_BEFORE,
+    ...platformTabs,
+    ...workflowsTabs,
+    ...STATIC_AFTER,
+    ...adminTabs,
+  ];
 
   return (
     <nav className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-800">

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { EquipmentGrid } from "@/components/EquipmentGrid";
 import { useEquipmentList } from "@/lib/use-equipment";
@@ -20,6 +21,7 @@ const SELECTED_PLATFORM_KEY = "platforms-selected";
 const NONE = "__none__";
 
 export default function PlatformsPage() {
+  const router = useRouter();
   const { data: equipmentData, error: equipmentError } = useEquipmentList();
   const { data: platforms, error: platformsError, isPending: platformsPending } =
     usePlatforms();
@@ -135,15 +137,13 @@ export default function PlatformsPage() {
             None
           </button>
         </div>
-        {selected?.href && (
+        {selected && (
           <button
             type="button"
-            onClick={() => {
-              window.location.href = selected.href!;
-            }}
+            onClick={() => router.push("/workflows")}
             className="ml-auto rounded-md bg-orange-600 px-3 py-1 text-xs font-medium text-white shadow-sm hover:bg-orange-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 dark:bg-orange-500 dark:hover:bg-orange-600"
           >
-            Workflow UI
+            Workflows
           </button>
         )}
       </div>
