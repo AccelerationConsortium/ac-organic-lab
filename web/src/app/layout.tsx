@@ -6,6 +6,19 @@ import { UserAuthProvider } from "@/lib/user-auth";
 import { AssistantBubble } from "@/components/AssistantBubble";
 import { Nav } from "@/components/Nav";
 import { StateReferencePanel } from "@/components/StateReferencePanel";
+import { Logo } from "@/components/Logo";
+
+// Sets the `dark` class before first paint (localStorage, else OS
+// preference) so there's no flash of the wrong theme on load.
+const THEME_INIT_SCRIPT = `
+(function () {
+  try {
+    var stored = localStorage.getItem("theme");
+    var dark = stored ? stored === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.classList.toggle("dark", dark);
+  } catch (e) {}
+})();
+`;
 
 export const metadata: Metadata = {
   title: "Organic Self-driving Lab",
@@ -15,6 +28,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        <Script id="theme-init" strategy="beforeInteractive">
+          {THEME_INIT_SCRIPT}
+        </Script>
+      </head>
       <body className="min-h-screen">
         {/* Shared SDL2 auth banner — the same top bar every lab UI shows,
             served once by ac_auth at /auth/banner.js. It attaches its UI into
@@ -36,12 +54,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     Live Status of Lab and Platforms
                   </p>
                 </div>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/logo-uoft-ac.png"
-                  alt="University of Toronto · Acceleration Consortium"
-                  className="hidden h-[60px] w-auto shrink-0 sm:block md:h-[72px]"
-                />
+                <Logo />
               </div>
               <Nav />
             </header>
