@@ -23,7 +23,9 @@ equipment is the **highest applicable** of:
 ``operator < admin``. With no grants and no membership this reduces exactly to
 the old flat behavior, so the change is backward-compatible. The mapping:
 
-* automation account (robot/platform principal) → ``automation``
+* automation account (robot/platform principal) → ``automation`` **on the
+  equipment its roster entry declares** (``platform:`` or ``grants:``); ``None``
+  elsewhere. An account declaring no scope is lab-wide — the pre-scope default.
 * effective central ``admin``                    → ``service``
 * effective central ``operator``                 → ``user``
 """
@@ -65,6 +67,30 @@ def _grant_applies(grant, equipment_key: str, membership: Mapping[str, Iterable[
     return False
 
 
+def _automation_in_scope(
+    user: User, equipment_key: str, membership: Optional[Mapping[str, Iterable[str]]]
+) -> bool:
+    """Is this automation account declared for ``equipment_key``?
+
+    An automation account carries its declared scope as grants (see
+    ``main._automation_grants``: ``platform: hte`` becomes a platform grant, and
+    an account may instead name single equipment). It reaches only what it
+    declares — a camera-follow principal has no business holding control of the
+    sealer.
+
+    An account declaring **no** scope is lab-wide. That is the pre-scope default
+    and is kept deliberately: tightening it would silently revoke access from any
+    account whose roster entry predates the field, and a revocation should be an
+    explicit roster edit, not a side effect of a code change.
+    """
+    declared = tuple(getattr(user, "grants", ()) or ())
+    if not declared:
+        return True
+    # Normalize as effective_central_role does: membership is optional, and a
+    # platform grant must then resolve to nothing rather than raise.
+    return any(_grant_applies(g, equipment_key, membership or {}) for g in declared)
+
+
 def effective_central_role(
     user: User,
     equipment_key: str,
@@ -98,7 +124,7 @@ def effective_device_role(
     platform-scoped grants simply don't resolve (global/equipment still do).
     """
     if user.is_automation:
-        return "automation"
+        return "automation" if _automation_in_scope(user, equipment_key, membership) else None
     central = effective_central_role(user, equipment_key, membership)
     if central is None:
         return None

@@ -55,7 +55,7 @@ from .authz import data_scope, effective_central_role, effective_device_role
 from .config import Settings, build_mailer, load_settings
 from .db import Db, User, norm_email
 from .platforms import load_membership
-from .roster import Roster, RosterAutomation, RosterUser, load_roster, reload_roster
+from .roster import Grant, Roster, RosterAutomation, RosterUser, load_roster, reload_roster
 from .smtp_mailer import MailSendError, new_code
 
 logging.basicConfig(
@@ -112,9 +112,26 @@ def _automation_user(a: RosterAutomation) -> User:
         role="user",
         status="active" if a.approved else "disabled",
         is_automation=True,
+        grants=_automation_grants(a),
         name=a.name,
         expires_at=a.expires_at,
     )
+
+
+def _automation_grants(a: RosterAutomation) -> list:
+    """The account's declared scope, as grants ``authz`` can resolve.
+
+    ``platform: hte`` is shorthand for one platform-scoped grant, so both it and
+    an explicit ``grants:`` list reach :func:`authz.effective_device_role`
+    through the same path. Empty means undeclared, which that resolver reads as
+    lab-wide. The grant ``role`` is vestigial here (the device role is always
+    ``automation``); only scope/id are read, and ``operator`` keeps the value
+    inside what ``Grant`` accepts at equipment scope.
+    """
+    grants = list(a.grants)
+    if a.platform:
+        grants.append(Grant(scope="platform", id=a.platform, role="operator"))
+    return grants
 
 
 def _login_id(email: str) -> str:

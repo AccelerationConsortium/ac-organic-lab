@@ -79,8 +79,9 @@ def _now() -> float:
 
 
 class Grant(BaseModel):
-    """A per-scope authorization (Phase 1). Parsed and validated now so the file
-    format is stable; not consulted by the resolver until the hierarchy lands."""
+    """A per-scope authorization (Phase 1), consulted by
+    :func:`ac_auth.authz.effective_central_role` (humans) and
+    :func:`ac_auth.authz.effective_device_role` (automation scope)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -112,7 +113,7 @@ class RosterUser(BaseModel):
     expires: Optional[date] = None
     status: Literal["active", "disabled"] = "active"
     disabled_reason: str = ""
-    grants: list[Grant] = []  # Phase 1; parsed, not yet consulted
+    grants: list[Grant] = []  # resolved by authz.effective_central_role
 
     @field_validator("email")
     @classmethod
@@ -149,7 +150,15 @@ class RosterAutomation(BaseModel):
     email: str
     name: str = ""
     approved: bool = False  # global-admin approval gate (requirement 5)
-    platform: Optional[str] = None  # Phase 1 scope
+    # Scope. `platform` is shorthand for a single platform-scoped grant; use
+    # `grants` for anything narrower (an account that only drives one device
+    # should say so at equipment scope). Both are consulted by
+    # authz.effective_device_role, which bounds the account to what it declares.
+    # An account declaring NEITHER is lab-wide — the pre-scope default, kept for
+    # back-compat. The `role` on an automation grant is vestigial: the device
+    # role is always `automation`; only the scope/id are read.
+    platform: Optional[str] = None
+    grants: list[Grant] = []
     expires: Optional[date] = None
     notes: str = ""
 
@@ -423,6 +432,8 @@ def _automation_dict(a: RosterAutomation) -> dict:
         d["name"] = a.name
     if a.platform:
         d["platform"] = a.platform
+    if a.grants:
+        d["grants"] = [g.model_dump(exclude_none=True) for g in a.grants]
     if a.expires:
         d["expires"] = a.expires.isoformat()
     if a.notes:
