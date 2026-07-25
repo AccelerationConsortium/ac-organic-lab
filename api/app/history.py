@@ -30,6 +30,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from .events import ACTIVITY_TRANSITION
+
 logger = logging.getLogger(__name__)
 
 
@@ -139,9 +141,16 @@ def build_history_router() -> APIRouter:
     async def uptime_all(days: int = 7, request: Request = ...):
         """Uptime summary for every device in one request.
 
-        Returns ``{device_id: {uptime_pct, last_event, days}}`` — suitable
-        for the dashboard uptime overview table.  Devices with no uptime
-        data yet return ``uptime_pct: null``.
+        Returns ``{device_id: {uptime_pct, last_event, state_pcts,
+        activity_pcts, activity_tracking_since, days}}`` — suitable for the
+        dashboard uptime overview table.  Devices with no uptime data yet
+        return ``uptime_pct: null``.
+
+        ``activity_pcts`` (idle/running/unknown, STATUS_SPEC v1.2 §2.3) is a
+        60 s poll-sampled series: operations shorter than the poll interval
+        are missed outright, so per §2.3.1 it must be rendered as sampled
+        observation — never as usage accounting — alongside
+        ``activity_tracking_since`` (null until the first activity row).
         """
         import asyncio
         loop = asyncio.get_event_loop()
@@ -172,12 +181,21 @@ def build_history_router() -> APIRouter:
             state_pcts = await loop.run_in_executor(
                 None, lambda d=did: db.get_state_time_pcts(d, days=days)
             )
+            activity_pcts = await loop.run_in_executor(
+                None, lambda d=did: db.get_activity_time_pcts(d, days=days)
+            )
+            activity_since = await loop.run_in_executor(
+                None,
+                lambda d=did: db.get_first_event_ts(d, ACTIVITY_TRANSITION),
+            )
             results[did] = {
                 "device_id": did,
                 "days": days,
                 "uptime_pct": pct,
                 "last_event": dict(last[0]) if last else None,
                 "state_pcts": state_pcts,
+                "activity_pcts": activity_pcts,
+                "activity_tracking_since": activity_since,
             }
 
         return {"devices": results, "days": days}

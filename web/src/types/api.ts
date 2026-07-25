@@ -142,6 +142,9 @@ export interface PlatformsConfig {
   sections: PlatformSection[];
 }
 
+/** Activity (STATUS_SPEC v1.2 §2.3) — orthogonal to `equipment_status`. */
+export type Activity = "idle" | "running" | "unknown";
+
 export type EquipmentSnapshot = Omit<
   Schemas["EquipmentSnapshot"],
   "kind" | "status"
@@ -153,6 +156,12 @@ export type EquipmentSnapshot = Omit<
   /** Display-only Tailscale IP from equipment.yaml (null/absent → not shown). */
   tailscale_ip?: string | null;
   pill?: PillConfig | null;
+  /** Server-resolved activity: device-reported when available, else derived
+   *  (§2.3 state invariants / per-kind component sniff). `unknown` when
+   *  unreachable or undeterminable — never a false `idle`. */
+  activity?: Activity;
+  /** How `activity` was determined: device | status | components | none. */
+  activity_source?: "device" | "status" | "components" | "none";
 };
 
 export interface EquipmentList {

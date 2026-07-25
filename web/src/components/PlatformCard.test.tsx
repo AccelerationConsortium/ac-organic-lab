@@ -98,3 +98,58 @@ describe("PlatformCard service links", () => {
     expect(link.getAttribute("target")).toBeNull();
   });
 });
+
+describe("PlatformCard equipment row health + activity (spec v1.2)", () => {
+  it("shows the activity label with an amber health glyph for a degraded-but-running device", () => {
+    const shaker = {
+      ...gatewaySnapshot,
+      id: "torry_pines_shaker",
+      name: "Torrey Pines SC25XR",
+      kind: "shaker",
+      pill: {},
+      activity: "running",
+      activity_source: "components",
+      status: {
+        ...gatewaySnapshot.status,
+        equipment_id: "torry_pines_shaker",
+        equipment_kind: "shaker",
+        equipment_status: "degraded",
+      },
+    } as unknown as EquipmentSnapshot;
+
+    render(<PlatformCard id="hte" title="HTE" snapshots={[shaker]} />);
+
+    // Two separate elements: activity carries the text, health the glyph.
+    expect(screen.getByText("Running")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Health: Degraded" })).toBeTruthy();
+    expect(screen.queryByText("Degraded")).toBeNull();
+  });
+
+  it("shows only the activity label when health is nominal", () => {
+    const ready = {
+      ...gatewaySnapshot,
+      pill: {},
+      activity: "idle",
+      activity_source: "status",
+    } as unknown as EquipmentSnapshot;
+
+    render(<PlatformCard id="web_services" title="Services" snapshots={[ready]} />);
+
+    expect(screen.getByText("Idle")).toBeTruthy();
+    expect(screen.queryByRole("img")).toBeNull();
+  });
+
+  it("renders unknown activity as a dash, never a false Idle", () => {
+    const legacy = {
+      ...gatewaySnapshot,
+      pill: {},
+      // v1.0/v1.1 device in a state the invariants can't pin: no activity
+      status: { ...gatewaySnapshot.status, equipment_status: "dry_run" },
+    } as unknown as EquipmentSnapshot;
+
+    render(<PlatformCard id="web_services" title="Services" snapshots={[legacy]} />);
+
+    expect(screen.getByText("—")).toBeTruthy();
+    expect(screen.queryByText("Idle")).toBeNull();
+  });
+});

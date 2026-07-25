@@ -40,6 +40,8 @@ from typing import Any, Optional
 
 import httpx
 
+from .events import ALERT_EMITTED
+
 logger = logging.getLogger("alert_notifier")
 
 ALERT_STATES = {"error", "e_stop"}
@@ -251,7 +253,7 @@ class AlertNotifier:
         try:
             self._db.record_equipment_event(
                 payload["device_id"],
-                "alert_emitted",
+                ALERT_EMITTED,
                 to_state=payload.get("state"),
                 message=payload.get("message"),
                 payload={

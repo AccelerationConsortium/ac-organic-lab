@@ -1,7 +1,7 @@
 # Lab Equipment Status Spec
 
-**Current version:** `1.1` (additive over `1.0`; v1.0 devices remain valid).
-**Status:** authoritative contract for every lab equipment REST API displayed on the AC Organic Self-Driving Lab dashboard. v1.0 is the *baseline*; v1.1 adds cooperative claims, `allowed_actions`, and `details.claimed_by`. The two coexist on the wire and in `equipment.yaml`; the SDK degrades gracefully when talking to v1.0 devices.
+**Current version:** `1.2` (additive over `1.1`, which was additive over `1.0`; v1.0 and v1.1 devices remain valid).
+**Status:** authoritative contract for every lab equipment REST API displayed on the AC Organic Self-Driving Lab dashboard. v1.0 is the *baseline*; v1.1 adds cooperative claims, `allowed_actions`, and `details.claimed_by`; v1.2 adds `activity` / `activity_since`, separating "is it healthy" from "is it working". All three coexist on the wire and in `equipment.yaml`; the SDK degrades gracefully when talking to older devices.
 
 Each equipment repo copies the Pydantic models below into its own `models.py`. Once the spec has been stable for ~1 month and 3+ repos have migrated cleanly to v1.1, these types will be promoted into a shared `lab-status-contract` Python package and per-device repos will `from lab_status_contract import ...` instead of vendoring a copy.
 
@@ -43,7 +43,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-PROTOCOL_VERSION = "1.1"   # v1.0 devices stay on "1.0"
+PROTOCOL_VERSION = "1.2"   # v1.0 / v1.1 devices stay on their own version
 
 
 EquipmentKind = Literal[
@@ -73,6 +73,15 @@ EquipmentState = Literal[
     "error",          # device is REACHABLE and reported a hardware/subsystem fault — NOT "couldn't reach it" (see §2.1)
     "e_stop",         # emergency stopped
     "unknown",        # state cannot be determined — honest fallback, NOT a failure signal on its own (see §2.1)
+]
+
+# NEW in v1.2. Orthogonal to EquipmentState: health and activity are
+# independent questions, and `equipment_status` answers only the first
+# (§2.2 requires a fault to claim the top-level state). See §2.3.
+Activity = Literal[
+    "idle",           # not performing its primary operation
+    "running",        # primary operation in progress
+    "unknown",        # cannot be determined — answer of last resort, same discipline as §2.1
 ]
 
 
@@ -134,6 +143,11 @@ class EquipmentStatus(BaseModel):
     # `details.claimed_by` is a ClaimedBy | None; nested under details to keep
     # the top-level shape stable for v1.0 readers.
 
+    # NEW in v1.2 — see §2.3. Defaults are deliberate: an older device that
+    # omits these reads as "undetermined", never as a false "idle".
+    activity: Activity = "unknown"
+    activity_since: datetime | None = None  # start of the current activity span
+
     # Free-form per-equipment data; safe to display in a debug/details panel.
     details: dict[str, Any] = Field(default_factory=dict)
 ```
@@ -178,6 +192,94 @@ the equipment unsuitable; follow the clearing policy in §6.4.
 fault is active, omit actions that start or enqueue a normal run. Recovery,
 abort, standby, and diagnostic actions may remain available when safe.
 
+### 2.3 `activity` is orthogonal to `equipment_status` (normative, v1.2+)
+
+`equipment_status` answers *"is this equipment healthy and suitable for a
+run?"*. `activity` answers *"is it performing its primary operation right
+now?"*. These are independent questions, and §2.2 deliberately gives the
+top-level state to the **first** one — so before v1.2 there was nowhere for the
+second answer to live. `activity` is that place.
+
+Concretely: a shaker with a faulty heater RTD but a healthy motor, mid-cycle,
+reports `equipment_status: "degraded"` **and** `activity: "running"`. Neither
+fact suppresses the other. `equipment_status` alone cannot express this, which
+is why a reader that only stores the top-level state loses all record of
+utilization for a chronically-degraded device.
+
+Rules:
+
+- Devices **MUST** derive `activity` from observed hardware state, **never**
+  from `equipment_status`. A device that computes one from the other adds no
+  information.
+- Each device repo **MUST** document what "primary operation" means for its
+  kind, in its README (shaker: orbital motor turning; HPLC: injection or
+  gradient in progress; press: platen cycle; plate sealer: a seal cycle).
+  Per-subsystem detail stays in `components`.
+- `activity` **MUST NOT** be used to soften, delay, or hide a run-blocking
+  fault. The §2.2 prohibition applies unchanged.
+- `activity_since` is the start of the **current** span (the instant `activity`
+  last changed value), not the start of the enclosing request or process. It
+  lets a reader recover the true duration of an in-progress operation instead
+  of inferring it from its own poll timestamps.
+- Report `unknown` only when the answer genuinely cannot be determined — same
+  discipline §2.1 imposes on `equipment_status: unknown`. It is the answer of
+  last resort, not a routine one.
+
+**Consistency invariants.** `activity` and `equipment_status` are independent
+but not unconstrained. A reader **MAY** treat a violation as a device bug:
+
+| `equipment_status` | required `activity` |
+|---|---|
+| `busy` | `running` |
+| `ready` | `idle` |
+| `requires_init` | `idle` |
+| `e_stop` | `idle` |
+| `degraded` | `running` **or** `idle` — whichever is true |
+| `error`, `dry_run`, `unknown` | any |
+
+`busy` is retained unchanged for compatibility, and is definitionally
+equivalent to healthy + `running`. It follows that `busy` and `degraded` can
+never co-occur in `equipment_status` — that combination is expressed as
+`degraded` + `activity: "running"`.
+
+> A future v2 could make the state enum health-only and let `activity` carry
+> every run signal, retiring `busy`. That is cleaner but breaks every device,
+> the catalog's `requires_states`, and stored history. Not now.
+
+`allowed_actions` **MUST** agree with `activity` as well as with the top-level
+state: while `activity == "running"`, omit actions that would start or enqueue
+a *second* concurrent run. Abort and stop actions remain available.
+
+#### 2.3.1 Readers: `activity` alone is not usage accounting (normative)
+
+A poll-sampled `activity` series **MUST NOT** be presented as usage or
+utilization accounting. Operations shorter than the reader's poll interval can
+begin and end entirely between two polls, so they are not undercounted — they
+are missed outright. (The dashboard aggregator polls at 60 s; a default shaker
+cycle is 30 s.)
+
+For accounting that survives sampling, devices **SHOULD** provide at least one
+of:
+
+- a monotonically increasing `metrics["cycles_total"]` (reserved key,
+  `unit: "count"`), whose poll-to-poll delta reveals operations the reader
+  slept through — it never decreases except on device restart; or
+- device-originated start/stop records posted to the aggregator's event-ingest
+  path, which carry exact timestamps independent of any reader's poll cadence.
+
+Readers that cannot offer either **MUST** label such a series as sampled, and
+**MUST** show when tracking began rather than rendering pre-tracking time as
+zero usage.
+
+#### 2.3.2 Reader-side derivation is non-normative
+
+Until every device reports `activity`, a reader **MAY** infer it for known
+kinds from `components` (e.g. a shaker's `components["motor"].state` in
+`{running, shaking}`). Such inference is **reader-local and non-normative**:
+devices **MUST NOT** rely on it, it is not part of the contract, and it is
+expected to be deleted once the fleet has migrated. A device that omits
+`activity` is reported as `unknown`, which is the honest answer.
+
 ### v1.1 field semantics
 
 `allowed_actions`:
@@ -190,6 +292,21 @@ abort, standby, and diagnostic actions may remain available when safe.
 - `null` (or missing) when no claim is active.
 - A `ClaimedBy` object when a claim is active. `expires_at` is the heartbeat-extended absolute UTC timestamp.
 
+### v1.2 field semantics
+
+`activity`:
+- Independent of `equipment_status`; see §2.3 for the full rules and the consistency invariants.
+- Absent on a v1.0/v1.1 device → readers treat it as `"unknown"`, never as `"idle"`.
+- Devices that have not yet migrated to v1.2 simply omit the field, exactly as with the v1.1 additions.
+
+`activity_since`:
+- `null` when unknown, or when the device cannot timestamp the transition.
+- Otherwise the absolute UTC instant `activity` last changed value.
+
+`metrics["cycles_total"]` (reserved, optional):
+- Monotonic count of completed primary operations since device start, `unit: "count"`.
+- Resets only on device restart; a reader detecting a decrease treats it as a restart, not as negative usage.
+
 ---
 
 ## 3. Probe Endpoints
@@ -200,7 +317,7 @@ abort, standby, and diagnostic actions may remain available when safe.
 class ProbeResponse(BaseModel):
     equipment_id: str
     equipment_name: str
-    protocol_version: str   # "1.0" or "1.1"
+    protocol_version: str   # "1.0", "1.1" or "1.2"
 ```
 
 `GET /health` returns:
@@ -369,7 +486,7 @@ Recommended additional fields (per precondition type):
 - Precondition-specific fields named to make the body shape self-describing. Examples in the reference implementation:
 
 ```json
-// Temperature interlock (plateloc v1.2+)
+// Temperature interlock (plateloc device v1.2+ — device version, not spec version)
 {
   "detail":         "Temperature outside seal band",
   "actual_c":       166.0,
@@ -378,7 +495,7 @@ Recommended additional fields (per precondition type):
   "retry_after_s":  2
 }
 
-// Stage interlock (plateloc v1.3+)
+// Stage interlock (plateloc device v1.3+)
 {
   "detail":      "Stage not loaded",
   "stage_state": "out",
@@ -471,23 +588,26 @@ Implemented in `lab-skills` v0.3:
 - A step that targets an `EquipmentEntry` with `protocol = "1.0"` produces a `warnings: ["no_claim_semantics"]` entry. The plan can still be executed; the warning surfaces that no mutual-exclusion guarantee will be in effect.
 - A step that targets `protocol = "1.1"` adds no warning. `execute_plan` (v0.4) will wrap it in `ClaimManager`.
 
-The `protocol` field on `EquipmentEntry` in the registry defaults to `"1.0"`, so existing `equipment.yaml` files stay valid. To opt a migrated device into v1.1 semantics, add `protocol: "1.1"` to its yaml entry.
+The `protocol` field on `EquipmentEntry` in the registry defaults to `"1.0"`, so existing `equipment.yaml` files stay valid. To opt a migrated device into v1.1 semantics, add `protocol: "1.1"` to its yaml entry (`protocol: "1.2"` for v1.2).
 
 ---
 
 ## 8. Back-compatibility (normative)
 
-The SDK's contract for v1.0 devices, post-v1.1:
+The SDK's contract across versions:
 
-| Surface             | v1.0 device              | v1.1 device              |
-|---------------------|--------------------------|--------------------------|
-| `/status`           | no `allowed_actions`     | populates `allowed_actions` |
-| `Skill.available`   | from `requires_states`   | from `allowed_actions` first, falls back to `requires_states` |
-| `ClaimManager`      | degraded (no-op)         | claims + heartbeat + release |
-| `validate_plan` warning | `["no_claim_semantics"]` | none |
-| `execute_plan` (v0.4) | runs without claim wrap | wraps each step in `ClaimManager` |
+| Surface             | v1.0 device              | v1.1 device              | v1.2 device              |
+|---------------------|--------------------------|--------------------------|--------------------------|
+| `/status`           | no `allowed_actions`     | populates `allowed_actions` | also populates `activity` / `activity_since` |
+| `Skill.available`   | from `requires_states`   | from `allowed_actions` first, falls back to `requires_states` | unchanged from v1.1 |
+| `ClaimManager`      | degraded (no-op)         | claims + heartbeat + release | unchanged from v1.1 |
+| `validate_plan` warning | `["no_claim_semantics"]` | none | none |
+| `execute_plan` (v0.4) | runs without claim wrap | wraps each step in `ClaimManager` | unchanged from v1.1 |
+| `activity`          | absent → reader sees `"unknown"` | absent → reader sees `"unknown"` | observed from hardware |
 
-A workflow that talks to a mix of v1.0 and v1.1 devices in the same `LabSession` is supported and is the expected migration path.
+A workflow that talks to a mix of v1.0, v1.1 and v1.2 devices in the same `LabSession` is supported and is the expected migration path.
+
+v1.2 adds no endpoints and no required fields — a v1.1 device is v1.2-compatible on the wire the moment the reader defaults `activity` to `"unknown"`. Readers **MUST NOT** condition any *safety* decision on `activity` alone, precisely because an unmigrated device always reports `unknown`; the §2.2 health gate remains the authority.
 
 ---
 
@@ -531,6 +651,22 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 - [ ] `equipment.yaml` entry has `protocol: "1.1"`.
 
 A repo that does **not** want to opt into v1.1 stays on v1.0 unchanged. The SDK treats it as "no claim semantics, fall back to v1.0 catalog `requires_states`".
+
+### v1.2 (additive over v1.1)
+
+A repo is considered v1.2 conformant when, on top of v1.1:
+
+- [ ] `protocol_version` reported on `/` and `/status` is `"1.2"`.
+- [ ] `EquipmentStatus.activity` is populated from **observed hardware state**, not derived from `equipment_status` (§2.3).
+- [ ] `activity_since` is set to the instant `activity` last changed, or `null` if the device cannot timestamp it.
+- [ ] The §2.3 consistency invariants hold — in particular `busy` ⇒ `running`, and `ready` / `requires_init` / `e_stop` ⇒ `idle`.
+- [ ] `allowed_actions` omits start-a-new-run actions while `activity == "running"`; abort/stop remain listed when safe.
+- [ ] `README.md` defines what "primary operation" means for this device, and says "This repo conforms to lab status spec v1.2".
+- [ ] Recommended for any device whose primary operation can be shorter than 60 s: a monotonic `metrics["cycles_total"]`, or device-originated start/stop event records (§2.3.1).
+- [ ] Snapshot fixtures cover at least: healthy + `running` (i.e. `busy`), healthy + `idle` (`ready`), and — if the device has an independently-faultable subsystem — `degraded` + `running`.
+- [ ] `equipment.yaml` entry has `protocol: "1.2"`.
+
+A repo that does not opt into v1.2 stays on its current version unchanged; readers report its activity as `unknown`.
 
 For *deploying* the repo to the actual lab PC (uv environment, NSSM service registration, log paths, multi-device hosting), follow [`DEVICE_PC_SETUP.md`](DEVICE_PC_SETUP.md). Each device repo's README should link to that document rather than re-deriving the recipe.
 
@@ -673,6 +809,62 @@ This is the reference implementation of §6.2: the heater is below band, so the 
     "sash_position":   {"value": 2, "unit": "preset"},
     "target_position": {"value": 4, "unit": "preset"}
   }
+}
+```
+
+### Orbital shaker (`shaker`) — v1.2 `degraded` **and** `running`
+
+The motivating case for §2.3: the heater's RTD has failed calibration, so the
+device is not suitable for a temperature-controlled run and §2.2 requires
+`degraded`. The motor is healthy and mid-cycle, so `activity` is `running`.
+Neither fact hides the other, and a reader that stores both can still report
+utilization for a device that has been `degraded` for weeks.
+
+```json
+{
+  "protocol_version": "1.2",
+  "equipment_id": "shaker_sc25xr",
+  "equipment_name": "Torrey Pines SC25XR",
+  "equipment_kind": "shaker",
+  "host": "shaker-pi",
+  "equipment_status": "degraded",
+  "activity": "running",
+  "activity_since": "2026-04-29T22:49:44Z",
+  "message": "Heater RTD calibration fault (cal3) — shaking without temperature control",
+  "required_actions": ["Recalibrate heater RTD"],
+  "device_time": "2026-04-29T22:50:01Z",
+  "components": {
+    "motor":  {"connected": true, "state": "shaking"},
+    "heater": {"connected": true, "state": "unknown", "message": "cal3: RTD out of calibration"}
+  },
+  "metrics": {
+    "speed_level":  {"value": 5, "unit": "level"},
+    "cycles_total": {"value": 418, "unit": "count"}
+  },
+  "last_error": {
+    "code": "cal3",
+    "message": "Heater RTD out of calibration",
+    "severity": "warning",
+    "timestamp": "2026-04-14T08:12:33Z"
+  },
+  "allowed_actions": ["shake.stop"],
+  "details": {"claimed_by": null}
+}
+```
+
+Note `allowed_actions`: `shake.start` is omitted because `activity` is
+`running` (no second concurrent cycle), and `heater.set_temperature` is omitted
+because of the fault — the two gates of §2.3 acting together. `shake.stop`
+stays available so an abort is always reachable.
+
+The same device, fault unchanged, between cycles:
+
+```json
+{
+  "equipment_status": "degraded",
+  "activity": "idle",
+  "activity_since": "2026-04-29T22:50:14Z",
+  "allowed_actions": ["shake.start"]
 }
 ```
 
@@ -831,6 +1023,8 @@ SiLA: a typed three-tier hierarchy declared in the feature definition — `Defin
 
 STATUS_SPEC models long-running work as: client polls `/status` → sees `equipment_status: busy` → poll until `ready`. There's no canonical request-id, no progress %, no intermediate values.
 
+v1.2 narrows the gap slightly but does not close it: `activity` survives a concurrent health fault (a `degraded` device is still visibly `running`, which a `busy`→`ready` poll loop could not express), and `activity_since` gives elapsed time without the client timing its own polls. There is still no request-id, no progress fraction, and no intermediate values — and §2.3.1 is explicit that polling cannot see an operation shorter than the poll interval, which is why `metrics["cycles_total"]` and device-originated event records exist.
+
 SiLA observable commands return a `CommandExecutionUUID` immediately, then expose:
 
 - `ExecutionInfo` stream (status: `waiting`/`running`/`finished_successfully`/`finished_with_error`, progress, estimated remaining time)
@@ -843,7 +1037,7 @@ This is genuinely missing from STATUS_SPEC today. A workflow that needs progress
 
 | STATUS_SPEC | SiLA 2 |
 |---|---|
-| Single `protocol_version` field at the envelope level (`"1.0"` / `"1.1"`) | Per-Feature semver inside the FQI (e.g. `…/PlateReader/v1`, `v2`); a server can expose both versions concurrently |
+| Single `protocol_version` field at the envelope level (`"1.0"` / `"1.1"` / `"1.2"`) | Per-Feature semver inside the FQI (e.g. `…/PlateReader/v1`, `v2`); a server can expose both versions concurrently |
 
 We bump the whole envelope; SiLA bumps features independently. Our approach is simpler when the entire ecosystem moves together (which is true today — we control all the repos).
 
@@ -893,4 +1087,4 @@ The semantics line up well enough that this would be a few hundred lines of Pyth
 - [`EQUIP_GUIDE.md`](EQUIP_GUIDE.md) — operational runbook for onboarding and maintenance.
 - [`DEVICE_PC_SETUP.md`](DEVICE_PC_SETUP.md) — canonical install recipe for a Windows device PC (uv + NSSM).
 - [`LAB_MONITORING.md`](LAB_MONITORING.md) — where state-history rows go (devices do not own them).
-- [`ROADMAP.md`](ROADMAP.md) — per-device migration status to v1.0 / v1.1.
+- [`ROADMAP.md`](ROADMAP.md) — per-device migration status to v1.0 / v1.1 / v1.2.

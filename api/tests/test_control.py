@@ -532,6 +532,9 @@ def test_ok_action_writes_audit_row() -> None:
     assert ev["payload"]["outcome"] == "ok"
     assert ev["payload"]["status_code"] == 200
     assert ev["payload"]["owner"] == "ac-organic-lab-dashboard"
+    # Wall-clock of the device interaction — rounded to ms, non-negative.
+    assert isinstance(ev["payload"]["duration_s"], float)
+    assert ev["payload"]["duration_s"] >= 0.0
 
 
 @respx.mock
@@ -582,6 +585,8 @@ def test_claim_denied_writes_audit_row() -> None:
     assert len(db.events) == 1
     assert db.events[0]["payload"]["outcome"] == "claim_denied"
     assert db.events[0]["payload"]["action"] == "seal/temperature"
+    # The claim hop DID reach the device, so time-to-refusal is recorded.
+    assert db.events[0]["payload"]["duration_s"] >= 0.0
 
 
 def test_audit_is_noop_without_db() -> None:

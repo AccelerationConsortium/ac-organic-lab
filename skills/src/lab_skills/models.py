@@ -1,7 +1,7 @@
-"""Lab equipment status spec v1.0 + aggregator runtime types.
+"""Lab equipment status spec v1.2 + aggregator runtime types.
 
-The STATUS_SPEC v1.0 portion of this file (everything from ``PROTOCOL_VERSION``
-down through ``HealthResponse``) is the authoritative copy that mirrors
+The STATUS_SPEC portion of this file (everything from ``SPEC_VERSION`` down
+through ``HealthResponse``) is the authoritative copy that mirrors
 ``docs/STATUS_SPEC.md`` at the repo root and is kept verbatim-identical to the
 copies vendored into per-device repos (each carries its own ``models.py``).
 Once a shared ``lab-status-contract`` package ships, this section will be
@@ -13,7 +13,9 @@ The aggregator-only types at the bottom (``FetchError`` family,
 (workflow scripts via the SDK, the dashboard's web server, and eventually the
 ``serve`` mode HTTP service in v0.5).
 
-Conformance: ``lab-skills`` SDK conforms to lab status spec v1.0.
+Conformance: ``lab-skills`` SDK reads lab status spec v1.2 (v1.0 / v1.1 / v1.2
+devices all parse; the v1.1 and v1.2 additions default to their
+"undetermined" values so an unmigrated device is never misread).
 """
 
 from __future__ import annotations
@@ -23,6 +25,16 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+# The spec revision the models in this module mirror. Bump this in lockstep
+# with ``docs/STATUS_SPEC.md``.
+SPEC_VERSION = "1.2"
+
+# Default for the ``protocol_version`` *field* when a device omits it. This is
+# deliberately NOT ``SPEC_VERSION``: a device that does not state its version
+# is a pre-spec / v1.0 device, and reading it as v1.2 would claim guarantees
+# (claims, ``allowed_actions``, ``activity``) it never made. Device repos
+# vendoring this file override the constant with the version they actually
+# speak.
 PROTOCOL_VERSION = "1.0"
 
 
@@ -59,6 +71,16 @@ EquipmentState = Literal[
     "unknown",        # state cannot be determined
 ]
 
+# NEW in v1.2 (STATUS_SPEC §2.3). Orthogonal to ``EquipmentState``: health and
+# activity are independent questions, and ``equipment_status`` answers only the
+# first (§2.2 requires a fault to claim the top-level state). A device MUST
+# derive this from observed hardware, never from ``equipment_status``.
+Activity = Literal[
+    "idle",           # not performing its primary operation
+    "running",        # primary operation in progress
+    "unknown",        # cannot be determined - answer of last resort
+]
+
 ErrorSeverity = Literal["info", "warning", "error", "critical"]
 
 
@@ -83,15 +105,23 @@ class ErrorInfo(BaseModel):
 
 
 class EquipmentStatus(BaseModel):
-    """Unified equipment status envelope (spec v1.0).
+    """Unified equipment status envelope (spec v1.0 + v1.1 + v1.2 additions).
 
-    The :attr:`allowed_actions` field is an optional v1.1 forward-compat hook:
-    the SDK reads it when a device reports it (so the catalog's availability
-    computation can use the device's own declaration as the source of truth)
-    but does not require it. v1.0 devices that omit it see an empty list and
-    fall back to ``equipment_status in def.requires_states`` precedence. The
-    formal v1.1 spec bump (claim/lease + ``allowed_actions`` semantics)
-    arrives in a later release.
+    All three versions parse through this one model; the later additions carry
+    defaults chosen so an unmigrated device is read as "did not say", never as
+    a positive claim it never made.
+
+    v1.1: :attr:`allowed_actions` is the device's own declaration of what it
+    would honor right now. v1.0 devices that omit it see an empty list, and
+    the catalog falls back to ``equipment_status in def.requires_states``.
+    ``details.claimed_by`` (a ``ClaimedBy``-shaped dict, or absent) stays
+    nested under :attr:`details` to keep the top-level shape stable for v1.0
+    readers; :mod:`lab_skills.claims` parses it.
+
+    v1.2: :attr:`activity` / :attr:`activity_since` answer "is it working",
+    which :attr:`equipment_status` cannot express once §2.2 gives the
+    top-level state to health. A v1.0/v1.1 device omitting them reads as
+    ``"unknown"`` - never as a false ``"idle"``.
     """
 
     protocol_version: str = PROTOCOL_VERSION
@@ -108,6 +138,14 @@ class EquipmentStatus(BaseModel):
     message: str | None = None
     required_actions: list[str] = Field(default_factory=list)
     allowed_actions: list[str] = Field(default_factory=list)
+
+    # NEW in v1.2 (§2.3) - orthogonal to `equipment_status`. The defaults are
+    # deliberate: an older device that omits these reads as "undetermined",
+    # never as a false "idle".
+    activity: Activity = "unknown"
+    # Start of the current activity span (the instant `activity` last changed
+    # value), not the start of the enclosing request or process.
+    activity_since: datetime | None = None
 
     # Timing
     device_time: datetime

@@ -22,6 +22,7 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from .events import snapshot_activity
 from lab_skills import (
     CameraConfig,
     EquipmentList as SkillEquipmentList,
@@ -70,6 +71,15 @@ class EquipmentSnapshot(SkillEquipmentSnapshot):
     plug: PlugConfig | None = None
     # Display-only Tailscale IP from the registry entry (None → not shown).
     tailscale_ip: str | None = None
+    # Server-resolved activity (STATUS_SPEC v1.2 §2.3): device-reported when
+    # available, else the §2.3 state invariants, else a per-kind component
+    # sniff (§2.3.2, non-normative). Resolved by the SAME function the poll
+    # loop records with (events.snapshot_activity), so live tiles and the
+    # stored activity_transition series can never disagree. `unknown` when
+    # unreachable or genuinely undeterminable — never a false `idle`.
+    activity: Literal["idle", "running", "unknown"] = "unknown"
+    # How `activity` was determined: device | status | components | none.
+    activity_source: Literal["device", "status", "components", "none"] = "none"
 
 
 class EquipmentList(BaseModel):
@@ -155,6 +165,8 @@ def _snapshot(
 
     pill = entry.pills if entry is not None else PillConfig()
 
+    activity, activity_source = snapshot_activity(sdk_snapshot)
+
     return EquipmentSnapshot(
         # SDK fields
         id=sdk_snapshot.id,
@@ -176,6 +188,8 @@ def _snapshot(
         camera=camera,
         plug=plug,
         tailscale_ip=entry.tailscale_ip if entry is not None else None,
+        activity=activity,
+        activity_source=activity_source,
     )
 
 

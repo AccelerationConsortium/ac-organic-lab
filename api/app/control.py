@@ -24,6 +24,7 @@ import asyncio
 import functools
 import logging
 import os
+import time
 from typing import Any
 
 import uuid
@@ -31,6 +32,8 @@ import uuid
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+
+from .events import CONTROL_ACTION
 
 logger = logging.getLogger("ac_dashboard.api.control")
 
@@ -452,6 +455,7 @@ async def _record_control_event(
     status_code: int,
     outcome: str,
     detail: Any = None,
+    duration_s: float | None = None,
 ) -> None:
     """Append one audit row to ``equipment_events`` for a control action.
 
@@ -459,6 +463,15 @@ async def _record_control_event(
     mutating passthrough call is recorded with the actor (``owner``), the
     action, and the outcome (``ok`` / ``refused`` / ``claim_denied`` /
     ``timeout`` / ``transport_error``).
+
+    ``duration_s`` is the wall-clock of the device interaction (the full
+    claim → action → release dance for v1.1 devices) as seen from the
+    dashboard. Many device endpoints block until the physical operation
+    completes, so this recovers an operation-duration record that the
+    poll-sampled activity series cannot (STATUS_SPEC §2.3.1) — but only for
+    dashboard-originated calls; SDK calls straight to the device remain
+    invisible here. ``None`` when no device interaction happened (e.g.
+    authorization refused before the first hop).
 
     Best-effort and non-blocking: the synchronous sqlite write is pushed to
     a worker thread so the event loop never blocks, and any failure is
@@ -477,6 +490,8 @@ async def _record_control_event(
         "outcome": outcome,
         "owner": owner,
     }
+    if duration_s is not None:
+        payload["duration_s"] = round(duration_s, 3)
     if detail is not None:
         payload["detail"] = detail[:500] if isinstance(detail, str) else detail
     message = f"{owner} {method} {action} → {outcome} ({status_code})"
@@ -487,7 +502,7 @@ async def _record_control_event(
             functools.partial(
                 db.record_equipment_event,
                 equipment_id,
-                "control_action",
+                CONTROL_ACTION,
                 message=message,
                 payload=payload,
             ),
@@ -545,6 +560,11 @@ async def _proxy(
     # release) so login-gated claims (XARM_REQUIRE_LOGIN_FOR_CLAIM) pass and
     # the device stamps/audits the real operator. Empty when unauthenticated.
     edge_headers = _device_auth_headers(request)
+    # Wall-clock of the whole device interaction (claim → action → release),
+    # stamped into the audit payload as `duration_s`. Started here — after
+    # auth, before the first device hop — so refusals that never reach the
+    # device carry no duration.
+    started = time.monotonic()
     try:
         token: str | None = None
         if needs_claim:
@@ -579,6 +599,7 @@ async def _proxy(
             request, equipment_id, action, method,
             owner=owner, status_code=exc.status_code,
             outcome=outcome, detail=exc.detail,
+            duration_s=time.monotonic() - started,
         )
         raise
     except httpx.TimeoutException as exc:
@@ -587,6 +608,7 @@ async def _proxy(
             request, equipment_id, action, method,
             owner=owner, status_code=504,
             outcome="timeout", detail=str(exc),
+            duration_s=time.monotonic() - started,
         )
         raise HTTPException(status_code=504, detail=f"Gateway timeout calling {target}") from exc
     except httpx.HTTPError as exc:
@@ -595,6 +617,7 @@ async def _proxy(
             request, equipment_id, action, method,
             owner=owner, status_code=502,
             outcome="transport_error", detail=str(exc),
+            duration_s=time.monotonic() - started,
         )
         raise HTTPException(status_code=502, detail=f"Cannot reach gateway: {exc}") from exc
 
@@ -611,6 +634,7 @@ async def _proxy(
             request, equipment_id, action, method,
             owner=owner, status_code=response.status_code,
             outcome="refused", detail=detail,
+            duration_s=time.monotonic() - started,
         )
         raise HTTPException(status_code=response.status_code, detail=detail)
 
@@ -618,6 +642,7 @@ async def _proxy(
         request, equipment_id, action, method,
         owner=owner, status_code=response.status_code,
         outcome="ok",
+        duration_s=time.monotonic() - started,
     )
     try:
         return response.json()
@@ -689,6 +714,7 @@ async def _device_action_proxy(
     # Forward the operator's credential so the device's `require_login` passes
     # and its audit records the real actor (empty when unauthenticated).
     edge_headers = _device_auth_headers(request)
+    started = time.monotonic()
     try:
         response = await client.post(target, json=body or {}, headers=edge_headers or None)
     except httpx.TimeoutException as exc:
@@ -696,6 +722,7 @@ async def _device_action_proxy(
         await _record_control_event(
             request, equipment_id, normalized, "POST",
             owner=owner, status_code=504, outcome="timeout", detail=str(exc),
+            duration_s=time.monotonic() - started,
         )
         raise HTTPException(status_code=504, detail=f"Gateway timeout calling {target}") from exc
     except httpx.HTTPError as exc:
@@ -703,6 +730,7 @@ async def _device_action_proxy(
         await _record_control_event(
             request, equipment_id, normalized, "POST",
             owner=owner, status_code=502, outcome="transport_error", detail=str(exc),
+            duration_s=time.monotonic() - started,
         )
         raise HTTPException(status_code=502, detail=f"Cannot reach gateway: {exc}") from exc
 
@@ -715,12 +743,14 @@ async def _device_action_proxy(
         await _record_control_event(
             request, equipment_id, normalized, "POST",
             owner=owner, status_code=response.status_code, outcome="refused", detail=detail,
+            duration_s=time.monotonic() - started,
         )
         raise HTTPException(status_code=response.status_code, detail=detail)
 
     await _record_control_event(
         request, equipment_id, normalized, "POST",
         owner=owner, status_code=response.status_code, outcome="ok",
+        duration_s=time.monotonic() - started,
     )
     try:
         return response.json()
