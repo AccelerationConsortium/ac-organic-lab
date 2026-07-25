@@ -3,7 +3,7 @@
 **Current version:** `1.2` (additive over `1.1`, which was additive over `1.0`; v1.0 and v1.1 devices remain valid).
 **Status:** authoritative contract for every lab equipment REST API displayed on the AC Organic Self-Driving Lab dashboard. v1.0 is the *baseline*; v1.1 adds cooperative claims, `allowed_actions`, and `details.claimed_by`; v1.2 adds `activity` / `activity_since`, separating "is it healthy" from "is it working". All three coexist on the wire and in `equipment.yaml`; the SDK degrades gracefully when talking to older devices.
 
-Each equipment repo copies the Pydantic models below into its own `models.py`. Once the spec has been stable for ~1 month and 3+ repos have migrated cleanly to v1.1, these types will be promoted into a shared `lab-status-contract` Python package and per-device repos will `from lab_status_contract import ...` instead of vendoring a copy.
+Each equipment repo copies the Pydantic models below into its own `models.py`. Once the spec has been stable for ~1 month and 3+ repos have migrated cleanly to v1.1, these types will be promoted into a shared `sdl-lab-contract` Python package and per-device repos will `from sdl_lab_contract import ...` instead of vendoring a copy.
 
 > **Layered safety:** this spec is one of four interlock layers. Hardware limits (layer 1) and device state machine (layer 2) live in the device repos; skill preconditions (layer 3) and project plan interlocks (layer 4) live in `skills/` and project repos respectively. See [`INTERLOCKS.md`](INTERLOCKS.md). The catalog of skills the SDK can dispatch is described in [`SKILLS_CATALOG.md`](SKILLS_CATALOG.md). For a wider perspective on how this contract relates to other lab automation standards, see the [Comparison with SiLA 2 appendix](#appendix-a--comparison-with-sila-2) at the bottom of this document.
 
@@ -244,7 +244,9 @@ never co-occur in `equipment_status` — that combination is expressed as
 
 > A future v2 could make the state enum health-only and let `activity` carry
 > every run signal, retiring `busy`. That is cleaner but breaks every device,
-> the catalog's `requires_states`, and stored history. Not now.
+> the catalog's `requires_states`, and stored history. Not now — the agreed
+> target shape and the criteria that gate starting it are recorded in
+> [Appendix B](#appendix-b--v2-direction-non-normative).
 
 `allowed_actions` **MUST** agree with `activity` as well as with the top-level
 state: while `activity == "running"`, omit actions that would start or enqueue
@@ -1078,6 +1080,136 @@ If we ever want to interop with vendor instruments shipping native SiLA servers 
 The semantics line up well enough that this would be a few hundred lines of Python — none of the differences are fundamental incompatibilities. The biggest gap to plan for is **observable commands** (long-running work with progress), because our current polled model loses information that SiLA exposes natively. A future v1.2 could close that gap by adopting an `execution_id` + `events` channel on `/control/*`.
 
 ---
+
+## Appendix B — v2 direction (non-normative)
+
+**Status:** design target recorded 2026-07-25, immediately after the v1.2
+rollout. Nothing in this appendix changes v1.x behavior; it exists so the
+agreed shape — and, just as importantly, the alternatives already considered
+and rejected — survive outside the conversation that produced them. The
+[migration gate](#b5-migration-gate) below governs when (not whether) this
+work starts.
+
+The problem v2 finishes solving: `equipment_status` is one enum answering
+several independent questions (health, activity, mode), with §2.2 precedence
+deciding which answer wins the single word. v1.2 broke *activity* out
+additively; v2 factors the rest.
+
+### B.1 The factored model
+
+| Question | Field | Values |
+|---|---|---|
+| Can I reach it? | — (reader-side, §2.1) | reachable / **unreachable** — never on the wire |
+| Is it healthy / what blocks a run? | `health` | `healthy` \| `degraded` \| `error` \| `e_stopped` \| `requires_init` \| `unknown` |
+| Is it performing its primary operation? | `activity` | `idle` \| `running` \| `unknown` — unchanged from v1.2 §2.3 |
+| What is it operated *for*? | `mode` | `production` \| `develop` \| `maintenance` |
+| Is everything I'm reading synthetic? | `simulated` | `bool` |
+
+Semantics that make the small field-count sound:
+
+- **`health` absorbs the readiness/safety conditions** (`requires_init`,
+  `e_stopped`) rather than carrying a separate K8s-style conditions list —
+  precedence was chosen over composition for simplicity. A device reports
+  exactly **one** value: the most run-blocking applicable, safety first —
+  `e_stopped > error > degraded > requires_init > healthy`. `unknown` stays
+  the §2.1 honest fallback, outside the ranking. `required_actions` remains
+  the actionability carrier; co-occurrence detail (e-stopped *and* faulted)
+  lives in `components` / `last_error`, exactly as today.
+- **`activity` is pure observation** — "primary operation in progress",
+  no judgment about ability. "Ready to start" is a *derived conjunction*
+  (`healthy` ∧ `idle` ∧ nothing blocking), whose precise, per-action,
+  device-authoritative form already exists: `allowed_actions`.
+- **`mode: develop`** = operated for non-production purposes (workflow
+  bring-up, engineering tests on real hardware, agent training — SEMI E10's
+  *Engineering Time*). Results produced under `mode != production` are never
+  production records. `maintenance` aligns with the registry's
+  `maintenance:` block.
+- **`simulated: true`** = no hardware attached, nothing actuates, all data
+  synthetic. Implies `mode: develop`. A simulated device behaves
+  **identically on every axis** — it is never required to stay idle, or
+  simulation could not exercise the wait-for-completion paths it exists to
+  test (LG7). Instead, readers **MUST** exclude `simulated` devices from
+  production utilization, uptime rollups, and record stores. Consumers must
+  branch on the right field: "can an agent safely hammer this device?" →
+  `simulated`, never `mode` (a develop-mode xArm still moves); "may this
+  result enter the record store as real data?" → `mode`.
+
+The design rule underneath all of this, worth applying to any future
+extension: **devices report reality — even simulated reality — and never
+self-censor to make accounting easier; readers apply judgment** (unreachable
+attribution, utilization exclusion, production filtering are all
+reader-side). *Record what is; filter what counts.*
+
+### B.2 v1.x → v2 mapping
+
+| v1.x `equipment_status` | v2 |
+|---|---|
+| `ready` | `healthy` + `idle` |
+| `busy` | `healthy` + `running` (retired — already the §2.3 invariant) |
+| `requires_init` | `requires_init` + `idle` |
+| `degraded` | `degraded` + observed activity |
+| `error` | `error` + any |
+| `e_stop` | `e_stopped` + `idle` |
+| `dry_run` | `simulated: true` (⇒ `mode: develop`) + the simulation's own health/activity |
+| `unknown` | `unknown` + `unknown` |
+
+The mapping is deterministic, so stored v1.x history remains re-derivable
+into v2 terms, and `ready` → `healthy` is a rename (with `idle` moved to its
+own axis, "ready + running" would read as a contradiction).
+
+### B.3 Decided against — do not relitigate
+
+- **Compound states** (`busy_degraded`, …): combinatorial explosion; the
+  original v1.2 motivation.
+- **A separate conditions list** (K8s-style) for `requires_init` /
+  `e_stopped`: purer (they can co-occur with `degraded`/`error`) but costs a
+  field, list semantics, and iteration in every reader. Folded into `health`
+  with the precedence order; revisit only if a v3 has evidence the
+  co-occurrence detail in `components` is not enough.
+- **Renaming activity `idle` → `ready`**: readiness is a conjunction, not an
+  observation — a `degraded` shaker between cycles is *not* ready for its
+  normal run, and would have no honest value. Also collides with v1.x
+  `ready` during coexistence. (PackML's `Idle` does mean ready-to-start, but
+  only because 17 sibling states hold the not-ready cases.)
+- **`unknown` ≡ `unreachable`**: "asked and didn't learn" vs "couldn't ask";
+  opposite uptime accounting (§2.1); and on the activity axis every
+  reachable unmigrated device would read as offline.
+- **`simulated` as a mode or activity value**: it qualifies the *whole
+  envelope*, not one axis; as an activity value, simulated devices would
+  have no observable activity at all.
+- **Requiring simulated devices to report no activity/runs**: kills
+  simulation's purpose (untestable wait-for-completion, recorder, agent
+  training); the guard is the reader-side exclusion in B.1 instead.
+
+### B.4 Standards mapping
+
+- `health` ↔ NAMUR NE 107's device-health signals (Failure / Out of
+  Specification / Maintenance Required / Function Check) and monitoring's
+  OK/WARNING/CRITICAL/**UNKNOWN** lineage (unknown as honest fallback).
+- `activity` + `mode` ↔ PackML (ISA-TR88.00.02): operational state machine
+  × UnitMode (Production/Maintenance/Manual) as **separate axes**; SEMI E10's
+  time buckets (Productive / Standby / Engineering / Downtime) for the
+  utilization accounting the activity series feeds.
+- The factoring itself ↔ Kubernetes' `phase` → `conditions` history: a
+  single enum cannot answer independent questions ("Running but not Ready"),
+  **and** the deprecated field survived for years because breaking a
+  deployed API is harder than shipping a better one. Both lessons apply: v2
+  fields arrive additively alongside `equipment_status`, readers migrate,
+  and the old enum retires last. Never a cutover.
+
+### B.5 Migration gate
+
+No v2 implementation work starts until **all** of:
+
+1. **The shared `sdl-lab-contract` package exists** (ARCHITECTURE.md LG5)
+   — a breaking contract change must cost one package bump, not an edit to
+   every vendored `models.py`.
+2. **The majority of the fleet natively reports `activity`** and the §2.3.2
+   reader-side derivation has been deleted — proof the fleet can absorb a
+   contract migration end-to-end.
+3. **A concrete case exists that v1.2 cannot express** — cleanliness alone
+   does not justify breaking 17 devices, `requires_states`, and stored
+   history.
 
 ## See also
 

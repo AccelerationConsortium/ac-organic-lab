@@ -4,8 +4,8 @@ The STATUS_SPEC portion of this file (everything from ``SPEC_VERSION`` down
 through ``HealthResponse``) is the authoritative copy that mirrors
 ``docs/STATUS_SPEC.md`` at the repo root and is kept verbatim-identical to the
 copies vendored into per-device repos (each carries its own ``models.py``).
-Once a shared ``lab-status-contract`` package ships, this section will be
-replaced by ``from lab_status_contract import ...``.
+Once a shared ``sdl-lab-contract`` package ships, this section will be
+replaced by ``from sdl_lab_contract import ...``.
 
 The aggregator-only types at the bottom (``FetchError`` family,
 ``EquipmentSnapshot``, ``EquipmentList``) are not part of the device contract

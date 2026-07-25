@@ -411,7 +411,7 @@ Project repos persist run manifests + append-only event logs. Resuming or replay
 
 ### LG5. Shared status contract package
 
-Once 3+ device repos have shipped on STATUS_SPEC v1.1 cleanly for ~1 month, extract `lab-status-contract` as a tiny shared Python package. Per-device repos and the SDK then `from lab_status_contract import EquipmentStatus, ...` instead of vendoring a copy.
+Once 3+ device repos have shipped on STATUS_SPEC v1.1 cleanly for ~1 month, extract `sdl-lab-contract` as a tiny shared Python package. Per-device repos and the SDK then `from sdl_lab_contract import EquipmentStatus, ...` instead of vendoring a copy.
 
 ### LG6. Agent-native operations
 
