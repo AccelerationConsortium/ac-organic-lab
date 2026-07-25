@@ -1215,7 +1215,7 @@ wheels = [
 [[package]]
 name = "sdl-lab-contract"
 version = "1.2.0"
-source = { git = "https://github.com/AccelerationConsortium/sdl-lab-contract?tag=v1.2.0#52057fca43c6acdbba5e457cc940af623afd83d0" }
+source = { git = "https://github.com/AccelerationConsortium/sdl-lab-contract?tag=v1.2.0#00dee234b699fa61511dc2bd98c7fd6a7e304e56" }
 dependencies = [
     { name = "pydantic" },
 ]
