@@ -117,6 +117,32 @@ def test_snapshot_passes_through_sdk_fields_and_defaults_dashboard_fields() -> N
     assert dashboard_snap.location is None
     assert dashboard_snap.enabled is True
     assert dashboard_snap.maintenance is None
+    # Server-resolved activity (v1.2): ready ⇒ idle via the §2.3 invariants.
+    assert dashboard_snap.activity == "idle"
+    assert dashboard_snap.activity_source == "status"
+    # v2 vocabulary (Appendix B.2 projection): mock adapter ⇒ simulated/develop.
+    assert dashboard_snap.health == "healthy"
+    assert dashboard_snap.mode == "develop"
+    assert dashboard_snap.simulated is True
+
+
+def test_snapshot_resolves_activity_for_degraded_running_shaker() -> None:
+    """The motivating v1.2 case surfaces on the live snapshot: health stays
+    `degraded`, activity reads `running` from the motor component sniff."""
+    from lab_skills import ComponentStatus
+
+    entry = _entry(id="torry_pines_shaker", name="SC25XR", kind="shaker")
+    registry = Registry(equipment=[entry])
+    sdk_snap = _skill_snapshot(entry, state="degraded")
+    sdk_snap.status.components = {
+        "motor": ComponentStatus(connected=True, state="shaking"),
+        "heater": ComponentStatus(connected=True, state="unknown", message="cal3"),
+    }
+    dashboard_snap = _snapshot(sdk_snap, override=None, registry=registry,
+                               platforms_config=_empty_platforms())
+    assert dashboard_snap.status.equipment_status == "degraded"
+    assert dashboard_snap.activity == "running"
+    assert dashboard_snap.activity_source == "components"
 
 
 def test_snapshot_resolves_platform_and_tile_from_platforms_config() -> None:

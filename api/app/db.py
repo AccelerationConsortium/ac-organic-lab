@@ -33,6 +33,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from .events import (
+    ACTIVITY_TRANSITION,
+    CONTROL_ACTION,
+    CYCLES_TOTAL_METRIC,
+    STATE_TRANSITION,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -256,13 +263,91 @@ class LabDatabase:
         )
 
     def get_state_time_pcts(self, device_id: str, *, days: int = 7) -> dict[str, float]:
-        """Return % of OBSERVED time spent in each equipment state.
+        """% of OBSERVED time in each equipment *health* state (see
+        :meth:`_event_time_pcts` for the observed-time semantics)."""
+        return self._event_time_pcts(device_id, STATE_TRANSITION, days=days)
 
-        Observed time is the span from the earliest in-window
-        ``state_transition`` event (or the most recent transition before the
-        window, whichever is later — so a state in effect at window-start
-        counts from window-start onwards) until *now*.  Each state is charged
-        leading-edge: ts → next ts (or now for the latest row).
+    def get_activity_time_pcts(self, device_id: str, *, days: int = 7) -> dict[str, float]:
+        """% of OBSERVED time in each *activity* (idle/running/unknown).
+
+        Same LEAD() window machinery as the health series, over the parallel
+        ``activity_transition`` rows (STATUS_SPEC v1.2 §2.3).
+
+        §2.3.1 caveat, for every consumer of this number: the series is
+        sampled by a 60 s poll, so operations shorter than the poll interval
+        are MISSED outright, not undercounted. Present it as sampled
+        observation ("active while observed"), never as usage accounting,
+        and pair it with :meth:`get_first_event_ts` so pre-tracking time is
+        shown as untracked rather than as 0% usage.
+        """
+        return self._event_time_pcts(device_id, ACTIVITY_TRANSITION, days=days)
+
+    def get_cycle_count(self, device_id: str, *, days: int = 7) -> Optional[int]:
+        """Completed primary-operation cycles in the window, exactly.
+
+        Computed from the stored raw ``metrics["cycles_total"]`` counter
+        (STATUS_SPEC §2.3.1): sum of poll-to-poll deltas, seeded with the
+        last pre-window reading so the first in-window delta isn't lost. A
+        decrease means the device restarted its counter — the post-restart
+        value is taken as the delta (cycles since restart), never negative
+        usage. Unlike the poll-sampled activity series this is exact: cycles
+        shorter than the poll interval still advance the counter.
+
+        Returns ``None`` when the device has never reported the counter in
+        (or immediately before) the window — "not tracked", distinct from 0.
+        """
+        window = (device_id, CYCLES_TOTAL_METRIC, f"-{days}")
+        rows = self._fetchall(
+            "SELECT value FROM sensor_readings"
+            " WHERE sensor_id = ? AND metric = ?"
+            "   AND ts >= datetime('now', ? || ' days')"
+            " ORDER BY ts",
+            window,
+        )
+        if not rows:
+            return None
+        carry = self._fetchone(
+            "SELECT value FROM sensor_readings"
+            " WHERE sensor_id = ? AND metric = ?"
+            "   AND ts < datetime('now', ? || ' days')"
+            " ORDER BY ts DESC LIMIT 1",
+            window,
+        )
+        prev = float(carry["value"]) if carry else None
+        total = 0.0
+        for r in rows:
+            v = float(r["value"])
+            if prev is not None:
+                # decrease ⇒ counter restarted; count the post-restart value
+                total += v if v < prev else v - prev
+            prev = v
+        return int(total)
+
+    def get_first_event_ts(self, device_id: str, event_type: str) -> Optional[str]:
+        """Timestamp of the earliest event of one type for a device.
+
+        Used to render "tracking since <date>" next to sampled series
+        (§2.3.1) — the honest alternative to displaying pre-tracking time as
+        zero. Returns ``None`` when the series has no rows yet.
+        """
+        row = self._fetchone(
+            "SELECT MIN(ts) AS first_ts FROM equipment_events"
+            " WHERE device_id = ? AND event_type = ?",
+            (device_id, event_type),
+        )
+        return row["first_ts"] if row and row["first_ts"] else None
+
+    def _event_time_pcts(
+        self, device_id: str, event_type: str, *, days: int = 7
+    ) -> dict[str, float]:
+        """Return % of OBSERVED time spent in each ``to_state`` of one
+        transition-event series (``state_transition``, ``activity_transition``).
+
+        Observed time is the span from the earliest in-window transition
+        event (or the most recent transition before the window, whichever is
+        later — so a state in effect at window-start counts from window-start
+        onwards) until *now*.  Each state is charged leading-edge: ts → next
+        ts (or now for the latest row).
 
         Returned percentages sum to ~100% of observed time.  Periods before
         tracking started are NOT counted — the bar shows ratios of what we've
@@ -271,7 +356,7 @@ class LabDatabase:
         now = datetime.now(timezone.utc)
         window_start = now - timedelta(days=days)
 
-        # In-window state transitions.
+        # In-window transitions of this series.
         rows = self._fetchall(
             """
             SELECT ts,
@@ -279,11 +364,11 @@ class LabDatabase:
                    LEAD(ts) OVER (ORDER BY ts)   AS next_ts
             FROM   equipment_events
             WHERE  device_id   = ?
-              AND  event_type  = 'state_transition'
+              AND  event_type  = ?
               AND  ts         >= datetime('now', ? || ' days')
             ORDER  BY ts
             """,
-            (device_id, f"-{days}"),
+            (device_id, event_type, f"-{days}"),
         )
 
         # Most recent pre-window transition (state in effect AT window_start).
@@ -292,12 +377,12 @@ class LabDatabase:
             SELECT COALESCE(to_state, 'unknown') AS state, ts
             FROM   equipment_events
             WHERE  device_id   = ?
-              AND  event_type  = 'state_transition'
+              AND  event_type  = ?
               AND  ts         <  datetime('now', ? || ' days')
             ORDER  BY ts DESC
             LIMIT  1
             """,
-            (device_id, f"-{days}"),
+            (device_id, event_type, f"-{days}"),
         )
 
         state_seconds: dict[str, float] = {}
@@ -427,16 +512,19 @@ class LabDatabase:
     ) -> list[dict]:
         """Operator control-write audit rows (event_type='control_action',
         written by api/app/control.py) across all devices, newest first.
-        The payload JSON {action, method, status_code, outcome, owner} is
-        flattened into the row for direct table rendering."""
+        The payload JSON {action, method, status_code, outcome, owner,
+        duration_s} is flattened into the row for direct table rendering.
+        ``duration_s`` (wall-clock of the device interaction) is null on
+        rows written before it was recorded (2026-07-24) and on refusals
+        that never reached the device."""
         sql = (
             "SELECT ts, device_id, message, payload FROM equipment_events"
-            " WHERE event_type = 'control_action'"
+            " WHERE event_type = ?"
         )
-        params: tuple = ()
+        params: tuple = (CONTROL_ACTION,)
         if device_id:
             sql += " AND device_id = ?"
-            params = (device_id,)
+            params += (device_id,)
         sql += " ORDER BY ts DESC LIMIT ?"
         rows = self._fetchall(sql, params + (limit,))
         result = []
@@ -454,6 +542,7 @@ class LabDatabase:
                     "status_code": payload.get("status_code"),
                     "outcome": payload.get("outcome"),
                     "owner": payload.get("owner"),
+                    "duration_s": payload.get("duration_s"),
                 }
             )
         return result

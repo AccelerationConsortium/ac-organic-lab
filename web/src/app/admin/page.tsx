@@ -88,6 +88,10 @@ interface ControlAction {
   status_code: number | null;
   outcome: string | null;
   owner: string | null;
+  /** Wall-clock of the device interaction (claim → action → release), seconds.
+   *  Null on rows written before 2026-07-24 and on refusals that never
+   *  reached the device. */
+  duration_s: number | null;
 }
 
 interface ClaimedBy {
@@ -476,7 +480,7 @@ export default function AdminPage() {
           ) : filteredActions.length === 0 ? (
             <Empty message="No operator control writes recorded." />
           ) : (
-            <Table head={["Time", "Device", "Action", "Operator", "Outcome"]}>
+            <Table head={["Time", "Device", "Action", "Operator", "Outcome", "Duration"]}>
               {filteredActions.map((a, i) => (
                 <tr key={`${a.ts}-${i}`}>
                   <td className="whitespace-nowrap px-4 py-2 text-xs">{fmtIso(a.ts)}</td>
@@ -499,6 +503,12 @@ export default function AdminPage() {
                       {a.outcome ?? "—"}
                       {a.status_code != null ? ` (${a.status_code})` : ""}
                     </span>
+                  </td>
+                  <td
+                    className="whitespace-nowrap px-4 py-2 text-right text-xs tabular-nums text-ink-muted dark:text-slate-400"
+                    title="Wall-clock of the device interaction (claim → action → release) as seen from the dashboard"
+                  >
+                    {a.duration_s != null ? `${a.duration_s.toFixed(1)} s` : "—"}
                   </td>
                 </tr>
               ))}

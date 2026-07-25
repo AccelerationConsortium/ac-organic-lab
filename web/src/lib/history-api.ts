@@ -40,6 +40,17 @@ export interface DeviceUptimeSummary {
   last_event: Pick<UptimeEvent, "ts" | "event"> | null;
   /** % of window spent in each equipment state, e.g. {ready: 45.2, unreachable: 54.8} */
   state_pcts: Record<string, number>;
+  /** % of OBSERVED window in each activity (idle/running/unknown, spec v1.2).
+   *  60 s poll-sampled: cycles shorter than the poll interval are missed
+   *  outright — render as sampled observation, never as usage accounting. */
+  activity_pcts: Record<string, number>;
+  /** Earliest activity_transition row — "tracking since". null until the
+   *  first activity observation; pre-tracking time is untracked, not 0%. */
+  activity_tracking_since: string | null;
+  /** Exact completed-cycle count in the window, from the reserved monotonic
+   *  metrics["cycles_total"] counter (spec §2.3.1) — survives cycles shorter
+   *  than the 60 s poll. null = device doesn't publish the counter. */
+  cycles: number | null;
 }
 
 export interface AllUptimeResponse {

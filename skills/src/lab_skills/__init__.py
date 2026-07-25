@@ -46,6 +46,8 @@ from .interlocks import (
 )
 from .lab import Lab
 from .models import (
+    SPEC_VERSION,
+    Activity,
     ComponentStatus,
     EquipmentKind,
     EquipmentList,
@@ -95,6 +97,7 @@ from .waiting import wait_until_state
 __version__ = "0.1.0"
 
 __all__ = [
+    "Activity",
     "AdapterKind",
     "BadRequest",
     "CameraConfig",
@@ -127,6 +130,7 @@ __all__ = [
     "Maintenance",
     "MetricValue",
     "PROTOCOL_VERSION",
+    "SPEC_VERSION",
     "PillConfig",
     "Plan",
     "PlanReport",

@@ -32,6 +32,12 @@ from .alert_notifier import AlertNotifier
 from .control import build_control_router
 from .db import LabDatabase, resolve_db_path
 from .deck import build_deck_router
+from .events import (
+    ACTIVITY_TRANSITION,
+    CYCLES_TOTAL_METRIC,
+    STATE_TRANSITION,
+    snapshot_activity,
+)
 from .history import build_history_router
 from .labware import build_labware_router
 from .presentation import (
@@ -59,6 +65,10 @@ def _cors_origins() -> list[str]:
 _last_reachable: dict[str, bool] = {}
 _consecutive_failures: dict[str, int] = {}
 _last_state: dict[str, str] = {}
+# Last recorded activity (idle/running/unknown) per device — the v1.2 series
+# recorded in parallel with _last_state so utilization survives a chronic
+# health fault (STATUS_SPEC §2.3).
+_last_activity: dict[str, str] = {}
 
 # Per-outlet energy accumulator for power strips/smart plugs.
 # Maps device_id → {metric_key → last_seen_today_value}.
@@ -108,6 +118,7 @@ async def _uptime_poll_loop(
 
                 prev = _last_reachable.get(device_id)
                 current_state = _state_str(snap)
+                current_activity, activity_source = snapshot_activity(snap)
 
                 if prev is None:
                     # First observation — write an initial row so the uptime
@@ -119,7 +130,7 @@ async def _uptime_poll_loop(
                     db.record_uptime_event(device_id, initial_event)
                     db.record_equipment_event(
                         device_id,
-                        "state_transition",
+                        STATE_TRANSITION,
                         from_state=None,
                         to_state=current_state,
                         message="Initial observation",
@@ -137,7 +148,7 @@ async def _uptime_poll_loop(
                     db.record_uptime_event(device_id, "recovered")
                     db.record_equipment_event(
                         device_id,
-                        "state_transition",
+                        STATE_TRANSITION,
                         from_state="unreachable",
                         to_state=current_state,
                         message="Device recovered",
@@ -152,7 +163,7 @@ async def _uptime_poll_loop(
                     db.record_uptime_event(device_id, "down", consecutive_failures=1)
                     db.record_equipment_event(
                         device_id,
-                        "state_transition",
+                        STATE_TRANSITION,
                         from_state=_last_state.get(device_id, "unknown"),
                         to_state="unreachable",
                         message=str(snap.fetch_error),
@@ -172,7 +183,7 @@ async def _uptime_poll_loop(
                     if prev_state is not None and prev_state != current_state:
                         db.record_equipment_event(
                             device_id,
-                            "state_transition",
+                            STATE_TRANSITION,
                             from_state=prev_state,
                             to_state=current_state,
                             message="Equipment state changed",
@@ -183,6 +194,42 @@ async def _uptime_poll_loop(
                         _last_state[device_id] = current_state
                     elif prev_state is None:
                         _last_state[device_id] = current_state
+
+                # Activity series (STATUS_SPEC v1.2 §2.3) — recorded in
+                # parallel with the state series above, NOT folded into it,
+                # so utilization survives a chronic health fault (the
+                # motivating case: the SC25XR shaker stuck on `degraded` for
+                # weeks while its motor keeps cycling). One uniform block
+                # handles every reachability branch: an unreachable device's
+                # activity is simply `unknown` (see _activity_str).
+                # NOTE §2.3.1: this is a 60 s poll-sampled series — a default
+                # 30 s shake can start and finish entirely between polls and
+                # is then MISSED, not undercounted. Readers must present it
+                # as sampled observation, never as usage accounting.
+                prev_activity = _last_activity.get(device_id)
+                if prev_activity != current_activity:
+                    db.record_equipment_event(
+                        device_id,
+                        ACTIVITY_TRANSITION,
+                        from_state=prev_activity,
+                        to_state=current_activity,
+                        message=(
+                            "Initial observation" if prev_activity is None
+                            else "Activity changed"
+                        ),
+                        payload={"source": activity_source},
+                    )
+                    _last_activity[device_id] = current_activity
+                    logger.info(
+                        "Activity: %s %s → %s (%s)",
+                        device_id, prev_activity, current_activity, activity_source,
+                    )
+
+                # Reserved cycle counter (STATUS_SPEC §2.3.1) — the exact
+                # complement to the sampled activity series above: cycles
+                # shorter than this loop's 60 s interval are missed by the
+                # series but revealed by this counter's poll-to-poll delta.
+                _record_cycles_total(db, snap)
 
                 # Sensor readings — real devices expose them in status.details;
                 # mock environmental sensors get synthetic readings generated here.
@@ -275,6 +322,27 @@ def _state_str(snap) -> str:
         return snap.status.equipment_status or "unknown"
     except Exception:
         return "unknown"
+
+
+def _record_cycles_total(db: LabDatabase, snap) -> None:
+    """Store the raw ``metrics["cycles_total"]`` counter into sensor_readings.
+
+    The raw counter (not the delta) is stored once per sweep, mirroring the
+    plug energy counters; ``LabDatabase.get_cycle_count`` computes the
+    windowed delta with restart detection at query time. No-op for devices
+    that don't publish the reserved key, and automatically for unreachable
+    devices (their synthetic envelope carries no metrics).
+    """
+    try:
+        entry = (snap.status.metrics or {}).get(CYCLES_TOTAL_METRIC)
+        if entry is None:
+            return
+        raw = entry.value if hasattr(entry, "value") else entry
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return
+        db.record_sensor_reading(snap.id, CYCLES_TOTAL_METRIC, float(raw), "count")
+    except Exception:
+        pass  # best-effort; never crash the poll loop
 
 
 def _write_sensor_readings(db: LabDatabase, snap) -> None:

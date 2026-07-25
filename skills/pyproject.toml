@@ -12,6 +12,9 @@ dependencies = [
     "httpx>=0.27",
     "pydantic>=2.7",
     "pyyaml>=6.0",
+    # Shared STATUS_SPEC contract types (spec major.minor == package version).
+    # Pinned to a tag; bump the tag when the spec revs.
+    "sdl-lab-contract",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +36,9 @@ lab-skills = "lab_skills.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.uv.sources]
+sdl-lab-contract = { git = "https://github.com/AccelerationConsortium/sdl-lab-contract", tag = "v1.2.0" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

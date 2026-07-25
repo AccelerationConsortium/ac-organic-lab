@@ -472,6 +472,25 @@ equipment:
     pills:
       open: true
 
+  # Bitácora — the agentic ELN (Next.js standalone :3001 + FastAPI :8050),
+  # fronted by the edge at /bitacora/ so it shares the auth banner and one
+  # sign-in. Also embedded in the dashboard's own Workflows tab; this entry is
+  # the Web Services tile + the grantable equipment id. Its backend serves
+  # /health but no STATUS_SPEC /status envelope, so it's a link-out tile like
+  # AnaliticaChat (adapter: mock, not health-polled — shown "ready" because
+  # base_url is set). Give it a real /status and flip to `adapter: http` to get
+  # true health here.
+  - id: bitacora_eln
+    name: Bitacora ELN
+    kind: other
+    adapter: mock
+    base_url: http://100.64.254.6/bitacora/
+    poll_timeout_seconds: 3.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills:
+      open: true
+
   # AnaliticaDB — the analytical-chemistry results catalog (FastAPI) on the
   # dashboard host. Serves a minimal STATUS_SPEC v1.0 /status envelope
   # (equipment_status `ready`, or `degraded` if its DB is unreachable); the

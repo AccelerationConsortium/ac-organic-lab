@@ -8,6 +8,13 @@ import type {
   LensStatusEntry,
 } from "@/types/api";
 import { kindLabel } from "@/lib/format";
+import {
+  ACTIVITY_META,
+  STATE_META,
+  effectiveState,
+  stateNeedsAttention,
+  type ActivityName,
+} from "@/lib/state-meta";
 import { AuthGatedLink } from "./AuthGatedLink";
 import { CameraPlayer } from "./CameraPlayer";
 import { StatusPill } from "./StatusPill";
@@ -91,6 +98,39 @@ function EquipmentRowSkeleton() {
   );
 }
 
+/** Health + activity for one equipment row (STATUS_SPEC v1.2 §2.3): two
+ *  separate visual elements, never one merged pill. Activity carries the
+ *  text ("Running" / "Idle" / "—"); health, when it needs attention,
+ *  collapses to an amber ⚠ whose tooltip names the state — so a chronically
+ *  degraded shaker reads "Running ⚠" instead of a permanent orange
+ *  "Degraded" that hides whether it is working. */
+function RowStatus({ snapshot }: { snapshot: EquipmentSnapshot }) {
+  const health = effectiveState(snapshot);
+  const healthMeta = STATE_META[health] ?? STATE_META.unknown;
+  const activity = (snapshot.activity ?? "unknown") as ActivityName;
+  const activityMeta = ACTIVITY_META[activity];
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        title={`Activity: ${activity === "unknown" ? "unknown" : activityMeta.label} · Health: ${healthMeta.label}`}
+        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${activityMeta.badge}`}
+      >
+        {activityMeta.label}
+      </span>
+      {stateNeedsAttention(health) && (
+        <span
+          role="img"
+          aria-label={`Health: ${healthMeta.label}`}
+          title={`Health: ${healthMeta.label}`}
+          className="text-xs text-amber-500 dark:text-amber-400"
+        >
+          ⚠
+        </span>
+      )}
+    </span>
+  );
+}
+
 function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const showOpen = snapshot.pill?.open === true && !!snapshot.base_url;
   const linkLabel = snapshot.pill?.link_label;
@@ -139,7 +179,7 @@ function EquipmentRow({ snapshot }: { snapshot: EquipmentSnapshot }) {
             Open ↗
           </AuthGatedLink>
         )}
-        <StatusPill state={snapshot.status.equipment_status} />
+        <RowStatus snapshot={snapshot} />
       </div>
     </li>
   );

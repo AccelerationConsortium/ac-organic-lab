@@ -45,9 +45,26 @@ def _fmt_date(ts: float | None) -> str:
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
-    """Validate a roster.yaml (schema + invariants). DB-free — usable anywhere,
-    and safe in a git pre-commit hook / systemd ExecStartPre. Exit 0 / 2."""
-    from .roster import RosterError, default_roster_path, load_roster
+    """Validate a roster.yaml (schema + invariants + referential integrity).
+    DB-free — usable anywhere, and safe in a git pre-commit hook / systemd
+    ExecStartPre. Exit 0 / 2.
+
+    Beyond the schema, cross-checks every grant id the roster names against the
+    registries that define them — equipment grants vs ``equipment.yaml``,
+    platform grants/scopes vs ``platforms.yaml``. (Project pis/members are
+    already load-time-validated by the model itself.) Grant matching is exact
+    string equality, so a typo is otherwise a *silently dead* grant (the
+    ``la_agente_analitica`` incident).
+    The registry files are auto-located next to the repo's config (override
+    with --equipment/--platforms); a missing file skips that check with a
+    warning rather than failing, so the command still works on a bare roster.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    from .platforms import default_platforms_path, platform_ids
+    from .roster import RosterError, cross_check_ids, default_roster_path, load_roster
 
     path = args.path or default_roster_path()
     try:
@@ -57,9 +74,53 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         for msg in exc.errors:
             print(f"  - {msg}", file=sys.stderr)
         return 2
+
+    # Referential integrity. equipment.yaml sits next to platforms.yaml at the
+    # repo root; reuse the platforms-path inference for both.
+    platforms_path = Path(args.platforms) if args.platforms else default_platforms_path()
+    equipment_path = (
+        Path(args.equipment) if args.equipment else platforms_path.parent / "equipment.yaml"
+    )
+    skipped: list[str] = []
+    equipment_ids: set[str] = set()
+    if equipment_path.is_file():
+        try:
+            doc = yaml.safe_load(equipment_path.read_text(encoding="utf-8")) or {}
+            equipment_ids = {
+                e["id"] for e in doc.get("equipment", []) or [] if isinstance(e, dict) and e.get("id")
+            }
+        except yaml.YAMLError as exc:
+            print(f"INVALID: {equipment_path} is not parseable YAML: {exc}", file=sys.stderr)
+            return 2
+    else:
+        skipped.append(f"equipment grants ({equipment_path} not found)")
+    plat_ids = platform_ids(platforms_path) if platforms_path.is_file() else set()
+    if not platforms_path.is_file():
+        skipped.append(f"platform grants ({platforms_path} not found)")
+
+    errors = cross_check_ids(
+        r,
+        equipment_ids=equipment_ids if equipment_path.is_file() else None,
+        platform_ids=plat_ids if platforms_path.is_file() else None,
+    )  # None = registry unavailable, skip that check (never fail on absence)
+    if errors:
+        print(f"INVALID: {path}", file=sys.stderr)
+        for msg in errors:
+            print(f"  - {msg}", file=sys.stderr)
+        return 2
+
     n_admin = sum(1 for u in r.users if u.role == "admin" and u.is_active)
     print(f"OK: {path}")
     print(f"  users: {len(r.users)} ({n_admin} active admin) · automation: {len(r.automation)}")
+    ran = []
+    if equipment_path.is_file():
+        ran.append(f"{len(equipment_ids)} equipment ids")
+    if platforms_path.is_file():
+        ran.append(f"{len(plat_ids)} platforms")
+    if ran:
+        print(f"  cross-check: all grant ids resolve ({', '.join(ran)})")
+    for s in skipped:
+        print(f"  WARNING: cross-check skipped for {s}")
     return 0
 
 
@@ -182,8 +243,18 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="ac_auth.cli", description="Manage the auth allow-list (roster.yaml).")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    val = sub.add_parser("validate", help="validate a roster.yaml (schema + invariants)")
+    val = sub.add_parser(
+        "validate", help="validate a roster.yaml (schema + invariants + id cross-check)"
+    )
     val.add_argument("path", nargs="?", help="roster file (default: AUTH_ROSTER_PATH or auth/roster.yaml)")
+    val.add_argument(
+        "--equipment",
+        help="equipment.yaml to cross-check grant ids against (default: next to platforms.yaml)",
+    )
+    val.add_argument(
+        "--platforms",
+        help="platforms.yaml to cross-check platform ids against (default: AUTH_PLATFORMS_PATH or repo root)",
+    )
 
     exp = sub.add_parser("export", help="dump the legacy DB allow-list as roster.yaml (migration aid)")
     exp.add_argument("-o", "--output", help="write to this file (default: stdout)")

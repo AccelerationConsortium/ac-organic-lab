@@ -506,3 +506,64 @@ Plan parameters, never edits to the protocol file — same rule as
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — writer classes (decision #1), device authority (decision #2).
 - [`LAB_MONITORING.md`](LAB_MONITORING.md) — the `control_action` audit row shape.
 - [`AUTH_DESIGN.md`](AUTH_DESIGN.md) — `ac_auth`, control-route enforcement, the identity a run/approval is stamped with.
+
+---
+
+## 4. Health · Activity split (STATUS_SPEC v1.2 surfaces)
+
+> **Status:** shipped 2026-07-24 with the v1.2 rollout. The recording side
+> (parallel `activity_transition` series, server-side derivation) is
+> documented in [`LAB_MONITORING.md`](LAB_MONITORING.md) §4; the contract is
+> STATUS_SPEC §2.3. This section records the **presentation decisions**.
+
+v1.2 split "is it healthy" (`equipment_status`) from "is it working"
+(`activity`). Three UI rules govern every surface that shows them:
+
+1. **Health always wins any single-glyph surface.** The History page's
+   `StateDot` and any platform rollup dot stay health-colored; activity
+   moves to the tooltip there ("Degraded · Running").
+2. **Where there is room, health and activity are two separate visual
+   elements** — never one merged pill with health's color and activity's
+   text (that would repeat the original conflation in pixels).
+3. **A poll-sampled activity series is never presented as usage
+   accounting** (§2.3.1): utilization bars are labelled as observed/sampled,
+   tooltips carry "sampled every 60 s · tracking since <date>", and
+   pre-tracking time renders as *untracked*, never as 0 % usage.
+
+The shipped surfaces:
+
+- **History → Uptime rows**: a thin segmented **utilization bar**
+  (`ActivityTimelineBar`) under each health timeline bar. Colors:
+  `running` = sky-500 (same hue as `busy`, which is definitionally
+  healthy+running), `idle` = slate-300, `unknown` = slate-400 (matches
+  health-unknown's "no information"). Devices with no activity rows yet get
+  a dashed empty bar ("No activity tracking yet"), not a 100 %-idle lie.
+- **Overview equipment rows** (`PlatformCard`): the raw health pill is
+  replaced by an **activity pill** (`Running` / `Idle` / `—`) plus a small
+  amber ⚠ whose tooltip names the health state, shown only when health
+  needs attention (`requires_init`, `degraded`, `error`, `e_stop`,
+  `unknown`, `unreachable`). A chronically degraded shaker reads
+  "Running ⚠" instead of a permanent orange "Degraded" that hides
+  whether it is working.
+- **State Reference panel**: two labelled groups (Health / Activity) with a
+  footer noting the axes are independent.
+- **Vocabulary + shared logic**: `web/src/lib/state-meta.ts` owns both
+  vocabularies (`STATE_META`, `ACTIVITY_META`), plus the shared
+  `effectiveState()` (transport/gateway "unreachable" attribution) and
+  `stateNeedsAttention()`. The *value* of `activity` shown in the UI is
+  resolved server-side (`api/app/events.py::derive_activity`, surfaced as
+  `EquipmentSnapshot.activity`/`activity_source`) so live tiles and the
+  stored series can never disagree — the frontend never sniffs
+  `components` itself.
+
+Decided against (see STATUS_SPEC Appendix B for the axis-design
+counterparts): a merged health+activity pill; showing activity on
+single-glyph surfaces; rendering pre-tracking time as zero usage.
+
+### See also (health · activity)
+
+- [`STATUS_SPEC.md`](STATUS_SPEC.md) §2.3 (contract), §2.3.1 (sampling
+  caveat), Appendix B (v2 direction).
+- [`LAB_MONITORING.md`](LAB_MONITORING.md) §4 — the `activity_transition`
+  registry entry and device-pushed convention.
+- [`EQUIP_STATUS.md`](EQUIP_STATUS.md) — per-device tile behaviour.

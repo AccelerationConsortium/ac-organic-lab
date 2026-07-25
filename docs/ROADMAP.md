@@ -45,7 +45,7 @@ repo is being generalized into the lab's ELN+LIMS record layer — see
 their live `/status` envelope (`fume_hood_actuator`,
 `xarm_translocation`, `ot2_hte`, `torry_pines_shaker`, `filter_every_well`,
 `plateloc`, `cytation_5`, `pypoe_web`); the rest are v1.0. The
-`lab-status-contract` shared-package threshold ("3+ repos cleanly on
+`sdl-lab-contract` shared-package threshold ("3+ repos cleanly on
 v1.1 for ~1 month") is comfortably cleared.
 
 **Skill catalog inventory** (`SKILL_REGISTRY` keys, count of `SkillDef`s
@@ -296,6 +296,28 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   (`details.loaded_plate` from `Container`/`Plate`/`Well` +
   orchestrator-assigned `sample_id`).
 
+#### `torry_pines_shaker` (device repo: `torry-pines-shaker-server`)
+
+Both found live on 2026-07-25 while exercising the new STATUS_SPEC v1.2
+activity recorder against a real 180 s shake cycle (heater `cal` fault
+active, motor healthy):
+
+- [ ] **§6.2 violation** — with the heater fault active the device
+  advertised `allowed_actions: ["shutdown"]`, yet honored
+  `POST /control/shake/start` (HTTP 200, cycle ran). Advisory and
+  authoritative surfaces must never disagree: either the device should
+  refuse the start (412, heater interlock) or `shake.start` should stay
+  listed while the heater fault only gates `shake.set_temperature`
+  (the catalog's motor/heater AND-gate split already models the latter).
+- [ ] **v1.2 migration (reference candidate)** — mid-cycle the device
+  reports `busy`, letting the run mask the active heater fault (§2.2);
+  between cycles it reports `degraded`. Migrating to v1.2 (`degraded` +
+  `activity: "running"`, observed from the motor) makes it the natural
+  reference implementation — it is the device that motivated §2.3. Once
+  it reports `activity` natively, delete the dashboard's reader-side
+  motor sniff (`api/app/events.py`, `_KIND_RUNNING_COMPONENTS`) per
+  §2.3.2's deletability promise.
+
 #### Remaining mock-only entries
 
 The four `env_*` environmental sensors stay synthesised pending the
@@ -425,8 +447,12 @@ successful seal is outstanding, blocked on the PlateLoc air supply.
 - **LLM / agent code** — future `ac-organic-lab-agents` repo.
 - **Run records / manifests** — project repos own these (see the
   project-repo blueprint in `DATABASE_DESIGN.md`).
-- **`lab-status-contract` shared package** — wait until 3+ device repos
-  ship on v1.1 cleanly (per `docs/STATUS_SPEC.md`).
+- ~~**`sdl-lab-contract` shared package** — wait until 3+ device repos
+  ship on v1.1 cleanly (per `docs/STATUS_SPEC.md`).~~ Threshold cleared
+  (12 devices on v1.1); extraction started 2026-07-25 with the v1.2
+  types, named `sdl-lab-contract`. First consumer is `lab-skills`
+  itself; device repos swap their vendored `models.py` for the import
+  as part of their v1.2 migration (see the STATUS_SPEC Appendix B gate).
 - **Maintenance-tile UI rendering** — tracked separately; not blocking.
 
 ## See also

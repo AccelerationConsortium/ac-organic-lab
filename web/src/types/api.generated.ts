@@ -4,6 +4,556 @@
  */
 
 export interface paths {
+    "/api/equipment/{equipment_id}/control/{action}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Control Get
+         * @description Read-only control-namespace endpoints (e.g. ``read-balance``).
+         *
+         *     These never carry ``X-Claim-Token`` (``_proxy`` only attempts the
+         *     claim dance for POST), matching devices that expose them without
+         *     ``Depends(require_claim)``.
+         */
+        get: operations["control_get_api_equipment__equipment_id__control__action__get"];
+        put?: never;
+        /** Control Post */
+        post: operations["control_post_api_equipment__equipment_id__control__action__post"];
+        /** Control Delete */
+        delete: operations["control_delete_api_equipment__equipment_id__control__action__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/equipment/{equipment_id}/device/{action}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Device Post
+         * @description Proxy to a device's root-level, claim-exempt "safety-floor" action.
+         *
+         *     The xArm exposes connect / disconnect / move-stop / clear-errors as
+         *     siblings of ``/status`` (outside ``/control/*``) and takes no claim on
+         *     them, so the ``/control/*`` passthrough can't reach them. This route
+         *     does: auth (via the same edge gate + ``_authorize_control``) and audit
+         *     still apply — only the claim dance is skipped. Allowlisted per kind so
+         *     it can't become a general side-door. See ``_device_action_proxy``.
+         */
+        post: operations["device_post_api_equipment__equipment_id__device__action__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/equipment/{equipment_id}/plate/{sub}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Plate Get
+         * @description JSON GET passthrough to ``<gateway>/plate/<sub>``.
+         *
+         *     Sibling namespace to ``/control/*`` — dose_every_well's
+         *     ``plate/status`` and ``plate/definitions`` are read-only and not
+         *     claim-gated, so they don't go through ``_proxy``'s claim dance;
+         *     this reuses the same generic JSON-GET plumbing as the camera media
+         *     listing below. Return type is ``Any`` (not ``dict``) because
+         *     ``plate/definitions`` returns a JSON array, not an object.
+         */
+        get: operations["plate_get_api_equipment__equipment_id__plate__sub__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/equipment/{equipment_id}/media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Media List
+         * @description List snapshots/recordings on the gateway for a camera.
+         */
+        get: operations["media_list_api_equipment__equipment_id__media_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/equipment/{equipment_id}/media/{rest}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Media Download
+         * @description Stream a saved snapshot/recording back from the gateway.
+         *
+         *     The browser hits e.g.
+         *     ``/api/equipment/cam_hte_tapo_c245/media/snapshots/wide/2026-...jpg``
+         *     and we forward to
+         *     ``<gateway>/cameras/cam_hte_tapo_c245/media/snapshots/wide/2026-...jpg``,
+         *     streaming the bytes through unmodified. Useful for the minimal
+         *     gallery page and direct ``<img src=...>`` / ``<a href=...>``
+         *     embedding without exposing the gateway to the LAN.
+         */
+        get: operations["media_download_api_equipment__equipment_id__media__rest__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/equipment/{equipment_id}/deck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Deck */
+        get: operations["get_deck_api_equipment__equipment_id__deck_get"];
+        /** Put Deck */
+        put: operations["put_deck_api_equipment__equipment_id__deck_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/labware": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Labware */
+        get: operations["list_labware_api_labware_get"];
+        put?: never;
+        /** Upload Labware */
+        post: operations["upload_labware_api_labware_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/labware/standard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Standard Labware
+         * @description Every official Opentrons definition shipped by opentrons-shared-data
+         *     (latest schema-2 version per load_name), as summaries.
+         */
+        get: operations["list_standard_labware_api_labware_standard_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/labware/standard/{load_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Standard Labware */
+        get: operations["get_standard_labware_api_labware_standard__load_name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/labware/{load_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Labware */
+        get: operations["get_labware_api_labware__load_name__get"];
+        put?: never;
+        post?: never;
+        /** Delete Labware */
+        delete: operations["delete_labware_api_labware__load_name__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/history/uptime/{device_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Uptime
+         * @description Equipment uptime percentage + raw transition events for the last N days.
+         *
+         *     Use this to render a per-device uptime tile or a 7-day uptime bar.
+         */
+        get: operations["uptime_api_history_uptime__device_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/history/uptime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Uptime All
+         * @description Uptime summary for every device in one request.
+         *
+         *     Returns ``{device_id: {uptime_pct, last_event, state_pcts,
+         *     activity_pcts, activity_tracking_since, days}}`` — suitable for the
+         *     dashboard uptime overview table.  Devices with no uptime data yet
+         *     return ``uptime_pct: null``.
+         *
+         *     ``activity_pcts`` (idle/running/unknown, STATUS_SPEC v1.2 §2.3) is a
+         *     60 s poll-sampled series: operations shorter than the poll interval
+         *     are missed outright, so per §2.3.1 it must be rendered as sampled
+         *     observation — never as usage accounting — alongside
+         *     ``activity_tracking_since`` (null until the first activity row).
+         */
+        get: operations["uptime_all_api_history_uptime_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/history/events/{device_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Equipment Events
+         * @description State transitions, errors, startup/shutdown events for one device.
+         *
+         *     Pass ``event_type`` to narrow to one kind — e.g.
+         *     ``event_type=agent_observation`` to read back prior agent findings
+         *     (what PyPoe's investigator journals via ``append_observation``).
+         */
+        get: operations["equipment_events_api_history_events__device_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/history/control-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Control Actions
+         * @description Operator control-write audit feed across all devices — one row per
+         *     dashboard-mediated `/control/*` call (actor, action, outcome). Backs
+         *     the admin page's audit panel.
+         */
+        get: operations["control_actions_api_history_control_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/history/sensors/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sensors Latest
+         * @description Most recent reading per (sensor_id, metric) — for live tiles.
+         *
+         *     Returns a flat list:
+         *     ``[{sensor_id, metric, value, unit, ts}, …]``
+         */
+        get: operations["sensors_latest_api_history_sensors_latest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/history/sensors/{sensor_id}/{metric}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sensor History
+         * @description Downsampled readings for one metric over the last N hours.
+         *
+         *     Typical use: line chart on the environmental monitoring panel or the
+         *     Switches power-consumption tile.
+         *
+         *     At 60 s poll intervals a 7-day window produces up to 10 080 points;
+         *     the default cap of 2 000 naturally downsamples that to ~1 point per
+         *     ~5 minutes, which is enough resolution for a sparkline.
+         *
+         *     Common metric names: ``temperature_c``, ``humidity_pct``, ``co2_ppm``,
+         *     ``pressure_hpa``, ``power_outlet_N``, ``energy_kwh_cumul_outlet_N``.
+         */
+        get: operations["sensor_history_api_history_sensors__sensor_id___metric__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/history/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Runs
+         * @description Most recent dosing runs, newest first.
+         *
+         *     Use this to render a run history table or a per-plate success rate tile.
+         *     Filter to one device with ``?device_id=dose_every_well``.
+         */
+        get: operations["list_runs_api_history_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/history/runs/{run_id}/wells": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Well Results
+         * @description Per-well dispense results for one run.
+         *
+         *     Returns 96 rows for a full plate.  Use this to render a 96-well
+         *     heatmap coloured by ``actual_mg`` or ``converged``.
+         *
+         *     Example heatmap colour scale:
+         *       - grey  → well not dosed
+         *       - green → converged, actual_mg within 5% of target
+         *       - amber → converged, actual_mg 5–15% off
+         *       - red   → not converged
+         */
+        get: operations["get_well_results_api_history_runs__run_id__wells_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ingest/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest Events
+         * @description Receive events.jsonl records POSTed by a device service.
+         *
+         *     The device-side exporter tails its own ``events.jsonl`` and POSTs
+         *     batches here.  The aggregator stores them in ``equipment_events``.
+         *
+         *     Idempotent for duplicate timestamps per device — duplicates are
+         *     silently ignored (SQLite unique index on ts+device_id is optional;
+         *     for now just insert and accept occasional duplicates).
+         */
+        post: operations["ingest_events_api_ingest_events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ingest/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest Run
+         * @description Create or update a run record.
+         *
+         *     Call this once when a run starts (``status=in_progress``) and again
+         *     when it finishes (``status=complete|failed|aborted``).
+         */
+        post: operations["ingest_run_api_ingest_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ingest/wells": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest Wells
+         * @description Append per-well results to an existing run.
+         *
+         *     Can be called once per well (streaming) or in bulk at the end of a row.
+         */
+        post: operations["ingest_wells_api_ingest_wells_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assistant/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Health */
+        get: operations["health_api_assistant_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assistant/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Chat */
+        post: operations["chat_api_assistant_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platforms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Platforms
+         * @description Return the static platforms configuration.
+         */
+        get: operations["list_platforms_api_platforms_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -13,6 +563,30 @@ export interface paths {
         };
         /** Health */
         get: operations["health_api_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Equipment Status
+         * @description STATUS_SPEC v1.0 envelope for the dashboard API service *itself*, so it
+         *     can appear as a tile under the dashboard's own "Web Services" section.
+         *
+         *     Side-effect-free (best-practice #1): only reads already-warm in-process
+         *     state. The aggregator polls this on loopback like any other device.
+         */
+        get: operations["equipment_status_status_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -33,6 +607,30 @@ export interface paths {
          * @description Return the latest status of every registered equipment in parallel.
          */
         get: operations["list_equipment_api_equipment_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Skill Catalog
+         * @description Return the static skill catalog grouped by platform.
+         *
+         *     Each platform contains its instruments; each instrument lists its
+         *     available actions with JSON Schema descriptions of the request body.
+         *     This endpoint is read-only and does not contact any device.
+         */
+        get: operations["skill_catalog_api_catalog_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -65,7 +663,10 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AggregatorHealth */
+        /**
+         * AggregatorHealth
+         * @description Body of ``GET /api/health`` on the dashboard server.
+         */
         AggregatorHealth: {
             /**
              * Status
@@ -78,6 +679,62 @@ export interface components {
             /** Equipment Count */
             equipment_count: number;
         };
+        /**
+         * CameraConfig
+         * @description Optional ``camera:`` block on entries with ``kind: camera``.
+         *
+         *     Mirrors the gateway's ``devices.yaml``. The dashboard reads it for the
+         *     lens-tab labels in the camera tile and the go2rtc stream-name
+         *     convention (``<equipment_id>_<lens_id>``).
+         */
+        CameraConfig: {
+            /** Host */
+            host: string;
+            /**
+             * Onvif Port
+             * @default 2020
+             */
+            onvif_port: number;
+            /**
+             * Rtsp Port
+             * @default 554
+             */
+            rtsp_port: number;
+            /** Lenses */
+            lenses?: components["schemas"]["CameraLens"][];
+        };
+        /**
+         * CameraLens
+         * @description One physical lens on a multi-lens camera (``kind: camera``).
+         */
+        CameraLens: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /**
+             * Rtsp Path
+             * @default stream1
+             */
+            rtsp_path: string;
+            /**
+             * Ptz Capable
+             * @default true
+             */
+            ptz_capable: boolean;
+        };
+        /** ChatMessage */
+        ChatMessage: {
+            /** Role */
+            role: string;
+            /** Content */
+            content: string;
+        };
+        /** ChatRequest */
+        ChatRequest: {
+            /** Messages */
+            messages: components["schemas"]["ChatMessage"][];
+        };
         /** ComponentStatus */
         ComponentStatus: {
             /** Connected */
@@ -89,7 +746,20 @@ export interface components {
             /** Last Event At */
             last_event_at?: string | null;
         };
-        /** EquipmentList */
+        /**
+         * DeckLayout
+         * @description A deck layout: slot number (as string) -> labware key.
+         */
+        DeckLayout: {
+            /** Slots */
+            slots?: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * EquipmentList
+         * @description Batch dashboard response for ``GET /api/equipment``.
+         */
         EquipmentList: {
             /** Equipment */
             equipment: components["schemas"]["EquipmentSnapshot"][];
@@ -101,12 +771,9 @@ export interface components {
         };
         /**
          * EquipmentSnapshot
-         * @description What the dashboard frontend consumes for one equipment.
-         *
-         *     Wraps `EquipmentStatus` with aggregator-side metadata (when we last fetched
-         *     it, how long it took, and whether the latest fetch errored). The `status`
-         *     field is always present - on first failure the aggregator emits a synthetic
-         *     `unknown` envelope so the UI never has to deal with `null`.
+         * @description Dashboard-side snapshot: the SDK's snapshot decorated with presentation
+         *     fields (``tile``, ``location``, ``pill``) and a mirror of the registry
+         *     entry's ``enabled`` / ``maintenance`` / ``camera`` / ``plug`` fields.
          */
         EquipmentSnapshot: {
             /** Id */
@@ -114,12 +781,12 @@ export interface components {
             /** Name */
             name: string;
             /** Platform */
-            platform: string;
+            platform?: string | null;
             /**
              * Kind
              * @enum {string}
              */
-            kind: "solid_doser" | "liquid_handler" | "press" | "fume_hood" | "robot_arm" | "environmental_sensor" | "hplc" | "plate_reader" | "plate_sealer" | "plate_stacker" | "other";
+            kind: "solid_doser" | "liquid_handler" | "press" | "fume_hood" | "robot_arm" | "environmental_sensor" | "hplc" | "plate_reader" | "plate_sealer" | "plate_stacker" | "shaker" | "camera" | "smart_plug" | "power_strip" | "other";
             /** Adapter */
             adapter: string;
             status: components["schemas"]["EquipmentStatus"];
@@ -135,10 +802,66 @@ export interface components {
             base_url?: string | null;
             location?: components["schemas"]["Location"] | null;
             tile?: components["schemas"]["Tile"];
+            pill?: components["schemas"]["PillConfig"];
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            maintenance?: components["schemas"]["Maintenance"] | null;
+            camera?: components["schemas"]["CameraConfig"] | null;
+            plug?: components["schemas"]["PlugConfig"] | null;
+            /** Tailscale Ip */
+            tailscale_ip?: string | null;
+            /**
+             * Activity
+             * @default unknown
+             * @enum {string}
+             */
+            activity: "idle" | "running" | "unknown";
+            /**
+             * Activity Source
+             * @default none
+             * @enum {string}
+             */
+            activity_source: "device" | "status" | "components" | "none";
+            /**
+             * Health
+             * @default unknown
+             * @enum {string}
+             */
+            health: "healthy" | "degraded" | "error" | "e_stopped" | "requires_init" | "unknown";
+            /**
+             * Mode
+             * @default production
+             * @enum {string}
+             */
+            mode: "production" | "develop" | "maintenance";
+            /**
+             * Simulated
+             * @default false
+             */
+            simulated: boolean;
         };
         /**
          * EquipmentStatus
-         * @description Unified equipment status envelope (spec v1.0).
+         * @description Unified equipment status envelope (spec v1.0 + v1.1 + v1.2 additions).
+         *
+         *     All three versions parse through this one model; the later additions carry
+         *     defaults chosen so an unmigrated device is read as "did not say", never as
+         *     a positive claim it never made.
+         *
+         *     v1.1: :attr:`allowed_actions` is the device's own declaration of what it
+         *     would honor right now. v1.0 devices that omit it see an empty list, and
+         *     readers fall back to catalog ``requires_states``. ``details.claimed_by``
+         *     (a :class:`sdl_lab_contract.claims.ClaimedBy`-shaped dict, or absent)
+         *     stays nested under :attr:`details` to keep the top-level shape stable for
+         *     v1.0 readers.
+         *
+         *     v1.2: :attr:`activity` / :attr:`activity_since` answer "is it working",
+         *     which :attr:`equipment_status` cannot express once §2.2 gives the
+         *     top-level state to health. A v1.0/v1.1 device omitting them reads as
+         *     ``"unknown"`` - never as a false ``"idle"``.
          */
         EquipmentStatus: {
             /**
@@ -154,7 +877,7 @@ export interface components {
              * Equipment Kind
              * @enum {string}
              */
-            equipment_kind: "solid_doser" | "liquid_handler" | "press" | "fume_hood" | "robot_arm" | "environmental_sensor" | "hplc" | "plate_reader" | "plate_sealer" | "plate_stacker" | "other";
+            equipment_kind: "solid_doser" | "liquid_handler" | "press" | "fume_hood" | "robot_arm" | "environmental_sensor" | "hplc" | "plate_reader" | "plate_sealer" | "plate_stacker" | "shaker" | "camera" | "smart_plug" | "power_strip" | "other";
             /** Equipment Version */
             equipment_version?: string | null;
             /** Host */
@@ -168,6 +891,16 @@ export interface components {
             message?: string | null;
             /** Required Actions */
             required_actions?: string[];
+            /** Allowed Actions */
+            allowed_actions?: string[];
+            /**
+             * Activity
+             * @default unknown
+             * @enum {string}
+             */
+            activity: "idle" | "running" | "unknown";
+            /** Activity Since */
+            activity_since?: string | null;
             /**
              * Device Time
              * Format: date-time
@@ -227,8 +960,49 @@ export interface components {
             detail?: components["schemas"]["ValidationError"][];
         };
         /**
+         * IngestEventRecord
+         * @description One record from a device's events.jsonl.
+         */
+        IngestEventRecord: {
+            /** Timestamp */
+            timestamp: string;
+            /** Event */
+            event: string;
+            /** Config Name */
+            config_name?: string | null;
+            /** From State */
+            from_state?: string | null;
+            /** To State */
+            to_state?: string | null;
+            /** Message */
+            message?: string | null;
+            /** Context */
+            context?: string | null;
+            /** Extra */
+            extra?: {
+                [key: string]: unknown;
+            };
+        };
+        /** IngestEventsRequest */
+        IngestEventsRequest: {
+            /** Device Id */
+            device_id: string;
+            /** Records */
+            records: components["schemas"]["IngestEventRecord"][];
+        };
+        /** LabwareUpload */
+        LabwareUpload: {
+            /**
+             * Definition
+             * @description Opentrons schema-2 labware definition
+             */
+            definition: {
+                [key: string]: unknown;
+            };
+        };
+        /**
          * Location
-         * @description Position of an equipment on the lab floorplan map (percentages 0-100).
+         * @description Position of an equipment on the lab floorplan map.
          */
         Location: {
             /** X */
@@ -237,6 +1011,23 @@ export interface components {
             y: number;
             /** Label */
             label?: string | null;
+        };
+        /**
+         * Maintenance
+         * @description Soft-maintenance metadata for an equipment registry entry.
+         *
+         *     Set on an entry to mark a device as offline for maintenance without
+         *     removing it from ``equipment.yaml``. The SDK raises
+         *     ``EquipmentInMaintenance`` from ``Lab.get(<id>)`` when an entry is in
+         *     maintenance; the dashboard surfaces the same metadata on its tile.
+         */
+        Maintenance: {
+            /** Reason */
+            reason: string;
+            /** Until */
+            until?: string | null;
+            /** Contact */
+            contact?: string | null;
         };
         /** MetricValue */
         MetricValue: {
@@ -248,12 +1039,161 @@ export interface components {
             timestamp?: string | null;
         };
         /**
+         * PillConfig
+         * @description Pill configuration for the Overview platform-card row.
+         *
+         *     ``open: true`` renders an "Open ↗" link to the equipment's ``base_url``.
+         *
+         *     ``link_label`` + ``link_href`` render an extra labelled pill (e.g.
+         *     ``"XArm5 UI"`` → ``/xarm5/web/``). Prefer this over ``open`` when the
+         *     target is an edge-gated URL rather than the device's raw ``base_url`` —
+         *     a root-relative ``link_href`` (``/xarm5/web/``) resolves against the
+         *     canonical dashboard origin (the Caddy edge), which forward-auths it,
+         *     instead of pointing at the device's directly-reachable Tailnet port.
+         *
+         *     ``authorized_only: true`` hides the pill links from users who hold no
+         *     role on this equipment (per the auth sidecar's ``/authz/mine`` map), so
+         *     admin-facing panels (e.g. Uptime Kuma) don't advertise a link the viewer
+         *     can't use. Presentation-only — the click was already blocked client-side
+         *     and the edge enforces server-side regardless.
+         *
+         *     ``internal: true`` marks ``link_href`` as a dashboard route. Internal
+         *     monitoring links use normal same-tab navigation and do not require an
+         *     equipment control role.
+         *
+         *     Extensible: add ``icon``, etc. without breaking older entries.
+         */
+        PillConfig: {
+            /**
+             * Open
+             * @default false
+             */
+            open: boolean;
+            /** Link Label */
+            link_label?: string | null;
+            /** Link Href */
+            link_href?: string | null;
+            /**
+             * Authorized Only
+             * @default false
+             */
+            authorized_only: boolean;
+            /**
+             * Internal
+             * @default false
+             */
+            internal: boolean;
+        };
+        /**
+         * PlatformSection
+         * @description One section in ``platforms.yaml``.
+         */
+        PlatformSection: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Description */
+            description?: string | null;
+            /** Href */
+            href?: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "platform" | "environmental_map";
+            /** Equipment */
+            equipment: string[];
+        };
+        /**
+         * PlatformsConfig
+         * @description Parsed ``platforms.yaml``.
+         */
+        PlatformsConfig: {
+            /** Sections */
+            sections: components["schemas"]["PlatformSection"][];
+        };
+        /**
+         * PlugConfig
+         * @description Optional ``plug:`` block on ``smart_plug`` and ``power_strip`` entries.
+         */
+        PlugConfig: {
+            /** Host */
+            host: string;
+            /** Outlets */
+            outlets?: components["schemas"]["PlugOutlet"][];
+        };
+        /**
+         * PlugOutlet
+         * @description One labelled outlet on a multi-outlet plug (``kind: power_strip``).
+         */
+        PlugOutlet: {
+            /** Index */
+            index: number;
+            /** Label */
+            label?: string | null;
+        };
+        /** RunRecord */
+        RunRecord: {
+            /** Id */
+            id: string;
+            /** Started At */
+            started_at: string;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Device Id */
+            device_id: string;
+            /** Config Name */
+            config_name?: string | null;
+            /** Plate Id */
+            plate_id?: string | null;
+            /** Compound Id */
+            compound_id?: string | null;
+            /** Target Mg */
+            target_mg?: number | null;
+            /**
+             * N Wells
+             * @default 0
+             */
+            n_wells: number;
+            /**
+             * N Converged
+             * @default 0
+             */
+            n_converged: number;
+            /**
+             * Status
+             * @default in_progress
+             */
+            status: string;
+        };
+        /** SensorHistoryResponse */
+        SensorHistoryResponse: {
+            /** Sensor Id */
+            sensor_id: string;
+            /** Metric */
+            metric: string;
+            /** Since Hours */
+            since_hours: number;
+            /** Readings */
+            readings: components["schemas"]["SensorReadingPoint"][];
+        };
+        /** SensorReadingPoint */
+        SensorReadingPoint: {
+            /** Ts */
+            ts: string;
+            /** Value */
+            value: number;
+            /** Unit */
+            unit: string;
+        };
+        /**
          * Tile
          * @description Tile size for the dashboard equipment grid.
          *
-         *     The platform card lays equipment out on a 4-column CSS grid with fixed-height
-         *     rows. `w` is the number of columns the tile spans (1..4) and `h` is the
-         *     number of rows it spans (1..4). Default 2x1 = current half-row layout.
+         *     The platform card lays equipment out on a 4-column CSS grid with
+         *     fixed-height rows.  ``w`` is the number of columns (1..4) and ``h``
+         *     is the number of rows (1..4).  Default 2×1.
          */
         Tile: {
             /**
@@ -266,6 +1206,19 @@ export interface components {
              * @default 1
              */
             h: number;
+        };
+        /** UptimeResponse */
+        UptimeResponse: {
+            /** Device Id */
+            device_id: string;
+            /** Days */
+            days: number;
+            /** Uptime Pct */
+            uptime_pct: number;
+            /** Events */
+            events: {
+                [key: string]: unknown;
+            }[];
         };
         /** ValidationError */
         ValidationError: {
@@ -280,6 +1233,28 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /** WellResultRecord */
+        WellResultRecord: {
+            /** Run Id */
+            run_id: string;
+            /** Ts */
+            ts: string;
+            /** Well */
+            well: string;
+            /** Target Mg */
+            target_mg: number;
+            /** Actual Mg */
+            actual_mg?: number | null;
+            /**
+             * Converged
+             * @default false
+             */
+            converged: boolean;
+            /** Iterations */
+            iterations?: number | null;
+            /** Duration S */
+            duration_s?: number | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -289,6 +1264,907 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    control_get_api_equipment__equipment_id__control__action__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                equipment_id: string;
+                action: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    control_post_api_equipment__equipment_id__control__action__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                equipment_id: string;
+                action: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                } | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    control_delete_api_equipment__equipment_id__control__action__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                equipment_id: string;
+                action: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    device_post_api_equipment__equipment_id__device__action__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                equipment_id: string;
+                action: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                } | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    plate_get_api_equipment__equipment_id__plate__sub__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                equipment_id: string;
+                sub: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    media_list_api_equipment__equipment_id__media_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                equipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    media_download_api_equipment__equipment_id__media__rest__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                equipment_id: string;
+                rest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_deck_api_equipment__equipment_id__deck_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                equipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeckLayout"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_deck_api_equipment__equipment_id__deck_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                equipment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeckLayout"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeckLayout"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_labware_api_labware_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    upload_labware_api_labware_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LabwareUpload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_standard_labware_api_labware_standard_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    get_standard_labware_api_labware_standard__load_name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                load_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_labware_api_labware__load_name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                load_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_labware_api_labware__load_name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                load_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    uptime_api_history_uptime__device_id__get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UptimeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    uptime_all_api_history_uptime_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    equipment_events_api_history_events__device_id__get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                event_type?: string | null;
+            };
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    control_actions_api_history_control_actions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                device_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sensors_latest_api_history_sensors_latest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    sensor_history_api_history_sensors__sensor_id___metric__get: {
+        parameters: {
+            query?: {
+                since_hours?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                sensor_id: string;
+                metric: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SensorHistoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_runs_api_history_runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                device_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_well_results_api_history_runs__run_id__wells_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ingest_events_api_ingest_events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IngestEventsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ingest_run_api_ingest_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunRecord"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ingest_wells_api_ingest_wells_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WellResultRecord"][];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    health_api_assistant_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    chat_api_assistant_chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_platforms_api_platforms_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformsConfig"];
+                };
+            };
+        };
+    };
     health_api_health_get: {
         parameters: {
             query?: never;
@@ -309,6 +2185,28 @@ export interface operations {
             };
         };
     };
+    equipment_status_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     list_equipment_api_equipment_get: {
         parameters: {
             query?: never;
@@ -325,6 +2223,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EquipmentList"];
+                };
+            };
+        };
+    };
+    skill_catalog_api_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };

@@ -92,7 +92,26 @@
     "select{max-width:40vw}" +
     ".who .email{max-width:38vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
     ".msg{flex-basis:100%;order:10;text-align:right}" +
-    "}";
+    "}" +
+    // Dark theme — toggled via the .theme-toggle button below. Applied as a
+    // ".dark" class on .bar (this shadow root's own styling) in lockstep with
+    // a "dark" class on the HOST page's <html>, so every UI's own Tailwind
+    // dark: variants (or equivalent) switch together with the banner.
+    ".bar.dark{background:#0b1120;color:#e2e8f0;border-bottom-color:#1e293b;box-shadow:0 1px 2px rgba(0,0,0,.3)}" +
+    ".bar.dark .brand{color:#e2e8f0}" +
+    ".bar.dark .dot{background:#334155}" +
+    ".bar.dark .dot.on{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.15)}" +
+    ".bar.dark .avatar{background:#1e293b;color:#e2e8f0}" +
+    ".bar.dark .who .email{color:#e2e8f0}.bar.dark .who .role{color:#94a3b8}" +
+    ".bar.dark button{background:#0f172a;color:#e2e8f0;border-color:#334155}" +
+    ".bar.dark button:hover{background:#1e293b}" +
+    ".bar.dark button.primary{background:#2563eb;border-color:#2563eb;color:#fff}" +
+    ".bar.dark button.primary:hover{background:#1d4ed8}" +
+    ".bar.dark button.ghost{color:#94a3b8}.bar.dark button.ghost:hover{background:#1e293b}" +
+    ".bar.dark select,.bar.dark input{background:#0f172a;color:#e2e8f0;border-color:#334155}" +
+    ".bar.dark input.code::placeholder{color:#64748b}" +
+    ".bar.dark .msg{color:#60a5fa}.bar.dark .msg.err{color:#f87171}" +
+    ".theme-toggle{padding:.3rem .5rem;line-height:1;font-size:14px}";
 
   function el(tag, props, kids) {
     var e = document.createElement(tag);
@@ -125,6 +144,7 @@
 
     var dot = el("span", { class: "dot" });
     var brand = el("span", { class: "brand", text: "SDL2 Lab" });
+    var themeBtn = el("button", { class: "ghost theme-toggle", type: "button" });
 
     // signed-in cluster
     var avatar = el("div", { class: "avatar", text: "?" });
@@ -146,8 +166,41 @@
 
     var msg = el("span", { class: "msg" });
     // Brand on the left; account + buttons pushed to the right by the spacer.
-    var bar = el("div", { class: "bar" }, [dot, brand, el("span", { class: "spacer" }), msg, signedOut, signedIn]);
+    var bar = el("div", { class: "bar" }, [dot, brand, themeBtn, el("span", { class: "spacer" }), msg, signedOut, signedIn]);
     root.appendChild(bar);
+
+    // Dark mode — one toggle shared by every UI behind the single edge.
+    // Source of truth is localStorage("theme"); we also mirror it onto the
+    // HOST page's <html> so each UI's own dark: styling (Tailwind or
+    // otherwise) switches in lockstep with the banner. A page that sets its
+    // own "dark" class before this script runs (e.g. a blocking inline
+    // script, to avoid a flash of the wrong theme) is respected as-is here —
+    // applyTheme below is idempotent either way.
+    function storedTheme() {
+      try {
+        var v = localStorage.getItem("theme");
+        return v === "dark" || v === "light" ? v : null;
+      } catch (e) { return null; }
+    }
+    function systemPrefersDark() {
+      try { return window.matchMedia("(prefers-color-scheme: dark)").matches; } catch (e) { return false; }
+    }
+    var isDark = storedTheme() ? storedTheme() === "dark" : systemPrefersDark();
+
+    function applyTheme(dark) {
+      isDark = dark;
+      bar.classList.toggle("dark", dark);
+      themeBtn.textContent = dark ? "☀️" : "🌙";
+      themeBtn.title = dark ? "Switch to light theme" : "Switch to dark theme";
+      try { document.documentElement.classList.toggle("dark", dark); } catch (e) { /* no-op */ }
+    }
+    applyTheme(isDark);
+
+    themeBtn.addEventListener("click", function () {
+      var next = !isDark;
+      try { localStorage.setItem("theme", next ? "dark" : "light"); } catch (e) { /* no-op */ }
+      applyTheme(next);
+    });
 
     function setMsg(t, isErr) { msg.textContent = t || ""; msg.className = "msg" + (isErr ? " err" : ""); }
 

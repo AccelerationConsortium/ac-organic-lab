@@ -291,3 +291,99 @@ def test_reload_mass_change_guard(tmp_path):
     # force overrides the guard
     forced = reload_roster(newf, good, max_revocations=1, force=True)
     assert forced.applied is True
+
+
+# --- cross_check_ids (referential integrity vs equipment/platform registries) --
+
+
+def _xcheck_roster(**kw):
+    from ac_auth.roster import Grant, Roster, RosterAutomation, RosterUser
+
+    defaults = dict(
+        users=[
+            RosterUser(email="admin@lab.edu", role="admin"),
+            RosterUser(
+                email="u@lab.edu",
+                role="none",
+                grants=[
+                    Grant(scope="equipment", id="plateloc", role="operator"),
+                    Grant(scope="platform", id="hte", role="operator"),
+                    Grant(scope="global", role="operator"),
+                ],
+            ),
+        ],
+        automation=[
+            RosterAutomation(
+                email="robot@lab.local",
+                approved=True,
+                platform="hte",
+                grants=[Grant(scope="equipment", id="cam_x", role="operator")],
+            )
+        ],
+    )
+    defaults.update(kw)
+    return Roster(**defaults)
+
+
+def test_cross_check_all_resolving_is_clean():
+    from ac_auth.roster import cross_check_ids
+
+    r = _xcheck_roster()
+    assert cross_check_ids(r, equipment_ids={"plateloc", "cam_x"}, platform_ids={"hte"}) == []
+
+
+def test_cross_check_catches_dead_equipment_grant():
+    """The la_agente_analitica class: a typo'd id is exact-match-dead."""
+    from ac_auth.roster import cross_check_ids
+
+    r = _xcheck_roster()
+    errors = cross_check_ids(r, equipment_ids={"plate_loc", "cam_x"}, platform_ids={"hte"})
+    assert len(errors) == 1
+    assert "u@lab.edu" in errors[0] and "'plateloc'" in errors[0] and "dead grant" in errors[0]
+
+
+def test_cross_check_catches_dead_platform_grant_and_scope():
+    from ac_auth.roster import cross_check_ids
+
+    r = _xcheck_roster()
+    errors = cross_check_ids(r, equipment_ids={"plateloc", "cam_x"}, platform_ids={"echem"})
+    # u's platform grant AND the automation account's platform: field both die.
+    assert len(errors) == 2
+    assert any("u@lab.edu" in e and "'hte'" in e for e in errors)
+    assert any("robot@lab.local" in e and "dead scope" in e for e in errors)
+
+
+def test_cross_check_checks_automation_grants_too():
+    from ac_auth.roster import cross_check_ids
+
+    r = _xcheck_roster()
+    errors = cross_check_ids(r, equipment_ids={"plateloc"}, platform_ids={"hte"})
+    assert len(errors) == 1
+    assert "robot@lab.local" in errors[0] and "'cam_x'" in errors[0]
+
+
+def test_cross_check_none_skips_that_registry():
+    """None = registry file unavailable; must not fail (distinct from empty set,
+    which means the registry exists and the grant is genuinely dead)."""
+    from ac_auth.roster import cross_check_ids
+
+    r = _xcheck_roster()
+    assert cross_check_ids(r, equipment_ids=None, platform_ids=None) == []
+    assert cross_check_ids(r, equipment_ids=None, platform_ids={"hte"}) == []
+    errors = cross_check_ids(r, equipment_ids=set(), platform_ids=None)
+    assert len(errors) == 2  # both equipment grants dead against an empty registry
+
+
+def test_cross_check_global_grants_are_exempt():
+    """Global grants name no id — nothing to resolve."""
+    from ac_auth.roster import Grant, Roster, RosterUser, cross_check_ids
+
+    r = Roster(
+        users=[
+            RosterUser(email="admin@lab.edu", role="admin"),
+            RosterUser(
+                email="g@lab.edu", role="none", grants=[Grant(scope="global", role="admin")]
+            ),
+        ]
+    )
+    assert cross_check_ids(r, equipment_ids=set(), platform_ids=set()) == []

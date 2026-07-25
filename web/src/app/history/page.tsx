@@ -8,9 +8,17 @@ import {
   useSensorHistory,
 } from "@/lib/use-history";
 import type { EquipmentSnapshot } from "@/types/api";
-import type { SensorPoint } from "@/lib/history-api";
+import type { DeviceUptimeSummary, SensorPoint } from "@/lib/history-api";
 import { pillClass } from "@/lib/pill";
-import { STATE_COLORS, STATE_META, type StateName } from "@/lib/state-meta";
+import {
+  ACTIVITY_COLORS,
+  ACTIVITY_META,
+  STATE_COLORS,
+  STATE_META,
+  effectiveState,
+  type ActivityName,
+  type StateName,
+} from "@/lib/state-meta";
 
 // ---------------------------------------------------------------------------
 // Shared primitives
@@ -50,39 +58,30 @@ function LoadingRow() {
 // State metadata (colour/label/desc per state) now lives in lib/state-meta.ts,
 // shared with the global auto-hiding State Reference panel in the left rail.
 
-// Kinds reached over a secondary link behind a shared gateway
-// (kasa-tapo-services fronts cameras + Kasa plugs). When the backing hardware
-// is offline the gateway still answers /status (HTTP 200, so no transport
-// `fetch_error`) but reports `equipment_status: "unknown"`. We attribute that
-// `unknown` to a known reachability failure and render it as "unreachable" —
-// matching how a directly-polled device surfaces a transport timeout. A bare
-// `unknown` from a non-gateway device (cold start / not-yet-observed) stays
-// "unknown". See STATUS_SPEC §"`unknown` vs `error` vs unreachable".
-const GATEWAY_FRONTED_KINDS = new Set(["camera", "power_strip", "smart_plug"]);
-
-function effectiveState(snap: EquipmentSnapshot): StateName {
-  if (snap.fetch_error) return "unreachable";
-  const reported = (snap.status?.equipment_status as StateName) ?? "unknown";
-  if (reported === "unknown" && GATEWAY_FRONTED_KINDS.has(snap.kind)) {
-    return "unreachable";
-  }
-  return reported;
-}
+// effectiveState (transport-failure / gateway-fronted "unreachable"
+// attribution) moved to lib/state-meta.ts, shared with the Overview rows.
 
 function StateDot({ snap }: { snap: EquipmentSnapshot }) {
   const state = effectiveState(snap);
   const meta = STATE_META[state] ?? STATE_META.unknown;
+  // Health always wins the single glyph; activity (spec v1.2, orthogonal)
+  // moves to the tooltip — "Degraded · Running" — when it is known.
+  const activity = (snap.activity ?? "unknown") as ActivityName;
+  const tooltip =
+    activity === "unknown"
+      ? meta.label
+      : `${meta.label} · ${ACTIVITY_META[activity].label}`;
   return (
     <span
-      aria-label={meta.label}
+      aria-label={tooltip}
       className="group/state-dot relative inline-flex h-5 w-5 items-center justify-center"
     >
       <span
         className="inline-block h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-slate-950"
         style={{ backgroundColor: STATE_COLORS[state] ?? STATE_COLORS.unknown }}
       />
-      <span className="pointer-events-none invisible absolute left-1/2 top-full z-50 mt-1 -translate-x-1/2 rounded-lg bg-slate-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover/state-dot:visible group-hover/state-dot:opacity-100 dark:bg-slate-700">
-        {meta.label}
+      <span className="pointer-events-none invisible absolute left-1/2 top-full z-50 mt-1 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover/state-dot:visible group-hover/state-dot:opacity-100 dark:bg-slate-700">
+        {tooltip}
       </span>
     </span>
   );
@@ -160,6 +159,83 @@ function StateTimelineBar({
           />
         );
       })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Segmented activity ("utilization") bar — STATUS_SPEC v1.2 §2.3.
+// A second, thinner bar under the health timeline. Deliberately NOT usage
+// accounting (§2.3.1): the series is sampled by a 60 s poll, so operations
+// shorter than the poll interval are missed outright. Tooltips say "of
+// observed time · sampled every 60 s" and carry the tracking-since date;
+// pre-tracking time is shown as untracked, never as 0% usage.
+// ---------------------------------------------------------------------------
+
+const ACTIVITY_ORDER: ActivityName[] = ["running", "idle", "unknown"];
+
+function ActivityTimelineBar({
+  activityPcts,
+  trackingSince,
+  cycles,
+  isPending,
+}: {
+  activityPcts: Record<string, number> | undefined;
+  trackingSince: string | null | undefined;
+  /** Exact cycle count from metrics["cycles_total"] (§2.3.1); null when the
+   *  device doesn't publish the counter. Shown alongside the sampled bar
+   *  because it counts what the bar can't see (sub-poll-interval cycles). */
+  cycles: number | null | undefined;
+  isPending: boolean;
+}) {
+  if (isPending) {
+    return <div className="h-1.5 animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />;
+  }
+
+  const entries: { activity: ActivityName; pct: number }[] = [];
+  for (const a of ACTIVITY_ORDER) {
+    const v = activityPcts?.[a] ?? 0;
+    if (v > 0) entries.push({ activity: a, pct: v });
+  }
+
+  if (entries.length === 0) {
+    // No activity rows yet — tracking hasn't started for this device.
+    return (
+      <div
+        title="No activity tracking yet for this device"
+        className="h-1.5 w-full rounded-full border border-dashed border-slate-300 dark:border-slate-600"
+      />
+    );
+  }
+
+  const total = entries.reduce((acc, e) => acc + e.pct, 0);
+  const since = trackingSince
+    ? ` · tracking since ${new Date(trackingSince).toLocaleDateString()}`
+    : "";
+  // Exact count from the device's monotonic counter — sees the sub-poll
+  // cycles the sampled bar misses.
+  const cyclesNote = cycles != null ? ` · ${cycles} cycles (exact)` : "";
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+        {entries.map(({ activity, pct }) => (
+          <div
+            key={activity}
+            title={`${ACTIVITY_META[activity].label === "—" ? "Unknown" : ACTIVITY_META[activity].label}: ${pct.toFixed(1)}% of observed time · sampled every 60 s${since}${cyclesNote}`}
+            className="h-1.5"
+            style={{ width: `${(pct / total) * 100}%`, backgroundColor: ACTIVITY_COLORS[activity] }}
+          />
+        ))}
+      </div>
+      {cycles != null && (
+        <span
+          title={`${cycles} completed cycles in window — exact count from the device's cycles_total counter, which sees cycles shorter than the 60 s poll`}
+          className="shrink-0 text-[10px] tabular-nums text-ink-subtle dark:text-slate-500"
+        >
+          {cycles}×
+        </span>
+      )}
     </div>
   );
 }
@@ -251,7 +327,7 @@ function DeviceUptimeRow({
   onToggle,
 }: {
   snap: EquipmentSnapshot;
-  uptimeData: Record<string, { uptime_pct: number | null; state_pcts: Record<string, number> }> | undefined;
+  uptimeData: Record<string, DeviceUptimeSummary> | undefined;
   isPending: boolean;
   expanded: boolean;
   onToggle: () => void;
@@ -282,9 +358,16 @@ function DeviceUptimeRow({
           <StateDot snap={snap} />
         </div>
 
-        {/* Segmented bar */}
-        <div className="flex-1">
+        {/* Segmented bars: health timeline + activity (utilization) below it.
+            Two separate visual elements — never one merged bar (spec §2.3). */}
+        <div className="flex flex-1 flex-col gap-1">
           <StateTimelineBar statePcts={summary?.state_pcts} isPending={isPending} />
+          <ActivityTimelineBar
+            activityPcts={summary?.activity_pcts}
+            trackingSince={summary?.activity_tracking_since}
+            cycles={summary?.cycles}
+            isPending={isPending}
+          />
         </div>
 
         {/* Percentage */}
@@ -314,7 +397,7 @@ function PlatformGroup({
 }: {
   platform: string;
   snaps: EquipmentSnapshot[];
-  uptimeData: Record<string, { uptime_pct: number | null; state_pcts: Record<string, number> }> | undefined;
+  uptimeData: Record<string, DeviceUptimeSummary> | undefined;
   isPending: boolean;
   days: number;
   onDaysChange: (days: number) => void;
@@ -341,7 +424,7 @@ function PlatformGroup({
       <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-1.5 dark:border-slate-800">
         <span className="w-44 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Module</span>
         <span className="w-10 shrink-0 text-center text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">State</span>
-        <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Uptime</span>
+        <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Health · Activity</span>
         <span className="w-14 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">%</span>
         <span className="ml-1 w-3" />
       </div>
@@ -426,7 +509,9 @@ function DeviceEventsList({ deviceId }: { deviceId: string }) {
                   ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300"
                   : ev.event_type === "state_transition"
                     ? "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300"
-                    : "bg-slate-100 text-ink dark:bg-slate-800 dark:text-slate-200"
+                    : ev.event_type === "activity_transition"
+                      ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300"
+                      : "bg-slate-100 text-ink dark:bg-slate-800 dark:text-slate-200"
               }`}
             >
               {ev.event_type}

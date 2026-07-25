@@ -2,7 +2,14 @@
 
 import { useState } from "react";
 
-import { STATE_COLORS, STATE_META, type StateName } from "@/lib/state-meta";
+import {
+  ACTIVITY_COLORS,
+  ACTIVITY_META,
+  STATE_COLORS,
+  STATE_META,
+  type ActivityName,
+  type StateName,
+} from "@/lib/state-meta";
 
 /**
  * Global State Reference — a click-to-toggle flyout docked to the left edge of
@@ -39,6 +46,9 @@ export function StateReferencePanel() {
           State Reference
         </button>
 
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+          Health
+        </p>
         <ul className="flex flex-col gap-1.5">
           {(Object.entries(STATE_META) as [StateName, (typeof STATE_META)[StateName]][]).map(
             ([key, meta]) => (
@@ -61,8 +71,36 @@ export function StateReferencePanel() {
             ),
           )}
         </ul>
+
+        {/* Activity (spec v1.2) — orthogonal to health: "is it working right
+            now", independent of "is it healthy". */}
+        <p className="mb-1 mt-3 border-t border-slate-100 pt-2 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:border-slate-800 dark:text-slate-500">
+          Activity
+        </p>
+        <ul className="flex flex-col gap-1.5">
+          {(Object.entries(ACTIVITY_META) as [ActivityName, (typeof ACTIVITY_META)[ActivityName]][]).map(
+            ([key, meta]) => (
+              <li key={key} className="group/row relative flex cursor-default items-center gap-2">
+                <span
+                  className="inline-block h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: ACTIVITY_COLORS[key] }}
+                />
+                <span className="text-xs font-medium text-ink dark:text-slate-200">
+                  {meta.label === "—" ? "Unknown" : meta.label}
+                </span>
+                {open && (
+                  <div className="pointer-events-none invisible absolute left-full top-1/2 z-50 ml-4 w-56 -translate-y-1/2 rounded-lg bg-slate-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover/row:visible group-hover/row:opacity-100 dark:bg-slate-700">
+                    {meta.desc}
+                    <span className="absolute left-0 top-1/2 -translate-x-full -translate-y-1/2 border-4 border-transparent border-r-slate-900 dark:border-r-slate-700" />
+                  </div>
+                )}
+              </li>
+            ),
+          )}
+        </ul>
         <p className="mt-3 text-[10px] leading-relaxed text-ink-subtle dark:text-slate-500">
-          Hover a label for details.
+          Health and activity are independent — a Degraded device can still be
+          Running. Hover a label for details.
         </p>
       </aside>
     </div>
