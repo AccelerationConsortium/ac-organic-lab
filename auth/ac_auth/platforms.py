@@ -50,4 +50,22 @@ def load_membership(path: Path | str | None = None) -> dict[str, set[str]]:
     return membership
 
 
-__all__ = ["load_membership", "default_platforms_path"]
+def platform_ids(path: Path | str | None = None) -> set[str]:
+    """The set of platform section ids (``kind: platform`` only) — the values a
+    platform-scoped grant may name. Empty set when the file is absent or
+    unparseable, mirroring :func:`load_membership`'s fail-soft."""
+    p = Path(path) if path else default_platforms_path()
+    try:
+        data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    return {
+        s["id"]
+        for s in data.get("sections", []) or []
+        if isinstance(s, dict) and s.get("kind") == "platform" and s.get("id")
+    }
+
+
+__all__ = ["load_membership", "default_platforms_path", "platform_ids"]

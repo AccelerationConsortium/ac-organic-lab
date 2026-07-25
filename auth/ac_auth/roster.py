@@ -30,7 +30,7 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Iterable, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
@@ -215,6 +215,54 @@ class RosterProject(BaseModel):
         if not self.pis:
             raise ValueError(f"project {self.id!r} must have at least one PI")
         return self
+
+
+def cross_check_ids(
+    roster: "Roster",
+    *,
+    equipment_ids: "Iterable[str] | None",
+    platform_ids: "Iterable[str] | None",
+) -> list[str]:
+    """Referential integrity between the roster and the registries it names.
+
+    Grant matching is exact string equality (``authz._grant_applies``), so an id
+    that exists nowhere is a **silently dead grant** — the account simply never
+    gets the access the file appears to give it (this is how the
+    ``la_agente_analitica`` typo went unnoticed until 2026-07-24). Grants are
+    the only cross-file references the schema cannot see: project pis/members
+    are already rejected at load time against the roster's own users.
+
+    Pure — callers supply the known-id sets (the CLI loads them from
+    ``equipment.yaml`` / ``platforms.yaml``); this module stays free of registry
+    file formats. Pass ``None`` for a set to skip that check (registry file not
+    available) — distinct from an *empty* set, which means the registry exists
+    and every grant against it is dead. Returns human-readable errors, empty
+    when everything resolves.
+    """
+    eq = None if equipment_ids is None else set(equipment_ids)
+    plat = None if platform_ids is None else set(platform_ids)
+    errors: list[str] = []
+
+    def _check_grants(who: str, grants: list[Grant]) -> None:
+        for g in grants:
+            if g.scope == "equipment" and eq is not None and g.id not in eq:
+                errors.append(
+                    f"{who}: equipment grant {g.id!r} matches no equipment.yaml id (dead grant)"
+                )
+            elif g.scope == "platform" and plat is not None and g.id not in plat:
+                errors.append(
+                    f"{who}: platform grant {g.id!r} matches no platforms.yaml section (dead grant)"
+                )
+
+    for u in roster.users:
+        _check_grants(u.email, u.grants)
+    for a in roster.automation:
+        _check_grants(a.email, a.grants)
+        if a.platform and plat is not None and a.platform not in plat:
+            errors.append(
+                f"{a.email}: platform: {a.platform!r} matches no platforms.yaml section (dead scope)"
+            )
+    return errors
 
 
 def _is_global_admin(u: RosterUser) -> bool:
@@ -464,4 +512,5 @@ __all__ = [
     "reload_roster",
     "dump_roster",
     "default_roster_path",
+    "cross_check_ids",
 ]

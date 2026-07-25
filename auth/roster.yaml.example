@@ -64,7 +64,9 @@ users:
     role: none
     name: Carol Intern
     grants:
-      - { scope: equipment, id: ot2, role: operator }   # may operate ONLY the OT-2
+      # Ids must exist in equipment.yaml — `validate` cross-checks them, so a
+      # typo fails loudly instead of becoming a silently dead grant.
+      - { scope: equipment, id: ot2_hte, role: operator }   # may operate ONLY the OT-2
 
 # --- automation accounts (machine principals) -----------------------------
 # Authenticate by API key (not email code). Created here, but a key only works
