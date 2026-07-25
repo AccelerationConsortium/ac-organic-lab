@@ -177,10 +177,15 @@ const ACTIVITY_ORDER: ActivityName[] = ["running", "idle", "unknown"];
 function ActivityTimelineBar({
   activityPcts,
   trackingSince,
+  cycles,
   isPending,
 }: {
   activityPcts: Record<string, number> | undefined;
   trackingSince: string | null | undefined;
+  /** Exact cycle count from metrics["cycles_total"] (§2.3.1); null when the
+   *  device doesn't publish the counter. Shown alongside the sampled bar
+   *  because it counts what the bar can't see (sub-poll-interval cycles). */
+  cycles: number | null | undefined;
   isPending: boolean;
 }) {
   if (isPending) {
@@ -207,17 +212,30 @@ function ActivityTimelineBar({
   const since = trackingSince
     ? ` · tracking since ${new Date(trackingSince).toLocaleDateString()}`
     : "";
+  // Exact count from the device's monotonic counter — sees the sub-poll
+  // cycles the sampled bar misses.
+  const cyclesNote = cycles != null ? ` · ${cycles} cycles (exact)` : "";
 
   return (
-    <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-      {entries.map(({ activity, pct }) => (
-        <div
-          key={activity}
-          title={`${ACTIVITY_META[activity].label === "—" ? "Unknown" : ACTIVITY_META[activity].label}: ${pct.toFixed(1)}% of observed time · sampled every 60 s${since}`}
-          className="h-1.5"
-          style={{ width: `${(pct / total) * 100}%`, backgroundColor: ACTIVITY_COLORS[activity] }}
-        />
-      ))}
+    <div className="flex items-center gap-2">
+      <div className="flex h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+        {entries.map(({ activity, pct }) => (
+          <div
+            key={activity}
+            title={`${ACTIVITY_META[activity].label === "—" ? "Unknown" : ACTIVITY_META[activity].label}: ${pct.toFixed(1)}% of observed time · sampled every 60 s${since}${cyclesNote}`}
+            className="h-1.5"
+            style={{ width: `${(pct / total) * 100}%`, backgroundColor: ACTIVITY_COLORS[activity] }}
+          />
+        ))}
+      </div>
+      {cycles != null && (
+        <span
+          title={`${cycles} completed cycles in window — exact count from the device's cycles_total counter, which sees cycles shorter than the 60 s poll`}
+          className="shrink-0 text-[10px] tabular-nums text-ink-subtle dark:text-slate-500"
+        >
+          {cycles}×
+        </span>
+      )}
     </div>
   );
 }
@@ -347,6 +365,7 @@ function DeviceUptimeRow({
           <ActivityTimelineBar
             activityPcts={summary?.activity_pcts}
             trackingSince={summary?.activity_tracking_since}
+            cycles={summary?.cycles}
             isPending={isPending}
           />
         </div>

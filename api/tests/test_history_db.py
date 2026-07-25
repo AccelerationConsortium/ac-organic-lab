@@ -152,6 +152,36 @@ def test_activity_time_pcts_carries_pre_window_state(tmp_path):
     db.close()
 
 
+def test_get_cycle_count_windowed_delta_with_restart(tmp_path):
+    """§2.3.1 counter math: sum of poll-to-poll deltas, pre-window carry as
+    baseline, and a decrease treated as device restart (post-restart value
+    counts, never negative usage)."""
+    db = _db(tmp_path)
+    now = datetime.now(timezone.utc)
+
+    def rec(hours_ago: float, value: float) -> None:
+        db.record_sensor_reading(
+            "torry_pines_shaker", "cycles_total", value, "count",
+            ts=_iso(now - timedelta(hours=hours_ago)),
+        )
+
+    # never reported → None ("not tracked"), distinct from 0
+    assert db.get_cycle_count("torry_pines_shaker", days=7) is None
+
+    rec(200, 400)   # pre-window (7d = 168h) — baseline carry
+    rec(10, 410)    # +10 vs carry
+    rec(9, 418)     # +8
+    rec(8, 3)       # decrease → restart: +3, not -415
+    rec(7, 5)       # +2
+    assert db.get_cycle_count("torry_pines_shaker", days=7) == 23
+
+    # first-ever reading (no carry, nothing to diff against) → 0, not None:
+    # the counter is tracked, no completed delta observed yet
+    db.record_sensor_reading("plateloc", "cycles_total", 1820, "count", ts=_iso(now))
+    assert db.get_cycle_count("plateloc", days=7) == 0
+    db.close()
+
+
 def test_get_first_event_ts_tracking_since(tmp_path):
     db = _db(tmp_path)
     assert db.get_first_event_ts("plateloc", ACTIVITY_TRANSITION) is None

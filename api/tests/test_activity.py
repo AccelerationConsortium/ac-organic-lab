@@ -36,6 +36,7 @@ class _Snap:
     """Minimal stand-in for the SDK's EquipmentSnapshot (duck-typed)."""
 
     def __init__(self, status: EquipmentStatus, fetch_error: FetchError | None = None):
+        self.id = status.equipment_id
         self.status = status
         self.fetch_error = fetch_error
 
@@ -132,3 +133,40 @@ def test_snapshot_activity_reachable_delegates():
 def test_activity_transition_is_in_pinned_vocabulary():
     assert ACTIVITY_TRANSITION in APP_EVENT_TYPES
     assert ACTIVITY_TRANSITION == "activity_transition"
+
+
+# ------------------------------------------------------------------ cycles_total recording
+
+
+class _FakeDB:
+    def __init__(self):
+        self.readings: list[tuple] = []
+
+    def record_sensor_reading(self, sensor_id, metric, value, unit, **kw):
+        self.readings.append((sensor_id, metric, value, unit))
+
+
+def test_record_cycles_total_stores_raw_counter():
+    from lab_skills import MetricValue
+
+    from app.main import _record_cycles_total
+
+    db = _FakeDB()
+    snap = _Snap(_status(metrics={"cycles_total": MetricValue(value=418, unit="count")}))
+    _record_cycles_total(db, snap)
+    assert db.readings == [("shaker_sc25xr", "cycles_total", 418.0, "count")]
+
+
+def test_record_cycles_total_ignores_absent_or_non_numeric():
+    from lab_skills import MetricValue
+
+    from app.main import _record_cycles_total
+
+    db = _FakeDB()
+    # absent key
+    _record_cycles_total(db, _Snap(_status()))
+    # non-numeric value must not be coerced into the series
+    _record_cycles_total(
+        db, _Snap(_status(metrics={"cycles_total": MetricValue(value="lots")}))
+    )
+    assert db.readings == []

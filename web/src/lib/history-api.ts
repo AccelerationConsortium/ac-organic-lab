@@ -47,6 +47,10 @@ export interface DeviceUptimeSummary {
   /** Earliest activity_transition row — "tracking since". null until the
    *  first activity observation; pre-tracking time is untracked, not 0%. */
   activity_tracking_since: string | null;
+  /** Exact completed-cycle count in the window, from the reserved monotonic
+   *  metrics["cycles_total"] counter (spec §2.3.1) — survives cycles shorter
+   *  than the 60 s poll. null = device doesn't publish the counter. */
+  cycles: number | null;
 }
 
 export interface AllUptimeResponse {

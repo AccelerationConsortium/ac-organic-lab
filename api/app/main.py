@@ -32,7 +32,12 @@ from .alert_notifier import AlertNotifier
 from .control import build_control_router
 from .db import LabDatabase, resolve_db_path
 from .deck import build_deck_router
-from .events import ACTIVITY_TRANSITION, STATE_TRANSITION, snapshot_activity
+from .events import (
+    ACTIVITY_TRANSITION,
+    CYCLES_TOTAL_METRIC,
+    STATE_TRANSITION,
+    snapshot_activity,
+)
 from .history import build_history_router
 from .labware import build_labware_router
 from .presentation import (
@@ -220,6 +225,12 @@ async def _uptime_poll_loop(
                         device_id, prev_activity, current_activity, activity_source,
                     )
 
+                # Reserved cycle counter (STATUS_SPEC §2.3.1) — the exact
+                # complement to the sampled activity series above: cycles
+                # shorter than this loop's 60 s interval are missed by the
+                # series but revealed by this counter's poll-to-poll delta.
+                _record_cycles_total(db, snap)
+
                 # Sensor readings — real devices expose them in status.details;
                 # mock environmental sensors get synthetic readings generated here.
                 reg_entry = _registry_map.get(device_id)
@@ -311,6 +322,27 @@ def _state_str(snap) -> str:
         return snap.status.equipment_status or "unknown"
     except Exception:
         return "unknown"
+
+
+def _record_cycles_total(db: LabDatabase, snap) -> None:
+    """Store the raw ``metrics["cycles_total"]`` counter into sensor_readings.
+
+    The raw counter (not the delta) is stored once per sweep, mirroring the
+    plug energy counters; ``LabDatabase.get_cycle_count`` computes the
+    windowed delta with restart detection at query time. No-op for devices
+    that don't publish the reserved key, and automatically for unreachable
+    devices (their synthetic envelope carries no metrics).
+    """
+    try:
+        entry = (snap.status.metrics or {}).get(CYCLES_TOTAL_METRIC)
+        if entry is None:
+            return
+        raw = entry.value if hasattr(entry, "value") else entry
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return
+        db.record_sensor_reading(snap.id, CYCLES_TOTAL_METRIC, float(raw), "count")
+    except Exception:
+        pass  # best-effort; never crash the poll loop
 
 
 def _write_sensor_readings(db: LabDatabase, snap) -> None:

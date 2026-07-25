@@ -46,6 +46,14 @@ APP_EVENT_TYPES = frozenset({
     ALERT_EMITTED,
 })
 
+#: Reserved metrics key (STATUS_SPEC §2.3.1): monotonic count of completed
+#: primary operations since device start, `unit: "count"`. Its poll-to-poll
+#: delta reveals cycles shorter than the 60 s poll interval, which the
+#: sampled activity series misses outright. A decrease means device restart,
+#: never negative usage. Pinned here for the same reason as the event types:
+#: recorder and query must spell it identically.
+CYCLES_TOTAL_METRIC = "cycles_total"
+
 
 # --------------------------------------------------------------------------
 # Activity derivation (reader-side, per STATUS_SPEC §2.3 / §2.3.2)

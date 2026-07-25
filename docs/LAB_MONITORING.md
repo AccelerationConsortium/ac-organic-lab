@@ -119,13 +119,17 @@ CREATE TABLE IF NOT EXISTS equipment_events (
     id          INTEGER PRIMARY KEY,
     ts          TEXT    NOT NULL,           -- ISO-8601 UTC
     device_id   TEXT    NOT NULL,           -- equipment.yaml key, e.g. "dose_every_well"
-    event_type  TEXT    NOT NULL,           -- "state_transition" | "error" | "startup" |
-                                            -- "shutdown" | "calibration" | "claim_acquired" |
+    event_type  TEXT    NOT NULL,           -- "state_transition" | "activity_transition" |
+                                            -- "error" | "startup" | "shutdown" |
+                                            -- "calibration" | "claim_acquired" |
                                             -- "control_action" (dashboard operator write —
                                             --   payload: {action, method, status_code,
-                                            --   outcome, owner}; written by api/app/control.py)
-    from_state  TEXT,                       -- for state_transition
-    to_state    TEXT,                       -- for state_transition
+                                            --   outcome, owner, duration_s};
+                                            --   written by api/app/control.py)
+                                            -- App-written types are pinned in
+                                            -- api/app/events.py (§4 registry below).
+    from_state  TEXT,                       -- for {state,activity}_transition
+    to_state    TEXT,                       -- for {state,activity}_transition
     message     TEXT,                       -- human-readable description
     payload     TEXT                        -- JSON blob for extra fields
 );
@@ -202,7 +206,8 @@ readers don't have to reverse-engineer it from the table:
 | `event_type` | Emitted by | Notes |
 |---|---|---|
 | `state_transition` | **Aggregator** 60 s poll (`api/app/main.py`) on an observed `equipment_status` change; **device-pushed** by exporters (xArm) for fine-grained transitions | The poll path misses any transition that begins and ends inside one 60 s window; device-pushed rows close that gap. Both use `from_state` / `to_state`. |
-| `control_action` | Dashboard control passthrough (`api/app/control.py`) | One audit row per operator write: `payload: {action, method, status_code, outcome, owner}`. |
+| `activity_transition` | **Aggregator** 60 s poll, in parallel with `state_transition` (STATUS_SPEC v1.2 §2.3); **device-pushed** rows welcome (see below) | The activity series (`idle`/`running`/`unknown` in `from_state`/`to_state`) that survives a chronic health fault — utilization for a device stuck on `degraded`. Poll rows carry `payload: {source: device\|status\|components\|none}` recording how the value was derived (`events.py::derive_activity`). Poll-sampled: a cycle shorter than 60 s is **missed**, not undercounted (§2.3.1) — hence `metrics["cycles_total"]` and device-pushed rows. **Device-pushed convention:** POST to `/api/ingest/events` with `event: "activity_transition"`, exact `timestamp`, `from_state`/`to_state` ∈ {idle, running}, `extra: {source: "device_event"}`. Duplicate/overlapping rows from the two emitters are harmless — the time-pct window charges by `to_state`, and both emitters describe the same hardware truth. |
+| `control_action` | Dashboard control passthrough (`api/app/control.py`) | One audit row per operator write: `payload: {action, method, status_code, outcome, owner, duration_s}`. `duration_s` = wall-clock of the device interaction (claim → action → release); null on rows before 2026-07-24 and on refusals that never reached the device. |
 | `agent_observation` | PyPoe read-only journaling | Free-form agent notes via `/api/ingest/events`. Read back with `GET /api/history/events/{device_id}?event_type=agent_observation` (PyPoe's `recent_observations` tool, and the assistant's `query_equipment_events(event_type=…)`) so an investigation recognises a recurrence and builds on the prior root cause instead of starting cold. |
 | `alert_emitted` | Device-alert notifier (`api/app/alert_notifier.py`) | One audit row per device alert pushed to PyPoe's `/alerts/device` webhook: `payload: {event, devices, outcome, target}`. Enabled by `PYPOE_ALERT_URL`. |
 | `error` | **Device-pushed** (xArm exporter, from the SDK error/warn callbacks) | `payload.extra: {severity: "error"\|"warning", error_code, warn_code, xarm_state, graph_node}`. |
@@ -516,7 +521,7 @@ via Next's built-in proxy (`/api/...` → `http://127.0.0.1:8001/api/...`).
 
 | Method + Path | Query params | Returns | Used by |
 |---|---|---|---|
-| `GET /api/history/uptime` | `days=7` | `{devices: {id: {uptime_pct, last_event, days}}}` | History / Uptime section |
+| `GET /api/history/uptime` | `days=7` | `{devices: {id: {uptime_pct, last_event, state_pcts, activity_pcts, activity_tracking_since, days}}}` | History / Uptime section (health bar + v1.2 utilization bar) |
 | `GET /api/history/uptime/{device_id}` | `days=7` | `{uptime_pct, events: [{ts, event, ...}]}` | Per-device drill-down |
 | `GET /api/history/events/{device_id}` | `limit=50`, `event_type=` | `{events: [{ts, event_type, from_state, to_state, message}]}` | Event timeline; `event_type` narrows to one kind (e.g. `agent_observation`) |
 | `GET /api/history/sensors/latest` | — | `{readings: [{sensor_id, metric, value, unit, ts}]}` | Live sensor tile |

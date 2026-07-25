@@ -33,7 +33,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from .events import ACTIVITY_TRANSITION, CONTROL_ACTION, STATE_TRANSITION
+from .events import (
+    ACTIVITY_TRANSITION,
+    CONTROL_ACTION,
+    CYCLES_TOTAL_METRIC,
+    STATE_TRANSITION,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +281,47 @@ class LabDatabase:
         shown as untracked rather than as 0% usage.
         """
         return self._event_time_pcts(device_id, ACTIVITY_TRANSITION, days=days)
+
+    def get_cycle_count(self, device_id: str, *, days: int = 7) -> Optional[int]:
+        """Completed primary-operation cycles in the window, exactly.
+
+        Computed from the stored raw ``metrics["cycles_total"]`` counter
+        (STATUS_SPEC §2.3.1): sum of poll-to-poll deltas, seeded with the
+        last pre-window reading so the first in-window delta isn't lost. A
+        decrease means the device restarted its counter — the post-restart
+        value is taken as the delta (cycles since restart), never negative
+        usage. Unlike the poll-sampled activity series this is exact: cycles
+        shorter than the poll interval still advance the counter.
+
+        Returns ``None`` when the device has never reported the counter in
+        (or immediately before) the window — "not tracked", distinct from 0.
+        """
+        window = (device_id, CYCLES_TOTAL_METRIC, f"-{days}")
+        rows = self._fetchall(
+            "SELECT value FROM sensor_readings"
+            " WHERE sensor_id = ? AND metric = ?"
+            "   AND ts >= datetime('now', ? || ' days')"
+            " ORDER BY ts",
+            window,
+        )
+        if not rows:
+            return None
+        carry = self._fetchone(
+            "SELECT value FROM sensor_readings"
+            " WHERE sensor_id = ? AND metric = ?"
+            "   AND ts < datetime('now', ? || ' days')"
+            " ORDER BY ts DESC LIMIT 1",
+            window,
+        )
+        prev = float(carry["value"]) if carry else None
+        total = 0.0
+        for r in rows:
+            v = float(r["value"])
+            if prev is not None:
+                # decrease ⇒ counter restarted; count the post-restart value
+                total += v if v < prev else v - prev
+            prev = v
+        return int(total)
 
     def get_first_event_ts(self, device_id: str, event_type: str) -> Optional[str]:
         """Timestamp of the earliest event of one type for a device.

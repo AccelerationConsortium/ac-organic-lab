@@ -188,6 +188,9 @@ def build_history_router() -> APIRouter:
                 None,
                 lambda d=did: db.get_first_event_ts(d, ACTIVITY_TRANSITION),
             )
+            cycles = await loop.run_in_executor(
+                None, lambda d=did: db.get_cycle_count(d, days=days)
+            )
             results[did] = {
                 "device_id": did,
                 "days": days,
@@ -196,6 +199,10 @@ def build_history_router() -> APIRouter:
                 "state_pcts": state_pcts,
                 "activity_pcts": activity_pcts,
                 "activity_tracking_since": activity_since,
+                # Exact completed-cycle count from metrics["cycles_total"]
+                # (§2.3.1) — null when the device doesn't publish the counter.
+                # Unlike activity_pcts this survives sub-poll-interval cycles.
+                "cycles": cycles,
             }
 
         return {"devices": results, "days": days}
