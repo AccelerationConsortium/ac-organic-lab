@@ -825,6 +825,23 @@ export interface components {
              * @enum {string}
              */
             activity_source: "device" | "status" | "components" | "none";
+            /**
+             * Health
+             * @default unknown
+             * @enum {string}
+             */
+            health: "healthy" | "degraded" | "error" | "e_stopped" | "requires_init" | "unknown";
+            /**
+             * Mode
+             * @default production
+             * @enum {string}
+             */
+            mode: "production" | "develop" | "maintenance";
+            /**
+             * Simulated
+             * @default false
+             */
+            simulated: boolean;
         };
         /**
          * EquipmentStatus
@@ -836,10 +853,10 @@ export interface components {
          *
          *     v1.1: :attr:`allowed_actions` is the device's own declaration of what it
          *     would honor right now. v1.0 devices that omit it see an empty list, and
-         *     the catalog falls back to ``equipment_status in def.requires_states``.
-         *     ``details.claimed_by`` (a ``ClaimedBy``-shaped dict, or absent) stays
-         *     nested under :attr:`details` to keep the top-level shape stable for v1.0
-         *     readers; :mod:`lab_skills.claims` parses it.
+         *     readers fall back to catalog ``requires_states``. ``details.claimed_by``
+         *     (a :class:`sdl_lab_contract.claims.ClaimedBy`-shaped dict, or absent)
+         *     stays nested under :attr:`details` to keep the top-level shape stable for
+         *     v1.0 readers.
          *
          *     v1.2: :attr:`activity` / :attr:`activity_since` answer "is it working",
          *     which :attr:`equipment_status` cannot express once §2.2 gives the

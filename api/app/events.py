@@ -118,6 +118,61 @@ def derive_activity(status: EquipmentStatus) -> tuple[str, str]:
     return "unknown", "none"
 
 
+# --------------------------------------------------------------------------
+# v2 vocabulary, reader-side (STATUS_SPEC Appendix B — non-normative)
+# --------------------------------------------------------------------------
+
+#: The deterministic Appendix B.2 projection of the v1.x enum onto the v2
+#: health axis. `dry_run` spends its one word on the *mode* axis (the
+#: simulation's own health is not reported by a v1.x device), so it projects
+#: to health `unknown` — honest, per §2.1.
+_STATE_TO_HEALTH: dict[str, str] = {
+    "ready": "healthy",
+    "busy": "healthy",          # busy ≡ healthy + running (§2.3)
+    "requires_init": "requires_init",
+    "degraded": "degraded",
+    "error": "error",
+    "e_stop": "e_stopped",
+    "dry_run": "unknown",
+    "unknown": "unknown",
+}
+
+
+def derive_v2_fields(
+    status: EquipmentStatus,
+    *,
+    adapter: str | None = None,
+    in_maintenance: bool = False,
+) -> tuple[str, str, bool]:
+    """Project a v1.x envelope onto the v2 vocabulary (Appendix B.2).
+
+    Returns ``(health, mode, simulated)``:
+
+    - ``health`` ∈ {healthy, degraded, error, e_stopped, requires_init,
+      unknown} — the B.2 mapping of ``equipment_status``.
+    - ``mode`` ∈ {production, develop, maintenance} — ``maintenance`` from
+      the registry's ``maintenance:`` block, ``develop`` when simulated,
+      else ``production``. (A real-hardware engineering run cannot be
+      detected reader-side; devices gain native ``mode`` in v2.)
+    - ``simulated`` — ``equipment_status == "dry_run"`` or a registry
+      ``adapter: mock`` entry. Implies ``develop``.
+
+    Purely derived — carries no information the v1.x envelope + registry
+    don't already hold. It exists so readers can speak the v2 vocabulary
+    *now*, and so this projection has one definition when v2-native fields
+    start arriving and need to agree with it.
+    """
+    simulated = status.equipment_status == "dry_run" or adapter == "mock"
+    if in_maintenance:
+        mode = "maintenance"
+    elif simulated:
+        mode = "develop"
+    else:
+        mode = "production"
+    health = _STATE_TO_HEALTH.get(status.equipment_status, "unknown")
+    return health, mode, simulated
+
+
 def snapshot_activity(snap) -> tuple[str, str]:
     """Resolve activity for an aggregator ``EquipmentSnapshot`` (best-effort).
 

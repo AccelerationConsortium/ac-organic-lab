@@ -135,6 +135,48 @@ def test_activity_transition_is_in_pinned_vocabulary():
     assert ACTIVITY_TRANSITION == "activity_transition"
 
 
+# ------------------------------------------------------------------ v2 projection (Appendix B.2)
+
+
+def test_derive_v2_health_mapping_is_the_b2_table():
+    from app.events import derive_v2_fields
+
+    expected = {
+        "ready": "healthy",
+        "busy": "healthy",
+        "requires_init": "requires_init",
+        "degraded": "degraded",
+        "error": "error",
+        "e_stop": "e_stopped",
+        "dry_run": "unknown",   # the word was spent on the mode axis
+        "unknown": "unknown",
+    }
+    for state, health in expected.items():
+        got, _, _ = derive_v2_fields(_status(equipment_status=state))
+        assert got == health, state
+
+
+def test_derive_v2_mode_and_simulated():
+    from app.events import derive_v2_fields
+
+    # plain production device
+    assert derive_v2_fields(_status()) == ("healthy", "production", False)
+    # dry_run device → simulated, develop
+    _, mode, simulated = derive_v2_fields(_status(equipment_status="dry_run"))
+    assert (mode, simulated) == ("develop", True)
+    # registry mock adapter → simulated even when the envelope says ready
+    _, mode, simulated = derive_v2_fields(_status(), adapter="mock")
+    assert (mode, simulated) == ("develop", True)
+    # registry maintenance block wins the mode
+    _, mode, _ = derive_v2_fields(_status(), in_maintenance=True)
+    assert mode == "maintenance"
+    # maintenance + simulated: mode reads maintenance, simulated stays true
+    _, mode, simulated = derive_v2_fields(
+        _status(equipment_status="dry_run"), in_maintenance=True
+    )
+    assert (mode, simulated) == ("maintenance", True)
+
+
 # ------------------------------------------------------------------ cycles_total recording
 
 

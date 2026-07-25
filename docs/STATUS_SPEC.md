@@ -1157,6 +1157,15 @@ The mapping is deterministic, so stored v1.x history remains re-derivable
 into v2 terms, and `ready` → `healthy` is a rename (with `idle` moved to its
 own axis, "ready + running" would read as a contradiction).
 
+Because it is deterministic, the dashboard already serves the projection
+reader-side (since 2026-07-25): `EquipmentSnapshot.health` / `mode` /
+`simulated`, computed by `api/app/events.py::derive_v2_fields` from
+`equipment_status` + the registry (`adapter: mock` ⇒ simulated;
+`maintenance:` block ⇒ mode maintenance). Non-normative, same status as the
+§2.3.2 activity sniff — it adds no information, exists so readers can speak
+the v2 vocabulary early, and is the single definition any native v2 fields
+must agree with when they arrive.
+
 ### B.3 Decided against — do not relitigate
 
 - **Compound states** (`busy_degraded`, …): combinatorial explosion; the

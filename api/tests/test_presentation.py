@@ -120,6 +120,10 @@ def test_snapshot_passes_through_sdk_fields_and_defaults_dashboard_fields() -> N
     # Server-resolved activity (v1.2): ready ⇒ idle via the §2.3 invariants.
     assert dashboard_snap.activity == "idle"
     assert dashboard_snap.activity_source == "status"
+    # v2 vocabulary (Appendix B.2 projection): mock adapter ⇒ simulated/develop.
+    assert dashboard_snap.health == "healthy"
+    assert dashboard_snap.mode == "develop"
+    assert dashboard_snap.simulated is True
 
 
 def test_snapshot_resolves_activity_for_degraded_running_shaker() -> None:

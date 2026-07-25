@@ -22,7 +22,7 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
-from .events import snapshot_activity
+from .events import derive_v2_fields, snapshot_activity
 from lab_skills import (
     CameraConfig,
     EquipmentList as SkillEquipmentList,
@@ -80,6 +80,17 @@ class EquipmentSnapshot(SkillEquipmentSnapshot):
     activity: Literal["idle", "running", "unknown"] = "unknown"
     # How `activity` was determined: device | status | components | none.
     activity_source: Literal["device", "status", "components", "none"] = "none"
+    # v2 vocabulary, reader-side (STATUS_SPEC Appendix B.2 projection —
+    # non-normative, deterministic from equipment_status + registry). Carries
+    # no new information yet; exists so readers can speak the v2 vocabulary
+    # before devices report it natively. `health` answers "what's the
+    # device's standing"; `mode` answers "what is it operated for";
+    # `simulated` means nothing physical happens and all data is synthetic.
+    health: Literal[
+        "healthy", "degraded", "error", "e_stopped", "requires_init", "unknown"
+    ] = "unknown"
+    mode: Literal["production", "develop", "maintenance"] = "production"
+    simulated: bool = False
 
 
 class EquipmentList(BaseModel):
@@ -166,6 +177,11 @@ def _snapshot(
     pill = entry.pills if entry is not None else PillConfig()
 
     activity, activity_source = snapshot_activity(sdk_snapshot)
+    health, mode, simulated = derive_v2_fields(
+        sdk_snapshot.status,
+        adapter=sdk_snapshot.adapter,
+        in_maintenance=maintenance is not None,
+    )
 
     return EquipmentSnapshot(
         # SDK fields
@@ -190,6 +206,9 @@ def _snapshot(
         tailscale_ip=entry.tailscale_ip if entry is not None else None,
         activity=activity,
         activity_source=activity_source,
+        health=health,
+        mode=mode,
+        simulated=simulated,
     )
 
 
