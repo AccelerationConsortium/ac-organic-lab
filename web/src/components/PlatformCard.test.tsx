@@ -155,4 +155,28 @@ describe("PlatformCard equipment row health + activity (spec v1.2)", () => {
     expect(screen.getByRole("img", { name: "Activity: Unknown" })).toBeTruthy();
     expect(screen.queryByRole("img", { name: "Activity: Idle" })).toBeNull();
   });
+  it("renders unreachable (fetch_error) as the two warning-bubble dots", () => {
+    // The whole-PC-off case: transport failure → effectiveState "unreachable"
+    // on the health dot, activity honestly Unknown on the activity dot —
+    // never a stale state, never a fake idle.
+    const down = {
+      ...gatewaySnapshot,
+      id: "plateloc",
+      name: "Agilent PlateLoc",
+      kind: "plate_sealer",
+      pill: {},
+      activity: "unknown",
+      activity_source: "none",
+      fetch_error: { kind: "timeout", message: "timed out", http_status: null },
+      status: {
+        ...gatewaySnapshot.status,
+        equipment_status: "unknown", // synthetic envelope
+      },
+    } as unknown as EquipmentSnapshot;
+
+    render(<PlatformCard id="hte" title="HTE" snapshots={[down]} />);
+
+    expect(screen.getByRole("img", { name: "Health: Unreachable" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Activity: Unknown" })).toBeTruthy();
+  });
 });
