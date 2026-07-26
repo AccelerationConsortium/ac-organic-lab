@@ -199,7 +199,7 @@ function ActivityTimelineBar({
         {entries.map(({ activity, pct }) => (
           <div
             key={activity}
-            title={`${ACTIVITY_META[activity].label === "—" ? "Unknown" : ACTIVITY_META[activity].label}: ${pct.toFixed(1)}% of observed time · sampled every 60 s${since}${cyclesNote}`}
+            title={`${ACTIVITY_META[activity].label}: ${pct.toFixed(1)}% of observed time · sampled every 60 s${since}${cyclesNote}`}
             className="h-1.5"
             style={{ width: `${(pct / total) * 100}%`, backgroundColor: ACTIVITY_COLORS[activity] }}
           />

@@ -86,7 +86,7 @@ export function StateReferencePanel() {
                   style={{ backgroundColor: ACTIVITY_COLORS[key] }}
                 />
                 <span className="text-xs font-medium text-ink dark:text-slate-200">
-                  {meta.label === "—" ? "Unknown" : meta.label}
+                  {meta.label}
                 </span>
                 {open && (
                   <div className="pointer-events-none invisible absolute left-full top-1/2 z-50 ml-4 w-56 -translate-y-1/2 rounded-lg bg-slate-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover/row:visible group-hover/row:opacity-100 dark:bg-slate-700">

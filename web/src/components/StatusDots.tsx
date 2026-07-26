@@ -77,9 +77,7 @@ export function StatusDots({
   const health = effectiveState(snapshot);
   const healthMeta = STATE_META[health] ?? STATE_META.unknown;
   const activity = (snapshot.activity ?? "unknown") as ActivityName;
-  // ACTIVITY_META's `unknown` label is "—", which reads as nothing on hover.
-  const activityLabel =
-    activity === "unknown" ? "Unknown" : ACTIVITY_META[activity].label;
+  const activityLabel = ACTIVITY_META[activity].label;
   return (
     <span className="inline-flex items-center">
       <HoverDot

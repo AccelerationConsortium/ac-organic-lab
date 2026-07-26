@@ -67,7 +67,7 @@ export const ACTIVITY_META: Record<ActivityName, {
 }> = {
   running: { label: "Running", badge: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300",        desc: "Primary operation in progress (shaker: motor turning; sealer: seal cycle; …). Independent of health — a Degraded device can still be Running." },
   idle:    { label: "Idle",    badge: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",   desc: "Not performing its primary operation right now. Says nothing about health." },
-  unknown: { label: "—",       badge: "bg-slate-100 text-slate-500 dark:bg-slate-800/50 dark:text-slate-500", desc: "Activity undetermined — the device predates spec v1.2 (doesn't report activity), is unreachable, or its components don't reveal it. Never assumed Idle." },
+  unknown: { label: "Unknown", badge: "bg-slate-100 text-slate-500 dark:bg-slate-800/50 dark:text-slate-500", desc: "Activity undetermined — the device predates spec v1.2 (doesn't report activity), is unreachable, or its components don't reveal it. Never assumed Idle. Surfaces wanting a compact glyph render a dash themselves; the label must read as a word in tooltips and legends." },
 };
 
 // ---------------------------------------------------------------------------
