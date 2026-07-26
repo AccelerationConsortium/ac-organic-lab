@@ -91,10 +91,14 @@ path from Steps 2–3 still works.
 
 Extends Track 1; phases note their dependencies.
 
-1. **Phase A — repository lifecycle.** Template-generate + ruleset + project
+1. **Phase A — repository lifecycle.** Repo stamping + ruleset + project
    registry + server workspace service (bare clone + per-session worktrees).
-   **Done (2026-07-23):** FastAPI lifecycle service shipped in `bitacora`. 
-   GitHub App integration (template stamping) deferred — depends on App setup.
+   **Done (2026-07-23):** FastAPI lifecycle service shipped in `bitacora`.
+   **Stamping shipped (2026-07-25)** as seed-from-local — empty org repo + one
+   root commit of the customized template tree, ruleset last (see DESIGN §7,
+   revised: `/generate` was unimplementable over a subdirectory template).
+   Live use pends the org GitHub App installation (App currently installed on
+   a personal account; permissions verified sufficient).
 2. **Phase B — canonical edit path + visual read view.** The protocol edit
    service (typed edits, schema re-validation, attributed commits). **Done
    (2026-07-23):** editor + schema shipped. Visual read view (Next.js) deferred —

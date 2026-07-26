@@ -72,6 +72,12 @@ gated.
 5. **Automation accounts are admin-approved** — a machine principal can run
    automation only after a global admin approves it; it is platform-scoped and
    time-boxed, and platform-authorized humans may invoke it.
+   *Scoping enforced since 2026-07-24:* `authz.effective_device_role` bounds an
+   automation account to its declared roster scope (`platform:` shorthand or
+   explicit `grants:`, which may name single equipment); undeclared stays
+   lab-wide for back-compat. Since 2026-07-25 `ac_auth.cli validate` also
+   cross-checks every grant id against `equipment.yaml`/`platforms.yaml`, so a
+   typo'd scope fails validation instead of becoming a silently dead grant.
 
 ---
 
