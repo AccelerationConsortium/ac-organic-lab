@@ -365,32 +365,55 @@ is borrowed from LaAgenteAnalitica's `domains/` layout):
 
 ## 7. Repository creation and server workspace lifecycle [PROPOSED]
 
-### Template, not fork
+### Template, not fork — seeded, not generated
 
-**Decision: GitHub template-based repository creation** (the
-`POST /repos/{owner}/{template}/generate` API over `bitacora/templates/hte`),
-not a private fork — also what the template's README already prescribes.
-Rationale: a generated repo is private, independently named, org-owned, with
-a clean single-commit start; fork networks couple visibility and lifecycle
-for nothing; provenance is explicit and better via `pins.yaml`
-(`TEMPLATE_VERSION`, and SHOULD also record the template commit SHA at stamp
-time) with the CI `pins` job flagging drift; template upgrades are already
-designed as one adopting PR per bump.
+**Decision (revised 2026-07-25): seed-from-local template stamping.** The
+platform creates an **empty** private repo under the lab org and seeds the
+`bitacora/templates/<name>/` tree into it as **one root commit** (Git Data
+API: inline tree → parentless commit → branch ref). Implemented in
+`bitacora` (`stamping.py`, `GitHubApp.create_org_repo` /
+`seed_initial_commit`).
+
+This supersedes the original decision here (GitHub template-based creation,
+`POST /repos/{owner}/{template}/generate`), which turned out unimplementable
+as designed: `/generate` copies a **whole repository** and the template lives
+in a *subdirectory* of `bitacora` — using it would have required splitting
+`templates/hte/` into a separately-maintained `bitacora-hte-template` repo
+kept in sync forever. It also records no provenance (the registry's
+`stamp_commit` sat at a `"HEAD"` placeholder). What the original rationale
+actually wanted survives unchanged and is now delivered more directly: a
+private, independently named, org-owned repo with a clean single-commit
+start, no fork network, and provenance via `pins.yaml` — now with the **real
+template commit SHA** recorded at stamp time, because the server derives
+`template_version` + `stamp_commit` from the tree it actually stamps (they
+are no longer request fields).
+
+The **fork** half of the original decision stands: never a private fork —
+fork networks couple visibility and lifecycle for nothing.
 
 ### Creation flow
 
 On "create project", the platform (server-side, never the browser):
 
-1. Generates the repo from the template, private, under the lab org, with the
-   user-supplied name.
-2. Applies branch protection via API (the template's `create_ruleset.sh`
-   equivalent): PR-only `main`, human CODEOWNERS review, squash-merge only,
-   required `protocols` CI check, no force-push, no deletion, linear history,
-   no bypass actors.
-3. Seeds `.github/CODEOWNERS` with the project's human reviewers, `pins.yaml`
-   with template version + stamp commit, and the `AGENT_RULES.md` link-back.
-4. Registers the project ↔ repo mapping in the platform's project registry
-   and creates the AnaliticaDB `Project` row if absent.
+1. Registers the project ↔ repo mapping in the platform's project registry
+   **first** — the row is durable, and a subsequent stamp failure is reported
+   (`stamp_error` on the response, error-level log), never silently swallowed.
+2. Creates the **empty** repo (no auto-init), private, under the lab org, with
+   the user-supplied name (org is server-side config, never a request field).
+3. Seeds the customized template tree as one root commit: `.github/CODEOWNERS`
+   with the project's human reviewers (request `codeowners`, default from
+   config — required, because step 4's ruleset demands code-owner review and
+   an unresolvable owner would make that gate vacuous), `PROJECT_NAME`
+   placeholders → project id, and `pins.yaml` with an appended `stamp:` block
+   (template, version, commit SHA, timestamp). The `AGENT_RULES.md` link-back
+   ships in the template tree itself.
+4. Applies branch protection via API **last** — it makes `main` PR-only, so
+   applying it before step 3 would refuse the very seed commit it protects:
+   PR-only `main`, human CODEOWNERS review, squash-merge only, required
+   `protocols` CI check, no force-push, no deletion, linear history, no
+   bypass actors.
+5. Creates the AnaliticaDB `Project` row if absent (unchanged; not yet
+   implemented).
 
 ### Server-side workspace
 
