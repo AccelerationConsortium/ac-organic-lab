@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="6" fill="#0f172a"/>
+  <!-- Flask silhouette; same geometry as favicon.ico so the two never diverge. -->
+  <rect x="11" y="5" width="10" height="2.5" rx="1" fill="#f8fafc"/>
+  <path d="M13 6.5H18V13L25 26.5H6L13 13Z" fill="#f8fafc"/>
+  <path d="M9.2 20H21.8L25 26.5H6Z" fill="#f97316"/>
+</svg>
