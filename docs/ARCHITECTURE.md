@@ -413,6 +413,8 @@ Project repos persist run manifests + append-only event logs. Resuming or replay
 
 Once 3+ device repos have shipped on STATUS_SPEC v1.1 cleanly for ~1 month, extract `sdl-lab-contract` as a tiny shared Python package. Per-device repos and the SDK then `from sdl_lab_contract import EquipmentStatus, ...` instead of vendoring a copy.
 
+**In progress since 2026-07-25.** The package exists (`AccelerationConsortium/sdl-lab-contract`, versioned major.minor == spec revision, currently `v1.2.0`) and has three consumers: `lab-skills`, `torry-pines-shaker-server`, and `agilent-plateloc-server`. Device repos swap their vendored `models.py` for the import as part of their own v1.2 migration, keeping only the models they genuinely specialise (both device repos keep a stricter local `ClaimRequest`). LG5 closes when no `equipment.yaml` device still vendors a copy — see [`ROADMAP.md`](ROADMAP.md) for the per-device state.
+
 ### LG6. Agent-native operations
 
 The lab is operable by humans, by scripted workflows, and by agents — using the same SDK and the same MCP surface. Agent ops are subject to the same claim/lease, plan validation, and audit trail as human ops.

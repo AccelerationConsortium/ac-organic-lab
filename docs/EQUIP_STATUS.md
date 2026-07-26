@@ -152,7 +152,8 @@ device is still working.
 
 ## 9) Plate sealer (`kind: plate_sealer`)
 
-The Agilent PlateLoc (`plateloc`, STATUS_SPEC v1.1) renders as
+The Agilent PlateLoc (`plateloc`, STATUS_SPEC **v1.2** since device
+v1.4.0 / 2026-07-26) renders as
 `PlateSealerTile`. A 2×2 metric grid (Actual / Setpoint /
 Seal time / Cycles), editable Setpoint + Seal time inputs, and
 state-aware action buttons (Startup, Stage in/out, Seal start,
@@ -162,18 +163,51 @@ IN/OUT pills): whichever pill matches the live
 `components.stage.state` is highlighted emerald — no separate Stage
 indicator row.
 
+### v1.2 activity (device v1.4.0)
+
+`activity` is the **seal cycle** — the device's primary operation — and it
+is what the tile's second status dot reflects (`StatusDots`). Three things
+follow for anyone reading this tile:
+
+- **A `busy` tile is a lucky catch, not the norm.** The ActiveX control runs
+  blocking, so the cycle is exactly the span of the
+  `POST /control/seal/start` request (0.5–12 s) — usually over before the
+  next 60 s poll. Device v1.4.0 fixed the older behaviour where
+  `_busy_state` latched *after* the call and only an explicit `seal/stop`
+  cleared it, which could park the tile at `busy` with nothing running.
+- **Utilization must come from `metrics.cycles_total`**, not from sampling
+  `activity` (STATUS_SPEC §2.3.1). It mirrors the instrument's lifetime
+  odometer, so the poll-to-poll delta recovers cycles the aggregator slept
+  through. `cycle_count` is the same number, kept for existing readers —
+  the **Cycles** cell can read either; prefer `cycles_total` for new code.
+- **A poll during a cycle is answered, not queued.** The device reads the
+  instrument off its state lock now; while a cycle owns the COM channel the
+  envelope serves the last observation and says so via
+  `details.readings_as_of` (and matching metric timestamps). Treat those
+  values as up to one cycle stale, not live.
+
+While `activity == "running"` the device advertises only
+`["shutdown", "seal.stop"]` and answers **409** to everything else —
+`seal/start`, `stage/{in,out}`, `seal/temperature`, `seal/time` — so the
+tile's buttons and the device agree without extra client logic.
+
 ### Seal-start interlocks (defence in depth)
 
 `Seal start` is enforced at **three layers**, all on by default, across
-**two independent preconditions**:
+**three independent preconditions**:
 
 1. **Temperature-band interlock** — `|actual_temperature −
    setpoint_temperature| ≤ details.temperature_tolerance_c`
    (plateloc v1.2+).
 2. **Stage-position interlock** — `components.stage.state == "in"`
    (plateloc v1.3+). The plate must be loaded under the press.
+3. **Health interlock** — no `last_error` inside the device's 60 s
+   recent-failure window (plateloc v1.4+). §2.2: don't start a normal run
+   while the device knows of an active fault. Clears the §6.4 way — the
+   first 2xx from any operational endpoint — so in practice the operator's
+   re-home click clears it.
 
-Both are enforced at all three layers:
+All are enforced at all three layers:
 
 1. **Device (layer 1, authoritative).** Plateloc v1.2+ / v1.3+ refuses
    `POST /control/seal/start` with **HTTP 412 Precondition Failed**.
@@ -199,12 +233,36 @@ Both are enforced at all three layers:
      "retry_after_s":  2
    }
    ```
-   The temperature 412 also carries a `Retry-After` header (seconds,
-   integer); the stage 412 does not (recovery is operator-driven, not
-   time-based). Bypassable via the device-side config flags
-   `[service].enforce_temp_interlock = false` and
-   `[service].enforce_stage_interlock = false` respectively, both
-   reserved for emergency calibration runs.
+   *Health interlock body* (v1.4+):
+   ```json
+   {
+     "detail":             "Recent operational failure not cleared",
+     "last_error_code":    "low_air_pressure",
+     "last_error_message": "StartCycle returned error code -2147221503 (driver: Low Air Pressure Error)",
+     "retry_after_s":      47
+   }
+   ```
+
+   The temperature and health 412s also carry a `Retry-After` header
+   (seconds, integer); the stage 412 does not (recovery is operator-driven,
+   not time-based). The temperature and stage gates are bypassable via the
+   device-side config flags `[service].enforce_temp_interlock = false` and
+   `[service].enforce_stage_interlock = false` respectively, both reserved
+   for emergency calibration runs. The health gate has **no** flag — §2.2
+   requires it.
+
+   Order of precedence at the endpoint (the tile should match it): **stage
+   → health → temperature**. The first two are in-memory, the third needs
+   COM reads.
+
+   > **Behaviour change in device v1.4.0.** `error` / `degraded` used to
+   > collapse `allowed_actions` to `["shutdown"]` while the endpoints still
+   > honoured stage moves — both a §6.2 violation and, in the 2026-07-15
+   > air failure, the reason the tile offered no way to retract a plate
+   > from a hot chamber. Recovery and diagnostic actions now stay listed in
+   > those states; the run is withheld by the health interlock instead. So
+   > a tile in `error` legitimately shows **Stage in / Stage out /
+   > Shutdown** enabled and **Seal start** disabled.
 
 2. **SDK (layer 3, `lab-skills`).** The `seal.start` SkillDef carries
    `requires_components={"heater": "stable", "stage": "in"}`.
@@ -264,7 +322,19 @@ buttons when an action returns one of these structured errors:
 | **412 / stage** | layer-1 stage interlock (race past the tile's block) | *"Plate stage is out, needs to be loaded. Click \"Stage in\" first."* |
 | **412 / temperature** | layer-1 temperature interlock (race past the tile's block) | *"Heater at 166 °C, need 170 ±2 °C. Try again in ~2 s."* |
 | **423** | claim conflict — another caller holds the device | *"Device claim is held by workflow:solubility. Try again later."* |
-| **409** | device-state conflict (e.g. not initialised) | *"Driver not connected. Click Startup first."* |
+| **409** | device-state conflict (not initialised, **or** a seal cycle in flight) | *"Driver not connected. Click Startup first."* |
+
+**Open work (device v1.4.0, 2026-07-26):** two shapes the tile does not yet
+have copy for.
+
+| Status | Source | Suggested text |
+|---|---|---|
+| **412 / health** | the new health interlock; distinguish by `last_error_code` being present in the body | *"Clear the last fault first — <recovery hint for that code>. Retrying in ~47 s also clears it."* Reuse `interpretLastError`'s copy table, keyed off `last_error_code`. |
+| **409 / cycle in flight** | `detail` contains *"seal cycle is in progress"* | *"A seal cycle is running. Wait for it to finish, or click Seal stop."* Today this falls through to the generic 409 branch, which says "Driver not connected" — actively misleading. |
+
+Until that lands, `interpretActionError` renders the generic 409 copy for a
+mid-cycle refusal. Fixing it is a small change in
+`PlateSealerTile.interpretActionError`.
 
 The 412 / 409 / 423 paths are differentiated in
 `PlateSealerTile.interpretActionError` and the structured body is
@@ -294,6 +364,15 @@ Branching is done in `PlateSealerTile.interpretLastError` on the
 | `com_other` | *"Driver fault — see message."* |
 | missing / null / unknown code | Raw `last_error.message` rendered verbatim (back-compat for pre-v1.3.1 / forward-compat for new codes) |
 
+**v1.4.0: `last_error` can now be a warning, not only a failure.** A failing
+instrument *readback* (which drives `equipment_status: "degraded"`) is
+surfaced as a `last_error` with `severity: "warning"` and a classified code —
+previously it reached the dashboard only as free text in `message`. An
+operational failure always takes precedence over the synthesized one. The
+tile currently renders both identically in the rose band; toning `warning`
+differently from `error` is optional polish, but the band should **not** be
+read as "the last action failed" when `severity == "warning"`.
+
 The device's verbatim driver message is always shown after the
 recovery sentence (dimmed) and as the hover `title` attribute on the
 whole band — operators can still inspect the underlying error code
@@ -314,11 +393,16 @@ table) when that happens.
 
 ### What this interlock does NOT cover
 
-- **Air-pressure faults.** The 2026-05-23 incident's downstream
+- **Air-pressure faults, proactively.** The 2026-05-23 / 2026-07-15
   symptom (`Low Air Pressure Error` from the pneumatic press inside
   the sealer) needs a facility-level sensor; the device has no
-  pressure introspection. The dashboard surfaces it post-hoc via
-  `last_error`.
+  pressure introspection, so the *first* failure is always discovered by
+  attempting the operation. The dashboard surfaces it post-hoc via
+  `last_error`. Since device v1.4.0 the *second* attempt is prevented (the
+  health interlock refuses `seal.start` until the fault clears) and the
+  pneumatic retract stays advertised so the operator can try to recover the
+  plate — but if air is genuinely gone, `stage.out` fails too, and that is
+  a facilities problem, not a software one.
 - **Cross-device chemistry interlocks.** Sealing at 170 °C with a
   flammable solvent below its flash point belongs in layer 4 (project
   plan interlocks); see [`docs/INTERLOCKS.md`](INTERLOCKS.md).

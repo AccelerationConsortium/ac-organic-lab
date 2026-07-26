@@ -41,12 +41,17 @@ no `open` pill) and serves a STATUS_SPEC `/status` envelope (`ready`, or
 repo is being generalized into the lab's ELN+LIMS record layer — see
 [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md).
 
-**Protocol mix.** Eight devices reach `protocol_version: "1.1"` on
-their live `/status` envelope (`fume_hood_actuator`,
+**Protocol mix.** Eight devices reach at least `protocol_version: "1.1"`
+on their live `/status` envelope (`fume_hood_actuator`,
 `xarm_translocation`, `ot2_hte`, `torry_pines_shaker`, `filter_every_well`,
-`plateloc`, `cytation_5`, `pypoe_web`); the rest are v1.0. The
-`sdl-lab-contract` shared-package threshold ("3+ repos cleanly on
-v1.1 for ~1 month") is comfortably cleared.
+`plateloc`, `cytation_5`, `pypoe_web`); the rest are v1.0. Two of those
+repos are **natively v1.2** and consume the shared `sdl-lab-contract`
+package instead of a vendored `models.py`: `torry_pines_shaker` (live since
+2026-07-25) and `plateloc` (merged 2026-07-26, live at its next service
+restart). The shared-package threshold ("3+ repos cleanly on v1.1 for
+~1 month") is comfortably cleared; the Appendix B v2 gate additionally
+needs the *majority* of the fleet reporting `activity` — 2 of the 8 v1.1+
+devices so far.
 
 **Skill catalog inventory** (`SKILL_REGISTRY` keys, count of `SkillDef`s
 each):
@@ -147,7 +152,7 @@ host. Spec is what the device's live `/status` envelope reports.
 | `dose_every_well` | `http` | 1.1 | ✅ `requires_init` | Full v1.1 verified live 2026-05-31: hard `X-Claim-Token` (423), `/control/*` consolidation (breaking), state-driven `allowed_actions`. |
 | `torry_pines_shaker` | `http` | **1.2** | ✅ `ready`/`degraded` | First native v1.2 device (2026-07-25): motor-observed `activity`, `cycles_total`, per-subsystem `allowed_actions`. Poll timeout restored to 10 s (read-off-lock fix deployed). The heater RTD `cal` fault recurs intermittently — now reported honestly as `degraded` without blocking shakes. |
 | `filter_every_well` | `http` | 1.1 | ✅ `ready` | v1.1 deployed on the Pi at `100.64.254.104`; PressTile per-direction `hold_time` inputs verified (EQUIP_STATUS.md §8). |
-| `plateloc` | `http` | 1.1 | ✅ `ready` | Real claims (TTL `ClaimStore`, commit fa98ca8) verified 2026-05-31; 423 ahead of the 412 seal interlocks. Only a cosmetic version bump remains. |
+| `plateloc` | `http` | 1.1 → **1.2** *(restart pending)* | ✅ `ready` | v1.2 merged to `main` 2026-07-26 (device v1.4.0, PR #2): seal-cycle `activity`, `cycles_total` mirroring the instrument odometer, three §6 interlocks (stage / health / temperature) all mirrored in `allowed_actions`, `equipment_version` populated. The **live envelope still reports 1.1** until the NSSM service is restarted (needs an elevated shell — see the sub-task). Real claims (TTL `ClaimStore`, commit fa98ca8) verified 2026-05-31; 423 ahead of the 412s. |
 | `cytation_5` | `http` | 1.1 | ✅ `ready` | 13 actions advertised; device-repo Phases 3+4 shipped; Phase 2 (per-well tracking) remains. |
 | `agilent_uplc_ms` | `http` | 1.1 | ✅ `ready` | v1.1 sidecar with hard claims and the `workflow.start`/`end` campaign lock; the sidecar owns the queue. Detail in the sub-task below. |
 | `agilent_biostack` | `http` | 1.0 | ✅ `ready` | Driver landed; read-only (`allowed_actions: []`), no `/control/*` yet. |
@@ -193,8 +198,52 @@ is the remaining work per device.
   Both surfaced live on the bench 2026-07-15 (previously fell through to
   `com_other`); deployed to the device and verified live. `pyproject` /
   CHANGELOG bumped 1.3.1 → 1.3.2.
-- [ ] Cosmetic: `equipment_version` on `/status` is still `null` (config
-  unset); populate it to match the shipped state.
+- [x] **STATUS_SPEC v1.2 migration** (v1.4.0, PR
+  [#2](https://github.com/cyrilcaoyang/agilent-plateloc-server/pull/2),
+  merged 2026-07-26). Contract types from `sdl-lab-contract` v1.2.0;
+  seal-cycle `activity` / `activity_since`; `metrics["cycles_total"]`
+  mirroring the instrument's lifetime odometer (`cycle_count` retained);
+  `allowed_actions` gated on activity as well as the interlocks;
+  `equipment_version` populated (closes the cosmetic above). 85 tests.
+  Two behaviour changes worth knowing as a reader — see the notes below.
+- [ ] **Deploy + live verification** — the NSSM restart needs an elevated
+  shell (the `plateloc` service SD grants start/stop to
+  `BUILTIN\Administrators` only, and WSL-launched shells run with a
+  filtered token). Stop-first order per DEVICE_PC_SETUP §8: this release
+  adds the `sdl-lab-contract` git dependency *and* bumps the project
+  version, so `uv sync` must replace the console-script shim the running
+  service holds open. Confirm `protocol_version: "1.2"`, `activity`,
+  `metrics.cycles_total` and a non-null `equipment_version` on
+  `http://127.0.0.1:8010/status` afterwards.
+- [ ] **PR-3 retry** (see *Operational regressions* / v0.4 PR-3): still
+  blocked on the compressed-air supply, unchanged by this release.
+
+**Reader-visible consequences of the plateloc v1.2 release.** Both are
+intentional; both change what a poller sees.
+
+1. **`busy` is now rare-to-invisible in a poll.** The ActiveX control runs
+   in blocking mode, so a seal cycle is exactly the span of the
+   `POST /control/seal/start` request (0.5–12 s). Previously `_busy_state`
+   was latched *after* `StartCycle` returned and cleared only by an
+   explicit `seal/stop`, so the tile could sit at `busy` indefinitely
+   while nothing was running. It now brackets the real cycle — which the
+   60 s aggregator poll will usually miss entirely. **Utilization for this
+   device must come from `metrics["cycles_total"]` deltas, not from
+   sampling `activity`** (STATUS_SPEC §2.3.1). A mid-cycle poll is now
+   answered rather than queued behind the cycle, so `busy` + `running` is
+   observable when a poll does land inside one.
+2. **`error` / `degraded` no longer advertise `["shutdown"]` only.** That
+   was a §6.2 violation in the withholding direction (the endpoints
+   honoured stage moves the list omitted) and it hid exactly the recovery
+   an operator needs: during the 2026-07-15 failure the device offered no
+   way to retract the carriage from a hot chamber. Recovery/diagnostic
+   actions now stay listed (§2.2 permits it) and the *run* is gated by a
+   new third interlock — `seal.start` returns **412** with
+   `{detail, last_error_code, last_error_message, retry_after_s}` while
+   `last_error` is uncleared. Mid-cycle conflicts are **409**, not 412
+   (a concurrency conflict is a state conflict, §6.1). The dashboard's
+   `PlateSealerTile` should grow copy for the new 412 shape — see
+   [`EQUIP_STATUS.md`](EQUIP_STATUS.md) §9.
 
 #### `dose_every_well`
 
@@ -343,6 +392,18 @@ Active watch items (not regressions; behavioural notes):
   re-attempting PR-3. Follow-up worth considering: a device-side
   low-air interlock that refuses `seal.start` / `stage.in` up front,
   rather than discovering it mid-cycle.
+
+  **Partially addressed 2026-07-26 (plateloc v1.4.0).** Two of the three
+  things that went wrong now behave better: after any operational failure
+  `seal.start` is refused with 412 until the error clears (so a second
+  cycle can't be started into a failed pneumatic supply), and the recovery
+  actions — `stage.in` / `stage.out` / `shutdown` — stay in
+  `allowed_actions` in `error` / `degraded` instead of collapsing to
+  `["shutdown"]`, so the dashboard offers a way to retract the carriage.
+  Still **open**: a *proactive* low-air check. The device has no pressure
+  introspection (EQUIP_STATUS §9 "What this interlock does NOT cover"), so
+  the first failure is still discovered by attempting the operation; a
+  facility-level sensor is the only real fix.
 
 ## Control-surface exposure (known security / safety risk)
 

@@ -218,7 +218,12 @@ equipment:
     name: Agilent PlateLoc
     kind: plate_sealer
     adapter: http
-    protocol: "1.1"
+    # Device v1.4.0 (merged 2026-07-26) speaks v1.2: seal-cycle activity +
+    # cycles_total. Flipped ahead of the service restart deliberately —
+    # v1.1 and v1.2 are indistinguishable to the SDK (§8: no new endpoints,
+    # no new required fields) and the dashboard reads `activity` off the
+    # envelope, not off this field, so the interim is inert.
+    protocol: "1.2"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8010
     tailscale_ip: 100.64.254.16
     status_path: /status

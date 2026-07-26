@@ -308,6 +308,7 @@ expected to be deleted once the fleet has migrated. A device that omits
 `metrics["cycles_total"]` (reserved, optional):
 - Monotonic count of completed primary operations since device start, `unit: "count"`.
 - Resets only on device restart; a reader detecting a decrease treats it as a restart, not as negative usage.
+- A device that has a **hardware odometer** for its primary operation SHOULD publish that instead of an in-process counter (plateloc mirrors the instrument's lifetime seal-cycle count). It satisfies the monotonic semantics by construction and additionally survives a service restart, so no usage is lost across a redeploy. Publishing it under the reserved key alongside any pre-existing device-specific metric key is fine — plateloc reports the same number as both `cycles_total` and its legacy `cycle_count`.
 
 ---
 
@@ -502,6 +503,17 @@ Recommended additional fields (per precondition type):
   "detail":      "Stage not loaded",
   "stage_state": "out",
   "required":    "in"
+}
+
+// Health interlock (plateloc device v1.4+) — §2.2's "don't start a normal
+// run while a fault is active", as a precondition. Recovery is both
+// time-bounded (the device's recent-error window) and immediate via the
+// §6.4 auto-clear, so it carries retry_after_s.
+{
+  "detail":             "Recent operational failure not cleared",
+  "last_error_code":    "low_air_pressure",
+  "last_error_message": "StartCycle returned error code -2147221503 (driver: Low Air Pressure Error)",
+  "retry_after_s":      47
 }
 ```
 

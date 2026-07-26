@@ -236,6 +236,19 @@ callbacks. Conventions any future exporter should copy:
   folds `extra` into the persisted JSON `payload` verbatim, so new keys
   need no `api/` change.
 
+**Next exporter candidate: `plateloc` (open).** Since device v1.4.0 the
+sealer reports `activity` natively, but its primary operation — a seal cycle
+— lasts 0.5–12 s against a 60 s sweep, so the poll path will almost never
+sample a `running` row. It is the fleet's clearest case of "sampling cannot
+see this at all" (§2.3.1). Two things follow: today, utilization for the
+sealer must be read from the `metrics["cycles_total"]` delta (the device
+mirrors the instrument's lifetime odometer, so the counter is exact even
+across restarts of the *service*); and an `activity_transition` exporter on
+the device — emitting the exact start/stop instants around its blocking
+`StartCycle` call — would give the history DB true cycle timings. The
+device already knows both timestamps (`activity_since`,
+`details.cycle_started_at`); nothing but the POST is missing.
+
 ### Why not InfluxDB or TimescaleDB?
 
 Use SQLite until you have > 1 sensor per zone reading at > 1 Hz, or until you need
