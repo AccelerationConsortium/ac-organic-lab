@@ -124,10 +124,13 @@ function fmt(value: number | null, unit: string, decimals: number): string {
  *  the border + background (used for heater state on the Actual pill);
  *  `title` becomes the native hover tooltip (heater.message). */
 /**
- * plateloc's `seal.start` 412 has two distinct body shapes:
+ * plateloc's `seal.start` 412 has three distinct body shapes:
  *
  *   stage interlock (v1.3+):
  *     { detail, stage_state: "out" | "unknown", required: "in" }
+ *
+ *   health interlock (v1.4+ — refuses a run while `last_error` is uncleared):
+ *     { detail, last_error_code, last_error_message, retry_after_s }
  *
  *   temperature interlock (v1.2+):
  *     { detail, actual_c, setpoint_c, tolerance_c, retry_after_s }
@@ -135,8 +138,9 @@ function fmt(value: number | null, unit: string, decimals: number): string {
  * We branch on which fields are present. Only `seal.start` carries these;
  * every other refusal (423 claim, 409 state) is handled generically by
  * interpretActionError. Module-scope so useActionError's identity is stable.
+ * Exported for tests.
  */
-const parseSealer412: Parse412 = (body, { action, retryAfterS }) => {
+export const parseSealer412: Parse412 = (body, { action, retryAfterS }) => {
   if (action !== "seal.start") return null;
   // Stage interlock first (operator-driven, fastest to fix).
   if (typeof body.stage_state === "string") {
@@ -148,6 +152,24 @@ const parseSealer412: Parse412 = (body, { action, retryAfterS }) => {
           ? ' Click "Stage in" or "Stage out" to home the stage.'
           : "";
     return `Plate stage is ${stage}, needs to be loaded.${hint}`;
+  }
+  // Health interlock (v1.4+): the run is refused while last_error is
+  // uncleared. Reuse the per-code recovery copy from the last_error band so
+  // the refusal and the band always say the same thing; the §6.4 window
+  // also self-clears, hence the retry hint.
+  if (typeof body.last_error_code === "string" || "last_error_message" in body) {
+    const code =
+      typeof body.last_error_code === "string" ? body.last_error_code : null;
+    const raw =
+      typeof body.last_error_message === "string" ? body.last_error_message : "";
+    const recovery = recoveryForCode(code) ?? raw ?? "see the device log";
+    const retry =
+      typeof body.retry_after_s === "number" ? body.retry_after_s : retryAfterS;
+    const retryStr =
+      retry !== null && retry > 0
+        ? ` Retrying in ~${Math.ceil(retry)} s also clears it.`
+        : "";
+    return `Clear the last fault first — ${recovery}${retryStr}`;
   }
   // Temperature interlock.
   const actual = typeof body.actual_c === "number" ? body.actual_c : null;
@@ -179,55 +201,57 @@ interface LastErrorBand {
 }
 
 /**
- * Branch on plateloc v1.3.1's `last_error.code` taxonomy. The mapping is
- * intentionally narrow: each code → one prescriptive recovery sentence.
- * Unknown / null codes fall back to a generic "see message" — that's the
- * forward-compat path for new device codes and the back-compat path for
- * v1.0 / pre-v1.3.1 devices that don't populate `code`.
+ * plateloc's `last_error.code` taxonomy (v1.3.1+, extended v1.3.2 with
+ * no_plate / vacuum_error) → one prescriptive recovery sentence per code.
+ * Shared by the rose `last_error` band AND the v1.4+ health-interlock 412
+ * (`parseSealer412`), so the refusal and the band always give the same
+ * advice. Returns null for unknown / absent codes — the forward-compat
+ * path for new device codes and the back-compat path for devices that
+ * don't populate `code`.
  *
  * Reference: STATUS_SPEC §6 — last_error.code taxonomy is per-device;
- * each device's README documents its own codes. New codes need a branch
- * here when devices introduce them.
+ * each device's README documents its own codes. New codes need an entry
+ * here when devices introduce them. Exported for tests.
  */
+export function recoveryForCode(code: string | null): string | null {
+  switch (code) {
+    case "low_air_pressure":
+      return "Air supply low. Check the regulator at ~80 psi.";
+    case "vacuum_error":
+      return "Vacuum fault — check the compressed-air supply and that the plate is seated flat.";
+    case "no_plate":
+      return "No plate detected on the stage. Load a plate (or re-seat it), then retry.";
+    case "com_init_failed":
+    case "com_timeout":
+      return "Driver unresponsive — restart the device service.";
+    case "profile_not_found":
+      return "Open the Diagnostics dialog on the device PC and create the profile.";
+    case "stage_jam":
+      return "Stage move failed. Check the carriage path, then re-home with Stage in / Stage out.";
+    case "heater_overtemp":
+    case "heater_undertemp":
+      return "Heater fault — service required.";
+    case "process_internal":
+      return "Lab-software bug — please file an issue.";
+    case "com_other":
+      return "Driver fault — see message.";
+    default:
+      return null;
+  }
+}
+
 function interpretLastError(
   errorInfo: { code?: string | null; message?: string | null } | null | undefined,
 ): LastErrorBand | null {
   if (!errorInfo) return null;
   const raw = (errorInfo.message ?? "").trim();
   const code = errorInfo.code ?? null;
-  let recovery: string;
-  switch (code) {
-    case "low_air_pressure":
-      recovery = "Air supply low. Check the regulator at ~80 psi.";
-      break;
-    case "com_init_failed":
-    case "com_timeout":
-      recovery = "Driver unresponsive — restart the device service.";
-      break;
-    case "profile_not_found":
-      recovery = "Open the Diagnostics dialog on the device PC and create the profile.";
-      break;
-    case "stage_jam":
-      recovery =
-        "Stage move failed. Check the carriage path, then re-home with Stage in / Stage out.";
-      break;
-    case "heater_overtemp":
-    case "heater_undertemp":
-      recovery = "Heater fault — service required.";
-      break;
-    case "process_internal":
-      recovery = "Lab-software bug — please file an issue.";
-      break;
-    case "com_other":
-      recovery = "Driver fault — see message.";
-      break;
-    default:
-      // v1.0 device (no code), or a new v1.3+ code we don't branch on yet.
-      // Render the raw message verbatim; suppress the band entirely if
-      // there's nothing to say.
-      if (!raw) return null;
-      recovery = "";
-      break;
+  const recovery = recoveryForCode(code);
+  if (recovery === null) {
+    // v1.0 device (no code), or a new code we don't map yet. Render the raw
+    // message verbatim; suppress the band entirely if there's nothing to say.
+    if (!raw) return null;
+    return { code, recovery: "", raw };
   }
   return { code, recovery, raw };
 }

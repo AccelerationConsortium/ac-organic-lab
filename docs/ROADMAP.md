@@ -241,9 +241,11 @@ intentional; both change what a poller sees.
    new third interlock — `seal.start` returns **412** with
    `{detail, last_error_code, last_error_message, retry_after_s}` while
    `last_error` is uncleared. Mid-cycle conflicts are **409**, not 412
-   (a concurrency conflict is a state conflict, §6.1). The dashboard's
-   `PlateSealerTile` should grow copy for the new 412 shape — see
-   [`EQUIP_STATUS.md`](EQUIP_STATUS.md) §9.
+   (a concurrency conflict is a state conflict, §6.1). ~~The dashboard's
+   `PlateSealerTile` should grow copy for the new 412 shape~~ — done
+   2026-07-26 (`parseSealer412` health branch, sharing one
+   `recoveryForCode` table with the last_error band; `no_plate` /
+   `vacuum_error` copy added). See [`EQUIP_STATUS.md`](EQUIP_STATUS.md) §9.
 
 #### `dose_every_well`
 
