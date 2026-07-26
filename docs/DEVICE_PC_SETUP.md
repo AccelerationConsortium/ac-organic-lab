@@ -223,6 +223,7 @@ After install + smoke, register the service in the monorepo's `equipment.yaml` w
 | Service starts but `curl http://127.0.0.1:<port>/` hangs | Windows Defender Firewall blocking loopback (rare) | `New-NetFirewallRule -DisplayName "<svc>" -Direction Inbound -Action Allow -LocalPort <port> -Protocol TCP`. |
 | `uv run` reports "no project found" under NSSM | `--project <path>` not specified | NSSM does not change directory unless `AppDirectory` is set; either set it (preferred) or always pass `--project`. |
 | Service crash-loops with `error: Project virtual environment directory ...\.venv cannot be used ... (no Python executable was found)`; the `.venv` has only a `Lib\` folder (no `Scripts\python.exe` / `pyvenv.cfg`) | A `uv` venv rebuild (Python upgrade or a fleet-wide `uv sync`) **aborted mid-delete** on a hardlinked package file. uv hardlinks wheels from its global cache into every venv, so a shared `.pyd` (e.g. `httptools\...\parser.cp3XX-win_amd64.pyd`) is one physical file across many venvs; when another running uvicorn service has it memory-mapped, the delete hits a sharing violation and leaves the venv with no interpreter. | Rename or remove the corrupt `.venv`, then re-`sync`. See the note below — `Remove-Item`/`takeown` will **not** clear the image-locked hardlink. |
+| `uv sync` exits non-zero with `error: failed to remove file ...\.venv\Lib\site-packages\../../Scripts\<svc>-serve.exe: The process cannot access the file because it is being used by another process. (os error 32)` — while `Scripts\python.exe` and `pyvenv.cfg` are both still present | The **running service holds its own console-script `.exe`**, and the release changed a dependency (or the project version), so uv had to replace that shim. Distinct from the row above: this is the service's *own* lock, not a hardlinked `.pyd` shared with another service. | Stop just that service, re-`sync`, start it: `nssm stop <svc>; C:\SDL_Tools\uv.exe sync --extra api; nssm start <svc>; sc continue <svc>`. Do **not** rename/delete the `.venv` — it is intact. See the note below: **verify the new dependency actually installed.** |
 
 > **Corrupt-venv / hardlink-lock recovery (all uv device PCs).** The trap:
 > the corrupt `.venv` can't be deleted because its `.pyd` files are uv
@@ -243,6 +244,44 @@ After install + smoke, register the service in the monorepo's `equipment.yaml` w
 > corrupt several device venvs at once — check every service, not just the one
 > that paged you. (First hit live 2026-07-13: `xarm` and `opentrons-server`
 > both landed in this state after a Python 3.14 rebuild.)
+
+> **Own-service `.exe` lock — the silent-partial-sync trap (all uv device
+> PCs).** Do not confuse this with the hardlink trap above. Here the service
+> locks **its own** `Scripts\<svc>-serve.exe` console-script shim, so the
+> `.venv` stays perfectly healthy (`Scripts\python.exe` + `pyvenv.cfg` both
+> present) — the rename-`.venv` recovery is the **wrong** tool and must not be
+> applied.
+>
+> **The dangerous part is not the error, it's what it leaves behind.** uv
+> aborts the *entire* install transaction at the failed removal, so a genuinely
+> new dependency can end up **not installed at all** while the old service
+> keeps running happily off code already resident in memory. The service looks
+> fine; the on-disk environment can no longer start the new build. After any
+> `os error 32` sync failure, check the package actually landed rather than
+> trusting a retry:
+>
+> ```powershell
+> C:\SDL_Tools\uv.exe pip list | Select-String '<new-dep>'
+> # or: ls .venv\Lib\site-packages\<new_dep>*
+> ```
+>
+> **When to stop first.** Syncing *while the service runs* is fine and keeps it
+> up — the shim is only replaced when a dependency or the project version
+> changes, which is why §4's `update.ps1` ordering (`git pull` → `uv sync` →
+> `nssm restart`) works for the common no-dependency-change update. Stop the
+> service first when a release adds or bumps a dependency, or retry stop-first
+> after hitting `os error 32`. Stop **only** the service being updated; leave
+> the other services on the PC alone.
+>
+> A bare `nssm restart` will often self-heal this, since NSSM launches these
+> services via `uv run --project ...`, which self-syncs at startup. Prefer the
+> explicit stop → sync → start anyway: it surfaces a GitHub-unreachable or
+> build failure in your terminal instead of burying it in service startup,
+> where it becomes a crash-loop. (First hit live 2026-07-25 deploying
+> `torry-pines-shaker` STATUS_SPEC v1.2, whose release added the
+> `sdl-lab-contract` git dependency: sync failed on
+> `torry-pines-shaker-serve.exe`, and `sdl_lab_contract` was absent from
+> `site-packages` afterwards even though it had resolved and built fine.)
 
 ## 9. Uninstall
 
