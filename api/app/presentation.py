@@ -72,14 +72,15 @@ class EquipmentSnapshot(SkillEquipmentSnapshot):
     # Display-only Tailscale IP from the registry entry (None → not shown).
     tailscale_ip: str | None = None
     # Server-resolved activity (STATUS_SPEC v1.2 §2.3): device-reported when
-    # available, else the §2.3 state invariants, else a per-kind component
-    # sniff (§2.3.2, non-normative). Resolved by the SAME function the poll
-    # loop records with (events.snapshot_activity), so live tiles and the
-    # stored activity_transition series can never disagree. `unknown` when
-    # unreachable or genuinely undeterminable — never a false `idle`.
+    # available, else the §2.3 state invariants. Resolved by the SAME
+    # function the poll loop records with (events.snapshot_activity), so live
+    # tiles and the stored activity_transition series can never disagree.
+    # `unknown` when unreachable or genuinely undeterminable — never a false
+    # `idle`. (A "components" sniff source existed briefly pre-shaker-
+    # migration; stored rows with it remain valid history.)
     activity: Literal["idle", "running", "unknown"] = "unknown"
-    # How `activity` was determined: device | status | components | none.
-    activity_source: Literal["device", "status", "components", "none"] = "none"
+    # How `activity` was determined: device | status | none.
+    activity_source: Literal["device", "status", "none"] = "none"
     # v2 vocabulary, reader-side (STATUS_SPEC Appendix B.2 projection —
     # non-normative, deterministic from equipment_status + registry). Carries
     # no new information yet; exists so readers can speak the v2 vocabulary

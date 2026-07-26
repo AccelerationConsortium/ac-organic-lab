@@ -184,20 +184,19 @@ equipment:
     name: Torrey Pines Shaker
     kind: shaker
     adapter: http
-    protocol: "1.1"
+    # v1.2 native since 2026-07-25 (torry-pines-shaker-server 0.2.0):
+    # activity/activity_since observed from the motor, cycles_total,
+    # per-subsystem allowed_actions gating. First v1.2 device in the fleet.
+    protocol: "1.2"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8030
     tailscale_ip: 100.64.254.16
     status_path: /status
-    # /status on the device holds a service lock across 4 serial round-trips
-    # (~1.7 s on the live SC25XR). Under dashboard load that lock queues
-    # callers up to ~10 s, which used to pin every /api/equipment fan-out
-    # against this device's timeout (measured: 9.57 s vs 32 ms direct).
-    # Capped at 2.5 s so the shaker fails fast and stops dragging the rest
-    # of the fleet down -- the shaker tile will show fetch_error / unknown
-    # while contended, which is the correct signal. Restore to ~10 s once
-    # the device repo ships the _build_status read-off-lock fix
-    # (ROADMAP shaker row).
-    poll_timeout_seconds: 2.5
+    # Was capped at 2.5 s while /status held the device's service lock
+    # across 4 serial round-trips (~1.7 s each poll; measured 9.57 s under
+    # contention). The read-off-lock + short-TTL readings cache fix shipped
+    # with the 0.2.0 deploy (2026-07-25), so the cap is restored to a
+    # comfortable timeout.
+    poll_timeout_seconds: 10.0
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}

@@ -74,7 +74,10 @@ class PillConfig(BaseModel):
 # ``docs/STATUS_SPEC.md``. Devices stay on ``"1.0"`` (the default) until their
 # repo has been migrated and the yaml entry flips this field. The SDK never
 # auto-detects from a live ``/status`` to keep ``validate_plan`` offline.
-DeviceProtocol = Literal["1.0", "1.1"]
+# "1.2" (additive: native activity/activity_since, cycles_total) implies the
+# full v1.1 claim semantics — every ≥1.1 check in the SDK must treat 1.1 and
+# 1.2 identically.
+DeviceProtocol = Literal["1.0", "1.1", "1.2"]
 
 
 class Maintenance(BaseModel):

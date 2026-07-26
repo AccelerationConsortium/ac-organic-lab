@@ -70,17 +70,6 @@ _STATE_IMPLIED_ACTIVITY: dict[str, str] = {
     "e_stop": "idle",
 }
 
-#: Per-kind component sniffs (§2.3.2: reader-local, NON-NORMATIVE, expected
-#: to be deleted once the fleet reports `activity` natively). Component key →
-#: states meaning "primary operation in progress". Only consulted when the
-#: device didn't report `activity` and the state enum doesn't pin it — i.e.
-#: today's chronically-degraded shaker, whose motor keeps shaking through the
-#: heater RTD fault.
-_KIND_RUNNING_COMPONENTS: dict[str, tuple[str, frozenset[str]]] = {
-    "shaker": ("motor", frozenset({"running", "shaking"})),
-}
-
-
 def derive_activity(status: EquipmentStatus) -> tuple[str, str]:
     """Resolve a device's activity, best answer first.
 
@@ -90,12 +79,19 @@ def derive_activity(status: EquipmentStatus) -> tuple[str, str]:
     - ``"device"``     — the device reported ``activity`` itself (v1.2).
     - ``"status"``     — implied by the §2.3 consistency-invariant table
       (busy ⇒ running; ready / requires_init / e_stop ⇒ idle).
-    - ``"components"`` — per-kind component sniff (§2.3.2, non-normative).
     - ``"none"``       — genuinely undeterminable → ``"unknown"``.
 
     Callers that only need the activity can discard the source; the recorder
-    stores it in the event payload so non-normative derivations remain
-    identifiable (and re-derivable/deletable) after the fleet migrates.
+    stores it in the event payload so derivations stay identifiable in the
+    stored series.
+
+    History note: a third source, ``"components"`` (a per-kind motor sniff
+    for the shaker, §2.3.2), existed 2026-07-24 → 2026-07-25 and was deleted
+    the day the shaker began reporting ``activity`` natively — exactly the
+    deletability §2.3.2 promises. Rows recorded with ``source: components``
+    remain valid history. If another kind ever needs a sniff before its
+    device migrates, resurrect the pattern from git history rather than
+    keeping dead code here.
     """
     if status.activity != "unknown":
         return status.activity, "device"
@@ -103,17 +99,6 @@ def derive_activity(status: EquipmentStatus) -> tuple[str, str]:
     implied = _STATE_IMPLIED_ACTIVITY.get(status.equipment_status)
     if implied is not None:
         return implied, "status"
-
-    sniff = _KIND_RUNNING_COMPONENTS.get(status.equipment_kind)
-    if sniff is not None:
-        component_key, running_states = sniff
-        component = status.components.get(component_key)
-        if component is not None and component.connected:
-            state = (component.state or "").lower()
-            if state in running_states:
-                return "running", "components"
-            if state and state != "unknown":
-                return "idle", "components"
 
     return "unknown", "none"
 

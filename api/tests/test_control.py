@@ -346,6 +346,42 @@ def test_v11_control_acquires_claim_attaches_token_releases() -> None:
 
 
 @respx.mock
+def test_v12_control_still_runs_the_claim_dance() -> None:
+    """protocol "1.2" is additive over v1.1 — the device still hard-enforces
+    X-Claim-Token, so the passthrough must claim exactly as for v1.1.
+    Regression: `needs_claim` once tested `== "1.1"`, which would have sent
+    tokenless requests to the first v1.2 device (423 on every click)."""
+    entry = _v11_entry(id="torry_pines_shaker", kind="shaker", protocol="1.2")
+    app = _make_app(entry)
+
+    claim_route = respx.post("http://127.0.0.1:9999/control/claim").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "claim_token": "tok-v12",
+                "heartbeat_interval_s": 10.0,
+                "expires_at": "2026-07-25T16:00:00Z",
+            },
+        )
+    )
+    action_route = respx.post("http://127.0.0.1:9999/control/shake/stop").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    respx.post("http://127.0.0.1:9999/control/release").mock(
+        return_value=httpx.Response(204)
+    )
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/torry_pines_shaker/control/shake/stop", json={}
+        )
+
+    assert r.status_code == 200
+    assert claim_route.called
+    assert action_route.calls.last.request.headers["x-claim-token"] == "tok-v12"
+
+
+@respx.mock
 def test_authenticated_user_is_stamped_as_claim_owner() -> None:
     """When the edge injects X-Auth-User, that real owner (not the dashboard
     fallback) is sent in the device claim and recorded in the audit row."""

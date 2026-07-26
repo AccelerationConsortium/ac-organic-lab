@@ -540,8 +540,11 @@ async def _proxy(
     # finally block. Calls to the claim protocol itself (claim/heartbeat/
     # release) are passed through unwrapped so callers that want to
     # manage their own claim can. v1.0 devices skip the dance entirely.
+    # Any protocol ≥ 1.1 has claim semantics (v1.2 is additive over v1.1 —
+    # a "1.2" device still hard-enforces X-Claim-Token). Only v1.0 devices
+    # skip the dance.
     needs_claim = (
-        getattr(entry, "protocol", None) == "1.1"
+        getattr(entry, "protocol", None) not in (None, "1.0")
         and method == "POST"
         and action not in _CLAIM_PROTOCOL_ACTIONS
     )

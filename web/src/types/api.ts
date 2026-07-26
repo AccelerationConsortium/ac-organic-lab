@@ -157,11 +157,13 @@ export type EquipmentSnapshot = Omit<
   tailscale_ip?: string | null;
   pill?: PillConfig | null;
   /** Server-resolved activity: device-reported when available, else derived
-   *  (§2.3 state invariants / per-kind component sniff). `unknown` when
-   *  unreachable or undeterminable — never a false `idle`. */
+   *  from the §2.3 state invariants. `unknown` when unreachable or
+   *  undeterminable — never a false `idle`. */
   activity?: Activity;
-  /** How `activity` was determined: device | status | components | none. */
-  activity_source?: "device" | "status" | "components" | "none";
+  /** How `activity` was determined: device | status | none. ("components"
+   *  appears only in historical recorded rows, from the pre-migration
+   *  shaker sniff.) */
+  activity_source?: "device" | "status" | "none";
 };
 
 export interface EquipmentList {

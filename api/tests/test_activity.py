@@ -79,9 +79,13 @@ def test_unpinned_states_fall_through():
         assert derive_activity(status) == ("unknown", "none")
 
 
-# ------------------------------------------------------------------ per-kind component sniff (§2.3.2)
+# ------------------------------------------------------------------ sniff deleted (§2.3.2 deletability, 2026-07-25)
 
-def test_degraded_shaker_motor_shaking_is_running():
+def test_unmigrated_degraded_shaker_reads_unknown_not_sniffed():
+    """The shaker motor sniff was deleted the day the device migrated to
+    native v1.2 activity (§2.3.2's deletability promise, kept). A device in
+    an invariant-unpinned state that doesn't report activity now honestly
+    reads unknown — components no longer influence the derivation."""
     status = _status(
         equipment_status="degraded",
         components={
@@ -89,28 +93,7 @@ def test_degraded_shaker_motor_shaking_is_running():
             "heater": ComponentStatus(connected=True, state="unknown", message="cal3"),
         },
     )
-    assert derive_activity(status) == ("running", "components")
-
-
-def test_degraded_shaker_motor_stopped_is_idle():
-    status = _status(
-        equipment_status="degraded",
-        components={"motor": ComponentStatus(connected=True, state="stopped")},
-    )
-    assert derive_activity(status) == ("idle", "components")
-
-
-def test_shaker_sniff_is_honest_when_motor_unhelpful():
-    # missing, disconnected, or state-unknown motor → unknown, not false idle
-    cases = [
-        {},
-        {"motor": ComponentStatus(connected=False, state="running")},
-        {"motor": ComponentStatus(connected=True, state="unknown")},
-        {"motor": ComponentStatus(connected=True, state="")},
-    ]
-    for components in cases:
-        status = _status(equipment_status="degraded", components=components)
-        assert derive_activity(status) == ("unknown", "none"), components
+    assert derive_activity(status) == ("unknown", "none")
 
 
 # ------------------------------------------------------------------ recorder-facing wrapper

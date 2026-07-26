@@ -128,21 +128,19 @@ def test_snapshot_passes_through_sdk_fields_and_defaults_dashboard_fields() -> N
 
 def test_snapshot_resolves_activity_for_degraded_running_shaker() -> None:
     """The motivating v1.2 case surfaces on the live snapshot: health stays
-    `degraded`, activity reads `running` from the motor component sniff."""
-    from lab_skills import ComponentStatus
-
+    `degraded`, activity reads `running` — now reported natively by the
+    device (the reader-side motor sniff was deleted when the shaker
+    migrated, per §2.3.2)."""
     entry = _entry(id="torry_pines_shaker", name="SC25XR", kind="shaker")
     registry = Registry(equipment=[entry])
     sdk_snap = _skill_snapshot(entry, state="degraded")
-    sdk_snap.status.components = {
-        "motor": ComponentStatus(connected=True, state="shaking"),
-        "heater": ComponentStatus(connected=True, state="unknown", message="cal3"),
-    }
+    sdk_snap.status.protocol_version = "1.2"
+    sdk_snap.status.activity = "running"
     dashboard_snap = _snapshot(sdk_snap, override=None, registry=registry,
                                platforms_config=_empty_platforms())
     assert dashboard_snap.status.equipment_status == "degraded"
     assert dashboard_snap.activity == "running"
-    assert dashboard_snap.activity_source == "components"
+    assert dashboard_snap.activity_source == "device"
 
 
 def test_snapshot_resolves_platform_and_tile_from_platforms_config() -> None:

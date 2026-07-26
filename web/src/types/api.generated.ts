@@ -824,7 +824,7 @@ export interface components {
              * @default none
              * @enum {string}
              */
-            activity_source: "device" | "status" | "components" | "none";
+            activity_source: "device" | "status" | "none";
             /**
              * Health
              * @default unknown

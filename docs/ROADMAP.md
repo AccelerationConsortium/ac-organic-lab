@@ -145,7 +145,7 @@ host. Spec is what the device's live `/status` envelope reports.
 | `xarm_translocation` | `http` | 1.1 | ✅ `requires_init` | Claim protocol + `/control/graph/*` deployed 2026-05-31; claims gated behind `POST /connect`. Open items in the sub-tasks below. |
 | `ot2_hte` | `http` | 1.1 | ✅ `ready` | Protocol actions + `lights.set` advertised; deck snapshot pulled over SSH. Protocol-action SkillDefs pending (typed labware args). |
 | `dose_every_well` | `http` | 1.1 | ✅ `requires_init` | Full v1.1 verified live 2026-05-31: hard `X-Claim-Token` (423), `/control/*` consolidation (breaking), state-driven `allowed_actions`. |
-| `torry_pines_shaker` | `http` | 1.1 | ✅ `ready` | 2026-05-09 `cal3` degrade cleared. Poll capped at 2.5 s pending the device-repo read-off-lock fix (watch item below). |
+| `torry_pines_shaker` | `http` | **1.2** | ✅ `ready`/`degraded` | First native v1.2 device (2026-07-25): motor-observed `activity`, `cycles_total`, per-subsystem `allowed_actions`. Poll timeout restored to 10 s (read-off-lock fix deployed). The heater RTD `cal` fault recurs intermittently — now reported honestly as `degraded` without blocking shakes. |
 | `filter_every_well` | `http` | 1.1 | ✅ `ready` | v1.1 deployed on the Pi at `100.64.254.104`; PressTile per-direction `hold_time` inputs verified (EQUIP_STATUS.md §8). |
 | `plateloc` | `http` | 1.1 | ✅ `ready` | Real claims (TTL `ClaimStore`, commit fa98ca8) verified 2026-05-31; 423 ahead of the 412 seal interlocks. Only a cosmetic version bump remains. |
 | `cytation_5` | `http` | 1.1 | ✅ `ready` | 13 actions advertised; device-repo Phases 3+4 shipped; Phase 2 (per-well tracking) remains. |
@@ -298,25 +298,22 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
 
 #### `torry_pines_shaker` (device repo: `torry-pines-shaker-server`)
 
-Both found live on 2026-07-25 while exercising the new STATUS_SPEC v1.2
-activity recorder against a real 180 s shake cycle (heater `cal` fault
-active, motor healthy):
+Both findings from the 2026-07-25 live exercise were **fixed and deployed
+2026-07-25** (device repo PR #1, v0.2.0 — the fleet's first native v1.2
+device, and the reference implementation):
 
-- [ ] **§6.2 violation** — with the heater fault active the device
-  advertised `allowed_actions: ["shutdown"]`, yet honored
-  `POST /control/shake/start` (HTTP 200, cycle ran). Advisory and
-  authoritative surfaces must never disagree: either the device should
-  refuse the start (412, heater interlock) or `shake.start` should stay
-  listed while the heater fault only gates `shake.set_temperature`
-  (the catalog's motor/heater AND-gate split already models the latter).
-- [ ] **v1.2 migration (reference candidate)** — mid-cycle the device
-  reports `busy`, letting the run mask the active heater fault (§2.2);
-  between cycles it reports `degraded`. Migrating to v1.2 (`degraded` +
-  `activity: "running"`, observed from the motor) makes it the natural
-  reference implementation — it is the device that motivated §2.3. Once
-  it reports `activity` natively, delete the dashboard's reader-side
-  motor sniff (`api/app/events.py`, `_KIND_RUNNING_COMPONENTS`) per
-  §2.3.2's deletability promise.
+- [x] **§6.2 violation** — one pure availability function now feeds both
+  `/status.allowed_actions` and new 412 gates, split per subsystem: a
+  heater fault withholds `shake.set_temperature` (and
+  `wait_for_temperature` starts) but not shaking; a motor readback
+  failure withholds `shake.start`/`shake.set_speed`.
+- [x] **v1.2 migration** — health and activity computed independently
+  (`degraded` + `activity: "running"` mid-fault-cycle; `busy` ≡ healthy +
+  running), `activity_since`, `metrics["cycles_total"]`, contract types
+  from `sdl-lab-contract`. The dashboard's reader-side motor sniff was
+  deleted the same day (§2.3.2's deletability promise, kept), and the
+  poll timeout restored to 10 s (the read-off-lock fix deployed with
+  v0.2.0 — the poll-contention watch item below is cleared).
 
 #### Remaining mock-only entries
 
@@ -333,12 +330,9 @@ Active watch items (not regressions; behavioural notes):
 
 - **`agilent_uplc_ms` poll latency** — ~1.5 s against a 5 s
   `poll_timeout_seconds`. Raise to 8 s if it ever errors.
-- **`torry_pines_shaker` poll contention** — `service.get_status()`
-  on the device still holds the service lock across 4 serial round-
-  trips; the dashboard caps `poll_timeout_seconds` at 2.5 s so the
-  shaker fails fast under contention rather than dragging the fleet.
-  Restore to ~10 s once the device-repo `_build_status` read-off-
-  lock fix ships.
+- ~~**`torry_pines_shaker` poll contention**~~ — cleared 2026-07-25:
+  the device-repo read-off-lock + short-TTL readings-cache fix deployed
+  with v0.2.0; `poll_timeout_seconds` restored to 10 s.
 - **`plateloc` compressed-air supply** — during the 2026-07-15 PR-3
   bench run the seal cycle failed on Low Air Pressure / vacuum faults
   (`stage.out` was also refused with "Low Air Pressure Error"),
