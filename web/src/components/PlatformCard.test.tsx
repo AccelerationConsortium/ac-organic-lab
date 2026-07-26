@@ -100,7 +100,7 @@ describe("PlatformCard service links", () => {
 });
 
 describe("PlatformCard equipment row health + activity (spec v1.2)", () => {
-  it("shows the activity label with an amber health glyph for a degraded-but-running device", () => {
+  it("shows two independent dots for a degraded-but-running device", () => {
     const shaker = {
       ...gatewaySnapshot,
       id: "torry_pines_shaker",
@@ -119,13 +119,16 @@ describe("PlatformCard equipment row health + activity (spec v1.2)", () => {
 
     render(<PlatformCard id="hte" title="HTE" snapshots={[shaker]} />);
 
-    // Two separate elements: activity carries the text, health the glyph.
-    expect(screen.getByText("Running")).toBeTruthy();
+    // Two separate dots: neither axis hides the other, and neither renders
+    // its state as visible text — the labels live in the tooltips.
     expect(screen.getByRole("img", { name: "Health: Degraded" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Activity: Running" })).toBeTruthy();
+    // The state names live only in the hover bubbles, never as row text.
     expect(screen.queryByText("Degraded")).toBeNull();
+    expect(screen.queryByText("Running")).toBeNull();
   });
 
-  it("shows only the activity label when health is nominal", () => {
+  it("shows a nominal health dot alongside the activity dot", () => {
     const ready = {
       ...gatewaySnapshot,
       pill: {},
@@ -135,11 +138,11 @@ describe("PlatformCard equipment row health + activity (spec v1.2)", () => {
 
     render(<PlatformCard id="web_services" title="Services" snapshots={[ready]} />);
 
-    expect(screen.getByText("Idle")).toBeTruthy();
-    expect(screen.queryByRole("img")).toBeNull();
+    expect(screen.getByRole("img", { name: "Health: Ready" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Activity: Idle" })).toBeTruthy();
   });
 
-  it("renders unknown activity as a dash, never a false Idle", () => {
+  it("names unknown activity in the tooltip, never a false Idle", () => {
     const legacy = {
       ...gatewaySnapshot,
       pill: {},
@@ -149,7 +152,7 @@ describe("PlatformCard equipment row health + activity (spec v1.2)", () => {
 
     render(<PlatformCard id="web_services" title="Services" snapshots={[legacy]} />);
 
-    expect(screen.getByText("—")).toBeTruthy();
-    expect(screen.queryByText("Idle")).toBeNull();
+    expect(screen.getByRole("img", { name: "Activity: Unknown" })).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Activity: Idle" })).toBeNull();
   });
 });

@@ -15,10 +15,10 @@ import {
   ACTIVITY_META,
   STATE_COLORS,
   STATE_META,
-  effectiveState,
   type ActivityName,
   type StateName,
 } from "@/lib/state-meta";
+import { StatusDots } from "@/components/StatusDots";
 
 // ---------------------------------------------------------------------------
 // Shared primitives
@@ -61,31 +61,8 @@ function LoadingRow() {
 // effectiveState (transport-failure / gateway-fronted "unreachable"
 // attribution) moved to lib/state-meta.ts, shared with the Overview rows.
 
-function StateDot({ snap }: { snap: EquipmentSnapshot }) {
-  const state = effectiveState(snap);
-  const meta = STATE_META[state] ?? STATE_META.unknown;
-  // Health always wins the single glyph; activity (spec v1.2, orthogonal)
-  // moves to the tooltip — "Degraded · Running" — when it is known.
-  const activity = (snap.activity ?? "unknown") as ActivityName;
-  const tooltip =
-    activity === "unknown"
-      ? meta.label
-      : `${meta.label} · ${ACTIVITY_META[activity].label}`;
-  return (
-    <span
-      aria-label={tooltip}
-      className="group/state-dot relative inline-flex h-5 w-5 items-center justify-center"
-    >
-      <span
-        className="inline-block h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-slate-950"
-        style={{ backgroundColor: STATE_COLORS[state] ?? STATE_COLORS.unknown }}
-      />
-      <span className="pointer-events-none invisible absolute left-1/2 top-full z-50 mt-1 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover/state-dot:visible group-hover/state-dot:opacity-100 dark:bg-slate-700">
-        {tooltip}
-      </span>
-    </span>
-  );
-}
+// The per-device health + activity dots are the shared StatusDots indicator,
+// identical to the Overview equipment rows.
 
 // ---------------------------------------------------------------------------
 // Platform label map
@@ -353,9 +330,9 @@ function DeviceUptimeRow({
           </p>
         </div>
 
-        {/* State dot; legend already carries the text labels. */}
-        <div className="w-10 shrink-0 text-center">
-          <StateDot snap={snap} />
+        {/* Health + activity dots; legend already carries the text labels. */}
+        <div className="flex w-10 shrink-0 items-center justify-center">
+          <StatusDots snapshot={snap} placement="right" />
         </div>
 
         {/* Segmented bars: health timeline + activity (utilization) below it.
