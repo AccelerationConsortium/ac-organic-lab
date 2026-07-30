@@ -110,11 +110,36 @@ Extends Track 1; phases note their dependencies.
    native-async refactored. 73 tests passing. Lab client wiring (needs
    `equipment.yaml`) is a deployment concern.
 4. **Phase D — PR + scientific diff.** PR open/update from the page; the
-   rendered scientific-diff CI job; the Review tab.
+   rendered scientific-diff CI job; the Review tab. **Done (2026-07-27):** room
+   branch pushed as the App, PR opened/updated idempotently with a structured
+   scientific diff as its body (steps, and since 2026-07-28 the `design` /
+   `plate_map` blocks summarized), `GET …/diff` + Review tab. Exercised end to
+   end on `AccelerationConsortium/sdl-safety-agent` PR #1, merged by a human
+   CODEOWNER. The diff is a *rendered summary in the PR body*, not yet a CI job.
 5. **Phase E — run authorizer + compiler (dry-run first).** Authorization pins +
    revalidation + package digest; compiler in dry-run (compile + simulate,
-   nothing actuates). Requires the AnaliticaDB contract bump for run-authorization
-   linkage ([`DATABASE_DESIGN.md`](DATABASE_DESIGN.md) §"Run-authorization linkage").
+   nothing actuates). **Done (2026-07-30), dry-run only:**
+   `POST /projects/{id}/authorizations` pins the commit (verified an **ancestor
+   of the default branch** — unreviewed branch work cannot run), protocol path,
+   `TEMPLATE_VERSION` + `pins.yaml` read *at that commit*, the compiled package
+   digest + compiler version, the live-readiness verdict (SDK dry-run
+   preflight), and the approving human; immutable `authorization_id`, TTL per
+   D-2, revocable without erasure; Authorize tab in the room UI.
+   **The compiler resolves the action↔skill question** the first authored plate
+   exposed: a protocol `action` is *chemistry* vocabulary (schema-constrained,
+   `^[a-z0-9][a-z0-9_]*$`), a skill id is *platform* vocabulary (dotted, owned
+   by the SDK catalog), and translating between them is the compiler's job — not
+   a mismatch to fix. The map lives in each project's own repo
+   (`compile/actions.yaml`, per D-6). An unmapped action or unresolved parameter
+   **fails** compilation; the package digest covers `design` and `plate_map`, so
+   a plate relayout with identical steps is a different package.
+   Still open on E: the **required-checks gate** is inert until the GitHub App
+   is granted `actions: read` (authorization refuses unless a human passes a
+   recorded `override_checks_reason` — an unverifiable gate that silently passes
+   is worse than none); authorizations are stored **locally**, pending the
+   AnaliticaDB contract bump for run-authorization linkage
+   ([`DATABASE_DESIGN.md`](DATABASE_DESIGN.md) §"Run-authorization linkage");
+   real lots/barcodes await LIMS Phase 2.
 6. **Phase F — authorized execution.** Wire run authorizations into the
    [`UI_DESIGN.md`](UI_DESIGN.md) §3 runner (Track 1 Steps
    3–5); orchestrated runs consume packages; records carry the five pins
