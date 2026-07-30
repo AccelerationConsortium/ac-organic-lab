@@ -409,7 +409,8 @@ table) when that happens.
 
 ## 10) Robot arm (`kind: robot_arm`)
 
-The UFactory xArm5 (`xarm_translocation`, STATUS_SPEC v1.1 on
+The UFactory xArm5 (`xarm_translocation`, STATUS_SPEC **v1.2** since
+device repo commit c91dd05 / 2026-07-30 on
 `sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000`) renders as the
 kind-specific `RobotArmTile`. As of **2026-05-31** the device exposes a
 **claim-gated motion-graph control surface** (see below); the *tile*,
@@ -442,6 +443,39 @@ Notes:
   `do_not_call_connect: true`, so the SDK never auto-connects — availability
   flows from the device's `allowed_actions` once connected.
 
+### v1.2 activity and concurrent-move refusal (device commit c91dd05)
+
+`activity` / `activity_since` are **observed from the controller's motion
+state** — not derived from `equipment_status` — so the tile's `StatusPill`
+(health) and the activity signal are now independent axes (STATUS_SPEC
+§2.3). `allowed_actions` mirrors the controller: while
+`activity == "running"` every `move.<node_id>` target is withheld and only
+`"stop"` remains. The tile derives `isBusy` from `equipment_status` today;
+once it surfaces graph controls it should prefer `activity` for the
+button-disable signal (§2.3.2's deletability promise — the device-side
+source is authoritative).
+
+Only one motion may be in flight at a time. A second concurrent move is
+refused with **HTTP 409**:
+
+```json
+{
+  "detail": {
+    "error": "motion_in_progress",
+    "message": "A motion is already in progress; stop it before issuing another move"
+  }
+}
+```
+
+This is **409, not 412**: it is a state conflict (§6.1), not a satisfiable
+precondition. The distinction matters for the dashboard's
+`interpretActionError` (below): 412 carries a `Retry-After` and a
+device-specific recovery hint; 409 is "wait or stop, then retry." The
+plateloc sealer established the same §6.1-vs-§6.2 split for its mid-cycle
+conflicts (§9), so the xArm 409 is the **second device** in the fleet to
+exercise the 409-vs-412 boundary — the pattern is now confirmed across two
+device kinds (plate sealer + robot arm).
+
 ### Tile layout
 
 Three rows, each leading with a `w-14` caption pill:
@@ -471,6 +505,26 @@ state, track position).
   `RobotArmTile` still renders read-only. Add control affordances that
   POST through the audited `/api/equipment/xarm_translocation/control/graph/*`
   passthrough; the lock chip then becomes load-bearing.
+- **409 `motion_in_progress` copy** — when graph controls land, the
+  generic `interpretActionError` 409 branch needs a device-specific
+  specializer (or a `parse412`-style hook for 409s). The xArm 409 body is
+  `{"detail": {"error": "motion_in_progress", "message": "…"}}` —
+  `detail` is an **object**, not a string, so the current
+  `typeof body.detail === "string"` check (action-error.ts line 51)
+  yields `undefined` and the tile renders the generic "Action rejected."
+  fallback. The fix: extract `body.detail.message` when
+  `body.detail.error === "motion_in_progress"` and render
+  *"A motion is already in progress. Click Stop, then retry."* Today
+  this is academic — the tile only calls `connect` / `stop` / `clear`,
+  none of which can trigger a 409. It becomes live the day the graph
+  move controls ship (previous item). The plateloc sealer's 409
+  mid-cycle copy (§9, "Open work" table) is the precedent for the
+  same shape.
+- **Prefer `activity` over `equipment_status` for button-disable** —
+  the tile derives `isBusy` from `st === "busy"` today. Once the
+  device's `activity` field is wired into `EquipmentSnapshot`,
+  disable move buttons on `activity === "running"` instead — the
+  device-side source is authoritative (§2.3.2).
 - **Verify claim enforcement live** — once the arm is connected
   (`POST /connect`), confirm tokenless `/control/graph/*` → 423 and
   `details.claimed_by` population.

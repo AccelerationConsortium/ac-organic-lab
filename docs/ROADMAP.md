@@ -44,13 +44,14 @@ repo is being generalized into the lab's ELN+LIMS record layer — see
 **Protocol mix.** Eight devices reach at least `protocol_version: "1.1"`
 on their live `/status` envelope (`fume_hood_actuator`,
 `xarm_translocation`, `ot2_hte`, `torry_pines_shaker`, `filter_every_well`,
-`plateloc`, `cytation_5`, `pypoe_web`); the rest are v1.0. Two of those
+`plateloc`, `cytation_5`, `pypoe_web`); the rest are v1.0. Three of those
 repos are **natively v1.2** and consume the shared `sdl-lab-contract`
 package instead of a vendored `models.py`: `torry_pines_shaker` (live since
-2026-07-25) and `plateloc` (merged 2026-07-26, live at its next service
-restart). The shared-package threshold ("3+ repos cleanly on v1.1 for
-~1 month") is comfortably cleared; the Appendix B v2 gate additionally
-needs the *majority* of the fleet reporting `activity` — 2 of the 8 v1.1+
+2026-07-25), `plateloc` (merged 2026-07-26, live at its next service
+restart), and `xarm_translocation` (device repo commit c91dd05, verified
+live 2026-07-30). The shared-package threshold ("3+ repos cleanly on v1.1
+for ~1 month") is comfortably cleared; the Appendix B v2 gate additionally
+needs the *majority* of the fleet reporting `activity` — 3 of the 8 v1.1+
 devices so far.
 
 **Skill catalog inventory** (`SKILL_REGISTRY` keys, count of `SkillDef`s
@@ -147,7 +148,7 @@ host. Spec is what the device's live `/status` envelope reports.
 | `cam_hte_tapo_c245` | `http` | 1.0 | ✅ `ready` | Full PTZ / presets / privacy / streaming / snapshot / recording surface; WebRTC opt-in available. |
 | `plug_hte_strip_right` / `_left` | `http` | 1.0 | ✅ `ready` | HS300 power strips; `on`/`off`/`toggle`; per-outlet safety decided client-side (`outletIsSafe()`). |
 | `fume_hood_actuator` | `http` | 1.1 | ✅ `ready` | `sash.move`/`sash.stop`; deployed on the Pi at `100.64.254.100:5000`; round-trip verified from `FumeHoodTile`. |
-| `xarm_translocation` | `http` | 1.1 | ✅ `requires_init` | Claim protocol + `/control/graph/*` deployed 2026-05-31; claims gated behind `POST /connect`. Open items in the sub-tasks below. |
+| `xarm_translocation` | `http` | **1.2** | ✅ `requires_init` | v1.2 native (device repo commit c91dd05, verified live 2026-07-30): controller-observed `activity` / `activity_since`, `allowed_actions` gated on activity, concurrent-move refusal (409 `motion_in_progress`, §6.1). Claim protocol + `/control/graph/*` deployed 2026-05-31; claims gated behind `POST /connect`. Open items in the sub-tasks below. |
 | `ot2_hte` | `http` | 1.1 | ✅ `ready` | Protocol actions + `lights.set` advertised; deck snapshot pulled over SSH. Protocol-action SkillDefs pending (typed labware args). |
 | `dose_every_well` | `http` | 1.1 | ✅ `requires_init` | Full v1.1 verified live 2026-05-31: hard `X-Claim-Token` (423), `/control/*` consolidation (breaking), state-driven `allowed_actions`. |
 | `torry_pines_shaker` | `http` | **1.2** | ✅ `ready`/`degraded` | First native v1.2 device (2026-07-25): motor-observed `activity`, `cycles_total`, per-subsystem `allowed_actions`. Poll timeout restored to 10 s (read-off-lock fix deployed). The heater RTD `cal` fault recurs intermittently — now reported honestly as `degraded` without blocking shakes. |
@@ -264,6 +265,20 @@ intentional; both change what a poller sees.
 
 Shipped 2026-07-03 (device repo + this monorepo):
 
+- **STATUS_SPEC v1.2 migration** (device repo commit c91dd05, verified
+  live 2026-07-30): contract types from `sdl-lab-contract`;
+  `activity` / `activity_since` observed from the controller's motion
+  state (not derived from `equipment_status`); `allowed_actions` gated
+  on activity — while `activity == "running"` every `move.<node_id>`
+  target is withheld and only `"stop"` remains. Only one motion may be
+  in flight at a time; a concurrent move is refused with HTTP 409
+  `{"detail":{"error":"motion_in_progress","message":"…"}}` — a §6.1
+  state conflict, not a 412 satisfiable precondition. `equipment.yaml`
+  flipped to `protocol: "1.2"` (this commit). The device still
+  advertises `move.<node_id>` in `allowed_actions` while the skill
+  catalog registers `graph.{move_to,recover_to,record,mode}` — that
+  pre-existing mismatch is unaffected by this migration (see the
+  skill-name reconciliation item below).
 - **Events exporter** (plan Step 3c): `src/core/events_exporter.py`
   pushes fine-grained `state_transition` / `error` / `startup` /
   `shutdown` rows from the SDK callbacks to `POST /api/ingest/events`
@@ -272,11 +287,12 @@ Shipped 2026-07-03 (device repo + this monorepo):
   **Deploy step pending:** set `XARM_INGEST_URL` in the `xarm` NSSM
   service env on the device PC, pull + restart.
 - **`equipment_version`** populated on `/status` (was null).
-- **Registry flipped to `protocol: "1.1"`** — the dashboard passthrough
-  now runs the per-request claim dance the device's hard enforcement
-  requires (tokenless → 423 verified live 2026-07-03, arm connected).
-  `do_not_call_connect` stays: claims are deliberately gated behind
-  `POST /connect` and the SDK must never auto-connect a robot arm.
+- **Registry flipped to `protocol: "1.1"`** (now v1.2, above) — the
+  dashboard passthrough now runs the per-request claim dance the
+  device's hard enforcement requires (tokenless → 423 verified live
+  2026-07-03, arm connected). `do_not_call_connect` stays: claims are
+  deliberately gated behind `POST /connect` and the SDK must never
+  auto-connect a robot arm.
 - Claim-gating turned out broader than recorded: the legacy `/move/*`,
   `/gripper/*`, `/track/*`, `/robot/*`, `/velocity/*` surfaces all carry
   `require_claim` (423 even when *no* claim is held), so the `/web/`

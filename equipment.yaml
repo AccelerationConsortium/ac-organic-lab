@@ -100,18 +100,22 @@ equipment:
     name: UFactory xArm5
     kind: robot_arm
     adapter: http
-    protocol: "1.1"
+    protocol: "1.2"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000
     tailscale_ip: 100.64.254.16
     status_path: /status
     poll_timeout_seconds: 2.0
-    # STATUS_SPEC v1.1: claim/heartbeat/release + claim-gated control
-    # (motion-graph /control/graph/* plus the legacy /move|/gripper|/track
-    # surfaces, all behind require_claim). protocol "1.1" turns on the
-    # dashboard passthrough's per-request claim dance, which the device's
-    # hard enforcement (tokenless -> 423) requires. Claims are only
-    # issuable while the controller is connected; the SDK must never
-    # auto-connect a robot arm, hence do_not_call_connect stays.
+    # STATUS_SPEC v1.2 (device repo commit c91dd05, verified live 2026-07-30):
+    # activity / activity_since are observed from the controller's motion
+    # state (not derived from equipment_status), and allowed_actions is gated
+    # on activity — while activity is "running" every move.<node_id> target
+    # is withheld and only "stop" remains. Only one motion may be in flight;
+    # a concurrent move is refused with HTTP 409 {"detail":{"error":
+    # "motion_in_progress", ...}} (§6.1 state conflict, not a 412
+    # precondition). The dashboard passthrough's per-request claim dance
+    # stays (the device hard-enforces X-Claim-Token; tokenless -> 423).
+    # Claims are only issuable while the controller is connected; the SDK
+    # must never auto-connect a robot arm, hence do_not_call_connect stays.
     do_not_call_connect: true
     tiles:
       hte: { w: 2, h: 1 }
@@ -142,7 +146,7 @@ equipment:
     name: Opentrons OT-2 (HTE)
     kind: liquid_handler
     adapter: http
-    protocol: "1.1"
+    protocol: "1.2"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020
     tailscale_ip: 100.64.254.16
     status_path: /status
@@ -325,7 +329,7 @@ equipment:
     name: Opentrons OT-2 (Complexation)
     kind: liquid_handler
     adapter: http
-    protocol: "1.1"
+    protocol: "1.2"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8021
     tailscale_ip: 100.64.254.91
     status_path: /status
@@ -369,12 +373,15 @@ equipment:
 
   # Per-printer STATUS_SPEC surfaces served from the same gateway. They are
   # intentionally omitted from Overview sections and rendered together on
-  # /utils/bambu_printer instead.
+  # /utils/bambu_printer instead. The per-printer envelopes are v1.2 (print-job
+  # `activity` observed from the printer's gcode state); the aggregate gateway
+  # `/status` above stays v1.0 — it fronts printers and has no primary
+  # operation of its own.
   - id: bambu_p1s_01
     name: Bambu P1S 01
     kind: other
     adapter: http
-    protocol: "1.0"
+    protocol: "1.2"
     base_url: http://127.0.0.1:8012
     status_path: /printers/bambu_p1s_01/status
     poll_timeout_seconds: 3.0
@@ -386,7 +393,7 @@ equipment:
     name: Bambu H2D 01
     kind: other
     adapter: http
-    protocol: "1.0"
+    protocol: "1.2"
     base_url: http://127.0.0.1:8012
     status_path: /printers/bambu_h2d_01/status
     poll_timeout_seconds: 3.0
