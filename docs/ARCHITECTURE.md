@@ -288,7 +288,7 @@ sections:
   - id: lab_environment
     title: Lab Environment
     kind: environmental_map      # renders LabMap instead of PlatformCard
-    equipment: [env_sample_prep, ...]
+    equipment: [env_hte, ...]
 
   - id: hte
     title: HTE Platform

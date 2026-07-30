@@ -86,9 +86,9 @@ def _entry(**overrides) -> EquipmentEntry:
 def test_load_dashboard_overrides_from_committed_yaml() -> None:
     overrides = load_dashboard_overrides(REPO_ROOT / "equipment.yaml")
     # Environmental sensors carry locations.
-    sample_prep = overrides["env_sample_prep"]
+    sample_prep = overrides["env_hte"]
     assert sample_prep.location is not None
-    assert sample_prep.location.label == "Sample Prep"
+    assert sample_prep.location.label == "HTE"
     # No tile on overrides; tile is now on EquipmentEntry.tiles.
     assert not hasattr(sample_prep, "tile") or sample_prep.location is not None
 

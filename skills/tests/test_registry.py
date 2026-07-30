@@ -23,7 +23,7 @@ def test_loads_committed_registry() -> None:
     assert "filter_every_well" in ids
     assert "fume_hood_actuator" in ids
     assert "xarm_translocation" in ids
-    assert "env_sample_prep" in ids
+    assert "env_hte" in ids
     assert "env_storage" in ids
     assert any(i.startswith("env_lab499_") for i in ids)
     assert "ot2_hte" in ids

@@ -555,13 +555,18 @@ equipment:
   # is deployed; switch `adapter: mock` -> `http` + `base_url` once each
   # sensor service is up.
 
-  - id: env_sample_prep
-    name: Sample Prep Sensors
+  - id: env_hte
+    name: HTE Sensors
     kind: environmental_sensor
     adapter: mock
+    # Tomorrow: switch to http for the SEN55 node at 100.64.254.151:8030
+    # protocol: "1.2"
+    # base_url: http://100.64.254.151:8030
+    # status_path: /zones/env_hte/status
+    # poll_timeout_seconds: 8.0
     tiles: {}
     pills: {}
-    location: { x: 75, y: 12, label: "Sample Prep" }
+    location: { x: 75, y: 12, label: "HTE" }
 
   - id: env_storage
     name: Storage Sensors

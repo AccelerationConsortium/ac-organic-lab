@@ -3,7 +3,7 @@ sections:
   #   title: Lab Environment
   #   description: "Temperature, humidity, O₂, and VOC"
   #   kind: environmental_map
-  #   equipment: [env_sample_prep, env_storage, env_lab499_west, env_lab499_east]
+  #   equipment: [env_hte, env_storage, env_lab499_west, env_lab499_east]
 
   - id: web_services
     title: Services
