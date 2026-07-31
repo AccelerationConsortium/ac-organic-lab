@@ -391,12 +391,29 @@ Shipped 2026-07-03 (device repo + this monorepo):
   `require_claim` (423 even when *no* claim is held), so the `/web/`
   panel moves through the same gate. Exempt safety floor: `/move/stop`,
   `/clear/errors`, `/connect`, `/disconnect`.
+- **Simulation self-identification** (device repo commit e0fc768,
+  verified 2026-07-30 against the `uf_software` Docker simulator on the
+  central server): when connected via a `docker` profile the device
+  reports `equipment_status: "dry_run"` (never `ready`), prefixes
+  `message` with `[SIMULATION]`, sets `details.simulated: true`, and the
+  `/web/` panel shows an amber SIMULATION banner (headless-Chromium
+  screenshot confirmed). `dry_run` coexists with any `activity` per
+  STATUS_SPEC §2.3 — a mid-move sim poll reads `dry_run` +
+  `activity: "running"` with `allowed_actions: ["stop"]`, and idle
+  restores the `move.<node_id>` targets. Startup log prints
+  `[events] exporter OFF` when `XARM_INGEST_URL` is unset; if it were
+  set, the exporter self-suppresses under a simulation profile.
 
 Open:
 
 - [ ] **Full claim lifecycle verification** with the arm connected:
   claim → move → heartbeat → release, `details.claimed_by` populates.
-  (Tokenless-423 half already verified live.)
+  (Tokenless-423 half already verified live. The full lifecycle —
+  claim → `graph/move_to` → release, `details.claimed_by` populating
+  and clearing, plus expiry semantics: heartbeat after TTL → 401,
+  tokenless move → 423 — was exercised end-to-end **against the Docker
+  simulator** 2026-07-30 during the e0fc768 verification; only the
+  real-arm repeat remains.)
 - [ ] **Skill-name reconciliation**: the device advertises
   `allowed_actions` as `connect`/`stop`/`clear_errors`/`move.<node_id>`
   (graph-derived, STRICT mode only) while the catalog registers
