@@ -296,11 +296,11 @@ class LabDatabase:
         Returns ``None`` when the device has never reported the counter in
         (or immediately before) the window — "not tracked", distinct from 0.
         """
-        window = (device_id, CYCLES_TOTAL_METRIC, f"-{days}")
+        window = (device_id, CYCLES_TOTAL_METRIC, _iso_ago(days=days))
         rows = self._fetchall(
             "SELECT value FROM sensor_readings"
             " WHERE sensor_id = ? AND metric = ?"
-            "   AND ts >= datetime('now', ? || ' days')"
+            "   AND ts >= ?"
             " ORDER BY ts",
             window,
         )
@@ -309,7 +309,7 @@ class LabDatabase:
         carry = self._fetchone(
             "SELECT value FROM sensor_readings"
             " WHERE sensor_id = ? AND metric = ?"
-            "   AND ts < datetime('now', ? || ' days')"
+            "   AND ts < ?"
             " ORDER BY ts DESC LIMIT 1",
             window,
         )
@@ -558,9 +558,9 @@ class LabDatabase:
         rows = self._fetchall(
             "SELECT ts, value, unit FROM sensor_readings"
             " WHERE sensor_id = ? AND metric = ?"
-            "   AND ts >= datetime('now', ? || ' hours')"
+            "   AND ts >= ?"
             " ORDER BY ts ASC LIMIT ?",
-            (sensor_id, metric, f"-{since_hours}", limit),
+            (sensor_id, metric, _iso_ago(hours=since_hours), limit),
         )
         return [dict(r) for r in rows]
 
@@ -619,11 +619,16 @@ class LabDatabase:
         Called once per poll cycle to bound unbounded growth.  At 60 s poll
         intervals, 6 outlets × 3 metrics × 2 strips produces ~52 k rows/day;
         30 days of retention caps the table at ~1.6 M rows (~30 MB).
+
+        Until 2026-07-31 the cutoff was built with `datetime('now', …)`, which
+        under-deleted: see `_iso_ago` for why a stored ISO timestamp always
+        compared greater than that bound. The error direction was the safe one
+        — rows sharing the cutoff's date were spared, so the table ran at most
+        ~1 day over the retention cap and nothing was ever deleted early.
         """
         self._execute(
-            "DELETE FROM sensor_readings"
-            " WHERE ts < datetime('now', '-' || ? || ' days')",
-            (str(keep_days),),
+            "DELETE FROM sensor_readings WHERE ts < ?",
+            (_iso_ago(days=keep_days),),
         )
 
 
@@ -643,6 +648,26 @@ def resolve_db_path() -> Path:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _iso_ago(*, days: float = 0.0, hours: float = 0.0) -> str:
+    """A UTC cutoff `days`/`hours` in the past, in the same format as `_now()`.
+
+    Use this for every `WHERE ts >= ?` bound instead of SQLite's
+    `datetime('now', …)`. The two are **not** interchangeable: `_now()` writes
+    ISO-8601 (`2026-07-31T03:02:54.880535+00:00`) while `datetime()` renders
+    space-separated and offset-free (`2026-07-31 03:03:20`). Since `'T'` (0x54)
+    sorts above `' '` (0x20), every row sharing the cutoff's date compared
+    greater than the bound regardless of its time — so a "last 1 hour" filter
+    silently returned everything since midnight UTC. Emitting the bound in the
+    stored format makes the lexicographic comparison mean what it says.
+
+    Only valid because `sensor_readings.ts` is uniformly UTC (`+00:00`), which
+    holds because every write goes through `_now()`. `equipment_events.ts` also
+    carries device-ingested `…Z`-suffixed values, so the same substitution
+    there needs format normalisation first, not just this helper.
+    """
+    return (datetime.now(timezone.utc) - timedelta(days=days, hours=hours)).isoformat()
 
 
 def _parse_ts(ts: str) -> datetime:
