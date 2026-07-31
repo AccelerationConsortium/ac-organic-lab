@@ -12,7 +12,7 @@ Cursor plan UI.
 > migration histories are compressed to their outcomes — full detail is in
 > git history and the device repos. Open work is preserved verbatim.
 
-## Current state (last fleet sweep: 2026-05-30)
+## Current state (last full fleet sweep: 2026-05-30; protocol-version + liveness re-probe: 2026-07-30)
 
 | Milestone | Scope | Status |
 |-----------|-------|--------|
@@ -24,14 +24,31 @@ Cursor plan UI.
 | **v0.4 PR-3** | Live agent acceptance: run a 5-step `Plan` against PlateLoc via `execute_plan` | ◑ executor validated live 2026-07-15; a *successful* seal is blocked by a PlateLoc compressed-air fault (facilities), retry pending |
 | **v0.5** | Standalone `lab-skills serve` CLI exposing the aggregator as a long-lived HTTP service | not started |
 
-**Fleet snapshot (live, all on `adapter: http`).** Zero `legacy_http`,
-zero `mock` left in `equipment.yaml`. Thirteen devices respond live
-from real hardware (`cam_hte_tapo_c245`, both `plug_hte_strip_*`,
-`fume_hood_actuator`, `xarm_translocation`, `ot2_hte`, `dose_every_well`,
+**Fleet snapshot.** Zero `legacy_http` left in `equipment.yaml` — LG2 holds.
+`adapter: mock` is **no longer zero**: 24 of 30 entries are `http`, and six
+are `mock` (the four `env_*` sensors, plus `laagente_analitica` and
+`bitacora_eln`, which were onboarded as placeholder tiles). Nothing is
+`enabled: false` and no entry carries a `maintenance:` block.
+
+All thirty entries answered the 2026-07-30 sweep with no `fetch_error`,
+broken down as: seventeen real-hardware devices (`cam_hte_tapo_c245`,
+`cam_echem_tapo_c245`, both `plug_hte_strip_*`, `fume_hood_actuator`,
+`xarm_translocation`, `ot2_hte`, `ot2_complexation`, `dose_every_well`,
 `torry_pines_shaker`, `filter_every_well`, `plateloc`, `cytation_5`,
-`agilent_uplc_ms`, `agilent_biostack`, `pypoe_web`); the four `env_*`
-environmental sensors are still synthesised pending the `env_sensors`
-repo.
+`agilent_uplc_ms`, `agilent_biostack`, `bambu_p1s_01`, `bambu_h2d_01`),
+nine service / gateway tiles (`pypoe_web`, `kasa_tapo_gateway`,
+`bambu_gateway`, `uptime_kuma`, `laagente_analitica`, `bitacora_eln`,
+`analytica_db`, `ac_organic_lab_api`, `ac_organic_lab_auth`), and the
+four `env_*` environmental sensors, still synthesised pending the
+`env_sensors` repo. Note that "answered" is weaker than "reports real
+hardware" for the six `mock` entries above — a mock adapter always
+answers.
+
+> The per-device table and sub-task sections below still cover only the
+> original seventeen entries. The devices onboarded since (both Bambu
+> printers + `bambu_gateway`, `ot2_complexation`, `cam_echem_tapo_c245`,
+> and the newer service tiles) are live and version-checked in the
+> protocol mix below, but have no migration history recorded here yet.
 
 **Web-service tile: `analytica_db`.** AnaliticaDB (the lab's record
 store, FastAPI on the data server at `100.64.254.6:8010`) is registered
@@ -41,18 +58,33 @@ no `open` pill) and serves a STATUS_SPEC `/status` envelope (`ready`, or
 repo is being generalized into the lab's ELN+LIMS record layer — see
 [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md).
 
-**Protocol mix.** Eight devices reach at least `protocol_version: "1.1"`
-on their live `/status` envelope (`fume_hood_actuator`,
-`xarm_translocation`, `ot2_hte`, `torry_pines_shaker`, `filter_every_well`,
-`plateloc`, `cytation_5`, `pypoe_web`); the rest are v1.0. Three of those
-repos are **natively v1.2** and consume the shared `sdl-lab-contract`
-package instead of a vendored `models.py`: `torry_pines_shaker` (live since
-2026-07-25), `plateloc` (merged 2026-07-26, live at its next service
-restart), and `xarm_translocation` (device repo commit c91dd05, verified
-live 2026-07-30). The shared-package threshold ("3+ repos cleanly on v1.1
-for ~1 month") is comfortably cleared; the Appendix B v2 gate additionally
-needs the *majority* of the fleet reporting `activity` — 3 of the 8 v1.1+
-devices so far.
+**Protocol mix** (live `/status` envelopes, 2026-07-30 sweep; registry
+`protocol:` agrees with the wire for every entry — no drift).
+
+| Live version | n | Devices |
+|---|---|---|
+| **1.2** | 7 | `plateloc`, `xarm_translocation`, `torry_pines_shaker`, `ot2_hte`, `ot2_complexation`, `bambu_p1s_01`, `bambu_h2d_01` |
+| 1.1 | 7 | `fume_hood_actuator`, `dose_every_well`, `filter_every_well`, `cytation_5`, `agilent_uplc_ms`, `agilent_biostack`, `pypoe_web` |
+| 1.0 | 16 | both `cam_*`, both `plug_hte_strip_*`, `kasa_tapo_gateway`, `bambu_gateway`, the six service tiles, the four `env_*` sensors |
+
+The v1.2 devices consume the shared `sdl-lab-contract` package instead of
+a vendored `models.py`. Migration dates: `torry_pines_shaker` (live
+2026-07-25), `plateloc` (merged 2026-07-26; **deployed and verified live
+2026-07-30** — device v1.4.0, `activity`, and `cycles_total: 1862`
+mirroring the instrument odometer all present on the wire),
+`xarm_translocation` (device repo commit c91dd05, verified live
+2026-07-30), plus both OT-2 gateways and both Bambu printers.
+
+The shared-package threshold ("3+ repos cleanly on v1.1 for ~1 month") is
+comfortably cleared. The Appendix B v2 gate additionally needs the
+*majority* of the fleet reporting `activity`: **7 of the 14 v1.1+ devices**
+— exactly half, so the gate is at but not past its threshold. The six
+actuating v1.1 stragglers are what clear it: `fume_hood_actuator`,
+`dose_every_well`, `filter_every_well`, `cytation_5`, `agilent_uplc_ms`,
+`agilent_biostack`. (`pypoe_web` is the seventh, but it is a read-only web
+service with no primary operation, so v1.2 would add nothing.) The v1.0
+group is mostly gateway-fronted or presentation-only tiles where `activity`
+has no meaningful referent.
 
 **Skill catalog inventory** (`SKILL_REGISTRY` keys, count of `SkillDef`s
 each):
@@ -138,7 +170,7 @@ Each per-device repo is migrated independently. The dashboard's
 → `http` once `/status` is `EquipmentStatus`-shaped, and `protocol:
 "1.0"` → `"1.1"` once the device implements claims.
 
-### Verified state (2026-05-30 liveness sweep)
+### Verified state (2026-05-30 liveness sweep; versions + states re-probed 2026-07-30)
 
 Probed against `http://127.0.0.1:8001/api/equipment` on the dashboard
 host. Spec is what the device's live `/status` envelope reports.
@@ -149,25 +181,31 @@ host. Spec is what the device's live `/status` envelope reports.
 | `plug_hte_strip_right` / `_left` | `http` | 1.0 | ✅ `ready` | HS300 power strips; `on`/`off`/`toggle`; per-outlet safety decided client-side (`outletIsSafe()`). |
 | `fume_hood_actuator` | `http` | 1.1 | ✅ `ready` | `sash.move`/`sash.stop`; deployed on the Pi at `100.64.254.100:5000`; round-trip verified from `FumeHoodTile`. |
 | `xarm_translocation` | `http` | **1.2** | ✅ `requires_init` | v1.2 native (device repo commit c91dd05, verified live 2026-07-30): controller-observed `activity` / `activity_since`, `allowed_actions` gated on activity, concurrent-move refusal (409 `motion_in_progress`, §6.1). Claim protocol + `/control/graph/*` deployed 2026-05-31; claims gated behind `POST /connect`. Open items in the sub-tasks below. |
-| `ot2_hte` | `http` | 1.1 | ✅ `ready` | Protocol actions + `lights.set` advertised; deck snapshot pulled over SSH. Protocol-action SkillDefs pending (typed labware args). |
+| `ot2_hte` | `http` | **1.2** | ✅ `ready` | Now v1.2 native (gateway 8.7.0): `activity` + `cycles_total`. Protocol actions + `lights.set` advertised; deck snapshot pulled over SSH. A second OT-2, `ot2_complexation` (same gateway version, also v1.2), is registered and currently `error` — `POST /runs` read-timeout to `sdl2-ot2-complexation`, `last_error.code: startup_failed`. |
 | `dose_every_well` | `http` | 1.1 | ✅ `requires_init` | Full v1.1 verified live 2026-05-31: hard `X-Claim-Token` (423), `/control/*` consolidation (breaking), state-driven `allowed_actions`. |
 | `torry_pines_shaker` | `http` | **1.2** | ✅ `ready`/`degraded` | First native v1.2 device (2026-07-25): motor-observed `activity`, `cycles_total`, per-subsystem `allowed_actions`. Poll timeout restored to 10 s (read-off-lock fix deployed). The heater RTD `cal` fault recurs intermittently — now reported honestly as `degraded` without blocking shakes. |
 | `filter_every_well` | `http` | 1.1 | ✅ `ready` | v1.1 deployed on the Pi at `100.64.254.104`; PressTile per-direction `hold_time` inputs verified (EQUIP_STATUS.md §8). |
-| `plateloc` | `http` | 1.1 → **1.2** *(restart pending)* | ✅ `ready` | v1.2 merged to `main` 2026-07-26 (device v1.4.0, PR #2): seal-cycle `activity`, `cycles_total` mirroring the instrument odometer, three §6 interlocks (stage / health / temperature) all mirrored in `allowed_actions`, `equipment_version` populated. The **live envelope still reports 1.1** until the NSSM service is restarted (needs an elevated shell — see the sub-task). Real claims (TTL `ClaimStore`, commit fa98ca8) verified 2026-05-31; 423 ahead of the 412s. |
+| `plateloc` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and live 2026-07-30** (device v1.4.0, PR #2): seal-cycle `activity`, `cycles_total` mirroring the instrument odometer (live value 1862, equal to `cycle_count`), three §6 interlocks (stage / health / temperature) all mirrored in `allowed_actions`, `equipment_version` populated. Real claims (TTL `ClaimStore`, commit fa98ca8) verified 2026-05-31; 423 ahead of the 412s. Reader-visible behaviour changes noted below the sub-tasks. |
 | `cytation_5` | `http` | 1.1 | ✅ `ready` | 13 actions advertised; device-repo Phases 3+4 shipped; Phase 2 (per-well tracking) remains. |
 | `agilent_uplc_ms` | `http` | 1.1 | ✅ `ready` | v1.1 sidecar with hard claims and the `workflow.start`/`end` campaign lock; the sidecar owns the queue. Detail in the sub-task below. |
-| `agilent_biostack` | `http` | 1.0 | ✅ `ready` | Driver landed; read-only (`allowed_actions: []`), no `/control/*` yet. |
+| `agilent_biostack` | `http` | **1.1** | ✅ `ready` | No longer read-only: device v0.2.0 now serves the claim trio + `/control/{startup,shutdown,home,stage_plate,present_plate,handoff}`, advertising `["shutdown","home","stage_plate","handoff"]` live. Real hardware (`details.com_port: COM8`, `bench_validated: 2026-05-29`), not dry-run. Not yet exercised end-to-end from a workflow or a dashboard tile — see the sub-task. |
 | `pypoe_web` | `http` | 1.1 | ✅ `ready` | Internal web service; no control surface. |
 | `analytica_db` | `http` | 1.0 | ✅ `ready` | Record-layer tile; STATUS_SPEC `/status` envelope live alongside the data API. |
 | `env_*` (4 sensors) | `http` (mock) | 1.0 | dry_run | Awaiting the `env_sensors` repo. Not on the v0.4 critical path. |
 
 ### Remaining migration work (priority order)
 
-1. **`agilent_biostack` (plate_stacker) `/control/*` surface** —
-   driver landed and is on `adapter: http` v1.0 read-only. Until it
-   grows control endpoints the xArm is the lab's only plate-mover,
-   which makes it both a throughput bottleneck and a single point of
-   failure for the solubility workflow.
+1. ~~**`agilent_biostack` (plate_stacker) `/control/*` surface**~~ —
+   **shipped** (device v0.2.0, live v1.1 as of the 2026-07-30 sweep): the
+   claim trio plus `/control/{startup,shutdown,home,stage_plate,
+   present_plate,handoff}`. The xArm is no longer the lab's only
+   plate-mover on paper. What remains is *operationalising* it, the same
+   gap the xArm has: no dashboard tile controls, and no workflow has
+   driven it through `execute_plan` yet. Skill names *do* line up — all
+   six `plate_stacker` SkillDefs (`startup`, `shutdown`, `home`,
+   `stage_plate`, `present_plate`, `handoff`) match the device's
+   endpoint/`allowed_actions` names exactly, so this device does **not**
+   have the xArm's mismatch problem (item 2c).
 2. **`xarm_translocation` (operationalising the graph surface)** — the
    device now exposes claim + `/control/graph/*` and the catalog has the
    matching SkillDefs, but: (a) control is gated behind `POST /connect`;
@@ -207,15 +245,19 @@ is the remaining work per device.
   `allowed_actions` gated on activity as well as the interlocks;
   `equipment_version` populated (closes the cosmetic above). 85 tests.
   Two behaviour changes worth knowing as a reader — see the notes below.
-- [ ] **Deploy + live verification** — the NSSM restart needs an elevated
-  shell (the `plateloc` service SD grants start/stop to
-  `BUILTIN\Administrators` only, and WSL-launched shells run with a
-  filtered token). Stop-first order per DEVICE_PC_SETUP §8: this release
-  adds the `sdl-lab-contract` git dependency *and* bumps the project
-  version, so `uv sync` must replace the console-script shim the running
-  service holds open. Confirm `protocol_version: "1.2"`, `activity`,
-  `metrics.cycles_total` and a non-null `equipment_version` on
-  `http://127.0.0.1:8010/status` afterwards.
+- [x] **Deploy + live verification** — **done; verified from the dashboard
+  side 2026-07-30.** The live envelope now reports `protocol_version:
+  "1.2"`, `equipment_version: "1.4.0"`, `activity: "idle"`, and
+  `metrics.cycles_total: 1862` equal to the legacy `cycle_count` (the
+  odometer mirror of §2.3.1 working as specified). `equipment_status:
+  ready`, `message: "Idle, ready to seal"`, heater at 159 °C against a
+  160 °C setpoint. The `allowed_actions` list is
+  `[startup, shutdown, seal.set_temperature, seal.set_time, stage.in,
+  stage.out]` — note `seal.start` is **absent**, consistent with the
+  1 °C temperature-band interlock being active at probe time (§6.2
+  mirroring, not a fault). The NSSM restart on the device PC still
+  required an elevated shell as predicted; whoever performed it did so
+  outside this record.
 - [ ] **PR-3 retry** (see *Operational regressions* / v0.4 PR-3): still
   blocked on the compressed-air supply, unchanged by this release.
 
@@ -448,7 +490,8 @@ out-of-band, un-audited?"):
 | `plateloc`, `dose_every_well` | Yes | **Yes** (hard-enforced since 2026-05-31) | Rejected if a claim is held; cooperative + un-audited via direct `curl` |
 | `xarm_translocation` | Yes | **Yes** on `/control/*`; native `/web/` claim-awareness **unverified** | The `/web/` side-door is still advertised by the tile deep-link — the single most exposed control path in the lab |
 | `agilent_uplc_ms` | Yes | **Yes** (X-Claim-Token → 423) | Rejected if a claim is held. A run can still start out-of-band in OpenLab CDS on the instrument PC — surfaced as `busy`, not preventable. |
-| biostack, pypoe | Yes | read-only, no control surface | n/a |
+| `agilent_biostack` | Yes | Claim trio served; **hard enforcement unverified** | **New exposure as of device v0.2.0** — it grew a plate-moving `/control/*` surface (`home`, `stage_plate`, `present_plate`, `handoff`) after this table was written, so it is no longer the harmless read-only row it used to be. Whether a tokenless POST is refused with 423 has not been probed. Verify before a workflow relies on it. |
+| pypoe | Yes | read-only, no control surface | n/a |
 
 **What closes it, in order:**
 
@@ -486,10 +529,11 @@ The enforcement target is one invariant, not a per-device feature:
 The MCP milestone resumes when **all** of the following are true:
 
 1. **At least three devices in `equipment.yaml` have `adapter: http`.**
-   ✅ **comfortably met** — all 17 entries are on `adapter: http`;
-   thirteen respond live.
-2. **`agilent-plateloc-server` is at `protocol: "1.1"`.** ✅ **met** —
-   plus seven other devices also reach v1.1.
+   ✅ **comfortably met** — 24 of 30 entries are on `adapter: http`, all
+   responding live (the remaining six are `mock` placeholders).
+2. **`agilent-plateloc-server` is at `protocol: "1.1"`.** ✅ **met, and
+   exceeded** — plateloc has been live on v1.2 since 2026-07-30; thirteen
+   other devices also reach v1.1 or better.
 3. **`lab.skills()` returns a non-empty catalog with `available=True`
    entries against at least one v1.1 device.** ✅ **met** — every
    v1.1 device reports non-empty `allowed_actions` live, and the
