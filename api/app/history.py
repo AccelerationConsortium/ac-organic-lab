@@ -28,8 +28,9 @@ import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from .db import canonicalize_ts
 from .events import ACTIVITY_TRANSITION
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,22 @@ class IngestEventRecord(BaseModel):
     context: Optional[str] = None
     # Everything else lands in the payload blob
     extra: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("timestamp")
+    @classmethod
+    def _canonical_timestamp(cls, v: str) -> str:
+        """Store one fixed-width UTC format, whatever the device sent.
+
+        Devices post `Z`-suffixed (and occasionally naive) timestamps, but
+        history windows compare `ts` as a string, so mixed formats can place an
+        event on the wrong side of a cutoff. Normalising here keeps the column
+        uniform; see `db.canonicalize_ts`. An unparseable value is a 422 rather
+        than an uninterpretable row.
+        """
+        try:
+            return canonicalize_ts(v)
+        except ValueError as exc:
+            raise ValueError(f"timestamp is not ISO-8601: {v!r}") from exc
 
 
 class IngestEventsRequest(BaseModel):

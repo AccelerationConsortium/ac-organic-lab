@@ -356,6 +356,10 @@ class LabDatabase:
         now = datetime.now(timezone.utc)
         window_start = now - timedelta(days=days)
 
+        # Bound with `window_start` itself, not a second clock read — the carry
+        # segment below is measured from this exact instant.
+        cutoff = window_start.isoformat()
+
         # In-window transitions of this series.
         rows = self._fetchall(
             """
@@ -365,10 +369,10 @@ class LabDatabase:
             FROM   equipment_events
             WHERE  device_id   = ?
               AND  event_type  = ?
-              AND  ts         >= datetime('now', ? || ' days')
+              AND  ts         >= ?
             ORDER  BY ts
             """,
-            (device_id, event_type, f"-{days}"),
+            (device_id, event_type, cutoff),
         )
 
         # Most recent pre-window transition (state in effect AT window_start).
@@ -378,11 +382,11 @@ class LabDatabase:
             FROM   equipment_events
             WHERE  device_id   = ?
               AND  event_type  = ?
-              AND  ts         <  datetime('now', ? || ' days')
+              AND  ts         <  ?
             ORDER  BY ts DESC
             LIMIT  1
             """,
-            (device_id, event_type, f"-{days}"),
+            (device_id, event_type, cutoff),
         )
 
         state_seconds: dict[str, float] = {}
@@ -425,23 +429,28 @@ class LabDatabase:
         now = datetime.now(timezone.utc)
         window_start = now - timedelta(days=days)
 
+        # Bound with `window_start` itself, not a second clock read: the carry
+        # segment below is measured from this exact instant, so a SQL cutoff
+        # even microseconds apart would mis-attribute that first span.
+        cutoff = window_start.isoformat()
+
         rows = self._fetchall(
             """
             SELECT ts, event,
                    LEAD(ts) OVER (ORDER BY ts) AS next_ts
             FROM service_uptime
             WHERE device_id = ?
-              AND ts >= datetime('now', ? || ' days')
+              AND ts >= ?
             ORDER BY ts
             """,
-            (device_id, f"-{days}"),
+            (device_id, cutoff),
         )
 
         carry_rows = self._fetchall(
             "SELECT event FROM service_uptime"
-            " WHERE device_id = ? AND ts < datetime('now', ? || ' days')"
+            " WHERE device_id = ? AND ts < ?"
             " ORDER BY ts DESC LIMIT 1",
-            (device_id, f"-{days}"),
+            (device_id, cutoff),
         )
         prev_event = carry_rows[0]["event"] if carry_rows else None
 
@@ -647,7 +656,31 @@ def resolve_db_path() -> Path:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    # `timespec` pinned so every stored timestamp is the same width. Bare
+    # `.isoformat()` drops the fractional part when it happens to be zero,
+    # producing a shorter string that breaks the fixed-width assumption every
+    # `ts >= ?` comparison relies on (see `canonicalize_ts`).
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def canonicalize_ts(ts: str) -> str:
+    """Normalise an ISO-8601 timestamp to the exact format `_now()` writes.
+
+    Timestamps are compared as **strings** in SQL (`ts >= ?`), which is only
+    equivalent to comparing instants when every value shares one fixed-width
+    UTC format. Device-supplied timestamps do not: they arrive `Z`-suffixed,
+    at other offsets, sometimes without microseconds. `2026-01-01T00:00:00Z`
+    would sort *above* a `…T00:00:00.500000+00:00` bound — 'Z' (0x5A) beats
+    '.' (0x2E) — placing an earlier instant inside a window it precedes.
+
+    Raises `ValueError` on an unparseable timestamp, deliberately: such a value
+    already breaks `_parse_ts` on read, so rejecting it at ingest surfaces the
+    device's bug instead of storing a row nothing can interpret.
+    """
+    dt = datetime.fromisoformat(ts)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)   # naive ⇒ UTC by convention
+    return dt.astimezone(timezone.utc).isoformat(timespec="microseconds")
 
 
 def _iso_ago(*, days: float = 0.0, hours: float = 0.0) -> str:
@@ -662,12 +695,12 @@ def _iso_ago(*, days: float = 0.0, hours: float = 0.0) -> str:
     silently returned everything since midnight UTC. Emitting the bound in the
     stored format makes the lexicographic comparison mean what it says.
 
-    Only valid because `sensor_readings.ts` is uniformly UTC (`+00:00`), which
-    holds because every write goes through `_now()`. `equipment_events.ts` also
-    carries device-ingested `…Z`-suffixed values, so the same substitution
-    there needs format normalisation first, not just this helper.
+    Sound only while every stored `ts` shares one fixed-width UTC format —
+    `_now()` on the write path and `canonicalize_ts()` on the ingest path are
+    what keep that true.
     """
-    return (datetime.now(timezone.utc) - timedelta(days=days, hours=hours)).isoformat()
+    delta = timedelta(days=days, hours=hours)
+    return (datetime.now(timezone.utc) - delta).isoformat(timespec="microseconds")
 
 
 def _parse_ts(ts: str) -> datetime:

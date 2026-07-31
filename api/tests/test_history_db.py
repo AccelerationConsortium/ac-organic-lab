@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -335,3 +338,152 @@ def test_prune_sensor_readings_drops_rows_just_past_retention(tmp_path):
                                          since_hours=24 * 40, limit=100))
     assert kept == [2.0, 3.0]
     db.close()
+
+
+def test_canonicalize_ts_normalises_every_accepted_form():
+    """One fixed-width UTC format out, whatever ISO-8601 form comes in."""
+    from app.db import canonicalize_ts
+
+    same_instant = {
+        "2026-07-31T03:02:54.500000+00:00",   # already canonical
+        "2026-07-31T03:02:54.500000Z",        # Zulu suffix (device style)
+        "2026-07-31T03:02:54.500000",         # naive ⇒ UTC by convention
+        "2026-07-31T08:32:54.500000+05:30",   # other offset
+    }
+    assert {canonicalize_ts(t) for t in same_instant} == {
+        "2026-07-31T03:02:54.500000+00:00"
+    }
+
+    # Microseconds are always emitted, so every value is the same width.
+    assert canonicalize_ts("2026-07-31T03:02:54Z") == "2026-07-31T03:02:54.000000+00:00"
+    assert len({len(canonicalize_ts(t)) for t in same_instant}) == 1
+
+    with pytest.raises(ValueError):
+        canonicalize_ts("last tuesday")
+
+
+def test_canonicalize_ts_prevents_the_zulu_sort_inversion():
+    """A `Z` timestamp must not sort above a bound it actually precedes."""
+    from app.db import canonicalize_ts
+
+    bound = "2026-07-31T03:02:54.500000+00:00"
+    earlier_zulu = "2026-07-31T03:02:54Z"      # .000000 — before the bound
+
+    assert earlier_zulu > bound, "the raw hazard: 'Z' (0x5A) outranks '.' (0x2E)"
+    assert canonicalize_ts(earlier_zulu) < bound
+
+
+def _stale_before(cutoff: datetime, *, days: int) -> tuple[datetime, float]:
+    """A ts on the cutoff's UTC date but earlier in the day, plus its weight.
+
+    This is the one shape the pre-2026-07-31 bound mishandled: a space-
+    separated cutoff made *every* row sharing its date compare greater, so a
+    row from 00:00 that day was pulled into a window opening at, say, 03:40.
+    How much that distorts the result equals the cutoff's time-of-day, so the
+    caller skips when the clock leaves too little room to tell the difference.
+    """
+    stale = cutoff.replace(hour=0, minute=0, second=0, microsecond=0)
+    misattributed_s = (cutoff - stale).total_seconds()
+    return stale, misattributed_s / (days * 86400.0) * 100.0
+
+
+def test_get_uptime_pct_ignores_events_before_the_window(tmp_path):
+    days = 7
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+    stale, distortion_pct = _stale_before(cutoff, days=days)
+    if distortion_pct < 1.0:
+        pytest.skip("run too close to 00:00 UTC to distinguish the bound bug")
+
+    db = _db(tmp_path)
+    # "down" before the window is the carry-in state, not in-window downtime.
+    db.record_uptime_event("plateloc", "down", ts=_iso(stale))
+    # Recovered at window open, up ever since ⇒ observed time is all up.
+    db.record_uptime_event("plateloc", "recovered", ts=_iso(cutoff + timedelta(seconds=1)))
+
+    pct = db.get_uptime_pct("plateloc", days=days)
+    assert pct == pytest.approx(100.0, abs=0.05), (
+        f"stale pre-window 'down' leaked into the window: {pct}% "
+        f"(a broken bound would read about {100.0 - distortion_pct:.1f}%)"
+    )
+    db.close()
+
+
+def test_get_uptime_pct_charges_a_downtime_span(tmp_path):
+    db = _db(tmp_path)
+    now = datetime.now(timezone.utc)
+
+    # Up for 8 h, down for 2 h, then up again ⇒ 2 of 10 observed hours down.
+    db.record_uptime_event("plateloc", "up", ts=_iso(now - timedelta(hours=10)))
+    db.record_uptime_event("plateloc", "down", ts=_iso(now - timedelta(hours=2)))
+    db.record_uptime_event("plateloc", "recovered", ts=_iso(now))
+
+    pct = db.get_uptime_pct("plateloc", days=7)
+    assert 79.0 < pct < 81.0, f"expected ~80%, got {pct}"
+    db.close()
+
+
+def test_event_time_pcts_excludes_transitions_before_the_window(tmp_path):
+    days = 7
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+    stale, distortion_pct = _stale_before(cutoff, days=days)
+    if distortion_pct < 1.0:
+        pytest.skip("run too close to 00:00 UTC to distinguish the bound bug")
+
+    db = _db(tmp_path)
+    # Pre-window transition into 'error' is carry-in only; 'ready' holds from
+    # window open onward and should account for ~all observed time.
+    db.record_equipment_event("plateloc", STATE_TRANSITION, to_state="error",
+                              ts=_iso(stale))
+    db.record_equipment_event("plateloc", STATE_TRANSITION, to_state="ready",
+                              ts=_iso(cutoff + timedelta(seconds=1)))
+
+    pcts = db.get_state_time_pcts("plateloc", days=days)
+    assert pcts.get("ready", 0.0) == pytest.approx(100.0, abs=0.05), pcts
+    assert pcts.get("error", 0.0) == pytest.approx(0.0, abs=0.05), (
+        f"stale 'error' leaked in: {pcts} "
+        f"(a broken bound would charge it about {distortion_pct:.1f}%)"
+    )
+    db.close()
+
+
+def test_event_time_pcts_handles_zulu_timestamps_from_device_ingest(tmp_path):
+    """Device-ingested `Z` rows must land on the right side of the cutoff."""
+    db = _db(tmp_path)
+    now = datetime.now(timezone.utc)
+    from app.db import canonicalize_ts
+
+    # Written the way the ingest path now stores them: canonicalised.
+    db.record_equipment_event(
+        "xarm_translocation", ACTIVITY_TRANSITION, to_state="running",
+        ts=canonicalize_ts(_iso(now - timedelta(hours=4)).replace("+00:00", "Z")),
+    )
+    db.record_equipment_event(
+        "xarm_translocation", ACTIVITY_TRANSITION, to_state="idle",
+        ts=canonicalize_ts(_iso(now - timedelta(hours=2)).replace("+00:00", "Z")),
+    )
+
+    pcts = db.get_activity_time_pcts("xarm_translocation", days=7)
+    # 2 h running then 2 h idle out of 4 h observed.
+    assert 45.0 < pcts.get("running", 0.0) < 55.0, pcts
+    assert 45.0 < pcts.get("idle", 0.0) < 55.0, pcts
+    db.close()
+
+
+def test_ingest_record_canonicalises_device_timestamps():
+    """The ingest boundary is where mixed formats were entering the column."""
+    from app.history import IngestEventRecord
+
+    rec = IngestEventRecord(timestamp="2026-07-03T20:43:19.729685Z",
+                            event="state_transition")
+    assert rec.timestamp == "2026-07-03T20:43:19.729685+00:00"
+
+    # A device on a non-UTC offset is converted, not stored as sent.
+    rec = IngestEventRecord(timestamp="2026-07-04T01:43:19.729685+05:00",
+                            event="startup")
+    assert rec.timestamp == "2026-07-03T20:43:19.729685+00:00"
+
+    # Unparseable timestamps are rejected here rather than stored unreadable.
+    with pytest.raises(ValidationError):
+        IngestEventRecord(timestamp="2026/07/03 20:43", event="startup")
