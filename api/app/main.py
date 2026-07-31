@@ -35,6 +35,7 @@ from .events import (
     CYCLES_TOTAL_METRIC,
     STATE_TRANSITION,
     snapshot_activity,
+    snapshot_reachable,
 )
 from .history import build_history_router
 from .labware import build_labware_router
@@ -75,9 +76,10 @@ _last_activity: dict[str, str] = {}
 _plug_energy_accum: dict[str, dict[str, float]] = {}
 
 
-#: Gateway-fronted kinds whose ``unknown`` means "unreachable" per
-#: STATUS_SPEC §2.1 — folded into the alert notifier's reachability.
-_GATEWAY_FRONTED_KINDS = {"camera", "smart_plug", "power_strip"}
+# The gateway-fronted kind set and the §2.1 reachability rule live in
+# `events.py` (`GATEWAY_FRONTED_KINDS` / `snapshot_reachable`) so the uptime
+# recorder, the alert notifier, and the presentation layer share one
+# definition.
 
 
 async def _uptime_poll_loop(
@@ -112,11 +114,25 @@ async def _uptime_poll_loop(
             skill_list = await aggregator.get_snapshot()
             for snap in skill_list.equipment:
                 device_id = snap.id
-                reachable = snap.fetch_error is None
-
+                reg_entry = _registry_map.get(device_id)
                 prev = _last_reachable.get(device_id)
                 current_state = _state_str(snap)
                 current_activity, activity_source = snapshot_activity(snap)
+
+                # Reachability per STATUS_SPEC §2.1 — decided once, shared by
+                # every branch below and by the alert notifier. Notably this is
+                # *not* just `fetch_error is None`: see `snapshot_reachable`.
+                reachable = snapshot_reachable(snap, reg_entry)
+
+                # Why the device is unreachable: a transport failure for a
+                # directly-polled device, the gateway's own explanation for a
+                # gateway-fronted one (where `fetch_error` is None and would
+                # otherwise be logged as the literal string "None").
+                unreachable_reason = (
+                    str(snap.fetch_error)
+                    if snap.fetch_error is not None
+                    else (_snap_message(snap) or "gateway cannot reach device")
+                )
 
                 if prev is None:
                     # First observation — write an initial row so the uptime
@@ -164,10 +180,10 @@ async def _uptime_poll_loop(
                         STATE_TRANSITION,
                         from_state=_last_state.get(device_id, "unknown"),
                         to_state="unreachable",
-                        message=str(snap.fetch_error),
+                        message=unreachable_reason,
                     )
                     _last_state[device_id] = "unreachable"
-                    logger.warning("Uptime: %s went DOWN — %s", device_id, snap.fetch_error)
+                    logger.warning("Uptime: %s went DOWN — %s", device_id, unreachable_reason)
                     _last_reachable[device_id] = False
 
                 elif not reachable:
@@ -229,13 +245,12 @@ async def _uptime_poll_loop(
                 # series but revealed by this counter's poll-to-poll delta.
                 _record_cycles_total(db, snap)
 
-                # Sensor readings — real devices expose them in status.details;
-                # mock environmental sensors get synthetic readings generated here.
-                reg_entry = _registry_map.get(device_id)
-
                 # Device-alert notifier (best-effort; suppressed for
                 # maintenance/disabled/mock entries). The notifier owns the
                 # debounce/cooldown/storm logic — see alert_notifier.py.
+                # Shares the single `reachable` decided at the top of the loop:
+                # this block used to apply the §2.1 gateway rule on its own,
+                # which is how the alerting and uptime views came to disagree.
                 if (
                     notifier is not None
                     and notifier.enabled
@@ -244,13 +259,9 @@ async def _uptime_poll_loop(
                     and reg_entry.maintenance is None
                     and reg_entry.adapter != "mock"
                 ):
-                    effective_reachable = reachable and not (
-                        reg_entry.kind in _GATEWAY_FRONTED_KINDS
-                        and current_state == "unknown"
-                    )
                     notifier.observe(
                         device_id,
-                        reachable=effective_reachable,
+                        reachable=reachable,
                         state=current_state,
                         message=_snap_message(snap),
                         last_error=_snap_last_error(snap),

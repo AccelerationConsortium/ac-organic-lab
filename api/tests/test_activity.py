@@ -195,3 +195,65 @@ def test_record_cycles_total_ignores_absent_or_non_numeric():
         db, _Snap(_status(metrics={"cycles_total": MetricValue(value="lots")}))
     )
     assert db.readings == []
+
+
+# ------------------------------------------------------ §2.1 reachability (gateway-fronted)
+
+
+class _Entry:
+    """Minimal stand-in for a registry EquipmentEntry."""
+
+    def __init__(self, kind: str):
+        self.kind = kind
+
+
+def test_transport_failure_is_unreachable_for_any_kind():
+    from app.events import snapshot_reachable
+
+    snap = _Snap(_status(equipment_status="ready"),
+                 fetch_error=FetchError(kind="timeout", message="exceeded 5s cap"))
+    assert snapshot_reachable(snap, _Entry("plate_sealer")) is False
+    assert snapshot_reachable(snap, _Entry("power_strip")) is False
+
+
+def test_gateway_fronted_unknown_is_unreachable_without_a_fetch_error():
+    """The bug this function exists for: gateway answers 200, hardware is gone.
+
+    A plug whose strip is off the LAN reports `unknown` with NO transport
+    error, so a poller keying on `fetch_error` alone logged it as `up`.
+    """
+    snap = _Snap(_status(equipment_kind="power_strip", equipment_status="unknown",
+                         message="No route to host"))
+    assert snap.fetch_error is None
+    from app.events import snapshot_reachable
+    for kind in ("power_strip", "smart_plug", "camera"):
+        assert snapshot_reachable(snap, _Entry(kind)) is False, kind
+
+
+def test_gateway_fronted_healthy_states_stay_reachable():
+    from app.events import snapshot_reachable
+
+    for state in ("ready", "busy", "degraded", "error"):
+        snap = _Snap(_status(equipment_kind="power_strip", equipment_status=state))
+        assert snapshot_reachable(snap, _Entry("power_strip")) is True, state
+
+
+def test_bare_unknown_on_a_directly_polled_device_counts_as_up():
+    """§2.1's other half: an unattributable `unknown` is NOT a down signal.
+
+    A cold start before the first successful poll must not be charged as
+    downtime — "asked and didn't learn" is not "couldn't ask".
+    """
+    from app.events import snapshot_reachable
+
+    snap = _Snap(_status(equipment_kind="plate_sealer", equipment_status="unknown"))
+    assert snapshot_reachable(snap, _Entry("plate_sealer")) is True
+    # Unregistered device: no kind to key the rule on, so it stays up.
+    assert snapshot_reachable(snap, None) is True
+
+
+def test_gateway_fronted_kinds_match_the_spec_list():
+    """§2.1 keys the rule on equipment_kind, so the set is contract."""
+    from app.events import GATEWAY_FRONTED_KINDS
+
+    assert GATEWAY_FRONTED_KINDS == {"camera", "smart_plug", "power_strip"}

@@ -158,6 +158,46 @@ def derive_v2_fields(
     return health, mode, simulated
 
 
+#: Kinds reached over a secondary link behind a shared gateway service
+#: (`kasa-tapo-services` today). STATUS_SPEC §2.1 keys the "unknown means
+#: unreachable" rule on `equipment_kind`, so this set is the contract, not a
+#: convenience list — extend it when a new multi-device proxy appears.
+GATEWAY_FRONTED_KINDS = frozenset({"camera", "smart_plug", "power_strip"})
+
+
+def snapshot_reachable(snap, reg_entry) -> bool:
+    """Is this device reachable, per STATUS_SPEC §2.1?
+
+    Transport success alone is not the answer. A *gateway-fronted* device
+    (camera / plug / strip) whose gateway is healthy but cannot reach the
+    backing hardware reports `equipment_status: "unknown"` and, because the
+    gateway's own process answers HTTP 200, carries **no** `fetch_error`. §2.1
+    requires readers to treat that as unreachable "for presentation *and
+    uptime*" — so a poller keying on `fetch_error` alone records a plug that
+    has been off the LAN for hours as `up`, inflating its uptime.
+
+    The mirror-image case is deliberately *not* unreachable: a bare `unknown`
+    with no attribution (cold start, never-yet-observed) counts as **up**,
+    because nothing established that the device was down. Hence the
+    kind check — it is what distinguishes "asked and couldn't reach it" from
+    "haven't learned yet".
+
+    This is the one definition; the uptime recorder and the alert notifier both
+    consume it, having previously computed it separately and disagreed.
+    """
+    if snap.fetch_error is not None:
+        return False
+    if reg_entry is None:
+        return True
+    kind = getattr(reg_entry, "kind", None)
+    if kind in GATEWAY_FRONTED_KINDS:
+        try:
+            return snap.status.equipment_status != "unknown"
+        except AttributeError:
+            return True
+    return True
+
+
 def snapshot_activity(snap) -> tuple[str, str]:
     """Resolve activity for an aggregator ``EquipmentSnapshot`` (best-effort).
 
