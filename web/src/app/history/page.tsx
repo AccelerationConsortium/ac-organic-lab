@@ -522,10 +522,14 @@ const SENSOR_WINDOWS = [
   { label: "7 d", hours: 168 },
 ];
 
+// Keys match `sense-every-zone`'s `metrics` contract (unit lives in the
+// MetricValue, not the key — STATUS_SPEC best practice #5). CO₂ used to be
+// charted here but no sensor in the lab measures it: the SEN55 reports a
+// Sensirion VOC index instead, which is what replaced it.
 const METRICS = [
-  { key: "temperature_c", label: "Temperature", unit: "°C" },
-  { key: "humidity_pct", label: "Humidity", unit: "%" },
-  { key: "co2_ppm", label: "CO₂", unit: "ppm" },
+  { key: "temperature", label: "Temperature", unit: "°C" },
+  { key: "humidity", label: "Humidity", unit: "%RH" },
+  { key: "voc", label: "VOC", unit: "index" },
 ];
 
 function SensorCard({ sensor }: { sensor: EquipmentSnapshot }) {

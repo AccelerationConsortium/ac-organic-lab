@@ -25,8 +25,8 @@ Cursor plan UI.
 | **v0.5** | Standalone `lab-skills serve` CLI exposing the aggregator as a long-lived HTTP service | not started |
 
 **Fleet snapshot.** Zero `legacy_http` left in `equipment.yaml` — LG2 holds.
-`adapter: mock` is **no longer zero**: 24 of 30 entries are `http`, and six
-are `mock` (the four `env_*` sensors, plus `laagente_analitica` and
+`adapter: mock` is **no longer zero**: 25 of 30 entries are `http`, and five
+are `mock` (three of the four `env_*` zones, plus `laagente_analitica` and
 `bitacora_eln`, which were onboarded as placeholder tiles). Nothing is
 `enabled: false` and no entry carries a `maintenance:` block.
 
@@ -39,10 +39,48 @@ broken down as: seventeen real-hardware devices (`cam_hte_tapo_c245`,
 nine service / gateway tiles (`pypoe_web`, `kasa_tapo_gateway`,
 `bambu_gateway`, `uptime_kuma`, `laagente_analitica`, `bitacora_eln`,
 `analytica_db`, `ac_organic_lab_api`, `ac_organic_lab_auth`), and the
-four `env_*` environmental sensors, still synthesised pending the
-`env_sensors` repo. Note that "answered" is weaker than "reports real
-hardware" for the six `mock` entries above — a mock adapter always
-answers.
+four `env_*` environmental zones — of which **`env_hte` is now real
+hardware** (see below); the other three remain synthesised. Note that
+"answered" is weaker than "reports real hardware" for the five remaining
+`mock` entries — a mock adapter always answers.
+
+**Environmental sensors: `sense-every-zone` (first zone live 2026-07-31).**
+The repo the earlier notes called `env_sensors` shipped under the name
+[`sense-every-zone`](https://github.com/cyrilcaoyang/sense-every-zone) (the
+name `LAB_MONITORING.md` had reserved for it). It is a **gateway**: one
+FastAPI process per node serving `GET /zones/{zone_id}/status`, with a bare
+`/status` that 404s by design — the same shape as `kasa-tapo-services`, so
+the registry entry carries a per-zone `status_path`.
+
+Zone `env_hte` is live on real hardware: a Raspberry Pi Zero
+(`sdl2-pi0-environ-01`, port 8030) with a Sensirion **SEN55** (T / RH / VOC
+index / NOx index / PM1–PM10) and a **PiSugar 3** UPS, natively v1.2 on
+`sdl-lab-contract`. It is monitoring-only, so it reaches v1.2 through the
+§9 read-only clause: no `/control/*`, `allowed_actions: []`, `activity`
+permanently `idle`. `equipment.yaml` flipped from `adapter: mock` to `http`
+this commit.
+
+The other three zones (`env_storage`, `env_lab499_west`, `env_lab499_east`)
+stay `mock` pending hardware — `sdl2-pi0-environ-02` is enrolled in the
+tailnet but offline. Their placeholder envelopes now **mirror the live
+zone's shape** (same metric keys and units, `sen55_*` / `ups_*` components),
+so every reader exercises one code path; they keep `equipment_status:
+dry_run` and `adapter: mock` so synthetic readings can never be mistaken for
+lab data.
+
+> **Metric keys lost their unit suffixes** (2026-07-31, both repos). The
+> device now publishes `temperature` / `humidity` / `voc` / `nox` / `pm25` /
+> `battery` with the unit in `MetricValue.unit`, per best practice #5, rather
+> than `temperature_c` / `humidity_rh` / `voc_index`. This was a live bug, not
+> a cleanup: `LabMap.tsx` reads `metrics.temperature` by name, so the HTE
+> marker would have rendered blank, and `_write_sensor_readings` looked for
+> flat `details["temperature_c"]` — a shape no device ever served — so the
+> history series would have silently recorded nothing. Suffixed names survive
+> only inside `details`, which #5 permits. Pre-2026-07-31 `sensor_readings`
+> rows (~170k each of `temperature_c` / `humidity_pct` / `co2_ppm`) were
+> entirely mock-generated and are left in place, orphaned and no longer
+> queried. `co2` is gone for good: nothing in the lab measures it, and the
+> History tab charts the SEN55's VOC index in its place.
 
 > The per-device table and sub-task sections below still cover only the
 > original seventeen entries. The devices onboarded since (both Bambu
@@ -58,14 +96,19 @@ no `open` pill) and serves a STATUS_SPEC `/status` envelope (`ready`, or
 repo is being generalized into the lab's ELN+LIMS record layer — see
 [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md).
 
-**Protocol mix** (live `/status` envelopes, 2026-07-30 sweep; registry
-`protocol:` agrees with the wire for every entry — no drift).
+**Protocol mix** (live `/status` envelopes, 2026-07-30 sweep, `env_hte` added
+2026-07-31). Registry `protocol:` agrees with the wire for every `adapter:
+http` entry — no drift. The three mock `env_*` zones are the one deliberate
+exception: their registry entries carry no `protocol:` (defaulting to `1.0`,
+since they are placeholders for undeployed hardware) while their synthetic
+envelopes mirror the live zone's v1.2 shape. Nothing reads a mock's version,
+and the `adapter: mock` marks them simulated either way.
 
 | Live version | n | Devices |
 |---|---|---|
-| **1.2** | 7 | `plateloc`, `xarm_translocation`, `torry_pines_shaker`, `ot2_hte`, `ot2_complexation`, `bambu_p1s_01`, `bambu_h2d_01` |
+| **1.2** | 8 | `plateloc`, `xarm_translocation`, `torry_pines_shaker`, `ot2_hte`, `ot2_complexation`, `bambu_p1s_01`, `bambu_h2d_01`, `env_hte` |
 | 1.1 | 7 | `fume_hood_actuator`, `dose_every_well`, `filter_every_well`, `cytation_5`, `agilent_uplc_ms`, `agilent_biostack`, `pypoe_web` |
-| 1.0 | 16 | both `cam_*`, both `plug_hte_strip_*`, `kasa_tapo_gateway`, `bambu_gateway`, the six service tiles, the four `env_*` sensors |
+| 1.0 | 15 | both `cam_*`, both `plug_hte_strip_*`, `kasa_tapo_gateway`, `bambu_gateway`, the six service tiles, the three remaining mock `env_*` zones |
 
 The v1.2 devices consume the shared `sdl-lab-contract` package instead of
 a vendored `models.py`. Migration dates: `torry_pines_shaker` (live
@@ -76,15 +119,22 @@ mirroring the instrument odometer all present on the wire),
 2026-07-30), plus both OT-2 gateways and both Bambu printers.
 
 The shared-package threshold ("3+ repos cleanly on v1.1 for ~1 month") is
-comfortably cleared. The Appendix B v2 gate additionally needs the
-*majority* of the fleet reporting `activity`: **7 of the 14 v1.1+ devices**
-— exactly half, so the gate is at but not past its threshold. The six
-actuating v1.1 stragglers are what clear it: `fume_hood_actuator`,
+comfortably cleared. The Appendix B v2 gate additionally needs the *majority*
+of the fleet reporting `activity`: **8 of the 15 v1.1+ devices** — a bare
+majority, crossed on 2026-07-31 when `env_hte` went live.
+
+Treat that as met-on-a-technicality, not as the gate opening. `env_hte` is a
+passive sensor whose `activity` is permanently `idle`; it demonstrates nothing
+about the fleet's ability to absorb a contract migration, which is what gate
+criterion 2 is actually testing. The six *actuating* v1.1 stragglers are the
+real measure, and all six are still outstanding: `fume_hood_actuator`,
 `dose_every_well`, `filter_every_well`, `cytation_5`, `agilent_uplc_ms`,
-`agilent_biostack`. (`pypoe_web` is the seventh, but it is a read-only web
-service with no primary operation, so v1.2 would add nothing.) The v1.0
-group is mostly gateway-fronted or presentation-only tiles where `activity`
-has no meaningful referent.
+`agilent_biostack`. (`pypoe_web` is the seventh v1.1 entry, but it is a
+read-only web service with no primary operation, so v1.2 would add nothing.)
+Gate criterion 2 also requires the §2.3.2 reader-side derivation to be
+deleted — already true since 2026-07-25. The v1.0 group is mostly
+gateway-fronted or presentation-only tiles where `activity` has no meaningful
+referent.
 
 **Skill catalog inventory** (`SKILL_REGISTRY` keys, count of `SkillDef`s
 each):
@@ -191,7 +241,8 @@ host. Spec is what the device's live `/status` envelope reports.
 | `agilent_biostack` | `http` | **1.1** | ✅ `ready` | No longer read-only: device v0.2.0 now serves the claim trio + `/control/{startup,shutdown,home,stage_plate,present_plate,handoff}`, advertising `["shutdown","home","stage_plate","handoff"]` live. Real hardware (`details.com_port: COM8`, `bench_validated: 2026-05-29`), not dry-run. Not yet exercised end-to-end from a workflow or a dashboard tile — see the sub-task. |
 | `pypoe_web` | `http` | 1.1 | ✅ `ready` | Internal web service; no control surface. |
 | `analytica_db` | `http` | 1.0 | ✅ `ready` | Record-layer tile; STATUS_SPEC `/status` envelope live alongside the data API. |
-| `env_*` (4 sensors) | `http` (mock) | 1.0 | dry_run | Awaiting the `env_sensors` repo. Not on the v0.4 critical path. |
+| `env_hte` | `http` | **1.2** | ✅ `ready` | **Live 2026-07-31.** `sense-every-zone` gateway on `sdl2-pi0-environ-01:8030`, `status_path: /zones/env_hte/status`; SEN55 + PiSugar 3, both components `ready`. Monitoring-only, so v1.2 via the §9 read-only clause (`allowed_actions: []`, `activity` always `idle`). Reached over a DERP relay — `poll_timeout_seconds: 8.0`, observed latency ~120 ms. |
+| `env_storage`, `env_lab499_west`, `env_lab499_east` | `mock` | 1.0 | dry_run | Awaiting hardware (`sdl2-pi0-environ-02` enrolled but offline). Synthetic envelopes mirror `env_hte`'s metric shape so readers take one path. |
 
 ### Remaining migration work (priority order)
 
@@ -424,10 +475,37 @@ device, and the reference implementation):
   poll timeout restored to 10 s (the read-off-lock fix deployed with
   v0.2.0 — the poll-contention watch item below is cleared).
 
-#### Remaining mock-only entries
+#### `sense-every-zone` (environmental sensors)
 
-The four `env_*` environmental sensors stay synthesised pending the
-`env_sensors` repo; intentionally not on this round's critical path.
+Zone `env_hte` is live and registered (see the fleet notes above). Open:
+
+- [ ] **Deploy the metric-key rename to the Pi.** Device commit `7f22bf9`
+  (unsuffixed `metrics` keys) is pushed to `main` but **not yet running** —
+  the node still serves `temperature_c` / `humidity_rh` / `voc_index`, which
+  no reader now looks for, so the HTE map marker and its history series stay
+  empty until this lands. On `sdl2-pi0-environ-01`: `git -C
+  /opt/sense-every-zone pull && sudo systemctl restart sense-every-zone`,
+  then confirm `curl -s
+  http://127.0.0.1:8030/zones/env_hte/status | grep -o '"temperature"'`.
+- [ ] **`/health` is not §3-conformant** — returns `{"ok": …,
+  "dependencies": […], "timestamp": …}` instead of `{"status": "healthy"}`.
+  Deliberate (the repo aliases `HealthResponse = ZoneHealthResponse` and
+  leaves the spec type unused as `SpecHealthResponse`), and harmless to the
+  aggregator, which polls `status_path` — but it breaks EQUIP_GUIDE §1 Step A
+  and any Kuma keyword monitor on `healthy`. Suggested fix: serve the spec
+  shape at `/health`, move the richer body to `/health/zones`.
+- [ ] **README missing two v1.2-mandated statements** — §9's read-only clause
+  requires it to say *which* items are N/A because the device is
+  monitoring-only (so a reader can tell "deliberately read-only" from
+  "migration half-finished"), and §2.3 requires it to define what "primary
+  operation" means for the kind (for a passive sensor: none, hence
+  permanently `idle`). Neither is present, nor the "conforms to lab status
+  spec v1.2" line. Its sample `equipment.yaml` block is also stale — it
+  carries a `platform:` field (removed in schema v2) and a placeholder
+  `100.64.254.100` base_url.
+- [ ] `equipment_version` is `null` on `/status` (the package is at 0.2.0).
+- [ ] Remaining three zones need hardware; `sdl2-pi0-environ-02` is enrolled
+  in the tailnet but offline.
 
 ## Operational regressions
 

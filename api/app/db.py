@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS sensor_readings (
     id        INTEGER PRIMARY KEY,
     ts        TEXT    NOT NULL,
     sensor_id TEXT    NOT NULL,
-    metric    TEXT    NOT NULL,   -- 'temperature_c' | 'humidity_pct' | 'co2_ppm' | …
+    metric    TEXT    NOT NULL,   -- 'temperature' | 'humidity' | 'voc' | 'pm25' | …
     value     REAL    NOT NULL,
     unit      TEXT    NOT NULL
 );

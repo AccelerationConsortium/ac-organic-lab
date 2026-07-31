@@ -10,9 +10,7 @@ presentation fields (``tile``, ``location``) plus the registry's
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
-import math
 import os
 import socket
 import time
@@ -260,12 +258,6 @@ async def _uptime_poll_loop(
 
                 if (
                     reg_entry is not None
-                    and reg_entry.kind == "environmental_sensor"
-                    and reg_entry.adapter == "mock"
-                ):
-                    _write_mock_sensor_readings(db, device_id)
-                elif (
-                    reg_entry is not None
                     and reg_entry.kind in ("smart_plug", "power_strip")
                 ):
                     _write_plug_readings(db, snap)
@@ -345,27 +337,46 @@ def _record_cycles_total(db: LabDatabase, snap) -> None:
         pass  # best-effort; never crash the poll loop
 
 
+#: Environmental metrics persisted to `sensor_readings`, in `status.metrics`
+#: key order. These names are the `sense-every-zone` contract (its
+#: `_METRIC_MAP`), which the mock adapter mirrors, so mock and real zones take
+#: the identical path through this writer.
+#:
+#: Keys carry no unit suffix — the unit is read off `MetricValue.unit`, per
+#: STATUS_SPEC best practice #5. This is a curated subset, not everything the
+#: device offers: `pm1` / `pm4` are near-duplicates of `pm25` / `pm10` on a
+#: SEN55, and `battery_voltage` is diagnostic noise at one row/minute. Both
+#: remain visible on the live tile via `status.metrics`; they are just not
+#: worth 1,440 rows/day each.
+_ENV_HISTORY_METRICS = (
+    "temperature", "humidity", "voc", "nox", "pm25", "pm10",
+    "co", "o2", "h2", "battery",
+)
+
+
 def _write_sensor_readings(db: LabDatabase, snap) -> None:
-    """Write sensor metrics from a device snapshot (no-op if none present)."""
+    """Write environmental metrics from a device snapshot (no-op if none).
+
+    Reads `status.metrics` — where STATUS_SPEC puts measurements — for both
+    real and mock zones. Values that are non-numeric (or absent, e.g. a basic
+    zone node has no `o2` cell) are skipped rather than coerced, so a missing
+    channel never lands as a phantom zero.
+    """
     try:
-        details = snap.status.details
-        if details is None:
-            return
-        # When env_sensors exposes readings, they will appear as top-level
-        # fields on the details dict under keys like 'temperature_c',
-        # 'humidity_pct', 'co2_ppm'.  Adjust the key list when the device
-        # contract is finalised.
-        metric_map = {
-            "temperature_c": "°C",
-            "humidity_pct": "%",
-            "co2_ppm": "ppm",
-            "pressure_hpa": "hPa",
-        }
-        details_dict = details.model_dump() if hasattr(details, "model_dump") else {}
-        for metric, unit in metric_map.items():
-            value = details_dict.get(metric)
-            if value is not None:
-                db.record_sensor_reading(snap.id, metric, float(value), unit)
+        metrics = getattr(snap.status, "metrics", None) or {}
+        for name in _ENV_HISTORY_METRICS:
+            entry = metrics.get(name)
+            if entry is None:
+                continue
+            raw = entry.value if hasattr(entry, "value") else entry
+            if raw is None or isinstance(raw, bool):
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue  # a device reporting a string metric is not history
+            unit = getattr(entry, "unit", None)
+            db.record_sensor_reading(snap.id, name, value, unit)
     except Exception:
         pass  # sensor data is best-effort; never crash the poll loop
 
@@ -428,34 +439,12 @@ def _write_plug_readings(db: LabDatabase, snap) -> None:
         pass  # never crash the poll loop
 
 
-def _mock_sensor_phase(sensor_id: str) -> float:
-    """Deterministic phase offset (0..2π) derived from a sensor's ID."""
-    h = int(hashlib.md5(sensor_id.encode()).hexdigest()[:8], 16)
-    return (h % 10000) / 10000.0 * 2 * math.pi
-
-
-def _write_mock_sensor_readings(db: LabDatabase, sensor_id: str) -> None:
-    """Generate plausible synthetic readings for a mock environmental sensor.
-
-    Values drift slowly on independent sine waves so different sensors show
-    distinct but realistic trends.  Baselines match a typical indoor lab:
-      temperature  21.5 ± 1.5 °C
-      humidity     48 ± 6 %
-      co2          480 ± 90 ppm
-    """
-    try:
-        t = time.time()
-        φ = _mock_sensor_phase(sensor_id)
-
-        temp = 21.5 + 1.5 * math.sin(t / 3600 + φ) + 0.3 * math.sin(t / 600 + φ * 2)
-        hum  = 48.0 + 6.0 * math.sin(t / 7200 + φ + 1.0) + 1.2 * math.sin(t / 900)
-        co2  = 480.0 + 90.0 * math.sin(t / 14400 + φ + 2.0) + 25.0 * math.sin(t / 1800)
-
-        db.record_sensor_reading(sensor_id, "temperature_c", round(temp, 1), "°C")
-        db.record_sensor_reading(sensor_id, "humidity_pct",  round(hum,  1), "%")
-        db.record_sensor_reading(sensor_id, "co2_ppm",       round(co2,  0), "ppm")
-    except Exception:
-        pass  # never crash the poll loop
+# Synthetic readings are no longer generated here. A mock zone's fake values
+# come from the SDK's `MockAdapter`, which mirrors a real `sense-every-zone`
+# envelope, so `_write_sensor_readings` above persists mock and real zones
+# through one code path. (Removed 2026-07-31 along with the suffixed
+# `temperature_c` / `humidity_pct` / `co2_ppm` names it wrote; `co2` was always
+# fictional — no sensor in the lab measures it.)
 
 
 # ---------------------------------------------------------------------------

@@ -87,9 +87,11 @@ async def test_fetch_all_emits_one_snapshot_per_entry(
             listing = await aggregator.fetch_all()
         assert [s.id for s in listing.equipment] == ["sealer_a", "sensor_b"]
         # Mock adapter on the env sensor produces dry_run with metrics.
+        # Exact keys/units are pinned in test_status_adapters.py; here we only
+        # care that the aggregator carries a populated zone envelope through.
         env = listing.equipment[1]
         assert env.status.equipment_status == "dry_run"
-        assert set(env.status.metrics.keys()) == {"temperature", "humidity", "o2", "voc"}
+        assert {"temperature", "humidity", "voc"} <= set(env.status.metrics)
     finally:
         await aggregator.shutdown()
 

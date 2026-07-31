@@ -286,8 +286,12 @@ def build_history_router() -> APIRouter:
         the default cap of 2 000 naturally downsamples that to ~1 point per
         ~5 minutes, which is enough resolution for a sparkline.
 
-        Common metric names: ``temperature_c``, ``humidity_pct``, ``co2_ppm``,
-        ``pressure_hpa``, ``power_outlet_N``, ``energy_kwh_cumul_outlet_N``.
+        Common metric names: ``temperature``, ``humidity``, ``voc``, ``nox``,
+        ``pm25``, ``pm10``, ``battery``, ``power_outlet_N``,
+        ``energy_kwh_cumul_outlet_N``. Environmental names carry no unit suffix
+        (the unit is a column); rows written before 2026-07-31 used
+        ``temperature_c`` / ``humidity_pct`` / ``co2_ppm`` and are synthetic
+        mock data left in place but no longer queried.
         """
         import asyncio
         loop = asyncio.get_event_loop()

@@ -405,10 +405,29 @@ async def test_mock_adapter_synthesizes_sensor_metrics(client) -> None:
     adapter = MockAdapter(entry)
     result = await adapter.fetch(client)
     assert result.error is None
+    # Synthetic values, but a real zone's *shape*: the keys and units mirror
+    # `sense-every-zone`'s `_METRIC_MAP` for a SEN55 + PiSugar basic node, so
+    # mock and real zones take the same path through every reader.
     assert result.status.equipment_status == "dry_run"
+    assert result.status.protocol_version == "1.2"
     metric_keys = set(result.status.metrics.keys())
-    assert metric_keys == {"temperature", "humidity", "o2", "voc"}
-    assert result.status.metrics["temperature"].unit == "C"
+    assert metric_keys == {
+        "temperature", "humidity", "voc", "nox",
+        "pm1", "pm25", "pm4", "pm10",
+        "battery", "battery_voltage",
+    }
+    assert result.status.metrics["temperature"].unit == "°C"
     assert result.status.metrics["humidity"].unit == "%RH"
-    assert result.status.metrics["o2"].unit == "%"
-    assert result.status.metrics["voc"].unit == "ppb"
+    # Sensirion VOC/NOx are unitless indices, not ppb concentrations.
+    assert result.status.metrics["voc"].unit == "index"
+    assert result.status.metrics["pm25"].unit == "µg/m³"
+    assert result.status.metrics["battery"].unit == "%"
+    # No Alphasense cells on a basic zone node — never invent gas channels.
+    for absent in ("co", "o2", "h2"):
+        assert absent not in metric_keys
+    # Components mirror the device's naming (sen55_<zone> / ups_<zone>).
+    assert set(result.status.components) == {
+        "sen55_sensors_north_bench", "ups_sensors_north_bench",
+    }
+    # §2.3: dry_run permits any activity, but a quiet sensor is idle.
+    assert result.status.activity == "idle"
