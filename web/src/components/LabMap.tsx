@@ -2,13 +2,44 @@
 
 import type { EquipmentSnapshot, MetricValue } from "@/types/api";
 
-const METRIC_ORDER = ["temperature", "humidity", "o2", "voc"] as const;
+// Display order + short labels for every channel a sense-every-zone node can
+// report (SEN55 + PiSugar basic node; CO/O\u2082/H\u2082 arrive with the fumehood
+// node's Alphasense cells). The tooltip shows each metric the device actually
+// reports \u2014 a missing channel is omitted rather than rendered as a dash, so a
+// basic zone node doesn't display a wall of "\u2014" for cells it doesn't have.
+// Exception: O\u2082 is safety-relevant, so its slot is always visible and reads
+// "\u2014" until a node that measures it comes online.
+const METRIC_ORDER = [
+  "temperature",
+  "humidity",
+  "voc",
+  "nox",
+  "pm1",
+  "pm25",
+  "pm4",
+  "pm10",
+  "co",
+  "o2",
+  "h2",
+  "battery",
+  "battery_voltage",
+] as const;
 const METRIC_LABEL: Record<(typeof METRIC_ORDER)[number], string> = {
   temperature: "T",
   humidity: "RH",
-  o2: "O\u2082",
   voc: "VOC",
+  nox: "NOx",
+  pm1: "PM1",
+  pm25: "PM2.5",
+  pm4: "PM4",
+  pm10: "PM10",
+  co: "CO",
+  o2: "O\u2082",
+  h2: "H\u2082",
+  battery: "Batt",
+  battery_voltage: "Batt V",
 };
+const ALWAYS_SHOWN = new Set<(typeof METRIC_ORDER)[number]>(["o2"]);
 
 function formatTempShort(metric: MetricValue | undefined): string {
   if (!metric || metric.value == null) return "—";
@@ -89,14 +120,16 @@ function SensorMarker({ snapshot }: { snapshot: EquipmentSnapshot }) {
 
       {/* Tooltip on hover/focus */}
       <div
-        className="pointer-events-none absolute left-1/2 top-full z-10 mt-1.5 w-44 -translate-x-1/2 rounded-lg border border-slate-200 bg-white p-2.5 opacity-0 shadow-lg transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 dark:border-slate-700 dark:bg-slate-900"
+        className="pointer-events-none absolute left-1/2 top-full z-10 mt-1.5 w-60 -translate-x-1/2 rounded-lg border border-slate-200 bg-white p-2.5 opacity-0 shadow-lg transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 dark:border-slate-700 dark:bg-slate-900"
         role="tooltip"
       >
         <div className="mb-1.5 truncate text-xs font-semibold text-ink dark:text-slate-100">
           {loc.label ?? snapshot.name}
         </div>
         <dl className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px] leading-tight">
-          {METRIC_ORDER.map((key) => (
+          {METRIC_ORDER.filter(
+            (key) => metrics[key] !== undefined || ALWAYS_SHOWN.has(key),
+          ).map((key) => (
             <div key={key} className="flex items-baseline gap-1">
               <dt className="text-ink-subtle dark:text-slate-500">
                 {METRIC_LABEL[key]}
