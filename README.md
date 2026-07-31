@@ -88,6 +88,7 @@ All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](doc
 | [`docs/AGENTIC_ELN_DESIGN.md`](docs/AGENTIC_ELN_DESIGN.md) | **Agentic ELN design.** The why + the architecture: the four-repo assembly, authorities and trust boundaries, the planning page (repo lifecycle, AG-UI, canonical protocol model, scientific diffs), merge vs. release-for-execution, compilation, and execution boundaries. |
 | [`docs/AGENTIC_ELN_PLAN.md`](docs/AGENTIC_ELN_PLAN.md) | **Agentic ELN implementation plan.** Two build tracks (ELN loop wiring; planning page + release pipeline) and the consolidated list of pending decisions (D-1…D-15). |
 | [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) | The record layer: AnaliticaDB's ELN+LIMS generalization — Plan/Note/Analysis, the materials ledger, containers, the project-repo blueprint, release linkage (mirror — the canonical copy lives in the AnaliticaDB repo). |
+| [`docs/MEASUREMENT_INGEST.md`](docs/MEASUREMENT_INGEST.md) | **Design note — not agreed, not built.** How an instrument acquisition becomes a queryable `Measurement` record: the manifest-as-commit-marker, two-pass robocopy, and a data-server sweep that upserts `/uploads/experiments`. Written up so the alternatives already rejected stay rejected; five open questions still to settle. |
 | [`deploy/README.md`](deploy/README.md) | Linux server deployment, systemd units, Caddy + Tailscale TLS, day-to-day operations. |
 
 ## Local development
