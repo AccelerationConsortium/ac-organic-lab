@@ -627,6 +627,54 @@ v1.2 adds no endpoints and no required fields — a v1.1 device is v1.2-compatib
 
 ## 9. Conformance Checklists
 
+### Read-only devices and the ladder (normative)
+
+The three checklists below are cumulative — v1.1 is "on top of v1.0", v1.2 "on
+top of v1.1". Read literally that ladder is unclimbable for a device with no
+control surface, because **v1.1's additions are all about writing** (claims,
+`allowed_actions`, §6 precondition refusals) while **v1.2's are all read-side**
+(`activity`, `activity_since`, `cycles_total`). Such a device can implement
+every v1.2 item and no v1.1 item at all.
+
+This is not a corner case. As of 2026-07-30, **15 of the 30 entries in
+`equipment.yaml` expose no control affordances**: all four `env_*` sensors,
+every web service, both gateways, and the monitoring-only Bambu printers. And
+`activity` is the field that matters *most* for a device nobody can command —
+"is it working" is the only question such a device answers.
+
+Therefore: **a device that exposes no `/control/*` endpoints satisfies the v1.1
+control requirements vacuously** and MAY report `"1.1"` or `"1.2"` on the
+strength of the read-side items alone. Concretely, for such a device:
+
+- The §5 claim endpoints, `details.claimed_by`, and `X-Claim-Token` items are
+  **N/A** — there is no access to serialize.
+- `allowed_actions: []` is conformant. It is not an unfinished list; there is
+  nothing to allow.
+- §6 does not apply (no action can be refused).
+- Every **read-side** item still applies in full — in particular §2.2's
+  health honesty, and for v1.2 the §2.3 requirement that `activity` come from
+  observed hardware state with the consistency invariants holding.
+- The README **MUST** state which items are N/A because the device is
+  monitoring-only, so a reader can tell "deliberately read-only" from
+  "migration half-finished".
+
+What this does **not** license: a device that *does* expose `/control/*` may
+not skip claims to reach v1.2. Partial control without claims stays v1.0 — the
+exemption is for having nothing to claim, not for finding claims inconvenient.
+
+Why this is safe for readers: `protocol_version` was never the
+claim-capability signal. §5 already permits a v1.1 device to leave claims
+advisory, and the SDK's `ClaimManager` treats 404/405 from `/control/claim` as
+"device does not implement claims" and degrades silently (§7). A client decides
+claimability from that response and from `allowed_actions`, never from the
+version number.
+
+This clause is a **clarification of conformance, not a wire change** — no field
+gains or loses meaning, so it is not a spec revision and does not bump
+`sdl-lab-contract`. The deeper conflation it papers over (one version number
+spanning two independent axes) is recorded as an open question in
+[Appendix B.6](#b6-open-question--conformance-profiles).
+
 ### v1.0 (read-only baseline)
 
 A repo is considered v1.0 conformant when:
@@ -664,7 +712,7 @@ A repo is considered v1.1 conformant when, on top of v1.0:
 - [ ] `README.md` says "This repo conforms to lab status spec v1.1".
 - [ ] `equipment.yaml` entry has `protocol: "1.1"`.
 
-A repo that does **not** want to opt into v1.1 stays on v1.0 unchanged. The SDK treats it as "no claim semantics, fall back to v1.0 catalog `requires_states`".
+A repo that does **not** want to opt into v1.1 stays on v1.0 unchanged. The SDK treats it as "no claim semantics, fall back to v1.0 catalog `requires_states`". A repo that *cannot* opt in because it has no control surface at all is covered by the read-only clause at the top of this section.
 
 ### v1.2 (additive over v1.1)
 
@@ -1227,10 +1275,73 @@ No v2 implementation work starts until **all** of:
    every vendored `models.py`.
 2. **The majority of the fleet natively reports `activity`** and the §2.3.2
    reader-side derivation has been deleted — proof the fleet can absorb a
-   contract migration end-to-end.
+   contract migration end-to-end. Counted over the *whole* registry, read-only
+   devices included: half of it is read-only, and the §9 read-only clause is
+   what lets those devices declare the version that means "activity is
+   observed", so this gate is auditable from `equipment.yaml` rather than by
+   inspecting every envelope by hand.
 3. **A concrete case exists that v1.2 cannot express** — cleanliness alone
    does not justify breaking 17 devices, `requires_states`, and stored
    history.
+
+### B.6 Open question — conformance profiles
+
+**Status: not decided.** Unlike B.1–B.3, this section records a question v2
+must answer, not an agreed shape. It exists so the question is not rediscovered
+from scratch the third time a monitoring-only device is onboarded.
+
+**The conflation.** One `protocol_version` spans two independent axes:
+
+| axis | what it covers | today's versions |
+|---|---|---|
+| read-envelope richness | `/status` fields — `activity`, `activity_since`, `cycles_total` | v1.0 → v1.2 |
+| control contract | claims (§5), `allowed_actions`, §6 precondition refusals | v1.1 |
+
+Half the fleet has only the first axis and no vocabulary for saying so. The §9
+read-only clause deliberately patches the *symptom* inside v1.x, at the price
+of leaving the number ambiguous: `"1.2"` now means "rich reads, and either
+claims or nothing to claim". That is an acceptable trade for a clarification
+that touches no wire field, and a poor foundation to build v2 on.
+
+**Why v2 is the moment.** B.1–B.2 factor the *state fields* and say nothing
+about conformance or versioning, so v2 as drafted inherits the conflation with
+a *longer* ladder (`health`, `activity`, `mode`, `simulated` all arrive as
+read-side additions on top of a control-shaped v1.1 rung). Deciding this is
+also cheap exactly once: the moment there is already one breaking bump to spend.
+
+**Shapes considered, none chosen:**
+
+- **Status quo + the §9 clause.** Zero cost, already in force. Ambiguous number.
+- **A `profile` string** on `/status` (e.g. `monitoring` | `controllable`).
+  One field, readable at a glance; but a two-value enum will want a third value
+  the week after it ships (what is a device with control but no claims?).
+- **A `capabilities: list[str]`** on `/status` (`claims`, `control`,
+  `preconditions`, `events`, …) with `protocol_version` reduced to describing
+  the read envelope alone. Most honest to how devices actually differ, and it
+  subsumes the `profile` idea. Costs a field, list semantics in every reader,
+  and a rule for what an unrecognised capability means.
+- **SiLA-style per-feature versioning** (Appendix A §3, §9): no envelope-level
+  version at all, a device is a set of independently-versioned features and a
+  monitoring-only device simply implements fewer. Most expressive, and the
+  standard this document already benchmarks against — but it replaces one
+  string with a registry of feature identifiers, which is the heaviness
+  Appendix A's TL;DR deliberately rejected.
+
+**Already half-built on the reader side**, which should inform the choice: the
+registry carries a per-entry `protocol:` (a second-order copy of the device's
+claim, §7), and the dashboard already distinguishes a device-reported activity
+from a derived one (`EquipmentSnapshot.activity_source` ∈ {`device`, `status`,
+`none`}). Whatever shape wins should make the registry field derivable from the
+envelope rather than separately maintained.
+
+**A smaller instance of the same question**, worth resolving with it: §9's v1.2
+checklist requires a README definition of the device's "primary operation", but
+a *fronting service* has none — the `bambu_gateway` aggregate envelope fronts
+two printers and does not itself operate. Today such a service stays v1.0 by
+default, which understates that its per-printer surfaces are v1.2. Either
+services are out of scope for the activity axis (and the spec should say so), or
+"primary operation" needs a defined answer for a device whose job is to front
+other devices.
 
 ## See also
 
