@@ -559,6 +559,16 @@ Active watch items (not regressions; behavioural notes):
 - ~~**`torry_pines_shaker` poll contention**~~ — cleared 2026-07-25:
   the device-repo read-off-lock + short-TTL readings-cache fix deployed
   with v0.2.0; `poll_timeout_seconds` restored to 10 s.
+- **`torry_pines_shaker` USB-serial re-enumeration** — the Prolific
+  PL2303 adapter dropped off the bus 2026-07-31; the service's
+  auto-connect failed and it sat in `requires_init` until manually
+  reconnected 2026-08-02. It came back as the same COM6 this time, but a
+  re-plug can renumber: if `serial_init_failed` recurs, enumerate the
+  Prolific COM ports and probe each with the driver's read-only identity
+  queries (`v`/`V`) before editing `config.toml` (COM3 is Intel AMT,
+  COM8 is the BioStack). Consider a service-side retry loop on
+  `serial_init_failed` so a transient USB blip doesn't strand the
+  device in `requires_init` for days.
 - **`plateloc` compressed-air supply** — during the 2026-07-15 PR-3
   bench run the seal cycle failed on Low Air Pressure / vacuum faults
   (`stage.out` was also refused with "Low Air Pressure Error"),
