@@ -591,7 +591,7 @@ function SensorCard({ sensor }: { sensor: EquipmentSnapshot }) {
       </div>
 
       {/* Metric charts */}
-      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-3 xl:grid-cols-4">
         {charts.map((m) => (
           <SensorMetricChart
             key={m.key}
@@ -656,7 +656,10 @@ function SensorsSection({ sensors }: { sensors: EquipmentSnapshot[] }) {
           sub="Add entries with kind: environmental_sensor in equipment.yaml."
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:[grid-template-columns:repeat(2,minmax(0,540px))]">
+        // One full-width card per sensor: since the cards grew from 3 charts
+        // (mock era) to 7 (SEN55 + battery), the old 540px two-column cap
+        // left each chart ~160px wide.
+        <div className="grid grid-cols-1 gap-4">
           {sensors.map((s) => (
             <SensorCard key={s.id} sensor={s} />
           ))}
