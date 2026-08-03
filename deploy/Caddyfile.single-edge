@@ -263,6 +263,32 @@ http://100.64.254.6 {
 		reverse_proxy 100.64.254.6:8007
 	}
 
+	# ---- bitacora (agentic ELN), path-routed ONTO this origin ---------------
+	# The ELN is a separate Next.js app on :3001, framed by the dashboard's
+	# /workflows tab. It is built with `basePath: /bitacora` and proxies
+	# /bitacora/api/* -> :8050 itself, so the prefix must reach it INTACT:
+	# `handle`, never `handle_path` (which strips the prefix the app expects).
+	# forward_auth gates it through the same ac_auth as every other surface.
+	#
+	# MUST stay above the root reverse_proxy below. Caddy matches in order, and
+	# the catch-all otherwise swallows /bitacora/* and answers with the
+	# dashboard's own 404 — which, being same-origin, renders the whole dashboard
+	# inside the Workflows iframe and 404s every ELN asset.
+	#
+	# THIS BLOCK LIVES HERE ON PURPOSE. Installing this file overwrites
+	# /etc/caddy/Caddyfile wholesale, so a route kept only as a hand-edit there is
+	# silently destroyed by the next edge deploy — which is exactly what happened
+	# on 2026-08-02 (three edge fixes that evening; the ELN 404'd until someone
+	# opened the tab). One file, one owner.
+	@bitacora path /bitacora /bitacora/*
+	forward_auth @bitacora 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
+	handle @bitacora {
+		reverse_proxy 127.0.0.1:3001
+	}
+
 	# ---- dashboard (Next.js) at root ---------------------------------------
 	# Next.js serves / and /api/* (it rewrites /api/* to FastAPI on :8001) and
 	# enforces its own control/assistant gate via web/src/middleware.ts against
