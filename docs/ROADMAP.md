@@ -233,7 +233,7 @@ host. Spec is what the device's live `/status` envelope reports.
 | `xarm_translocation` | `http` | **1.2** | ✅ `requires_init` | v1.2 native (device repo commit c91dd05, verified live 2026-07-30): controller-observed `activity` / `activity_since`, `allowed_actions` gated on activity, concurrent-move refusal (409 `motion_in_progress`, §6.1). Claim protocol + `/control/graph/*` deployed 2026-05-31; claims gated behind `POST /connect`. Open items in the sub-tasks below. |
 | `ot2_hte` | `http` | **1.2** | ✅ `ready` | Now v1.2 native (gateway 8.7.0): `activity` + `cycles_total`. Protocol actions + `lights.set` advertised; deck snapshot pulled over SSH. A second OT-2, `ot2_complexation` (same gateway version, also v1.2), is registered and currently `error` — `POST /runs` read-timeout to `sdl2-ot2-complexation`, `last_error.code: startup_failed`. |
 | `dose_every_well` | `http` | 1.1 | ✅ `requires_init` | Full v1.1 verified live 2026-05-31: hard `X-Claim-Token` (423), `/control/*` consolidation (breaking), state-driven `allowed_actions`. |
-| `torry_pines_shaker` | `http` | **1.2** | ✅ `ready`/`degraded` | First native v1.2 device (2026-07-25): motor-observed `activity`, `cycles_total`, per-subsystem `allowed_actions`. Poll timeout restored to 10 s (read-off-lock fix deployed). The heater RTD `cal` fault recurs intermittently — now reported honestly as `degraded` without blocking shakes. |
+| `torry_pines_shaker` | `http` | **1.2** | ✅ `degraded` (motor healthy) | First native v1.2 device (2026-07-25): motor-observed `activity`, `cycles_total`, per-subsystem `allowed_actions`. Poll timeout restored to 10 s (read-off-lock fix deployed). The heater RTD `cal` fault recurs intermittently — now reported honestly as `degraded` without blocking shakes. 2026-08-02: recovered from a 2026-07-31 USB-serial drop (same COM6 after re-enumeration, no config change) and motor verified with a live 20 s test cycle (`degraded` + `running`, `cycles_total` 0→1); the RTD `cal` fault is active again — temperature control blocked pending recalibration at the instrument. |
 | `filter_every_well` | `http` | 1.1 | ✅ `ready` | v1.1 deployed on the Pi at `100.64.254.104`; PressTile per-direction `hold_time` inputs verified (EQUIP_STATUS.md §8). |
 | `plateloc` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and live 2026-07-30** (device v1.4.0, PR #2): seal-cycle `activity`, `cycles_total` mirroring the instrument odometer (live value 1862, equal to `cycle_count`), three §6 interlocks (stage / health / temperature) all mirrored in `allowed_actions`, `equipment_version` populated. Real claims (TTL `ClaimStore`, commit fa98ca8) verified 2026-05-31; 423 ahead of the 412s. Reader-visible behaviour changes noted below the sub-tasks. |
 | `cytation_5` | `http` | 1.1 | ✅ `ready` | 13 actions advertised; device-repo Phases 3+4 shipped; Phase 2 (per-well tracking) remains. |
@@ -491,6 +491,28 @@ device, and the reference implementation):
   deleted the same day (§2.3.2's deletability promise, kept), and the
   poll timeout restored to 10 s (the read-off-lock fix deployed with
   v0.2.0 — the poll-contention watch item below is cleared).
+
+**2026-08-02 live check** (recovery from a 2026-07-31 USB drop): the
+Prolific PL2303 adapter vanished from the bus long enough for the
+service's auto-connect to fail (`serial_init_failed`: "could not open
+port 'COM6'"), leaving it in `requires_init` for two days. The adapter
+re-enumerated on the **same** COM6 — confirmed by probing COM6/COM7 with
+the driver's read-only identity queries (`v`/`V` → `SC25XR v6.1`, serial
+50014748) — so no `config.toml` change was needed. Reconnected via the
+claim-gated `/control/startup` and verified end-to-end with a 20 s
+speed-3 test cycle: `degraded` + `activity: "running"` mid-cycle
+(the §2.3 motivating shape, observed live), watchdog-ended on schedule,
+`cycles_total` 0→1. Open:
+
+- [ ] **Recalibrate the heater RTD at the instrument** — the `cal` fault
+  is active again as of 2026-08-02 (`last_error.code:
+  calibration_error`; device token `cal3`: high-point measured cal value
+  ≤ low-point). The device firmware refuses temperature reads against
+  the broken cal curve, so `shake.set_temperature` /
+  `wait_for_temperature` stay withheld; shaking is unaffected. No API
+  path can fix this — it is a front-panel two-point recalibration. If it
+  recurs shortly after recalibrating, suspect the RTD probe or its
+  connection rather than the stored values.
 
 #### `sense-every-zone` (environmental sensors)
 

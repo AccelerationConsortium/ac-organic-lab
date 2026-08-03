@@ -239,12 +239,12 @@ equipment:
     name: BioTek Cytation 5
     kind: plate_reader
     adapter: http
-    protocol: "1.1"
+    protocol: "1.2"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8040
     tailscale_ip: 100.64.254.16
     status_path: /status
     poll_timeout_seconds: 3.0
-    # The agilent-cytation-server repo conforms to STATUS_SPEC v1.1.
+    # The agilent-cytation-server repo conforms to STATUS_SPEC v1.2.
     # /control/* is wired (claim/heartbeat/release, drawer, plate
     # management, reads, imaging). The skill catalog entry lives in
     # lab_skills/skill_catalog/plate_reader.py.
