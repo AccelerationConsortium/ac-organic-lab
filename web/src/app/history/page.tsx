@@ -523,18 +523,37 @@ const SENSOR_WINDOWS = [
 ];
 
 // Keys match `sense-every-zone`'s `metrics` contract (unit lives in the
-// MetricValue, not the key — STATUS_SPEC best practice #5). CO₂ used to be
-// charted here but no sensor in the lab measures it: the SEN55 reports a
-// Sensirion VOC index instead, which is what replaced it.
+// MetricValue, not the key — STATUS_SPEC best practice #5), restricted to the
+// channels the API's `_ENV_HISTORY_METRICS` actually persists — pm1/pm4 and
+// battery_voltage are live-only (near-duplicates / diagnostic noise at one
+// row per minute), so charting them would query series that never exist.
+// Each card charts the subset its device actually reports, so a basic zone
+// node (SEN55 + PiSugar) gets 7 charts and the future fumehood node's
+// CO/O₂/H₂ cells appear automatically when it comes online.
 const METRICS = [
   { key: "temperature", label: "Temperature", unit: "°C" },
   { key: "humidity", label: "Humidity", unit: "%RH" },
   { key: "voc", label: "VOC", unit: "index" },
+  { key: "nox", label: "NOx", unit: "index" },
+  { key: "pm25", label: "PM2.5", unit: "µg/m³" },
+  { key: "pm10", label: "PM10", unit: "µg/m³" },
+  { key: "co", label: "CO", unit: "ppm" },
+  { key: "o2", label: "O₂", unit: "%" },
+  { key: "h2", label: "H₂", unit: "ppm" },
+  { key: "battery", label: "Battery", unit: "%" },
 ];
+
+// The classic trio, shown when a device's envelope carries no metrics at all
+// (e.g. unreachable since the dashboard started) so the card isn't blank.
+const FALLBACK_METRIC_KEYS = new Set(["temperature", "humidity", "voc"]);
 
 function SensorCard({ sensor }: { sensor: EquipmentSnapshot }) {
   const [hours, setHours] = useState(1);
   const isMock = sensor.adapter === "mock";
+  const reported = new Set(Object.keys(sensor.status.metrics ?? {}));
+  const charts = reported.size
+    ? METRICS.filter((m) => reported.has(m.key))
+    : METRICS.filter((m) => FALLBACK_METRIC_KEYS.has(m.key));
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
@@ -573,7 +592,7 @@ function SensorCard({ sensor }: { sensor: EquipmentSnapshot }) {
 
       {/* Metric charts */}
       <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
-        {METRICS.map((m) => (
+        {charts.map((m) => (
           <SensorMetricChart
             key={m.key}
             sensorId={sensor.id}
