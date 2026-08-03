@@ -34,15 +34,18 @@
 http://100.64.254.6 {
 	encode gzip
 
-	# ---- camera video + gateway (unchanged; already on this origin) --------
+	# ---- camera video (unchanged; already on this origin) ------------------
+	# go2rtc only. The camera/plug gateway (:8002) is deliberately NOT routed
+	# at the edge: the browser reaches it exclusively through the dashboard's
+	# audited passthrough at /api/equipment/{id}/{control,media}/*
+	# (api/app/control.py), which falls through to Next.js at the bottom of
+	# this block. Two /api/{cameras,plugs}/* blocks used to sit here as a
+	# dev-only escape hatch; they never worked — the gateway mounts
+	# /cameras/… and /plugs/… with no /api prefix, so both the edge and the
+	# gateway itself answered 404 — while still shadowing those paths from the
+	# fallback proxy. Removed 2026-08-02.
 	handle_path /streams/* {
 		reverse_proxy 127.0.0.1:1984
-	}
-	handle /api/cameras/* {
-		reverse_proxy 127.0.0.1:8002
-	}
-	handle /api/plugs/* {
-		reverse_proxy 127.0.0.1:8002
 	}
 
 	# ---- shared auth surface + banner, on this origin ----------------------

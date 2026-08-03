@@ -16,16 +16,12 @@ lab-dashboard.tail-XXXX.ts.net {
         reverse_proxy 127.0.0.1:1984
     }
 
-    # Direct gateway access for development. Production traffic goes
-    # through the aggregator at /api/equipment/{id}/control/*; this block
-    # is the dev-only escape hatch and can be removed for a hardened
-    # deploy.
-    handle /api/cameras/* {
-        reverse_proxy 127.0.0.1:8002
-    }
-    handle /api/plugs/* {
-        reverse_proxy 127.0.0.1:8002
-    }
+    # The camera/plug gateway (127.0.0.1:8002) is intentionally not routed
+    # here. All traffic goes through the aggregator at
+    # /api/equipment/{id}/{control,media}/*, which the fallback proxy below
+    # already covers. (A /api/{cameras,plugs}/* dev escape hatch used to live
+    # here; it 404'd either way — the gateway mounts /cameras/… and /plugs/…
+    # with no /api prefix — and shadowed those paths. Removed 2026-08-02.)
 
     # Next.js handles both / and /api/* (the latter via its rewrite to FastAPI).
     reverse_proxy 100.64.254.6:8000
