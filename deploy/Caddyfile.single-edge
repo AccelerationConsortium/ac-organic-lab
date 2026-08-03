@@ -21,6 +21,16 @@
 #   sudo cp Caddyfile.single-edge /etc/caddy/Caddyfile
 #   sudo systemctl reload caddy
 
+# Bound config reloads. Without a grace_period Caddy waits FOREVER for open
+# connections to finish before retiring the old config — and this origin
+# always has long-lived ones (camera MSE/WebRTC streams, dashboard SSE/WS),
+# so `systemctl reload caddy` hangs until systemd's timeout and reports
+# failure while the old config keeps serving. 10s force-closes stragglers;
+# stream players and WS clients reconnect on their own.
+{
+	grace_period 10s
+}
+
 http://100.64.254.6 {
 	encode gzip
 
