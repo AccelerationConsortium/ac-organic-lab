@@ -719,18 +719,19 @@ function OutletPowerRow({
   const readings    = powerData?.readings ?? [];
 
   return (
-    <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-2.5 last:border-0 dark:border-slate-800">
+    <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-1.5 last:border-0 dark:border-slate-800">
       {/* Label */}
       <div className="w-36 shrink-0">
         <p className="truncate text-xs font-medium text-ink dark:text-slate-200">{label}</p>
       </div>
 
-      {/* Power sparkline */}
+      {/* Power sparkline — stretches to the column instead of a fixed 160px
+          box, same as the sensor charts. */}
       <div className="flex-1">
         {pPending ? (
-          <div className="h-8 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
+          <div className="h-6 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
         ) : readings.length >= 2 ? (
-          <Sparkline points={readings} w={160} h={32} />
+          <Sparkline points={readings} h={24} className="h-6 w-full" />
         ) : (
           <span className="text-xs text-ink-subtle dark:text-slate-500">No data yet</span>
         )}
@@ -809,7 +810,7 @@ function SwitchTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       </div>
 
       {/* Column header */}
-      <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-1 dark:border-slate-800">
+      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-1 dark:border-slate-800">
         <span className="w-36 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Outlet</span>
         <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Power trend</span>
         <span className="w-20 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Now</span>
@@ -820,7 +821,7 @@ function SwitchTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       {/* Outlet rows */}
       <div>
         {outlets.length === 0 ? (
-          <p className="px-4 py-3 text-xs text-ink-subtle dark:text-slate-500">No outlets detected yet.</p>
+          <p className="px-3 py-2 text-xs text-ink-subtle dark:text-slate-500">No outlets detected yet.</p>
         ) : (
           outlets.map((o) => (
             <OutletPowerRow
@@ -846,7 +847,9 @@ function SwitchesSection({ powerBars }: { powerBars: EquipmentSnapshot[] }) {
           sub="Add entries with kind: power_strip or smart_plug in equipment.yaml."
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:[grid-template-columns:repeat(2,minmax(0,540px))]">
+        // Full-width like SensorCard: each tile is a 6-row outlet table, so
+        // the old 540px two-column cap squeezed the power trend column.
+        <div className="grid grid-cols-1 gap-4">
           {powerBars.map((s) => (
             <SwitchTile key={s.id} snapshot={s} />
           ))}
