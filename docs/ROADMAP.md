@@ -106,8 +106,8 @@ and the `adapter: mock` marks them simulated either way.
 
 | Live version | n | Devices |
 |---|---|---|
-| **1.2** | 8 | `plateloc`, `xarm_translocation`, `torry_pines_shaker`, `ot2_hte`, `ot2_complexation`, `bambu_p1s_01`, `bambu_h2d_01`, `env_hte` |
-| 1.1 | 7 | `fume_hood_actuator`, `dose_every_well`, `filter_every_well`, `cytation_5`, `agilent_uplc_ms`, `agilent_biostack`, `pypoe_web` |
+| **1.2** | 9 | `plateloc`, `xarm_translocation`, `torry_pines_shaker`, `ot2_hte`, `ot2_complexation`, `bambu_p1s_01`, `bambu_h2d_01`, `env_hte`, `cytation_5` |
+| 1.1 | 6 | `fume_hood_actuator`, `dose_every_well`, `filter_every_well`, `agilent_uplc_ms`, `agilent_biostack`, `pypoe_web` |
 | 1.0 | 15 | both `cam_*`, both `plug_hte_strip_*`, `kasa_tapo_gateway`, `bambu_gateway`, the six service tiles, the three remaining mock `env_*` zones |
 
 The v1.2 devices consume the shared `sdl-lab-contract` package instead of
@@ -116,21 +116,24 @@ a vendored `models.py`. Migration dates: `torry_pines_shaker` (live
 2026-07-30** — device v1.4.0, `activity`, and `cycles_total: 1862`
 mirroring the instrument odometer all present on the wire),
 `xarm_translocation` (device repo commit c91dd05, verified live
-2026-07-30), plus both OT-2 gateways and both Bambu printers.
+2026-07-30), plus both OT-2 gateways and both Bambu printers, and
+`cytation_5` (device repo commit 65fa1c4, deployed and verified live
+2026-08-02).
 
 The shared-package threshold ("3+ repos cleanly on v1.1 for ~1 month") is
 comfortably cleared. The Appendix B v2 gate additionally needs the *majority*
-of the fleet reporting `activity`: **8 of the 15 v1.1+ devices** — a bare
-majority, crossed on 2026-07-31 when `env_hte` went live.
+of the fleet reporting `activity`: **9 of the 15 v1.1+ devices**, first
+crossed on 2026-07-31 when `env_hte` went live.
 
-Treat that as met-on-a-technicality, not as the gate opening. `env_hte` is a
-passive sensor whose `activity` is permanently `idle`; it demonstrates nothing
-about the fleet's ability to absorb a contract migration, which is what gate
-criterion 2 is actually testing. The six *actuating* v1.1 stragglers are the
-real measure, and all six are still outstanding: `fume_hood_actuator`,
-`dose_every_well`, `filter_every_well`, `cytation_5`, `agilent_uplc_ms`,
-`agilent_biostack`. (`pypoe_web` is the seventh v1.1 entry, but it is a
-read-only web service with no primary operation, so v1.2 would add nothing.)
+That majority was met-on-a-technicality at first: `env_hte` is a passive
+sensor whose `activity` is permanently `idle`, demonstrating nothing about the
+fleet's ability to absorb a contract migration, which is what gate criterion 2
+actually tests. `cytation_5` (2026-08-02) is the first *actuating* device to
+join since, so the margin no longer rests on a sensor. Five actuating v1.1
+stragglers remain: `fume_hood_actuator`, `dose_every_well`,
+`filter_every_well`, `agilent_uplc_ms`, `agilent_biostack`. (`pypoe_web` is
+the sixth v1.1 entry, but it is a read-only web service with no primary
+operation, so v1.2 would add nothing.)
 Gate criterion 2 also requires the §2.3.2 reader-side derivation to be
 deleted — already true since 2026-07-25. The v1.0 group is mostly
 gateway-fronted or presentation-only tiles where `activity` has no meaningful
@@ -236,7 +239,7 @@ host. Spec is what the device's live `/status` envelope reports.
 | `torry_pines_shaker` | `http` | **1.2** | ✅ `degraded` (motor healthy) | First native v1.2 device (2026-07-25): motor-observed `activity`, `cycles_total`, per-subsystem `allowed_actions`. Poll timeout restored to 10 s (read-off-lock fix deployed). The heater RTD `cal` fault recurs intermittently — now reported honestly as `degraded` without blocking shakes. 2026-08-02: recovered from a 2026-07-31 USB-serial drop (same COM6 after re-enumeration, no config change) and motor verified with a live 20 s test cycle (`degraded` + `running`, `cycles_total` 0→1); the RTD `cal` fault is active again — temperature control blocked pending recalibration at the instrument. |
 | `filter_every_well` | `http` | 1.1 | ✅ `ready` | v1.1 deployed on the Pi at `100.64.254.104`; PressTile per-direction `hold_time` inputs verified (EQUIP_STATUS.md §8). |
 | `plateloc` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and live 2026-07-30** (device v1.4.0, PR #2): seal-cycle `activity`, `cycles_total` mirroring the instrument odometer (live value 1862, equal to `cycle_count`), three §6 interlocks (stage / health / temperature) all mirrored in `allowed_actions`, `equipment_version` populated. Real claims (TTL `ClaimStore`, commit fa98ca8) verified 2026-05-31; 423 ahead of the 412s. Reader-visible behaviour changes noted below the sub-tasks. |
-| `cytation_5` | `http` | 1.1 | ✅ `ready` | 13 actions advertised; device-repo Phases 3+4 shipped; Phase 2 (per-well tracking) remains. |
+| `cytation_5` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and verified live 2026-08-02** (device repo commit 65fa1c4): `activity` observed from the in-flight-operation flag, `activity_since` stamped at span edges, reserved `cycles_total` (measurements + captures; the original `read_count` stays measurement-only). The b86da09 migration had derived `activity` from `equipment_status` (§2.3 forbids it), stamped `activity_since` with the poll instant, and paired `requires_init` with `unknown` — all three fixed. **`/status` no longer shares the reader lock**: it was queueing behind reads, so `busy` / `running` was unobservable from outside (same read-off-lock fix as the shaker); it now serves a short-TTL readback cache and reports `details.readback_age_s`. 13 actions advertised; device-repo Phases 2+3+4 all shipped. |
 | `agilent_uplc_ms` | `http` | 1.1 | ✅ `ready` | v1.1 sidecar with hard claims and the `workflow.start`/`end` campaign lock; the sidecar owns the queue. Detail in the sub-task below. |
 | `agilent_biostack` | `http` | **1.1** | ✅ `ready` | No longer read-only: device v0.2.0 now serves the claim trio + `/control/{startup,shutdown,home,stage_plate,present_plate,handoff}`, advertising `["shutdown","home","stage_plate","handoff"]` live. Real hardware (`details.com_port: COM8`, `bench_validated: 2026-05-29`), not dry-run. Not yet exercised end-to-end from a workflow or a dashboard tile — see the sub-task. |
 | `pypoe_web` | `http` | 1.1 | ✅ `ready` | Internal web service; no control surface. |
@@ -263,9 +266,17 @@ host. Spec is what the device's live `/status` envelope reports.
    (b) the dashboard tile shows no graph controls yet; and (c) the
    `/web/` side-door must become claim-aware or be fronted (see
    *Control-surface exposure*).
-3. **`agilent-cytation-server` Phase 2** — per-well sample tracking
-   under `details.loaded_plate`. Phases 3 and 4 (v1.1 +
-   `/control/*`, skill catalog) already shipped.
+3. ~~**`agilent-cytation-server` Phase 2**~~ — **done**, and the entry was
+   stale: per-well tracking ships as `PlateStateStore` +
+   `/control/plate/{load,unload}` + `/control/well/update`, and
+   `details.loaded_plate` is on the live envelope (`null` with no plate
+   loaded). Phase 4's `plate_reader.py` is registered in
+   `skill_catalog/` (11 SkillDefs). With the v1.2 work of 2026-08-02 this
+   device has no open migration items; what remains is **hardware
+   verification of the write surface** — the `/control/*` reads and
+   imaging capture have only ever been exercised dry-run
+   (`RUNBOOK.md` §3-§4), so no measurement has yet been driven end-to-end
+   from a workflow.
 
 ### Conformance checklists
 
@@ -467,11 +478,43 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   `ot_default`-conditional required fields (`loadname` / `config`) with
   validators once a real recipe exercises custom labware.
 
-#### `cytation_5`
+#### `cytation_5` (device repo: `agilent-cytation-server`)
 
-- [ ] Device-repo Phase 2: per-well sample tracking
-  (`details.loaded_plate` from `Container`/`Plate`/`Well` +
-  orchestrator-assigned `sample_id`).
+- [x] **Phase 2** — per-well sample tracking. `PlateStateStore` persists to
+  `state.json`; `details.loaded_plate` is live on the wire.
+- [x] **STATUS_SPEC v1.2** (commit 65fa1c4, deployed 2026-08-02). The
+  earlier b86da09 bump claimed v1.2 while deriving `activity` from
+  `equipment_status` — the one thing §2.3 forbids — so the field carried no
+  information. Now observed from the in-flight-operation flag, with
+  `activity_since` stamped at the operation's real edges, `requires_init`
+  paired with `idle` per the invariant table, and the reserved
+  `cycles_total`.
+- [x] **`/status` read off the lock.** It shared the reader's
+  `asyncio.Lock`, so a poll issued during a read returned only *after* the
+  read finished, with the busy flag already cleared: `busy` and
+  `activity: "running"` were unobservable from outside. Now composed from
+  in-memory state plus a 3 s readback cache (≤50 ms lock wait), with
+  `details.readback_age_s` published. Same class of bug as the shaker's.
+
+Open:
+
+- [ ] **Hardware verification of the write surface.** Reads, drawer moves
+  and `imaging.capture` have only been exercised dry-run; the live envelope
+  is verified but no measurement has been driven end-to-end. See
+  `RUNBOOK.md` §3-§4 (the FTDI ↔ libusbK driver swap this shares with
+  `biotek_driver`) before booking bench time.
+- [ ] **Watch: the service's own extras.** Its NSSM launch line was
+  `uv run --extra api`, which strips `pylabrobot` from the venv on any
+  restart — a plain `uv sync` disarmed the driver on 2026-08-02 and the
+  reader came up `requires_init`. `AppParameters` now carries
+  `--extra api --extra plr --extra windows`; the same trap applies to any
+  device whose driver lives behind an extra.
+- [ ] **pylabrobot v1 is coming.** PR #1000 ("v1b1 changes", merged to
+  `main` 2026-08-01, 759 files) restructures machine interfaces and touches
+  `biotek_backend.py`; branch `cytation-10x-fov` carries a
+  `CytationMicroscopyBackend`, suggesting reader and imager split apart.
+  Unreleased — PyPI is at 0.2.2 (we pin 0.2.1, and nothing Cytation-side
+  changed between them). `reader.py` will need rework when v1 ships.
 
 #### `torry_pines_shaker` (device repo: `torry-pines-shaker-server`)
 
