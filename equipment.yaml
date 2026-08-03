@@ -276,7 +276,7 @@ equipment:
     name: Agilent BioStack
     kind: plate_stacker
     adapter: http
-    protocol: "1.1"
+    protocol: "1.2"
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8050
     tailscale_ip: 100.64.254.16
     status_path: /status

@@ -106,8 +106,8 @@ and the `adapter: mock` marks them simulated either way.
 
 | Live version | n | Devices |
 |---|---|---|
-| **1.2** | 9 | `plateloc`, `xarm_translocation`, `torry_pines_shaker`, `ot2_hte`, `ot2_complexation`, `bambu_p1s_01`, `bambu_h2d_01`, `env_hte`, `cytation_5` |
-| 1.1 | 6 | `fume_hood_actuator`, `dose_every_well`, `filter_every_well`, `agilent_uplc_ms`, `agilent_biostack`, `pypoe_web` |
+| **1.2** | 10 | `plateloc`, `xarm_translocation`, `torry_pines_shaker`, `ot2_hte`, `ot2_complexation`, `bambu_p1s_01`, `bambu_h2d_01`, `env_hte`, `cytation_5`, `agilent_biostack` |
+| 1.1 | 5 | `fume_hood_actuator`, `dose_every_well`, `filter_every_well`, `agilent_uplc_ms`, `pypoe_web` |
 | 1.0 | 15 | both `cam_*`, both `plug_hte_strip_*`, `kasa_tapo_gateway`, `bambu_gateway`, the six service tiles, the three remaining mock `env_*` zones |
 
 The v1.2 devices consume the shared `sdl-lab-contract` package instead of
@@ -128,11 +128,12 @@ crossed on 2026-07-31 when `env_hte` went live.
 That majority was met-on-a-technicality at first: `env_hte` is a passive
 sensor whose `activity` is permanently `idle`, demonstrating nothing about the
 fleet's ability to absorb a contract migration, which is what gate criterion 2
-actually tests. `cytation_5` (2026-08-02) is the first *actuating* device to
-join since, so the margin no longer rests on a sensor. Five actuating v1.1
-stragglers remain: `fume_hood_actuator`, `dose_every_well`,
-`filter_every_well`, `agilent_uplc_ms`, `agilent_biostack`. (`pypoe_web` is
-the sixth v1.1 entry, but it is a read-only web service with no primary
+actually tests. `cytation_5` and `agilent_biostack` (both 2026-08-02/03) are
+actuating devices, so the margin no longer rests on a sensor — **10 of 15**,
+and every device physically attached to the Cytation PC is now on v1.2. Four
+actuating v1.1 stragglers remain, all on other hosts: `fume_hood_actuator`,
+`dose_every_well`, `filter_every_well`, `agilent_uplc_ms`. (`pypoe_web` is
+the fifth v1.1 entry, but it is a read-only web service with no primary
 operation, so v1.2 would add nothing.)
 Gate criterion 2 also requires the §2.3.2 reader-side derivation to be
 deleted — already true since 2026-07-25. The v1.0 group is mostly
@@ -241,7 +242,7 @@ host. Spec is what the device's live `/status` envelope reports.
 | `plateloc` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and live 2026-07-30** (device v1.4.0, PR #2): seal-cycle `activity`, `cycles_total` mirroring the instrument odometer (live value 1862, equal to `cycle_count`), three §6 interlocks (stage / health / temperature) all mirrored in `allowed_actions`, `equipment_version` populated. Real claims (TTL `ClaimStore`, commit fa98ca8) verified 2026-05-31; 423 ahead of the 412s. Reader-visible behaviour changes noted below the sub-tasks. |
 | `cytation_5` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and verified live 2026-08-02** (device repo commit 65fa1c4): `activity` observed from the in-flight-operation flag, `activity_since` stamped at span edges, reserved `cycles_total` (measurements + captures; the original `read_count` stays measurement-only). The b86da09 migration had derived `activity` from `equipment_status` (§2.3 forbids it), stamped `activity_since` with the poll instant, and paired `requires_init` with `unknown` — all three fixed. **`/status` no longer shares the reader lock**: it was queueing behind reads, so `busy` / `running` was unobservable from outside (same read-off-lock fix as the shaker); it now serves a short-TTL readback cache and reports `details.readback_age_s`. 13 actions advertised; device-repo Phases 2+3+4 all shipped. |
 | `agilent_uplc_ms` | `http` | 1.1 | ✅ `ready` | v1.1 sidecar with hard claims and the `workflow.start`/`end` campaign lock; the sidecar owns the queue. Detail in the sub-task below. |
-| `agilent_biostack` | `http` | **1.1** | ✅ `ready` | No longer read-only: device v0.2.0 now serves the claim trio + `/control/{startup,shutdown,home,stage_plate,present_plate,handoff}`, advertising `["shutdown","home","stage_plate","handoff"]` live. Real hardware (`details.com_port: COM8`, `bench_validated: 2026-05-29`), not dry-run. Not yet exercised end-to-end from a workflow or a dashboard tile — see the sub-task. |
+| `agilent_biostack` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and verified live 2026-08-03** (commit e531170): `activity` / `activity_since` from the macro-in-flight flag, reserved `cycles_total` counting plate moves (`stage_plate` / `present_plate` / `handoff`; `home` is `running` but carries no plate, so not a cycle), `allowed_actions` gated on activity. No read-off-lock fix was needed — `get_status()` already avoided `_op_lock`, so a poll answers during a ~21 s macro. Claim trio + `/control/{startup,shutdown,home,stage_plate,present_plate,handoff}` on real hardware (`details.com_port: COM8`, `bench_validated: 2026-05-29`), not dry-run. Still not exercised end-to-end from a workflow or a dashboard tile — see the sub-task. |
 | `pypoe_web` | `http` | 1.1 | ✅ `ready` | Internal web service; no control surface. |
 | `analytica_db` | `http` | 1.0 | ✅ `ready` | Record-layer tile; STATUS_SPEC `/status` envelope live alongside the data API. |
 | `env_hte` | `http` | **1.2** | ✅ `ready` | **Live 2026-07-31.** `sense-every-zone` gateway on `sdl2-pi0-environ-01:8030`, `status_path: /zones/env_hte/status`; SEN55 + PiSugar 3, both components `ready`. Monitoring-only, so v1.2 via the §9 read-only clause (`allowed_actions: []`, `activity` always `idle`). Reached over a DERP relay — `poll_timeout_seconds: 8.0`, observed latency ~120 ms. |
@@ -250,16 +251,17 @@ host. Spec is what the device's live `/status` envelope reports.
 ### Remaining migration work (priority order)
 
 1. ~~**`agilent_biostack` (plate_stacker) `/control/*` surface**~~ —
-   **shipped** (device v0.2.0, live v1.1 as of the 2026-07-30 sweep): the
-   claim trio plus `/control/{startup,shutdown,home,stage_plate,
-   present_plate,handoff}`. The xArm is no longer the lab's only
+   **shipped** (device v0.2.0, claim trio plus
+   `/control/{startup,shutdown,home,stage_plate,present_plate,handoff}`;
+   v1.2 as of 2026-08-03). The xArm is no longer the lab's only
    plate-mover on paper. What remains is *operationalising* it, the same
    gap the xArm has: no dashboard tile controls, and no workflow has
    driven it through `execute_plan` yet. Skill names *do* line up — all
    six `plate_stacker` SkillDefs (`startup`, `shutdown`, `home`,
    `stage_plate`, `present_plate`, `handoff`) match the device's
    endpoint/`allowed_actions` names exactly, so this device does **not**
-   have the xArm's mismatch problem (item 2c).
+   have the xArm's mismatch problem (item 2c). Its claim enforcement is
+   also still unprobed — see *Control-surface exposure*.
 2. **`xarm_translocation` (operationalising the graph surface)** — the
    device now exposes claim + `/control/graph/*` and the catalog has the
    matching SkillDefs, but: (a) control is gated behind `POST /connect`;
@@ -660,7 +662,7 @@ out-of-band, un-audited?"):
 | `plateloc`, `dose_every_well` | Yes | **Yes** (hard-enforced since 2026-05-31) | Rejected if a claim is held; cooperative + un-audited via direct `curl` |
 | `xarm_translocation` | Yes | **Yes** on `/control/*`; native `/web/` claim-awareness **unverified** | The `/web/` side-door is still advertised by the tile deep-link — the single most exposed control path in the lab |
 | `agilent_uplc_ms` | Yes | **Yes** (X-Claim-Token → 423) | Rejected if a claim is held. A run can still start out-of-band in OpenLab CDS on the instrument PC — surfaced as `busy`, not preventable. |
-| `agilent_biostack` | Yes | Claim trio served; **hard enforcement unverified** | **New exposure as of device v0.2.0** — it grew a plate-moving `/control/*` surface (`home`, `stage_plate`, `present_plate`, `handoff`) after this table was written, so it is no longer the harmless read-only row it used to be. Whether a tokenless POST is refused with 423 has not been probed. Verify before a workflow relies on it. |
+| `agilent_biostack` | Yes | **Yes** (X-Claim-Token → 423, verified 2026-08-03) | It grew a plate-moving `/control/*` surface (`home`, `stage_plate`, `present_plate`, `handoff`) at device v0.2.0, so it is no longer the harmless read-only row it used to be. Enforcement is now confirmed: a tokenless `POST /control/present_plate` returned **423 ahead of the 412** staged-plate interlock, with the device unchanged and no `last_error` — the probe was chosen precisely because that action is interlock-blocked, so it could not have moved a plate even had the claim check failed open. Rejected if a claim is held; cooperative + un-audited via direct `curl`, like every other row. |
 | pypoe | Yes | read-only, no control surface | n/a |
 
 **What closes it, in order:**
