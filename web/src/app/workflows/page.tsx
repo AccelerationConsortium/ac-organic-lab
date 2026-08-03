@@ -33,10 +33,18 @@ export default function WorkflowsPage() {
   }
 
   return (
-    <iframe
-      src="/bitacora/"
-      title="Bitácora — Agentic ELN"
-      className="h-[calc(100vh-220px)] min-h-[480px] w-full rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800"
-    />
+    // Full-bleed. Every other tab is content inside the app's `max-w-7xl`
+    // column, but this one hosts an entire second app — a three-pane ELN with a
+    // chat rail, a work surface and a plate grid — and 1280px squeezes all three.
+    // `left-1/2 / -translate-x-1/2` centres on the viewport regardless of the
+    // parent column, so the layout stays untouched for every other page; the
+    // padding restores the gutter the container would have given.
+    <div className="relative left-1/2 w-screen max-w-[100vw] -translate-x-1/2 px-4 sm:px-6 lg:px-8">
+      <iframe
+        src="/bitacora/"
+        title="Bitácora — Agentic ELN"
+        className="h-[calc(100vh-180px)] min-h-[520px] w-full rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800"
+      />
+    </div>
   );
 }
