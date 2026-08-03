@@ -225,10 +225,14 @@ function Sparkline({
   points,
   w = 120,
   h = 32,
+  className,
 }: {
   points: SensorPoint[];
   w?: number;
   h?: number;
+  /** Pass e.g. "h-6 w-full" to stretch the trace to its container. The
+   *  viewBox still uses w/h, so the polyline scales rather than clipping. */
+  className?: string;
 }) {
   if (points.length < 2) return <span className="text-xs text-ink-subtle">—</span>;
   const values = points.map((p) => p.value);
@@ -245,7 +249,8 @@ function Sparkline({
       width={w}
       height={h}
       viewBox={`0 0 ${w} ${h}`}
-      className="overflow-visible text-sky-500 dark:text-sky-400"
+      preserveAspectRatio="none"
+      className={`overflow-visible text-sky-500 dark:text-sky-400 ${className ?? ""}`}
     >
       <polyline
         points={coords.join(" ")}
@@ -254,6 +259,10 @@ function Sparkline({
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
+        // Keeps a 1.5px line when the svg is stretched to its container:
+        // preserveAspectRatio="none" would otherwise scale the stroke
+        // horizontally and vertically by different factors.
+        vectorEffect="non-scaling-stroke"
       />
     </svg>
   );
@@ -591,7 +600,7 @@ function SensorCard({ sensor }: { sensor: EquipmentSnapshot }) {
       </div>
 
       {/* Metric charts */}
-      <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-3 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-1.5 p-2.5 md:grid-cols-3 xl:grid-cols-4">
         {charts.map((m) => (
           <SensorMetricChart
             key={m.key}
@@ -626,22 +635,26 @@ function SensorMetricChart({
   const readings = data?.readings ?? [];
 
   return (
-    <div className="flex flex-col gap-1 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
-      <p className="text-xs font-medium text-ink-muted dark:text-slate-400">{label}</p>
+    <div className="flex flex-col gap-0.5 rounded-lg bg-slate-50 px-2.5 py-2 dark:bg-slate-800/50">
+      <p className="text-[11px] font-medium leading-none text-ink-muted dark:text-slate-400">
+        {label}
+      </p>
       {isPending ? (
-        <div className="h-8 animate-pulse rounded bg-slate-200 dark:bg-slate-700" />
+        <div className="h-7 animate-pulse rounded bg-slate-200 dark:bg-slate-700" />
       ) : readings.length > 0 ? (
         <>
-          <p className="text-xl font-semibold tabular-nums text-ink dark:text-slate-100">
+          <p className="text-base font-semibold leading-tight tabular-nums text-ink dark:text-slate-100">
             {latest?.value.toFixed(1)}
-            <span className="ml-1 text-sm font-normal text-ink-muted dark:text-slate-400">
+            <span className="ml-0.5 text-[11px] font-normal text-ink-muted dark:text-slate-400">
               {unit}
             </span>
           </p>
-          <Sparkline points={readings} />
+          {/* Fills the cell instead of a fixed 120px box, so tightening the
+              grid doesn't leave dead space to the right of each trace. */}
+          <Sparkline points={readings} h={24} className="h-6 w-full" />
         </>
       ) : (
-        <p className="text-sm text-ink-subtle dark:text-slate-500">No data</p>
+        <p className="text-xs text-ink-subtle dark:text-slate-500">No data</p>
       )}
     </div>
   );
