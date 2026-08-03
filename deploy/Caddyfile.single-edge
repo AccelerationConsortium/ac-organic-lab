@@ -75,7 +75,18 @@ http://100.64.254.6 {
 	#   device: XARM_EDGE_SHARED_SECRET=…  in the xarm NSSM/service env
 	# When Phase 2 lands (loopback-bind / ACL :8000 to the edge only) the secret
 	# becomes belt-and-suspenders. Canonical URL to publish: http://100.64.254.6/xarm5/web/
-	@xarm_ui path /xarm5 /xarm5/*
+	# /xarm5/ws is EXEMPT from forward_auth: Caddy forwards the WebSocket
+	# Connection/Upgrade headers to the auth subrequest, and Starlette answers
+	# an upgrade on a route with no WS handler with a bare 403 before any
+	# cookie check — so every WS through the edge died at /auth/verify, even
+	# logged-in (verified live 2026-08-02: plain GET /xarm5/status → 401,
+	# same with WS headers → 403; :8009/auth/verify shows the same pair).
+	# Ungating it adds no exposure while :8000 is directly reachable on the
+	# tailnet (Phase 2 pending) — /ws is read-only telemetry either way.
+	@xarm_ui {
+		path /xarm5 /xarm5/*
+		not path /xarm5/ws
+	}
 	forward_auth @xarm_ui 100.64.254.6:8009 {
 		uri /auth/verify
 		copy_headers X-Auth-User X-Auth-Role
