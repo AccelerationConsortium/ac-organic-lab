@@ -180,3 +180,46 @@ describe("PlatformCard equipment row health + activity (spec v1.2)", () => {
     expect(screen.getByRole("img", { name: "Activity: Unknown" })).toBeTruthy();
   });
 });
+
+describe("PlatformCard camera preview selection", () => {
+  const cameraSnapshot = (id: string, name: string) =>
+    ({
+      ...gatewaySnapshot,
+      id,
+      name,
+      kind: "camera",
+      pill: {},
+      status: {
+        ...gatewaySnapshot.status,
+        equipment_id: id,
+        equipment_name: name,
+        equipment_kind: "camera",
+        details: { lenses: [], streaming_enabled: true, privacy_mode: false },
+      },
+    }) as unknown as EquipmentSnapshot;
+
+  // A section may hold more than one camera (echem has the platform C245 plus
+  // the OT-2-facing C100). Only the FIRST one gets the preview region, so a
+  // second camera is opted out of Overview streaming purely by ordering it
+  // later in platforms.yaml — no per-camera flag exists. Ordering is therefore
+  // load-bearing config; this pins it.
+  it("previews only the first camera when a section has several", () => {
+    render(
+      <PlatformCard
+        id="echem"
+        title="Echem Platform"
+        snapshots={[
+          cameraSnapshot("cam_echem_tapo_c245", "Echem Platform Camera"),
+          cameraSnapshot("cam_echem_tapo_c100", "Echem OT2 Camera"),
+        ]}
+      />,
+    );
+
+    // Exactly one stream toggle and one preview region, and that region
+    // names the first camera — the second appears as an equipment row only.
+    expect(screen.getAllByTitle("Show camera stream")).toHaveLength(1);
+    const preview = screen.getByText("Stream hidden").parentElement!;
+    expect(preview.textContent).toContain("Echem Platform Camera");
+    expect(preview.textContent).not.toContain("Echem OT2 Camera");
+  });
+});

@@ -342,7 +342,9 @@ Steps:
 | Tile is `degraded`, lens markers grey                | go2rtc is up but credentials are wrong - source not connecting  | Check `journalctl -u ac-go2rtc -n 50` for RTSP auth errors  |
 | MSE viewport shows "No stream"                       | Caddy `/streams/*` block missing                                | Add the snippet in `kasa_tapo_services/deploy/Caddyfile.snippet` |
 | PTZ buttons disabled                                 | ONVIF was unreachable on last poll                              | Same as the first row                                       |
+| PTZ buttons absent on a *fixed* camera (C100/C110/…) | Expected. A fixed camera has no ONVIF PTZ service, so the gateway reports `has_ptz: false` and omits `ptz` / `preset/*` from `allowed_actions` (STATUS_SPEC §6.2 — never advertise an action the hardware would refuse) | Nothing to fix. If a *PTZ* camera lands here, its ONVIF account is likely wrong — see the first row |
 | Privacy toggle disabled                              | pytapo creds missing or wrong                                   | Set `<ID>_USER` / `<ID>_PASS` to the **Camera Account**     |
+| Privacy toggle disabled on *every* camera; logs repeat `tapo.getPrivacyMode failed: Temporary Suspension: Try again in N seconds` | Device-side lockout after repeated failed pytapo logins. The gateway retries each poll, which **keeps renewing the lockout**, so it never clears on its own. Health is unaffected (that needs only ONVIF + go2rtc), so tiles still read `ready` | Fix the Camera Account credentials, then restart the gateway so the retry loop stops feeding the lockout. Open as of 2026-08-04 on all three cameras |
 
 ## 6b) Password-gating the control surfaces (`CONTROL_PASSWORD`)
 
