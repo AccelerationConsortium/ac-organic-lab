@@ -322,6 +322,17 @@ is the remaining work per device.
   mirroring, not a fault). The NSSM restart on the device PC still
   required an elevated shell as predicted; whoever performed it did so
   outside this record.
+- [x] **Boot auto-connect retry** (v1.5.0, deployed and verified live
+  2026-08-03) — the 2026-07-31 PC reboot started the service before the
+  USB serial adapter enumerated; the single connect attempt failed
+  (`profile_not_found`) and the device sat in `requires_init` for two
+  days alongside the shaker, until reconnected via the claim-gated
+  `/control/startup`. The lifespan now spawns a background task that
+  retries a failed boot auto-connect every 30 s
+  (`[service].startup_retry_interval_s`) until the first successful
+  connect; a successful retry clears the init failure from
+  `last_error` per §6.4. Same fix as shaker v0.2.2; see the
+  *Operational regressions* watch item.
 - [ ] **PR-3 retry** (see *Operational regressions* / v0.4 PR-3): still
   blocked on the compressed-air supply, unchanged by this release.
 
@@ -547,7 +558,10 @@ the driver's read-only identity queries (`v`/`V` → `SC25XR v6.1`, serial
 claim-gated `/control/startup` and verified end-to-end with a 20 s
 speed-3 test cycle: `degraded` + `activity: "running"` mid-cycle
 (the §2.3 motivating shape, observed live), watchdog-ended on schedule,
-`cycles_total` 0→1. Open:
+`cycles_total` 0→1. Follow-up shipped: **v0.2.2 (deployed 2026-08-03)**
+retries a failed boot auto-connect every 30 s until the first
+successful connect, so this failure mode now self-heals (see the
+*Operational regressions* watch item). Open:
 
 - [ ] **Recalibrate the heater RTD at the instrument** — the `cal` fault
   is active again as of 2026-08-02 (`last_error.code:
@@ -604,16 +618,24 @@ Active watch items (not regressions; behavioural notes):
 - ~~**`torry_pines_shaker` poll contention**~~ — cleared 2026-07-25:
   the device-repo read-off-lock + short-TTL readings-cache fix deployed
   with v0.2.0; `poll_timeout_seconds` restored to 10 s.
-- **`torry_pines_shaker` USB-serial re-enumeration** — the Prolific
-  PL2303 adapter dropped off the bus 2026-07-31; the service's
-  auto-connect failed and it sat in `requires_init` until manually
-  reconnected 2026-08-02. It came back as the same COM6 this time, but a
-  re-plug can renumber: if `serial_init_failed` recurs, enumerate the
-  Prolific COM ports and probe each with the driver's read-only identity
-  queries (`v`/`V`) before editing `config.toml` (COM3 is Intel AMT,
-  COM8 is the BioStack). Consider a service-side retry loop on
-  `serial_init_failed` so a transient USB blip doesn't strand the
-  device in `requires_init` for days.
+- **Boot-time USB enumeration race (shaker + plateloc)** — the
+  2026-07-31 event was a PC reboot, not an adapter-only blip: the NSSM
+  services started before USB serial finished enumerating, and **both**
+  devices' single auto-connect attempts failed within one second of
+  each other (shaker `serial_init_failed`, plateloc
+  `profile_not_found`: "Communication failed - Could not open"). Both
+  sat in `requires_init` for two days until manually reconnected
+  (shaker 2026-08-02, plateloc 2026-08-03). The retry loop suggested
+  here **shipped 2026-08-03**: both services now retry a failed boot
+  auto-connect every 30 s (`[service].startup_retry_interval_s`, 0
+  disables; retry ends permanently at the first successful connect so
+  an operator shutdown is never fought) — shaker v0.2.2, plateloc
+  v1.5.0, both deployed and verified live. Port renumbering remains
+  the manual case no retry can fix: the shaker's adapter came back as
+  the same COM6 this time, but if `serial_init_failed` persists across
+  retries, enumerate the Prolific COM ports and probe each with the
+  driver's read-only identity queries (`v`/`V`) before editing
+  `config.toml` (COM3 is Intel AMT, COM8 is the BioStack).
 - **`plateloc` compressed-air supply** — during the 2026-07-15 PR-3
   bench run the seal cycle failed on Low Air Pressure / vacuum faults
   (`stage.out` was also refused with "Low Air Pressure Error"),
