@@ -17,10 +17,12 @@ export default function XarmControlPage() {
     // Full-bleed, like /workflows: the panel is a whole second UI (title tile,
     // camera, Control Modes, log) and the app's max-w-7xl column crops it.
     <div className="relative left-1/2 w-screen max-w-[100vw] -translate-x-1/2 px-4 sm:px-6 lg:px-8">
+      {/* No border/radius/shadow: the panel draws its own tiles, so a frame
+          around it reads as a second, redundant card edge. */}
       <iframe
         src="/xarm5/web/"
         title="xArm Translocation — Control Interface"
-        className="h-[calc(100vh-180px)] min-h-[720px] w-full rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800"
+        className="h-[calc(100vh-180px)] min-h-[720px] w-full border-0 bg-transparent"
       />
     </div>
   );
