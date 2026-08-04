@@ -17,8 +17,12 @@ sections:
     href: /platforms/echem
     kind: platform
     equipment:
+      # The Overview card streams only the FIRST camera in this list;
+      # cam_echem_tapo_c100 stays below cam_echem_tapo_c245 so it shows on
+      # the Overview as a status row only (no stream toggle).
       - cam_echem_tapo_c245
       - ot2_complexation
+      - cam_echem_tapo_c100
 
   - id: hte
     title: HTE Platform

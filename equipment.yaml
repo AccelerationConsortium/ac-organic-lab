@@ -295,7 +295,7 @@ equipment:
   # (device alias "Tapo for MG400"), hosted by the same `kasa-tapo-services`
   # gateway as the HTE camera.
   - id: cam_echem_tapo_c245
-    name: Echem Camera
+    name: Echem Platform Camera
     kind: camera
     adapter: http
     protocol: "1.0"
@@ -318,6 +318,34 @@ equipment:
         # HTE unit; /stream2 is the SD copy of the wide lens, NOT the tele).
         - { id: wide, label: Wide, rtsp_path: stream1, ptz_capable: false }
         - { id: tele, label: Tele, rtsp_path: stream6 }
+
+  # Second Echem camera: a single-lens Tapo C100 watching the OT-2. Listed
+  # AFTER cam_echem_tapo_c245 in platforms.yaml on purpose — the Overview
+  # card streams only the first camera of a section, so this one appears
+  # there as a status row only (full tile on /platforms/echem).
+  - id: cam_echem_tapo_c100
+    name: Echem OT2 Camera
+    kind: camera
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8002
+    tailscale_ip:
+    status_path: /cameras/cam_echem_tapo_c100/status
+    # Same cold-start headroom rationale as the other cameras: the gateway
+    # serves /status from a background-poller cache, so 5 s only matters
+    # for the first request after a gateway restart.
+    poll_timeout_seconds: 5.0
+    tiles:
+      echem: { w: 2, h: 2 }
+    pills: {}
+    camera:
+      host: 172.31.60.22
+      onvif_port: 2020
+      rtsp_port: 554
+      lenses:
+        # Single-lens C100: /stream1 (HD) only; /stream2 is the SD copy.
+        # Fixed lens — no PTZ.
+        - { id: main, label: Main, rtsp_path: stream1, ptz_capable: false }
 
   # Second Opentrons OT-2 (robot `sdl2-ot2-complexation`, Tailscale
   # 100.64.254.91) on the Echem bench for complexation work. Fronted by the
