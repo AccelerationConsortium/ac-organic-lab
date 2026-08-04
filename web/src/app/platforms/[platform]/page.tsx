@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 
 import { usePlatforms } from "@/lib/use-platforms";
+import { useUserAuth } from "@/lib/user-auth";
 
 /**
  * Placeholder for the per-platform **workflow UI** (`/platforms/{name}`).
@@ -18,6 +19,7 @@ import { usePlatforms } from "@/lib/use-platforms";
 export default function PlatformWorkflowPlaceholder() {
   const params = useParams<{ platform: string }>();
   const { data: platforms } = usePlatforms();
+  const { loading, authenticated } = useUserAuth();
 
   const section = platforms?.sections.find(
     (s) => s.href === `/platforms/${params.platform}` || s.id === params.platform,
@@ -34,15 +36,35 @@ export default function PlatformWorkflowPlaceholder() {
       </h2>
       <p className="max-w-md text-sm text-ink-muted dark:text-slate-400">
         This page will host the {title} workflow interface (plan, run, and
-        monitor experiments). Until then, live equipment tiles and controls are
-        on the Platforms tab.
+        monitor experiments). Until then, workflows are created and run in the
+        Workflows tab (Bitácora), and live equipment tiles and controls are on
+        the Platforms tab.
       </p>
-      <Link
-        href="/platforms"
-        className="mt-2 rounded-md border border-sky-400 bg-sky-100 px-3 py-1.5 text-sm font-medium text-sky-900 transition-colors hover:bg-sky-200 dark:border-sky-600 dark:bg-sky-900/60 dark:text-sky-100 dark:hover:bg-sky-900/80"
-      >
-        Go to Platforms →
-      </Link>
+      <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+        {/* Same visibility rule as the Nav's Workflows tab: /workflows is
+            sign-in-gated by the middleware (a signed-out click would just
+            bounce to /), so show the link only to signed-in viewers and say
+            why it's absent otherwise. */}
+        {!loading && authenticated && (
+          <Link
+            href="/workflows"
+            className="rounded-md bg-orange-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-orange-700 dark:bg-orange-500 dark:hover:bg-orange-600"
+          >
+            Create & run workflows →
+          </Link>
+        )}
+        <Link
+          href="/platforms"
+          className="rounded-md border border-sky-400 bg-sky-100 px-3 py-1.5 text-sm font-medium text-sky-900 transition-colors hover:bg-sky-200 dark:border-sky-600 dark:bg-sky-900/60 dark:text-sky-100 dark:hover:bg-sky-900/80"
+        >
+          Go to Platforms →
+        </Link>
+      </div>
+      {!loading && !authenticated && (
+        <p className="text-xs text-ink-subtle dark:text-slate-500">
+          Sign in to create and run workflows.
+        </p>
+      )}
     </div>
   );
 }
