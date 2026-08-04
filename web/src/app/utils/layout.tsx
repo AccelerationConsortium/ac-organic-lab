@@ -12,6 +12,11 @@ import { pillClass } from "@/lib/pill";
  */
 const UTILS: { slug: string; label: string; description: string }[] = [
   {
+    slug: "xarm_control",
+    label: "xArm Control",
+    description: "Operator panel for the xArm translocation arm.",
+  },
+  {
     slug: "bambu_printer",
     label: "Bambu Printer",
     description: "Live monitoring for the Bambu P1S and H2D printers.",
