@@ -490,6 +490,83 @@ contract (`SCHEMA_VERSION`) bump. Shape choice is deferred to the phase that
 builds the run authorizer ([`AGENTIC_ELN_PLAN.md`](AGENTIC_ELN_PLAN.md)
 Track 2 Phase E).
 
+## Plate identity — the device ↔ record join (2026-08-04, from an OT-2 bench run)
+
+Device services already track "which plate is on the deck and what is in each
+well", and §6 already models physical objects as `Container` rows. Neither
+knows about the other. A live two-plate transfer on `ot2_complexation`
+(`sdl-safety-agent` / `ot2-transfer-smoke`) made the seam concrete, so it is
+recorded here while the evidence is fresh. **Nothing below is a Phase 2 schema
+change** — the schema is right; what is missing is a convention and three
+device-side gaps.
+
+### The one decision
+
+**A device's `plate_id` *is* the `Container.hid` of that plate.** Both device
+repos that implement plate state (`opentrons-server`, `agilent-cytation-server`)
+carry `plate_id` as a free string, and both surface it on `GET /status` as
+`details.loaded_plate`. Declaring that string to be the barcode turns a label
+into a foreign key by value, costs nothing to adopt now, and is what makes
+every question in the *Tracking mechanics* table answerable for plates rather
+than only for bottles.
+
+It is a **convention, not an integration**: the device never resolves the id,
+never validates it against this database, and never learns whether the
+container exists. See the layering rule below.
+
+### Three gaps the run exposed
+
+1. **The device tracks one plate; the operation used two.** Both
+   `PlateStateStore` implementations track at most one loaded plate — a
+   deliberate simplification, taken so the OT-2 and the Cytation expose an
+   identical contract, and reasonable for a reader that holds one plate at a
+   time. A liquid handler is definitionally multi-plate: the run moved liquid
+   from a source plate on deck 1 to a destination plate on deck 2 and could
+   identify neither, with `details.loaded_plate` `null` throughout. Whether to
+   break the shared contract for plate-per-slot is the device repos' call, not
+   this document's; what matters here is that **a transfer has two container
+   endpoints and today's device state can name at most one.**
+
+2. **No slot binding, though both halves exist.** `plate.load` carries
+   `plate_id`, `model` and per-well contents but not the deck slot. §6's
+   `Location` registry is *exactly* this: a slash-path `name` such as
+   `ot2/slot_3` with `location_type = deck`. The device separately knows its
+   own slots — the OT-2 gateway publishes a provenance-tagged deck snapshot
+   whose slots read `source: run` once the run engine confirms them. So "where
+   is plate X" is unanswerable only because nothing joins a `plate_id` to a
+   slot. Carrying the slot on `plate.load` would let a workflow write both
+   `Container.location_id` and the `move` action without inferring anything.
+
+3. **No transfer ledger.** The run moved 100 µL A1→A1 twice and 20 µL into
+   each of eight wells in one 8-channel movement. `ContainerAction` is designed
+   to hold precisely that — a `transfer` verb with
+   `source_container_id`/`target_container_id` and a signed amount, against the
+   positional child containers of each plate. Nothing emits it. The device's
+   `well.update` mutates current per-well state and is **not** a ledger; §6 is
+   explicit that current composition is a service-owned cache
+   (`ContainerContents`) precisely because a transfer moves proportional
+   fractions and cannot be recovered by summing. Whatever writes these rows
+   must be the workflow layer, in the same transaction discipline §6 requires.
+
+### Already present, currently unused
+
+The OT-2 gateway's tip tracker records a `sample_id` per tip well — a
+contamination guard that refuses a tip which previously touched a different
+sample. That is a provenance thread of exactly the kind
+`sample_ingredients` exists to capture, sitting in a device and connected to
+nothing. Worth remembering when the ledger lands: some of the custody chain is
+already being observed, just not recorded.
+
+### The layering rule
+
+**A device must never become a client of this database.** Per
+[`ARCHITECTURE.md`](ARCHITECTURE.md), device services are authoritative for
+their own real-time state and nothing else; workflows and agents write records
+to AnaliticaDB. A gateway that resolved barcodes or posted `ContainerAction`
+rows would put the record layer on the critical path of a pipetting step and
+give one device two masters. `plate_id` travelling as an opaque string, and
+the workflow doing the joining, is what keeps the seam thin.
+
 ## Cross-cutting consequences
 
 - **Ownership scope.** The current authz model assumes every row has an
