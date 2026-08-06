@@ -1,7 +1,14 @@
 # Python / uv
 __pycache__/
 *.py[cod]
+# Both forms on purpose. `.venv/` matches only a directory, so a *symlink*
+# named .venv slips past it and can be committed — and checking that symlink
+# out over the real environment destroys it (it happened: a temporary
+# worktree symlinked .venv so the auth pre-commit hook could find a python,
+# `git add -A` staged it, and the next merge replaced this repo's venv with a
+# self-referential link, leaving the api unit's ExecStart dangling).
 .venv/
+.venv
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
