@@ -286,6 +286,13 @@ http://100.64.254.6 {
 		copy_headers X-Auth-User X-Auth-Role
 	}
 	handle @bitacora {
+		# Same no-store override as the dashboard route: Next.js defaults HTML
+		# to a 1-year cache, which pins the chunk hashes the HTML references.
+		# Static chunks under /_next/static/ keep their own immutable cache.
+		@bitacora_html not path /bitacora/_next/static/* /bitacora/api/*
+		reverse_proxy @bitacora_html 127.0.0.1:3001 {
+			header_down Cache-Control "private, no-cache, no-store, max-age=0, must-revalidate"
+		}
 		reverse_proxy 127.0.0.1:3001
 	}
 
@@ -293,6 +300,18 @@ http://100.64.254.6 {
 	# Next.js serves / and /api/* (it rewrites /api/* to FastAPI on :8001) and
 	# enforces its own control/assistant gate via web/src/middleware.ts against
 	# the same sidecar — so no forward_auth wrapper is needed here.
+	#
+	# Override Next.js's default 1-year HTML cache (s-maxage=31536000) with
+	# no-store on HTML documents only. The cached HTML pins the iframe src and
+	# chunk hashes it references, so a dashboard redeploy looks stale until a
+	# hard reload — the /workflows iframe kept serving an old bitacora build
+	# this way. Static chunks under /_next/static/ keep their own immutable
+	# cache (the matcher excludes them).
+	@dashboard_html not path /_next/static/* /api/* /streams/*
+	reverse_proxy @dashboard_html 100.64.254.6:8000 {
+		header_down Cache-Control "private, no-cache, no-store, max-age=0, must-revalidate"
+	}
+	# Static assets and API: no header override (pass through upstream's own).
 	reverse_proxy 100.64.254.6:8000
 }
 

@@ -13,6 +13,8 @@ const STATIC_AFTER = [
   { href: "/utils", label: "Utils" },
 ];
 
+type Tab = { href: string; label: string; external?: boolean };
+
 export function Nav() {
   const pathname = usePathname();
   const { data: platforms } = usePlatforms();
@@ -25,18 +27,19 @@ export function Nav() {
     ? [{ href: "/platforms", label: "Platforms" }]
     : [];
 
-  // Bitacora (agentic ELN), embedded same-origin under /workflows. Hidden
-  // until sign-in — anonymous visitors would otherwise see Bitacora's own
-  // auth-gated dashboard nested inside the iframe (see middleware.ts).
+  // Bitacora (agentic ELN) is a separate Next.js app served same-origin at
+  // /bitacora via Caddy path routing. Link to it directly (full page nav, not
+  // a client-side route transition) — it has its own route manifest, so
+  // next/link would try to resolve /bitacora against this app and 404.
   const workflowsTabs = authenticated
-    ? [{ href: "/workflows", label: "Workflows" }]
+    ? [{ href: "/bitacora", label: "Workflows", external: true }]
     : [];
 
   // Visibility only — the /admin route is enforced by the middleware + sidecar.
   const adminTabs =
     identity?.role === "admin" ? [{ href: "/admin", label: "Admin" }] : [];
 
-  const tabs = [
+  const tabs: Tab[] = [
     ...STATIC_BEFORE,
     ...platformTabs,
     ...workflowsTabs,
@@ -51,18 +54,18 @@ export function Nav() {
           tab.href === "/"
             ? pathname === "/"
             : pathname.startsWith(tab.href);
-        return (
-          <Link
-            key={tab.href}
-            href={tab.href}
-            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
-              active
-                ? "border-sky-600 text-ink dark:border-sky-400 dark:text-slate-100"
-                : "border-transparent text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
-            }`}
-          >
-            {tab.label}
-          </Link>
+        const cls = `-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+          active
+            ? "border-sky-600 text-ink dark:border-sky-400 dark:text-slate-100"
+            : "border-transparent text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
+        }`;
+        // External links (e.g. /bitacora, a separate app) use a plain <a> so
+        // the browser does a full page navigation instead of a client-side
+        // route transition that would 404 against this app's manifest.
+        return tab.external ? (
+          <a key={tab.href} href={tab.href} className={cls}>{tab.label}</a>
+        ) : (
+          <Link key={tab.href} href={tab.href} className={cls}>{tab.label}</Link>
         );
       })}
     </nav>

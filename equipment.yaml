@@ -336,7 +336,7 @@ equipment:
     # for the first request after a gateway restart.
     poll_timeout_seconds: 5.0
     tiles:
-      echem: { w: 2, h: 2 }
+      echem: { w: 2, h: 3 }
     pills: {}
     camera:
       host: 172.31.60.22
@@ -513,21 +513,35 @@ equipment:
   # Bitácora — the agentic ELN (Next.js standalone :3001 + FastAPI :8050),
   # fronted by the edge at /bitacora/ so it shares the auth banner and one
   # sign-in. Also embedded in the dashboard's own Workflows tab; this entry is
-  # the Web Services tile + the grantable equipment id. Its backend serves
-  # /health but no STATUS_SPEC /status envelope, so it's a link-out tile like
-  # AnaliticaChat (adapter: mock, not health-polled — shown "ready" because
-  # base_url is set). Give it a real /status and flip to `adapter: http` to get
-  # true health here.
+  # the Web Services tile + the grantable equipment id.
+  #
+  # Live-polled since 2026-08-06: the API serves a real STATUS_SPEC v1.0
+  # envelope, so this is `adapter: http`, not a link-out tile. base_url is the
+  # API's LOOPBACK port, not the edge path: bitácora binds 127.0.0.1 by design
+  # (the edge is the only path in, because it is what injects the verified
+  # X-Auth-User the ELN attributes records to), and the edge route itself is
+  # forward_auth'd — a poll through /bitacora/ would be answered by the auth
+  # sidecar, not the ELN. The dashboard API runs on this same host, so loopback
+  # is reachable; this entry is not portable to an aggregator elsewhere.
+  #
+  # `degraded` here means DB-only mode (no GitHub App): registry, rooms and
+  # chat work, protocol repos cannot be stamped.
   - id: bitacora_eln
     name: Bitacora ELN
     kind: other
-    adapter: mock
-    base_url: http://100.64.254.6/bitacora/
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8050
+    status_path: /status
     poll_timeout_seconds: 3.0
     tiles:
       web_services: { w: 2, h: 1 }
+    # No `open: true` — base_url is now loopback and useless to a browser. The
+    # pill points at the ABSOLUTE edge URL (port 80) so it lands on the Caddy
+    # edge even when the dashboard is viewed directly on :8000.
     pills:
-      open: true
+      link_label: "Open"
+      link_href: http://100.64.254.6/bitacora/
 
   # AnaliticaDB — the analytical-chemistry results catalog (FastAPI) on the
   # dashboard host. Serves a minimal STATUS_SPEC v1.0 /status envelope

@@ -12,9 +12,18 @@ const apiBase = process.env.DASHBOARD_API_BASE ?? "http://127.0.0.1:8001";
 // reverse proxy.
 const go2rtcBase = process.env.GO2RTC_BASE ?? "http://127.0.0.1:1984";
 
+// Unique per build (commit + build time), used as the Next build id so a
+// redeploy invalidates the chunk hashes the cached HTML references. It was
+// also exported as NEXT_PUBLIC_BITACORA_IFRAME_V to bust the Workflows
+// iframe's src; that iframe is gone (Workflows is now a plain link to
+// /bitacora), so the export went with it. Keep the build id — the no-store
+// header on HTML in Caddyfile.single-edge is the other half of the same fix.
+const BUILD_STAMP = `${process.env.GIT_COMMIT ?? "dev"}-${Date.now()}`;
+
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
+  generateBuildId: () => BUILD_STAMP,
   async redirects() {
     return [
       // The labware builder moved under the Utils section (2026-07-16).

@@ -140,7 +140,7 @@ export default function PlatformsPage() {
         {selected && (
           <button
             type="button"
-            onClick={() => router.push("/workflows")}
+            onClick={() => (window.location.href = "/bitacora")}
             className="ml-auto rounded-md bg-orange-600 px-3 py-1 text-xs font-medium text-white shadow-sm hover:bg-orange-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 dark:bg-orange-500 dark:hover:bg-orange-600"
           >
             Workflows
