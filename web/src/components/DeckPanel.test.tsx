@@ -120,3 +120,76 @@ describe("DeckPanel declared vs observed rendering", () => {
     expect(overhang.textContent).toContain("→ 40 °C");
   });
 });
+
+describe("DeckPanel tip-state rendering", () => {
+  const COLUMN_1 = ["A1", "B1", "C1", "D1", "E1", "F1", "G1", "H1"];
+
+  function rackDeck() {
+    return deckWith({
+      "5": labwareSlot("occupied", {
+        kind: "tiprack",
+        load_name: "opentrons_96_tiprack_20ul",
+        is_tiprack: true,
+        rows: 8,
+        columns: 12,
+        nickname: "tips_20",
+      }),
+    });
+  }
+
+  function summary(tips: Record<string, string>) {
+    return [
+      {
+        nickname: "tips_20",
+        total: 96,
+        available: 96 - Object.keys(tips).length,
+        empty: Object.values(tips).filter((s) => s === "empty").length,
+        touched: Object.values(tips).filter((s) => s !== "empty").length,
+        tips,
+      },
+    ];
+  }
+
+  /** The dots inside slot 5's mini grid, in row-major render order. */
+  function wellDots(container: HTMLElement): Element[] {
+    const cell = container.querySelector('[title^="Slot 5"]')!;
+    return Array.from(cell.querySelectorAll("span.rounded-full"));
+  }
+
+  it("fades the wells an 8-channel pick emptied, and tints a used tip", () => {
+    const tips = Object.fromEntries(COLUMN_1.map((w) => [w, "empty"]));
+    const { container } = render(
+      <DeckPanel deviceDeck={rackDeck()} tipRacks={summary({ ...tips, H2: "plate_D_B2" })} />,
+    );
+    const dots = wellDots(container);
+    expect(dots).toHaveLength(96);
+    // Row-major: index = row * columns + column. Column 1 is index r*12.
+    for (let r = 0; r < 8; r++) {
+      expect(dots[r * 12].className).toContain("bg-slate-100");
+    }
+    expect(dots[7 * 12 + 1].className).toContain("bg-amber-300"); // H2, used
+    expect(dots[3].className).toContain("bg-slate-300"); // A4, still full
+  });
+
+  it("draws an untracked rack uniformly rather than claiming it is full", () => {
+    // No summary for this rack: the thumbnail has no honest way to say
+    // "unknown" at 2 px, so it says nothing — the inspector carries the truth.
+    const { container } = render(<DeckPanel deviceDeck={rackDeck()} tipRacks={[]} />);
+    const dots = wellDots(container);
+    expect(dots.every((d) => d.className.includes("bg-slate-300"))).toBe(true);
+  });
+
+  it("leaves a plate alone (tip state is a tip-rack concept)", () => {
+    const deck = deckWith({
+      "5": labwareSlot("occupied", {
+        kind: "96-well",
+        load_name: "corning_96_wellplate_360ul_flat",
+        rows: 8,
+        columns: 12,
+        nickname: "plate_D",
+      }),
+    });
+    const { container } = render(<DeckPanel deviceDeck={deck} tipRacks={summary({ A1: "empty" })} />);
+    expect(wellDots(container).every((d) => d.className.includes("bg-slate-300"))).toBe(true);
+  });
+});

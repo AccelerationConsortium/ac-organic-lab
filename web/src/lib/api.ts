@@ -810,6 +810,14 @@ export async function putDeckLayout(
 // legacy get/putDeckLayout store and falls back to it for un-migrated devices.
 
 /** One slot of the gateway's normalized deck (details.snapshot.deck.slots). */
+/** One well of the orchestrator-tracked plate (deck slot `labware.wells`). */
+export interface WellSample {
+  well: string;
+  sample_id?: string | null;
+  volume_ul?: number | null;
+  notes?: string | null;
+}
+
 export interface DeviceDeckSlot {
   labware: {
     kind: string;
@@ -819,6 +827,12 @@ export interface DeviceDeckSlot {
     rows?: number | null;
     columns?: number | null;
     plate_id?: string | null;
+    /** Tracked plate samples the deck folds onto this slot. */
+    wells?: WellSample[] | null;
+    /** The setup recipe's name for this labware — the key `details.tip_racks`
+     *  and `/control/*` use. Stamped per slot by the gateway so it survives
+     *  run/REPL precedence, unlike `display_name`. */
+    nickname?: string | null;
   } | null;
   module: { module_name: string; status?: string | null; serial_number?: string | null } | null;
   slot_state: "empty" | "declared" | "occupied" | "in_use" | "mismatch";
