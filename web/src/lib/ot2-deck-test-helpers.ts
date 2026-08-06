@@ -4,10 +4,10 @@
  * Test-only — not imported by application code.
  */
 
-import type { DeviceDeck, DeviceDeckSlot, RobotModule } from "./api";
+import type { DeviceDeck, DeviceDeckSlot, RobotModule, WellSample } from "./api";
 import type { EquipmentSnapshot } from "@/types/api";
 
-export type { DeviceDeck, DeviceDeckSlot, RobotModule };
+export type { DeviceDeck, DeviceDeckSlot, RobotModule, WellSample };
 
 type Status = EquipmentSnapshot["status"];
 
@@ -24,6 +24,8 @@ export function labwareSlot(
     is_tiprack?: boolean;
     rows?: number | null;
     columns?: number | null;
+    nickname?: string | null;
+    wells?: WellSample[] | null;
   },
 ): DeviceDeckSlot {
   return {

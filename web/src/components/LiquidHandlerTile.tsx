@@ -8,6 +8,7 @@ import {
   deviceDeckFromStatus,
   pipetteLabel,
   robotModulesFromStatus,
+  tipRacksFromStatus,
 } from "@/lib/ot2-deck";
 
 import { AuthGatedLink } from "./AuthGatedLink";
@@ -123,6 +124,7 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
         legacyLabware={legacyLabware}
         robotModules={robotModules}
         variant="tile"
+        tipRacks={tipRacksFromStatus(status)}
       />
 
       {/* SSH / Protocol status pills. */}

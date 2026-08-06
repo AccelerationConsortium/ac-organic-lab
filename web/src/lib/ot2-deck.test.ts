@@ -132,6 +132,48 @@ describe("buildSlotView", () => {
     expect(v.label).toBe("corning_96_wellplate_360ul_flat");
   });
 
+  it("carries the slot nickname, tiprack flag and tracked wells to the inspector", () => {
+    // The nickname is the join key from a slot to details.tip_racks; the
+    // gateway stamps it per slot precisely so it survives run/REPL precedence,
+    // where display_name is overwritten by the robot's own label.
+    const deck = deckWith({
+      "5": labwareSlot("occupied", {
+        kind: "tiprack",
+        load_name: "opentrons_96_tiprack_20ul",
+        display_name: "Opentrons 20uL Tiprack",
+        is_tiprack: true,
+        nickname: "tips_20",
+      }),
+      "2": labwareSlot("occupied", {
+        kind: "96-well",
+        load_name: "corning_96_wellplate_360ul_flat",
+        nickname: "plate_D",
+        wells: [{ well: "A1", sample_id: "caffeine-001", volume_ul: 180 }],
+      }),
+    });
+
+    const rack = buildSlotView(5, deck, {});
+    expect(rack.nickname).toBe("tips_20");
+    expect(rack.isTiprack).toBe(true);
+    expect(rack.label).toBe("Opentrons 20uL Tiprack"); // robot's label still wins the label
+
+    const plate = buildSlotView(2, deck, {});
+    expect(plate.nickname).toBe("plate_D");
+    expect(plate.isTiprack).toBe(false);
+    expect(plate.wells?.[0].sample_id).toBe("caffeine-001");
+  });
+
+  it("infers the tiprack flag from the kind on a gateway that omits it", () => {
+    const deck = deckWith({
+      "5": labwareSlot("occupied", { kind: "tiprack", load_name: "opentrons_96_tiprack_20ul" }),
+    });
+    // labwareSlot defaults is_tiprack to false; the classified kind is the
+    // fallback, so an un-migrated gateway still reads tip state.
+    const v = buildSlotView(5, deck, {});
+    expect(v.nickname).toBeNull();
+    expect(v.isTiprack).toBe(false);
+  });
+
   it("flags a mismatch with declared vs observed in the title", () => {
     const deck = deckWith({
       "2": mismatchSlot(

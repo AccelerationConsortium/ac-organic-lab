@@ -1,8 +1,8 @@
 "use client";
 
-import { Ot2ControlPanel } from "@/components/Ot2ControlPanel";
+import { EmbeddedDevicePanel } from "@/components/EmbeddedDevicePanel";
 
 /** Alias of /equipment/ot2_hte/control — the HTE bench OT-2. */
 export default function Ot2HtePage() {
-  return <Ot2ControlPanel equipmentId="ot2_hte" />;
+  return <EmbeddedDevicePanel equipmentId="ot2_hte" title="Opentrons OT-2 (HTE) — operator panel" />;
 }

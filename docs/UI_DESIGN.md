@@ -26,91 +26,140 @@ lab contract.
 
 ## 1. OT-2 full-page interface
 
-**Shipped** 2026-07-15 (branch `feature-ot2-interface`).
+**Shipped** 2026-07-15 (branch `feature-ot2-interface`) as a dashboard-hosted
+implementation; **replaced** 2026-08-05 by an embed of the device's own panel.
 
-The dashboard hosts a dedicated, server-side (Linux central server) full-page
-interface for each Opentrons OT-2, alongside the existing compact
-`LiquidHandlerTile` on the platform pages. The Windows gateways
-(`opentrons-server`, ports 8020/8021) are **unchanged** — they remain the
-single authority for deck, plate and tip state; this interface is a pure
-consumer of the central equipment API.
+Each Opentrons OT-2 has a full-page operator interface, reached from the
+compact `LiquidHandlerTile` on the platform pages. The page **frames the
+gateway's own SPA** (`opentrons-server`, ports 8020/8021, served at `/ui`)
+rather than reimplementing its controls here — the same strategy as
+`/utils/xarm_control`. The dashboard keeps the read-only tile; every write
+happens in the device's panel.
 
 ### 1.1 Routes
 
 | Route | What it is |
 |---|---|
-| `/equipment/[equipmentId]/control` | Generic full-page equipment control view. Renders the OT-2 interface for `kind: liquid_handler`; other kinds get their status header and a notice. |
+| `/equipment/[equipmentId]/control` | Generic full-page equipment control view. Frames the device's own panel when it hosts one; anything else gets a notice pointing back at its tile. |
 | `/ot2_hte` | Fixed-id alias of `/equipment/ot2_hte/control` (HTE bench OT-2). |
 | `/ot2_complexation` | Fixed-id alias of `/equipment/ot2_complexation/control` (complexation bench OT-2). |
 
-Adding a third OT-2 needs no new code: register it in `equipment.yaml` and use
-`/equipment/<id>/control` (add an alias page only if a short URL is wanted).
+The panel paths live in `web/src/lib/device-panels.ts`, mirroring the route
+blocks in `deploy/Caddyfile.single-edge`. They are edge paths on *this* origin
+(`/ot2/hte/ui/`, `/ot2/complexation/ui/`, `/xarm5/web/`), not device URLs —
+that is what makes the frame same-origin, so the session cookie and the
+injected `X-Auth-User` identity carry through without a second login. They are
+deliberately **not** in `equipment.yaml`: the mapping describes the *edge's*
+routing table, whereas the registry's `base_url` is the device port the
+aggregator polls directly, un-proxied.
 
-### 1.2 Data flow (unchanged invariants)
+Adding a third OT-2 needs a `device-panels.ts` entry and an edge route block;
+no new components.
 
-- **Reads** — the page polls `GET /api/equipment/{id}/status` (2.5 s React
-  Query interval), the same central aggregator endpoint the tiles use. It
-  renders `details.snapshot.deck` (normalized deck), `details.robot`
-  (probe + live module telemetry), `details.tip_racks` / `details.mounted_tips`
-  (gateway tip tracking), `details.claimed_by`, `components.*` (pipettes,
-  SSH, protocol) and `last_error`. Nothing is read from the gateway directly,
-  and no deck state is duplicated on the server.
-- **Writes** — only `POST/DELETE /api/equipment/{id}/control/deck/declare`,
-  through the existing audited control passthrough (`api/app/control.py`):
-  middleware session check (`ac_auth`) → per-request claim → device →
-  release → `control_action` audit row. The browser never calls raw gateway
-  `/control/*` endpoints. Hardware execution (setup/home/aspirate/…) stays
-  behind `lab-skills` validated plans and interlocks — the page does not
-  expose those verbs.
-- **Authorization** — same `useControlLock(equipmentId)` gate as the tiles:
-  signed out ⇒ picker disabled with a "sign in" hint; signed in without a
-  role on the device ⇒ "no access". The middleware enforces the same answer
-  server-side; the client gate is UX only.
+### 1.2 Why the dashboard stopped hosting its own copy
 
-### 1.3 Declaration vs physical setup (important)
+The dashboard's `Ot2ControlPanel` and the gateway's SPA were ports of each
+other, kept in sync by hand, and had already drifted — `ot2-deck.ts` alone
+carried ~120 lines of divergence, and adding the plate inspector meant writing
+the same component twice. The device panel is also the better surface on the
+merits: it reads `/status` directly instead of through the aggregator's poll,
+and it holds a **real heartbeated claim** rather than the per-request claim the
+passthrough takes for a single action.
 
-The deck editor is labelled **"Declare deck intent"** deliberately:
+Framed, not linked, for the same reason as `/utils/xarm_control`: a `next/link`
+transition resolves the edge path against this app's route manifest and 404s.
+The gateway sets neither `X-Frame-Options` nor a CSP, so framing is not blocked;
+it also detects being framed (`window.self !== window.top`) and suppresses its
+own auth banner so the host's is the only one shown.
 
-- **Declaring** records *operator intent* in the gateway's persistent
-  declaration store (`POST /control/deck/declare`). It is pure metadata — it
-  does **not** load labware into an Opentrons protocol context, move
-  hardware, or run `/control/setup`.
-- The gateway merges declarations with what it *observes* (run/REPL deck)
-  and flags disagreements per slot as `slot_state: "mismatch"` — the page
-  renders declared and observed separately and badges mismatches (≠).
+**Audit — closed device-side.** Framing the panel opened a gap: a write made
+inside it goes straight to the device and never produces the `control_action`
+row the dashboard passthrough writes (ARCHITECTURE decision #1; ROADMAP's
+control-surface closure plan). `opentrons-server` closed it from the other end
+with its own events exporter (`ee529ad`, live on both gateways 2026-08-06),
+ported from the xArm's: hooked at `_run_action`, the single choke point every
+control command passes through, it POSTs `control_action` (action, outcome,
+`owner` = the claim holder the edge stamps with the signed-in person,
+`duration_s`), tip lifecycle, and session edges to `/api/ingest/events`. It is
+off unless `OT2_INGEST_URL` is set, takes its `device_id` from
+`OT2_EQUIPMENT_ID` so a two-gateway host attributes each robot, and never emits
+in dry run.
+
+Consequence worth knowing when reading history: a **dashboard-proxied** click
+now writes **two** `control_action` rows — the passthrough's (its HTTP hop,
+with `method` + `status_code`) and the device's (`source: "device"`). The
+device row is authoritative for outcome and duration; both follow the same
+message convention so they read alike in one series. A panel-originated write
+produces only the device row, which is the point.
+
+### 1.3 What the dashboard still owns
+
+- **The compact tile** (`LiquidHandlerTile`) — read-only summary: deck mirror
+  via `DeckPanel`, light / pipette / SSH / protocol pills, and the
+  "Control interface →" link. It reads deck state; it never writes it.
+- **`web/src/lib/ot2-deck.ts`** — pure `/status` parsing (unit-tested, no
+  React), shared by the tile and `DeckPanel`. Its declare-side helpers have no
+  caller here any more; see the module docstring for why they are kept.
+- **`web/src/components/DeckPanel.tsx`** — the reusable 12-slot deck with
+  module telemetry readouts, incl. the temperature-module overhang cell.
+- **The labware builder and central definition store** (§1.4) — platform-level
+  assets shared by both robots and by workflows, so they stay here.
+
+Deleted with the embed: `Ot2ControlPanel.tsx`, `PlateInspector.tsx`,
+`lib/ot2-catalog.ts` (the authored picker catalog — the gateway authors its
+own), and their tests.
+
+### 1.4 Declaration vs physical setup (unchanged distinction)
+
+The gateway's deck editor records *operator intent*:
+
+- **Declaring** writes to the gateway's persistent declaration store
+  (`POST /control/deck/declare`). It is pure metadata — it does **not** load
+  labware into an Opentrons protocol context, move hardware, or run
+  `/control/setup`.
+- The gateway merges declarations with what it *observes* (run/REPL deck) and
+  flags disagreements per slot as `slot_state: "mismatch"`; declared and
+  observed render separately, mismatches badged (≠) — including on the
+  dashboard tile's read-only mirror.
 - **Physical setup** (actually loading labware/instruments on the robot) is
-  `/control/setup` driven by a validated `lab-skills` plan — out of scope for
-  this interface by design (constraint: the UI must not pretend declaration
-  loads labware).
+  `/control/setup`, driven by a validated `lab-skills` plan. Neither surface
+  pretends declaration loads labware.
 
-### 1.4 Custom labware (builder + central store)
+`POST /control/deck/declare` is a **full-layout replace**: every edit must
+re-send all currently-declared slots, each as its exact Opentrons `load_name`
+when the gateway reported one (falling back to `kind` only for legacy
+declarations, and to the module key for declared modules). Round-tripping by
+`kind` alone silently degrades an exact declaration — the rule is enforced in
+the gateway's UI now, and recorded in `ot2-deck.ts`'s docstring for the helpers
+kept here.
 
-Three tiers of custom-labware support, added 2026-07-16:
+### 1.5 Custom labware (builder + central store)
 
-1. **Free-text declare** — the control page's picker accepts any exact
-   Opentrons `load_name` (must match `^[a-z0-9._]+$` and contain `_`,
-   otherwise the gateway would parse it as a legacy kind string). Unknown
-   names round-trip verbatim.
-2. **Labware builder** (`/utils/labware_builder`) — a parametric form (grid, footprint,
-   offsets, spacing, well geometry) that generates a complete Opentrons
-   **schema-2** definition JSON with a live to-scale preview. Validation
-   ports `opentrons-server`'s `LabwareGenerator` limits (footprint
-   127 × 85.5 mm, height 200 mm, wells inside the footprint). Anyone can
-   build + **download** the JSON; building never touches a robot.
-3. **Central definition store** (`/api/labware`, `api/app/labware.py`) —
-   two merged sources:
+Three tiers of custom-labware support, added 2026-07-16 and **retained**:
+
+1. **Free-text declare** — the gateway's picker accepts any exact Opentrons
+   `load_name` (must match `^[a-z0-9._]+$` and contain `_`, otherwise the
+   gateway would parse it as a legacy kind string). Unknown names round-trip
+   verbatim.
+2. **Labware builder** (`/utils/labware_builder`) — a parametric form (grid,
+   footprint, offsets, spacing, well geometry) that generates a complete
+   Opentrons **schema-2** definition JSON with a live to-scale preview.
+   Validation ports `opentrons-server`'s `LabwareGenerator` limits (footprint
+   127 × 85.5 mm, height 200 mm, wells inside the footprint). Anyone can build
+   + **download** the JSON; building never touches a robot.
+3. **Central definition store** (`/api/labware`, `api/app/labware.py`) — two
+   merged sources:
    - **(a) repo-committed**: `<repo>/labware/*.json`, PR-reviewed (see
-     `labware/README.md`); wins on name collisions and is immutable via
-     the API.
+     `labware/README.md`); wins on name collisions and is immutable via the
+     API.
    - **(b) admin-uploaded**: `<data-dir>/labware/*.json`, written by
      `POST /api/labware` (session verified at the middleware, **admin role
      enforced server-side**; uploads validated with the same rules; every
      write audited as a `control_action` on the `labware_store`
      pseudo-device). `DELETE` removes uploaded definitions only.
 
-   Store definitions appear in the deck picker's **"Custom (lab store)"**
-   group, and workflows can fetch the full JSON (`GET /api/labware/{name}`)
-   to pass as the labware `config` in a lab-skills `setup` plan
+   Workflows fetch the full JSON (`GET /api/labware/{name}`) to pass as the
+   labware `config` in a lab-skills `setup` plan
    (`protocol.load_labware_from_definition` on the gateway).
 
 Env overrides: `LABWARE_REPO_DIR`, `LABWARE_UPLOAD_DIR` (defaults:
@@ -118,72 +167,19 @@ Env overrides: `LABWARE_REPO_DIR`, `LABWARE_UPLOAD_DIR` (defaults:
 
 The API additionally serves the **official Opentrons library** (the
 `opentrons-shared-data` package, ~141 definitions, latest schema-2 version
-each) read-only at `GET /api/labware/standard` (+ `/{load_name}`); the
-builder lists it (searchable) and can load any entry's exact geometry for
-modification. Uploads that would shadow a standard load name are refused
-(409) — a custom variant needs its own name.
-
-### 1.5 The catalog (`web/src/lib/ot2-catalog.ts`)
-
-Because the gateway is unchanged, the *choices* offered in the pickers are
-authored centrally in the dashboard, separate from runtime state. Entries
-carry a stable key, display label, category, the exact declare string, grid
-dimensions and optional compatibility notes. Three declaration flavours:
-
-- **Exact Opentrons load_names** (preferred) — e.g.
-  `corning_96_wellplate_360ul_flat`, `agilent_1_reservoir_290ml`,
-  `opentrons_96_tiprack_300ul`. The gateway parses any string containing
-  `_` as a load_name and derives kind/grid from it.
-- **Module keys** — `temperature_module`, `magnetic_module`,
-  `heater_shaker_module`, `thermocycler_module` (the gateway's
-  `deck.py _MODULE_KINDS`). Declared modules are sticky fixtures.
-- **Legacy generic kinds** — `96-well`, `waste`, … kept so pre-catalog
-  declarations keep round-tripping and coarse intent stays expressible.
-
-Custom (MatterLab) labware definitions and `/control/setup` execution are
-explicitly out of scope for this phase.
-
-#### Round-trip rule (the bug this fixes)
-
-`POST /control/deck/declare` is a **full-layout replace**, so every edit
-re-sends all currently-declared slots. The shared helper
-(`declaredMapFromDeck` in `web/src/lib/ot2-deck.ts`) re-sends each declared
-slot as its **exact `load_name`** when the gateway reported one (falling back
-to `kind` only for legacy declarations, and to the module key for declared
-modules). The previous tile round-tripped by `kind` only, which would have
-silently degraded an exact load_name declaration on the next unrelated edit.
-
-### 1.6 Component layout
-
-- `web/src/lib/ot2-deck.ts` — pure /status parsing + declaration logic
-  (unit-tested, no React).
-- `web/src/lib/ot2-catalog.ts` — the authored catalog + search/grouping.
-- `web/src/components/DeckPanel.tsx` — the reusable 12-slot deck
-  (`variant="tile"` in `LiquidHandlerTile`, `variant="page"` on the full
-  page); module telemetry readouts incl. the temperature-module overhang
-  cell.
-- `web/src/components/Ot2ControlPanel.tsx` — the full page: header strip,
-  claim banner, mismatch banner, deck + slot detail + searchable
-  "Declare deck intent" picker, robot/pipettes/modules/tip-racks/
-  mounted-tips/claim sections, footer with message + staleness.
-- The compact tile is now a **read-only summary** (deck mirror, light /
-  pipette / SSH / protocol pills) with a prominent "Control interface →"
-  link. All controls — session lifecycle (connect/disconnect, pause),
-  lights, and deck declaration — live on this page only.
-
-Tests: `web/src/lib/ot2-deck.test.ts`, `web/src/lib/ot2-catalog.test.ts`
-(pure logic, node env) and `web/src/components/DeckPanel.test.tsx`,
-`web/src/components/DeclarePicker.test.tsx` (jsdom component tests — slot
-selection, exact load-name declaration, mismatch rendering, auth-disabled
-controls).
+each) read-only at `GET /api/labware/standard` (+ `/{load_name}`); the builder
+lists it (searchable) and can load any entry's exact geometry for
+modification. Uploads that would shadow a standard load name are refused (409)
+— a custom variant needs its own name.
 
 ### See also (OT-2 interface)
 
 - [`EQUIP_STATUS.md`](EQUIP_STATUS.md) §11 — the compact tile's behaviour.
-- `opentrons-server` `docs/DECK_STATE_PLAN.md` — the normalized deck shape;
-  its `feature/deck-viewer` spec informed this page's rendering conventions.
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) decision #1 — why writes go through
-  the audited passthrough and the device stays the single authority.
+- `opentrons-server` `docs/DECK_STATE_PLAN.md` — the normalized deck shape.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) decision #1 — the device as single
+  authority, and why the audit trail above matters.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) decision #9 — why device services push
+  events to the aggregator rather than writing `lab.db` themselves.
 
 ---
 
