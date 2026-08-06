@@ -72,12 +72,25 @@ The gateway sets neither `X-Frame-Options` nor a CSP, so framing is not blocked;
 it also detects being framed (`window.self !== window.top`) and suppresses its
 own auth banner so the host's is the only one shown.
 
-**Audit trade-off (open).** Writes made inside the panel go straight to the
-device, so they do *not* produce the `equipment_events` `control_action` rows
-the dashboard passthrough writes (ARCHITECTURE decision #1; ROADMAP's
-control-surface closure plan). Closing this means having the gateway post its
-own audit rows to `POST /api/ingest/events`, the way the xArm's events exporter
-does — tracked separately.
+**Audit — closed device-side.** Framing the panel opened a gap: a write made
+inside it goes straight to the device and never produces the `control_action`
+row the dashboard passthrough writes (ARCHITECTURE decision #1; ROADMAP's
+control-surface closure plan). `opentrons-server` closed it from the other end
+with its own events exporter (`ee529ad`, live on both gateways 2026-08-06),
+ported from the xArm's: hooked at `_run_action`, the single choke point every
+control command passes through, it POSTs `control_action` (action, outcome,
+`owner` = the claim holder the edge stamps with the signed-in person,
+`duration_s`), tip lifecycle, and session edges to `/api/ingest/events`. It is
+off unless `OT2_INGEST_URL` is set, takes its `device_id` from
+`OT2_EQUIPMENT_ID` so a two-gateway host attributes each robot, and never emits
+in dry run.
+
+Consequence worth knowing when reading history: a **dashboard-proxied** click
+now writes **two** `control_action` rows — the passthrough's (its HTTP hop,
+with `method` + `status_code`) and the device's (`source: "device"`). The
+device row is authoritative for outcome and duration; both follow the same
+message convention so they read alike in one series. A panel-originated write
+produces only the device row, which is the point.
 
 ### 1.3 What the dashboard still owns
 
@@ -164,7 +177,9 @@ modification. Uploads that would shadow a standard load name are refused (409)
 - [`EQUIP_STATUS.md`](EQUIP_STATUS.md) §11 — the compact tile's behaviour.
 - `opentrons-server` `docs/DECK_STATE_PLAN.md` — the normalized deck shape.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) decision #1 — the device as single
-  authority, and why the audit gap above matters.
+  authority, and why the audit trail above matters.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) decision #9 — why device services push
+  events to the aggregator rather than writing `lab.db` themselves.
 
 ---
 

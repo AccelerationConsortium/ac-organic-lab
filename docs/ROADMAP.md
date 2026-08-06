@@ -486,10 +486,46 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   (`plate.{load,unload}`/`well.update`) verbs, so `lab.skills()` now
   mirrors the gateway's full `allowed_actions` surface (16 SkillDefs). A
   parity test pins the names to the gateway's advertised strings.
+- [x] **The dashboard stopped hosting its own control surface** (2026-08-05/06,
+  both robots). `/equipment/<id>/control` and the two aliases now **frame the
+  gateway's own operator SPA** (`/ot2/{hte,complexation}/ui/` through the edge)
+  instead of rendering a second implementation here; ~1.9k lines and 21 tests
+  were deleted from `web/`. This is the first device class where the dashboard
+  is no longer the operator surface, so it is worth stating why: the two UIs
+  were hand-synced ports that had already drifted, and the device panel is the
+  better surface on the merits — it reads `/status` directly rather than
+  through the aggregator's poll, and holds a real heartbeated claim instead of
+  the per-request claim the passthrough takes for a single action. The
+  dashboard keeps the read-only tile, `DeckPanel`, and the platform-level
+  labware builder + definition store. See [`UI_DESIGN.md`](UI_DESIGN.md) §1.
+  - Prerequisite, shipped device-side: the SPA builds with vite `base: "./"`
+    and derives its API prefix from the page URL, so one build serves both
+    instances through their own edge prefixes (no per-instance rebuild). It
+    also detects being framed and suppresses its own auth banner. Both panels
+    verified through the edge 2026-08-06.
+  - **Audit gap opened and closed in the same week.** A write inside the panel
+    bypasses the dashboard passthrough and its `control_action` row. The
+    gateway's own events exporter (`ee529ad`, live on both gateways
+    2026-08-06, ported from the xArm's) closes it: `control_action` with
+    outcome / owner / `duration_s`, plus tip lifecycle and session edges, to
+    `/api/ingest/events`. It also covers SDK and workflow calls, which never
+    had an audit row at all — so the net trail is *wider* than before the
+    embed. Enabled by `OT2_INGEST_URL`; `device_id` from `OT2_EQUIPMENT_ID`.
+    Note a dashboard-proxied click now writes two rows (passthrough + device);
+    the device row is authoritative for outcome and duration.
 - [ ] Follow-ups now unblocked: `execute_plan` can drive a typed OT-2
   `Plan` (v0.4 PR-1); the setup sub-models could tighten the
   `ot_default`-conditional required fields (`loadname` / `config`) with
   validators once a real recipe exercises custom labware.
+- [ ] **The `liquid_handler` SkillDefs are now the only in-repo model of the
+  OT-2's write surface.** With `Ot2ControlPanel` gone, nothing in `web/`
+  exercises those 18 verbs. The remaining guard is
+  `test_liquid_handler_names_match_gateway_allowed_actions`, which asserts the
+  catalog equals a **hand-transcribed literal** of the gateway's advertised
+  strings — so it catches a rename on *our* side, but a rename on the
+  gateway's only surfaces when someone updates that literal. Re-check it
+  against `gateway/service.py::allowed_actions` whenever the device repo
+  touches its control surface.
 
 #### `cytation_5` (device repo: `agilent-cytation-server`)
 

@@ -704,9 +704,11 @@ passthrough in `api/app/control.py`, which handles claim acquire /
 Since the panel embed (2026-08-05) **no dashboard UI calls this path** — the
 lights toggle lives in the gateway's own panel, which talks to the device
 directly under its own heartbeated claim. The route and its middleware
-behaviour below are unchanged and still serve API callers; the consequence
-is that panel-originated writes produce no `control_action` audit row (see
-[`UI_DESIGN.md`](UI_DESIGN.md) §1.2).
+behaviour below are unchanged and still serve API callers. Panel-originated
+writes are still audited: the gateway posts its own `control_action` rows to
+`/api/ingest/events` (live on both gateways 2026-08-06) — see
+[`UI_DESIGN.md`](UI_DESIGN.md) §1.2 for the two-row consequence on
+dashboard-proxied clicks.
 
 The `CONTROL_PASSWORD` middleware **does not** gate this path even
 when the env var is set — `actionBypassesControlGate("lights")`
