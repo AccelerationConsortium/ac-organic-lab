@@ -11,6 +11,32 @@ Two systemd services, no app-level auth - access is gated by Tailscale ACLs.
 
 ## Layout on the server
 
+> **The paths below are the recommended layout, not necessarily where a given
+> server actually has it.** The units in this directory are templates; the live
+> deployment on `gaia` runs from `/home/sdl2/caoyang/ac-organic-lab` (installed
+> before this layout was written), and its unit files under
+> `/etc/systemd/system/` carry those paths. So never assume `/opt` when
+> operating a running server — ask systemd:
+>
+> ```bash
+> systemctl show ac-organic-lab-api \
+>   -p FragmentPath -p WorkingDirectory -p EnvironmentFiles -p ExecStart -p User
+> ```
+>
+> `EnvironmentFiles=` is where environment variables belong (e.g.
+> `DEVICE_EDGE_SHARED_SECRET`); `FragmentPath=` is the unit actually in force.
+> Note that `systemctl show -p Environment` does **not** expand
+> `EnvironmentFile=`, so an empty result there proves nothing — read the live
+> process instead:
+>
+> ```bash
+> sudo tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value ac-organic-lab-api)/environ
+> ```
+>
+> That file holds secrets once `DEVICE_EDGE_SHARED_SECRET` or auth config is in
+> it, so it should not be world-readable — match its ownership to the unit's
+> `User=` and use `600` (or `640` with the service's group).
+
 ```
 /opt/ac-organic-lab/
 ├── api/                              # checked-out source + venv
