@@ -540,10 +540,12 @@ state, track position).
 ## 11) Liquid handler (`kind: liquid_handler`) — OT-2
 
 The Opentrons OT-2 renders as the kind-specific `LiquidHandlerTile`.
-Each OT-2 also has a dedicated **full-page interface** at
-`/equipment/<id>/control` (aliases `/ot2_hte`, `/ot2_complexation`) with the
-full deck, declared-vs-observed state, module telemetry, tip tracking and
-claim visibility — see [`UI_DESIGN.md`](UI_DESIGN.md) §1.
+Each OT-2 also has a **full-page interface** at `/equipment/<id>/control`
+(aliases `/ot2_hte`, `/ot2_complexation`) which, since 2026-08-05, **frames
+the gateway's own operator SPA** (`/ot2/{hte,complexation}/ui/` via the edge)
+rather than reimplementing its controls here — the full deck,
+declared-vs-observed state, module telemetry, tip tracking and claim are the
+device panel's. See [`UI_DESIGN.md`](UI_DESIGN.md) §1.
 There are **two** OT-2s, each fronted by its own `opentrons-server`
 gateway process (the gateway is multi-instance by design — one process
 per robot, own port, own robot host, own state files):
@@ -575,7 +577,7 @@ The tile is a **read-only summary**: a top row with a "Control interface →"
 link + read-only light/pipette pills, a non-interactive 12-slot deck grid,
 then the SSH / Protocol status pills (and any leftover `MetricList` /
 `ComponentList`). **All control** — session lifecycle, lights toggle,
-declaring deck intent — lives on the dedicated full-page interface at
+declaring deck intent — lives in the device's own panel, framed at
 `/equipment/<id>/control` (see [`UI_DESIGN.md`](UI_DESIGN.md) §1);
 the tile carries no lock chip because it has nothing to gate.
 
@@ -583,7 +585,7 @@ the tile carries no lock chip because it has nothing to gate.
 
 | Element | Source | Behaviour |
 |---|---|---|
-| **Control interface →** link | — | Navigates to `/equipment/<id>/control`, where all OT-2 controls live. |
+| **Control interface →** link | — | Navigates to `/equipment/<id>/control`, which frames the gateway's own panel — where all OT-2 controls live. |
 | **Light pill** with a state dot | `components.lights.state` (`on` / `off` / `unknown`) | Read-only indicator: dot is **amber (glowing)** when on, **black** when off, grey when unknown. The toggle is on the control page. |
 | Left / right **pipette pills** | `components.pipette_left.state` / `pipette_right.state` | Model formatted (`p300_multi_gen2` → `P300 Multi`); left mount rendered first (position implies the mount, so no caption). Hover shows mount + raw model; empty mount shows `—`. |
 
@@ -593,9 +595,9 @@ top-right**). Blocks are a **fixed 160×120 px**; the grid keeps three
 fixed columns and distributes extra width between them
 (`justify-content: space-between`), so resizing the window only spaces
 the blocks out horizontally rather than stretching them (scrolls if the
-tile is narrower than three blocks). On the tile the grid is
-non-interactive (hover tooltips only); slot selection happens on the
-control page, where the same `DeckPanel` renders with a click handler.
+tile is narrower than three blocks). The grid is non-interactive (hover
+tooltips only) — `DeckPanel`'s click-to-select `variant="page"` mode has
+no caller in this repo now that slot selection happens in the device panel.
 
 **Deck source (2026-07 — device-driven, with fallback).** The tile
 prefers the gateway's *own* normalized deck published at
@@ -698,6 +700,13 @@ in `ready`.
 passthrough in `api/app/control.py`, which handles claim acquire /
 `X-Claim-Token` attach / release per request (the device enforces
 `X-Claim-Token` on `/control/*`).
+
+Since the panel embed (2026-08-05) **no dashboard UI calls this path** — the
+lights toggle lives in the gateway's own panel, which talks to the device
+directly under its own heartbeated claim. The route and its middleware
+behaviour below are unchanged and still serve API callers; the consequence
+is that panel-originated writes produce no `control_action` audit row (see
+[`UI_DESIGN.md`](UI_DESIGN.md) §1.2).
 
 The `CONTROL_PASSWORD` middleware **does not** gate this path even
 when the env var is set — `actionBypassesControlGate("lights")`

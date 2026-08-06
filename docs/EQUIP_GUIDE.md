@@ -427,11 +427,13 @@ agree. Be deliberate about which layer you mean when you say
 
 The two combinations that matter today:
 
-- **OT-2 deck lights** are bypassed at **both** layers — the
-  `LiquidHandlerTile` doesn't gate the lights row on `locked`, and the
-  middleware `actionBypassesControlGate("lights")` lets the POST
-  through without the `control_auth` cookie. Operator can flip the
-  lights regardless of lock state or `CONTROL_PASSWORD`.
+- **OT-2 deck lights** are bypassed at the **middleware** layer:
+  `actionBypassesControlGate("lights")` lets the POST through without the
+  `control_auth` cookie, so the lights can be flipped regardless of
+  `CONTROL_PASSWORD`. There is no tile-layer decision left to make — since
+  the panel embed (2026-08-05) the toggle lives in the gateway's own UI, not
+  in `LiquidHandlerTile`; the bypass is kept for API callers and for a future
+  dashboard-side lights control.
 - **Power-strip light outlets** are bypassed only at the **tile**
   layer. The middleware still requires the cookie because a single
   `power_strip` mixes safe outlets (light) with destructive outlets

@@ -134,15 +134,14 @@ http://100.64.254.6 {
 	# upstream sees its OWN /ui, /labware paths (the SPA was built to live at
 	# /ui). Canonical URLs to publish: /ot2/hte/ui/ and /ot2/complexation/ui/.
 	#
-	# CAVEAT — absolute asset paths: the SPA's assets use ABSOLUTE paths
-	# (/ui/assets/...). Under the /ot2/hte/ prefix those resolve against the
-	# EDGE ROOT (/ui/assets/...), not back under /ot2/hte/, and a SHARED /ui/*
-	# edge route can't disambiguate the two instances — so a UI base-path
-	# rebuild (e.g. Vite base=/ot2/hte/ui/) is needed for assets to resolve
-	# through the edge for BOTH. The route below is correct and ready: it
-	# serves the SPA HTML at /ot2/hte/ui/ today and will serve assets too once
-	# the SPA is rebuilt with a per-instance base path. Do NOT rebuild the UI
-	# here (see task spec); this route is the recommended proxy-preserve setup.
+	# Prefix-safe as of opentrons-server (vite base "./" + a runtime apiBase):
+	# assets resolve RELATIVE to the page URL, and the SPA derives its API
+	# prefix by stripping the trailing /ui segment of its own path — so one
+	# build serves both instances through their own prefixes, with no
+	# per-instance rebuild. (Before that, the SPA's absolute /ui/assets/...
+	# paths resolved against the edge root and only the HTML loaded.) The
+	# dashboard frames this panel at /equipment/<id>/control; see
+	# web/src/lib/device-panels.ts, which mirrors these route blocks.
 	#
 	# forward_auth gates the human at the edge (same ac_auth) and injects
 	# X-Auth-User via copy_headers. header_up in the reverse_proxy SETS

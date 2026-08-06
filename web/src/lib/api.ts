@@ -377,36 +377,10 @@ export async function postShakerSetSpeed(
   return controlPost(equipmentId, "shake/set_speed", { speed_level });
 }
 
-// -- Liquid handler (OT-2) control -----------------------------------------
-//
-// The OT-2 gateway exposes `/control/lights` as a claim-gated convenience
-// control (the dashboard's generic passthrough handles claim acquire /
-// release per request). Like every control write it requires a signed-in
-// session; the tile disables the toggle when logged out.
-
-export async function postSetLights(
-  equipmentId: string,
-  on: boolean,
-): Promise<unknown> {
-  return controlPost(equipmentId, "lights", { on });
-}
-
-// Lifecycle: `/control/startup` initialises/homes the robot; `/control/shutdown`
-// powers it down (the tile's ON toggle pairs these). `/control/pause` pauses a
-// running protocol — the closest thing the OT-2 has to a motion halt, wired to
-// the tile's STOP. All are claim-gated and require a signed-in session (unlike
-// lights, they are NOT a convenience-class bypass in the middleware).
-export async function postOt2Startup(equipmentId: string): Promise<ControlAck> {
-  return controlPost(equipmentId, "startup", {});
-}
-
-export async function postOt2Shutdown(equipmentId: string): Promise<ControlAck> {
-  return controlPost(equipmentId, "shutdown", {});
-}
-
-export async function postOt2Pause(equipmentId: string): Promise<ControlAck> {
-  return controlPost(equipmentId, "pause", {});
-}
+// The OT-2's write surface (lifecycle, lights, pause, deck declaration) lives
+// in the gateway's own panel, framed at /ot2/{hte,complexation}/ui/ — see
+// `lib/device-panels.ts`. `getDeckLayout` below stays: the tile reads deck
+// state, it just no longer writes it.
 
 // -- HPLC (Agilent UPLC-MS sidecar) ------------------------------------------
 //
@@ -860,23 +834,8 @@ export interface RobotModule {
   target_temperature?: number | null;
 }
 
-/** Declare the operator/recipe layout on a migrated gateway. Values are
- *  load_names or legacy kind strings; `null`/absent clears a slot. */
-export async function postDeckDeclare(
-  equipmentId: string,
-  slots: Record<string, string | null>,
-): Promise<DeviceDeck> {
-  return controlPost<{ slots: Record<string, string | null> }, DeviceDeck>(
-    equipmentId,
-    "deck/declare",
-    { slots },
-  );
-}
-
-/** Clear the whole declared layout on a migrated gateway. */
-export async function deleteDeckDeclare(equipmentId: string): Promise<DeviceDeck> {
-  return controlDelete<DeviceDeck>(equipmentId, "deck/declare");
-}
+// Declaring the layout (`POST`/`DELETE /control/deck/declare`) is done from
+// the gateway's own panel — see the note above `getDeckLayout`.
 
 // -- Central custom-labware store (/api/labware) -----------------------------
 //
