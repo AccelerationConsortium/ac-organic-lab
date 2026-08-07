@@ -3,7 +3,8 @@
 **Status:** living document. Created 2026-07-22 by folding in the former
 `OT2_INTERFACE.md` (§1, unchanged in substance); §2 (embedded-assistant
 tiering) recorded the same day; the former `WORKFLOW_UI_DESIGN.md` design
-note folded in as §3 (still [PROPOSED], nothing built).
+note folded in as §3 (still [PROPOSED], nothing built); §5 (assistant control
+mode) drafted 2026-08-07, also [PROPOSED].
 **Audience:** dashboard operators and developers touching the `web/` UI.
 
 This is the home for dashboard UI design and decisions. Each shipped
@@ -236,7 +237,7 @@ audit opacity without benefit at single-lab scale.
 | Tier | Surface | Tools | Model class | Agent loop runs on | Inference |
 |---|---|---|---|---|---|
 | **1. Panel micro-assistant** | xArm control page (pattern for future per-device panels) | One structured-intent tool, device-local; no loop (single translate call) | Cheap/fast (GLM-class via OpenRouter) | *Inside the device gateway process* (`assistant_llm.py` in `xarm_api_server.py`, the device's Windows PC) | OpenRouter cloud API |
-| **2. Dashboard assistant** | Chat bubble, all dashboard pages | Read-only: seven `lab-history` MCP tools (history DB, live `/api/equipment`, whitelisted journald) | Mid (sonnet-class) | Central dashboard host — `api/app/assistant.py` spawns a `claude` CLI subprocess per turn; the MCP server is a local stdio child | Anthropic cloud via the host's Claude Code OAuth |
+| **2. Dashboard assistant** | Chat bubble, all dashboard pages | Read-only: seven `lab-history` MCP tools (history DB, live `/api/equipment`, whitelisted journald). §5 [PROPOSED] adds a propose-only `lab-control` server in control mode — still no actuating tool, so this row's trust level is unchanged | Mid (sonnet-class) | Central dashboard host — `api/app/assistant.py` spawns a `claude` CLI subprocess per turn; the MCP server is a local stdio child | Anthropic cloud via the host's Claude Code OAuth |
 | **3. Lab / ELN agent** | ELN chat + planning page (LaAgenteAnalitica) | Lab-skills MCP (read-only first; `execute_plan` behind `--allow-control` + human approval), AnaliticaDB HTTP tools | Best available | The LaAgenteAnalitica backend service — its own host/service (deployment target open, D-8); tools reached **over the tailnet** | Provider cloud API |
 
 Trust level rises down the table; so does the gating (tier 3 actuation
@@ -574,3 +575,169 @@ single-glyph surfaces; rendering pre-tracking time as zero usage.
 - [`LAB_MONITORING.md`](LAB_MONITORING.md) §4 — the `activity_transition`
   registry entry and device-pushed convention.
 - [`EQUIP_STATUS.md`](EQUIP_STATUS.md) — per-device tile behaviour.
+
+---
+
+## 5. Assistant control mode [PROPOSED]
+
+**Drafted 2026-08-07** on branch `actionable-assistant`. Nothing built yet.
+Extends the tier-2 dashboard assistant (§2) from a purely investigative
+surface to one that can *propose* a single equipment action the operator then
+authorizes. Step 2 (autonomy) is sketched at the end and is **not** approved.
+
+### 5.1 The commitment: the assistant proposes, the browser executes
+
+In Step 1 no model-driven code path POSTs to a device. The model's most
+privileged act is producing a **validated proposal object**; actuation happens
+when the operator clicks *Authorize*, over the existing
+`/api/equipment/{id}/control/{action}` passthrough.
+
+This is the whole safety argument, and it is a property of the toolset rather
+than of the prompt — the same guarantee §2.1 already requires of this tier.
+Device `message` fields, ingested event rows and journald all flow into the
+model, and any of them is a string somebody else wrote. With no actuating
+tool, the worst an injected instruction can achieve is *raising a confirm card
+a human must read and click*. Authentication cannot supply this: it
+establishes **who**, never **whether the human meant it**.
+
+It is also the cheap option. Identity, per-equipment authorization, the
+claim dance and the audit row already exist on the operator path
+(`middleware.ts` injects the verified `X-Auth-User`; `control.py`'s
+`_authorize_control` → `_acquire_claim` → action → release-in-`finally` →
+`_record_control_event`). Reusing that path end-to-end means control mode
+adds **no new trust surface** — only a new way to reach the same button.
+
+### 5.2 Two modes
+
+| | **Ask** (default) | **Control** |
+|---|---|---|
+| Accent colour | emerald (today's) | **purple**, panel-wide |
+| MCP servers | `lab-history` | `lab-history` + `lab-control` (propose-only) |
+| System prompt | today's | + control-mode addendum |
+| Requires | signed in | signed in **and** `operator`+ on ≥1 equipment |
+
+- The toggle is a segmented control in the panel header. Purple carries through
+  the launcher bubble, header, send button, input focus ring and user turns:
+  the mode must be unmistakable at a glance, not a small badge.
+- **Resets to Ask** on reload / panel close. Deliberately *not* on an idle
+  timer like the tile lock's auto-relock — the confirm card is the gate, so an
+  expiry would add friction without adding safety (open question 1).
+- Disabled, with a reason tooltip, when `/api/auth/mine` reports no equipment
+  roles for this user.
+- Mode travels in the POST body, but **the server decides the toolset**:
+  `assistant.py` re-resolves the actor from `X-Auth-User` and re-checks
+  authorization before it will spawn the control server. A client that lies
+  about its mode gains nothing.
+- Control mode stays **off** under the `DASHBOARD_CONTROL_OPEN=true` dev
+  bypass — that path has no verified identity to bind a proposal to.
+
+### 5.3 Step 1 — propose → authorize → execute
+
+**New MCP server `lab-control`** (`api/app/assistant_control.py`, a second
+console script beside `lab-history-mcp`), spawned per request with the
+verified actor bound in **environment** (`LAB_ACTOR`) — never as a tool
+argument, which the model could otherwise choose. Two tools, neither
+actuating:
+
+- **`list_available_actions(equipment_id)`** — the device's live
+  `allowed_actions`, its `equipment_status` / `activity`, and the matching
+  `SkillDef` argument schema (`api/` already imports `SKILL_REGISTRY`). This
+  is how the model learns what is legal instead of guessing at endpoints.
+- **`propose_action(equipment_id, action, args, reason)`** — validates and
+  returns a normalized proposal. It refuses unless *all* hold: the equipment
+  exists and is enabled; `action ∈ status.allowed_actions` (the device is the
+  authority — STATUS_SPEC §6.2); `args` validate against the `SkillDef`
+  schema; and `LAB_ACTOR` holds `operator`+ **on that equipment**
+  (`/authz/check`). Exactly one `equipment_id` per proposal — no batches, no
+  sequences.
+
+**Flow.** `assistant.py` recognises `lab-control` results and emits a new SSE
+frame `{"type":"proposal", …}` alongside today's `text` / `tool_use` /
+`tool_result` / `done` / `error`. The bubble renders a **confirm card**:
+equipment name, action, argument table, and the device's current state, with
+the model's one-line `reason` shown *subordinate* to those authoritative
+fields — the card's load-bearing content comes from the validated proposal,
+never from model prose. One proposal outstanding at a time; it expires after
+~2 minutes and re-validates `allowed_actions` at click time (the device's
+412/423 remains the real backstop).
+
+*Authorize* calls the existing `controlPost` helper. Per execution the
+passthrough claims the device **as the human**, runs the one action, and
+releases in a `finally` — the "claim, act, release immediately" property is
+already implemented; control mode inherits it rather than reimplementing it.
+
+**Audit.** The browser adds `X-Control-Origin: assistant`, recorded on the
+existing `control_action` row so assistant-originated actions separate from
+tile clicks on the admin page. The proposal itself is written as an
+`assistant_proposal` event — otherwise the trail records the click but not
+what talked the operator into it.
+
+### 5.4 What control mode does *not* change
+
+- **The tier-2 trust level (§2.2).** No tool in either mode actuates, so the
+  read-only-by-construction guarantee and ARCHITECTURE decision #10 survive
+  intact. What the tier gains is a *rendering* capability, not a hardware one.
+- **Interlocks.** The passthrough deliberately runs no skill preconditions and
+  no project interlocks (ARCHITECTURE decision #1); the device's 412/423 is
+  the only backstop. Single-equipment actions are exactly the case where that
+  is acceptable — which is *why* Step 1 is capped at one device per proposal.
+  Cross-device sequencing is what layer-4 interlocks exist for, and it belongs
+  in a plan, not a chat turn.
+- **AGENT_RULES.** A human still authorizes every hardware action, and the
+  audit names them.
+
+### 5.5 Step 2 — autonomy (not approved)
+
+The target is **not** to give this assistant an actuating tool. It is to
+delegate to the SDK's control MCP server (`lab-skills mcp serve
+--allow-control`, ARCHITECTURE decision #7), where `execute_plan` re-checks
+layer-3 preconditions and layer-4 interlocks per step and holds proper claims
+across a multi-step plan. Multi-device work is the only reason to change
+surfaces at all.
+
+**Unresolved tension to settle before any of this starts:** §2 assigns
+actuation to **tier 3** (the ELN agent), with tier 2 handing off upward. Step 2
+either (a) keeps that intact — the dashboard assistant stays a proposer
+permanently and autonomy lands in LaAgenteAnalitica — or (b) amends §2's tier
+table. Option (a) is the cheaper story and the current default; do not drift
+into (b) by accident.
+
+Gates, all required before implementation:
+
+1. Step 1 shipped, with real proposal→authorize traffic in the audit trail.
+2. Per-user identity delegates through the SDK path — the claim owner must
+   remain the human, not `ac-organic-lab-dashboard`.
+3. A plan-approval gate exists: approve the *plan* once, then it runs.
+   "Autonomy" here means fewer clicks, not no human (AGENT_RULES still
+   requires human-approved plans).
+4. The target project has registered layer-4 interlocks.
+
+### 5.6 Build order
+
+| PR | Contents |
+|---|---|
+| **1 — backend, unwired** | `assistant_control.py` + `lab-control-mcp` entry point; validation against the registry, `allowed_actions`, `SkillDef` schemas and `/authz/check`. pytest incl. refusals: unknown id, action absent from `allowed_actions`, bad args, no role, multi-equipment. Nothing user-visible. |
+| **2 — end-to-end** | `assistant.py`: `mode` field, server-side authz re-check, per-mode MCP config / `--allowedTools` / prompt addendum, `proposal` SSE frame. `AssistantBubble.tsx`: toggle, purple theme, confirm card, Authorize → `controlPost`, gating from `/api/auth/mine`. vitest for card rendering + mode gating. |
+| **3 — audit + docs** | `X-Control-Origin` on the audit row, `assistant_proposal` event, admin-page column; promote this section from [PROPOSED]; amend ARCHITECTURE #10 ("proposer, still not actuator"); update AUTH_DESIGN's assistant section. |
+
+### 5.7 Open questions
+
+1. **Mode persistence** — reset on panel close (assumed above), or also expire
+   after N idle minutes?
+2. **Second factor on Authorize** — ac_auth session alone (assumed, consistent
+   with tile controls), or reuse the `CONTROL_PASSWORD` lock chip?
+3. **Read scope in control mode** — keep `lab-history` connected too (assumed,
+   so the model can check history before proposing), or restrict control-mode
+   turns to live status only?
+
+### See also (assistant control mode)
+
+- §2 — assistant tiering; this section changes tier 2's *tool surface*, not
+  its trust level.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) decision #10 (read-only assistant),
+  #7 (the control-capable SDK MCP server), #1 (why the passthrough has no
+  interlocks).
+- [`AUTH_DESIGN.md`](AUTH_DESIGN.md) — `operator`+ and claims for control;
+  the assistant chat's own gate.
+- [`INTERLOCKS.md`](INTERLOCKS.md) — the layers a single passthrough action
+  does not get.
