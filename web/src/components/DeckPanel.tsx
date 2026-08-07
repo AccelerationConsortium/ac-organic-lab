@@ -175,9 +175,9 @@ export function DeckPanel({
    * rack: an untracked rack has no state to show, and inventing one is the
    * failure this exists to avoid.
    */
-  function wellKindsFor(v: SlotView): Record<string, string> | undefined {
-    if (!v.isTiprack || !v.nickname) return undefined;
-    const summary = tipRacks.find((r) => r.nickname === v.nickname);
+  function wellKindsFor(v: SlotView, slot: number): Record<string, string> | undefined {
+    if (!v.isTiprack) return undefined;
+    const summary = tipRacks.find((r) => r.slot === String(slot));
     if (!summary) return undefined;
     const model = buildWellModel({
       isTiprack: true,
@@ -193,9 +193,7 @@ export function DeckPanel({
   }
   // Module slots whose readout renders in an overhang cell — their own cell
   // then shows only the module name (or the plate sitting on it).
-  const exportedReadouts = new Set(
-    Array.from(overhangReadout.values(), (o) => o.moduleSlot),
-  );
+  const exportedReadouts = new Set(Array.from(overhangReadout.values(), (o) => o.moduleSlot));
 
   return (
     <div
@@ -253,7 +251,7 @@ export function DeckPanel({
                 </span>
               </div>
             ) : v.rows > 0 && v.columns > 0 ? (
-              <MiniPlate rows={v.rows} columns={v.columns} wellKinds={wellKindsFor(v)} />
+              <MiniPlate rows={v.rows} columns={v.columns} wellKinds={wellKindsFor(v, slot)} />
             ) : v.state !== "empty" ? (
               // Occupied by something without a grid (module, unknown kind).
               <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-1 text-center">

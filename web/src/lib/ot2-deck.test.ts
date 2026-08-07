@@ -273,10 +273,12 @@ describe("status detail readers", () => {
     expect(deviceDeckFromStatus(statusWithDetails({}))).toBeNull();
   });
 
-  it("parses tip rack summaries", () => {
+  it("parses tip rack summaries, keyed by the deck slot the rack sits in", () => {
     const status = statusWithDetails({
       tip_racks: {
-        tips_300: {
+        // The gateway keys racks by slot — a rack has no identity beyond
+        // where it is, which is also what makes the deck join always resolve.
+        "4": {
           total: 96,
           available: 90,
           empty: 4,
@@ -288,7 +290,7 @@ describe("status detail readers", () => {
     });
     const racks = tipRacksFromStatus(status);
     expect(racks).toHaveLength(1);
-    expect(racks[0]).toMatchObject({ nickname: "tips_300", total: 96, available: 90 });
+    expect(racks[0]).toMatchObject({ slot: "4", total: 96, available: 90 });
   });
 
   it("parses mounted tips and the claim holder", () => {

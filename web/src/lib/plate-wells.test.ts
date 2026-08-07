@@ -22,10 +22,10 @@ import type { TipRackSummary } from "./ot2-deck";
 
 const COLUMN_1 = ["A1", "B1", "C1", "D1", "E1", "F1", "G1", "H1"];
 
-function tipRack(tips: Record<string, string>, nickname = "tips_20"): TipRackSummary {
+function tipRack(tips: Record<string, string>, slot = "5"): TipRackSummary {
   const nonFresh = Object.keys(tips).length;
   return {
-    nickname,
+    slot,
     total: 96,
     available: 96 - nonFresh,
     empty: Object.values(tips).filter((s) => s === "empty").length,

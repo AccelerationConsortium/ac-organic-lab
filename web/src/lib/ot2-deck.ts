@@ -349,7 +349,12 @@ export function computeOverhangReadouts(
 
 /** One tip rack's summary from `details.tip_racks` (gateway TipStateStore). */
 export interface TipRackSummary {
-  nickname: string;
+  /** The deck slot the rack sits in — a tip rack's identity. It carries no
+   *  sample and no history worth naming, and the slot is what an operator
+   *  points at and refills. Also why this join always resolves: the slot is
+   *  known from the deck itself, unlike `labware.nickname`, which is null
+   *  until a protocol setup runs. */
+  slot: string;
   total: number;
   available: number;
   empty: number;
@@ -363,11 +368,11 @@ export function tipRacksFromStatus(status: Status): TipRackSummary[] {
   const raw = status.details?.["tip_racks"];
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
   const out: TipRackSummary[] = [];
-  for (const [nickname, v] of Object.entries(raw as Record<string, unknown>)) {
+  for (const [slot, v] of Object.entries(raw as Record<string, unknown>)) {
     if (!v || typeof v !== "object") continue;
     const r = v as Partial<TipRackSummary>;
     out.push({
-      nickname,
+      slot,
       total: typeof r.total === "number" ? r.total : 0,
       available: typeof r.available === "number" ? r.available : 0,
       empty: typeof r.empty === "number" ? r.empty : 0,
@@ -376,7 +381,7 @@ export function tipRacksFromStatus(status: Status): TipRackSummary[] {
       registered_at: typeof r.registered_at === "string" ? r.registered_at : undefined,
     });
   }
-  return out.sort((a, b) => a.nickname.localeCompare(b.nickname));
+  return out.sort((a, b) => Number(a.slot) - Number(b.slot));
 }
 
 /** One mounted tip from `details.mounted_tips` — which rack/well the tip on a

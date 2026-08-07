@@ -140,7 +140,7 @@ describe("DeckPanel tip-state rendering", () => {
   function summary(tips: Record<string, string>) {
     return [
       {
-        nickname: "tips_20",
+        slot: "5",
         total: 96,
         available: 96 - Object.keys(tips).length,
         empty: Object.values(tips).filter((s) => s === "empty").length,
