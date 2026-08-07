@@ -78,7 +78,7 @@ describe("DeckPanel declared vs observed rendering", () => {
     ).toContain("busy");
   });
 
-  it("page variant labels occupied cells with the labware name and a declared badge", () => {
+  it("page variant labels an occupied cell with its slot number and labware name", () => {
     const deck = deckWith({
       "3": labwareSlot("declared", {
         kind: "96-well",
@@ -92,7 +92,51 @@ describe("DeckPanel declared vs observed rendering", () => {
     );
     const cell = screen.getByTitle("Slot 3 — corning_96_wellplate_360ul_flat (declared)");
     expect(cell.textContent).toContain("corning_96_wellplate_360ul_flat");
-    expect(cell.textContent).toContain("declared");
+    expect(cell.textContent).toContain("3");
+  });
+
+  it("marks a declared slot with the orange outline and explains it in one legend", () => {
+    // Declared is the one slot state carried by colour alone, so the legend is
+    // load-bearing rather than decorative: without it the outline is unnamed.
+    const deck = deckWith({
+      "3": labwareSlot("declared", {
+        kind: "96-well",
+        load_name: "corning_96_wellplate_360ul_flat",
+        rows: 8,
+        columns: 12,
+      }),
+      "6": labwareSlot("in_use", {
+        kind: "96-well",
+        load_name: "corning_96_wellplate_360ul_flat",
+        rows: 8,
+        columns: 12,
+      }),
+    });
+    const { container } = render(
+      <DeckPanel deviceDeck={deck} selectedSlot={null} onSelectSlot={() => {}} variant="page" />,
+    );
+    const declared = screen.getByTitle("Slot 3 — corning_96_wellplate_360ul_flat (declared)");
+    expect(declared.querySelector(".border-orange-400")).not.toBeNull();
+
+    // An observed slot must not borrow the outline, or it says nothing.
+    const inUse = screen.getByTitle("Slot 6 — corning_96_wellplate_360ul_flat (in use)");
+    expect(inUse.querySelector(".border-orange-400")).toBeNull();
+
+    expect(container.textContent).toContain("declared");
+  });
+
+  it("omits the declared legend on the compact tile, which never draws the outline", () => {
+    const deck = deckWith({
+      "3": labwareSlot("declared", {
+        kind: "96-well",
+        load_name: "corning_96_wellplate_360ul_flat",
+        rows: 8,
+        columns: 12,
+      }),
+    });
+    const { container } = render(<DeckPanel deviceDeck={deck} variant="tile" />);
+    expect(container.querySelector(".border-orange-400")).toBeNull();
+    expect(container.textContent).not.toContain("Orange outline");
   });
 
   it("renders a declared temperature module with its overhang readout cell", () => {

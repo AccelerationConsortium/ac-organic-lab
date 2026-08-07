@@ -195,7 +195,7 @@ export function DeckPanel({
   // then shows only the module name (or the plate sitting on it).
   const exportedReadouts = new Set(Array.from(overhangReadout.values(), (o) => o.moduleSlot));
 
-  return (
+  const grid = (
     <div
       className={
         page
@@ -221,6 +221,11 @@ export function DeckPanel({
           !exportedReadouts.has(slot) &&
           TEMP_FAMILIES.has(moduleFamily(v.moduleName) ?? "");
         const moduleAccent = overhang != null || v.moduleName != null;
+        // Declared = operator intent the robot has not confirmed. Page-only,
+        // matching where the "declared" wording already renders: on the compact
+        // tile almost every slot is declared, so outlining them all would say
+        // nothing while shouting.
+        const declaredOnly = page && migrated && v.state === "declared";
         const cellTitle = overhang
           ? `Slot ${slot} — overhang of the ${overhang.name} at slot ${overhang.moduleSlot}`
           : v.title;
@@ -231,9 +236,15 @@ export function DeckPanel({
             ? "border-sky-500 bg-sky-50 dark:border-sky-500 dark:bg-sky-950/40"
             : mismatch
               ? "border-amber-500 bg-amber-50 dark:border-amber-500 dark:bg-amber-950/30"
-              : interactive
-                ? "border-slate-200 bg-white hover:border-slate-400 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-slate-500"
-                : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800/40",
+              : declaredOnly
+                ? // Orange against a mismatch's amber. The two borders differ
+                  // only in hue, which is thin on its own — the "declared"
+                  // badge is what actually names the state, and the ≠ badge
+                  // names the other. The border is the glanceable half.
+                  "border-orange-400 bg-white dark:border-orange-500/80 dark:bg-slate-800/40"
+                : interactive
+                  ? "border-slate-200 bg-white hover:border-slate-400 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-slate-500"
+                  : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800/40",
         ].join(" ");
         const cellBody = (
           <>
@@ -267,25 +278,6 @@ export function DeckPanel({
                 </span>
               </div>
             )}
-            {/* Page variant: name the labware inside the cell (the tile relies
-                on tooltips to stay compact). */}
-            {page && v.state !== "empty" && !overhang && !v.isTrash && (
-              <span
-                className="absolute inset-x-0 bottom-0 truncate bg-white/80 px-1 py-0.5 text-left text-[10px] font-medium text-ink dark:bg-slate-900/80 dark:text-slate-200"
-                title={v.loadName || v.label}
-              >
-                {v.label}
-              </span>
-            )}
-            {/* Page variant: slot number pinned top-left on occupied cells. */}
-            {page && v.state !== "empty" && (
-              <span
-                className="absolute left-1 top-1 rounded bg-slate-100/90 px-1 text-[9px] font-semibold text-ink-subtle dark:bg-slate-800/90 dark:text-slate-400"
-                aria-hidden
-              >
-                {slot}
-              </span>
-            )}
             {/* Amber strip ties the module's cells together: the overhang
                 readout cell and the module's own slot (module name or the
                 plate sitting on it) read as one 1.5-slot fixture. */}
@@ -294,6 +286,22 @@ export function DeckPanel({
                 className="absolute inset-x-0 top-0 h-[3px] bg-amber-400/90 dark:bg-amber-500/80"
                 aria-hidden
               />
+            )}
+            {/* Slot number in the cell's own top-left corner. Bare text, no
+                pill: the badge background is what made the old corner number
+                read as an overlay sitting on top of A1. An empty slot already
+                draws its number large and centred, so it is skipped here. */}
+            {page && v.state !== "empty" && (
+              <span
+                className={[
+                  "pointer-events-none absolute left-1 top-0.5 text-[10px] font-semibold leading-none",
+                  moduleAccent ? "top-[5px]" : "",
+                  "text-ink-subtle dark:text-slate-400",
+                ].join(" ")}
+                aria-hidden
+              >
+                {slot}
+              </span>
             )}
             {/* State badge for migrated devices (top-right corner). The page
                 variant also badges declared-only slots so intent vs observed
@@ -319,13 +327,11 @@ export function DeckPanel({
         const box = <div className={cellClassName}>{cellBody}</div>;
         const content = page ? (
           <div className="flex w-full flex-col gap-1">
-            <div className="flex items-center justify-between gap-1 px-0.5 leading-none">
-              <span
-                className="text-[10px] font-semibold text-ink-subtle dark:text-slate-400"
-                aria-hidden
-              >
-                {v.state === "empty" ? "\u00a0" : slot}
-              </span>
+            {/* Badges only \u2014 the slot number moved into the cell's corner. The
+                min-height is what the number used to guarantee: without it this
+                row collapses on slots carrying no badge and the boxes stop
+                lining up across the grid. */}
+            <div className="flex min-h-[1.1em] items-center justify-end gap-1 px-0.5 leading-none">
               {migrated && (v.state === "in_use" || v.state === "mismatch") && (
                 <span
                   className={[
@@ -335,14 +341,6 @@ export function DeckPanel({
                   aria-hidden
                 >
                   {v.state === "mismatch" ? "≠" : "busy"}
-                </span>
-              )}
-              {migrated && v.state === "declared" && (
-                <span
-                  className="rounded border border-dashed border-slate-400 px-1 text-[8px] font-semibold uppercase tracking-wide text-ink-subtle dark:border-slate-500 dark:text-slate-400"
-                  aria-hidden
-                >
-                  declared
                 </span>
               )}
             </div>
@@ -374,6 +372,26 @@ export function DeckPanel({
           </div>
         );
       })}
+    </div>
+  );
+
+  // The orange outline is the only slot state carried by colour alone — every
+  // other one also says its name (a "busy"/"≠" badge, the labware label). One
+  // legend under the deck is cheaper than repeating the word on what is
+  // usually most of the twelve slots. Tile variant renders the bare grid: it
+  // never draws the outline, so it has nothing to explain.
+  if (!page) return grid;
+  return (
+    <div className="flex w-full flex-col gap-2">
+      {grid}
+      <p className="flex items-center gap-1.5 px-0.5 text-[10px] leading-tight text-ink-subtle dark:text-slate-400">
+        <span
+          className="inline-block h-3 w-4 shrink-0 rounded-[2px] border border-orange-400 dark:border-orange-500/80"
+          aria-hidden
+        />
+        Orange outline — <strong className="font-semibold">declared</strong>: operator intent, not
+        yet observed on the robot.
+      </p>
     </div>
   );
 }
