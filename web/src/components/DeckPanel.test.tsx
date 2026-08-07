@@ -156,7 +156,7 @@ describe("DeckPanel tip-state rendering", () => {
     return Array.from(cell.querySelectorAll("span.rounded-full"));
   }
 
-  it("fades the wells an 8-channel pick emptied, and tints a used tip", () => {
+  it("greys the wells an 8-channel pick emptied, and tints a used tip", () => {
     const tips = Object.fromEntries(COLUMN_1.map((w) => [w, "empty"]));
     const { container } = render(
       <DeckPanel deviceDeck={rackDeck()} tipRacks={summary({ ...tips, H2: "plate_D_B2" })} />,
@@ -165,10 +165,11 @@ describe("DeckPanel tip-state rendering", () => {
     expect(dots).toHaveLength(96);
     // Row-major: index = row * columns + column. Column 1 is index r*12.
     for (let r = 0; r < 8; r++) {
-      expect(dots[r * 12].className).toContain("bg-slate-100");
+      expect(dots[r * 12].className).toContain("bg-slate-300"); // emptied
     }
     expect(dots[7 * 12 + 1].className).toContain("bg-amber-300"); // H2, used
-    expect(dots[3].className).toContain("bg-slate-300"); // A4, still full
+    // Green is the "a tip is there and unused" signal.
+    expect(dots[3].className).toContain("bg-emerald-400"); // A4, still full
   });
 
   it("draws an untracked rack uniformly rather than claiming it is full", () => {
@@ -177,6 +178,9 @@ describe("DeckPanel tip-state rendering", () => {
     const { container } = render(<DeckPanel deviceDeck={rackDeck()} tipRacks={[]} />);
     const dots = wellDots(container);
     expect(dots.every((d) => d.className.includes("bg-slate-300"))).toBe(true);
+    // The load-bearing part: no green anywhere. Green means "known available",
+    // so an unregistered rack must never show it.
+    expect(dots.some((d) => d.className.includes("emerald"))).toBe(false);
   });
 
   it("leaves a plate alone (tip state is a tip-rack concept)", () => {
@@ -190,6 +194,8 @@ describe("DeckPanel tip-state rendering", () => {
       }),
     });
     const { container } = render(<DeckPanel deviceDeck={deck} tipRacks={summary({ A1: "empty" })} />);
-    expect(wellDots(container).every((d) => d.className.includes("bg-slate-300"))).toBe(true);
+    const dots = wellDots(container);
+    expect(dots.every((d) => d.className.includes("bg-slate-300"))).toBe(true);
+    expect(dots.some((d) => d.className.includes("emerald"))).toBe(false);
   });
 });
