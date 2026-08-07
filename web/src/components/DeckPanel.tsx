@@ -199,7 +199,7 @@ export function DeckPanel({
     <div
       className={
         page
-          ? "grid w-full gap-2 sm:gap-3"
+          ? "grid w-full gap-x-2 gap-y-1 sm:gap-x-3 sm:gap-y-1.5"
           : "grid justify-center gap-[10px] overflow-x-auto"
       }
       style={{ gridTemplateColumns: page ? "repeat(3, minmax(0, 1fr))" : "repeat(3, 160px)" }}
@@ -306,7 +306,11 @@ export function DeckPanel({
             {/* State badge for migrated devices (top-right corner). The page
                 variant also badges declared-only slots so intent vs observed
                 is legible at a glance. */}
-            {!page && migrated && (v.state === "in_use" || v.state === "mismatch") && (
+            {/* Both variants badge the cell's top-right corner. The page
+                variant used to reserve a whole text row above the box for this,
+                costing every row ~1.1em of height to carry a badge that only a
+                slot or two ever shows. */}
+            {migrated && (v.state === "in_use" || v.state === "mismatch") && (
               <span
                 className={[
                   "absolute right-1 top-1 rounded px-1 text-[8px] font-semibold uppercase tracking-wide",
@@ -319,31 +323,12 @@ export function DeckPanel({
             )}
           </>
         );
-        // On the full-width deck the slot number sits ABOVE the plate and the
-        // labware label BELOW it, rather than as badges laid over the wells —
-        // an overlay hides the very wells the picture exists to show, and at
-        // this size the corner badge covered A1. The compact tile keeps the
-        // bare box: there is no room for two text rows at 160x120.
+        // On the full-width deck the slot number sits in the cell's top-left
+        // corner and the labware label BELOW the box. The compact tile keeps
+        // the bare box: there is no room for a text row at 160x120.
         const box = <div className={cellClassName}>{cellBody}</div>;
         const content = page ? (
-          <div className="flex w-full flex-col gap-1">
-            {/* Badges only \u2014 the slot number moved into the cell's corner. The
-                min-height is what the number used to guarantee: without it this
-                row collapses on slots carrying no badge and the boxes stop
-                lining up across the grid. */}
-            <div className="flex min-h-[1.1em] items-center justify-end gap-1 px-0.5 leading-none">
-              {migrated && (v.state === "in_use" || v.state === "mismatch") && (
-                <span
-                  className={[
-                    "rounded px-1 text-[8px] font-semibold uppercase tracking-wide",
-                    v.state === "mismatch" ? "bg-amber-500 text-white" : "bg-sky-500 text-white",
-                  ].join(" ")}
-                  aria-hidden
-                >
-                  {v.state === "mismatch" ? "≠" : "busy"}
-                </span>
-              )}
-            </div>
+          <div className="flex w-full flex-col gap-0.5">
             {box}
             {/* Reserve the row even when blank so every plate box lines up. */}
             <span
@@ -382,8 +367,7 @@ export function DeckPanel({
   // never draws the outline, so it has nothing to explain.
   if (!page) return grid;
   return (
-    <div className="flex w-full flex-col gap-2">
-      {grid}
+    <div className="flex w-full flex-col gap-1.5">
       <p className="flex items-center gap-1.5 px-0.5 text-[10px] leading-tight text-ink-subtle dark:text-slate-400">
         <span
           className="inline-block h-3 w-4 shrink-0 rounded-[2px] border border-orange-400 dark:border-orange-500/80"
@@ -392,6 +376,7 @@ export function DeckPanel({
         Orange outline — <strong className="font-semibold">declared</strong>: operator intent, not
         yet observed on the robot.
       </p>
+      {grid}
     </div>
   );
 }
