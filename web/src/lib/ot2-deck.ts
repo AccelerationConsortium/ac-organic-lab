@@ -3,10 +3,11 @@
  * `LiquidHandlerTile` on the overview.
  *
  * It once also backed a full-page OT-2 interface in this repo; that was
- * removed in favour of framing the gateway's own panel (see
- * `EmbeddedDevicePanel`), so the device's UI is the only implementation of
- * those controls. The tile still needs this parsing, and `buildWellModel`
- * (`plate-wells.ts`) still tints its deck thumbnails with real tip state.
+ * removed in favour of the gateway's own panel, which the tile links to
+ * directly (see `device-panels.ts`), so the device's UI is the only
+ * implementation of those controls. The tile still needs this parsing, and
+ * `buildWellModel` (`plate-wells.ts`) still tints its deck thumbnails with
+ * real tip state.
  *
  * Everything here is side-effect-free and derives exclusively from the
  * device's own `/status` envelope (the gateway owns deck, plate and tip

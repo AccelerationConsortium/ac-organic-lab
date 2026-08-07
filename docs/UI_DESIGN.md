@@ -27,34 +27,43 @@ lab contract.
 ## 1. OT-2 full-page interface
 
 **Shipped** 2026-07-15 (branch `feature-ot2-interface`) as a dashboard-hosted
-implementation; **replaced** 2026-08-05 by an embed of the device's own panel.
+implementation; **replaced** 2026-08-05 by an embed of the device's own panel;
+the embed itself **retired** 2026-08-07 in favour of linking the device panel
+directly.
 
-Each Opentrons OT-2 has a full-page operator interface, reached from the
-compact `LiquidHandlerTile` on the platform pages. The page **frames the
-gateway's own SPA** (`opentrons-server`, ports 8020/8021, served at `/ui`)
-rather than reimplementing its controls here — the same strategy as
-`/utils/xarm_control`. The dashboard keeps the read-only tile; every write
-happens in the device's panel.
+Each Opentrons OT-2 has a full-page operator interface — the **gateway's own
+SPA** (`opentrons-server`, ports 8020/8021, served at `/ui`), reached from the
+"Control interface ↗" link on the compact `LiquidHandlerTile`. The dashboard
+keeps the read-only tile; every write happens in the device's panel.
 
 ### 1.1 Routes
 
-| Route | What it is |
-|---|---|
-| `/equipment/[equipmentId]/control` | Generic full-page equipment control view. Frames the device's own panel when it hosts one; anything else gets a notice pointing back at its tile. |
-| `/ot2_hte` | Fixed-id alias of `/equipment/ot2_hte/control` (HTE bench OT-2). |
-| `/ot2_complexation` | Fixed-id alias of `/equipment/ot2_complexation/control` (complexation bench OT-2). |
+The dashboard hosts **no** OT-2 control route of its own. The tile links
+straight at the panel's edge path, opened in a new tab:
 
-The panel paths live in `web/src/lib/device-panels.ts`, mirroring the route
-blocks in `deploy/Caddyfile.single-edge`. They are edge paths on *this* origin
+| Link target | What it is |
+|---|---|
+| `/ot2/hte/ui/` | The HTE bench OT-2's gateway SPA, edge-routed and `forward_auth`-gated. |
+| `/ot2/complexation/ui/` | The complexation (echem) bench OT-2's gateway SPA, same. |
+
+These paths live in `web/src/lib/device-panels.ts`, mirroring the route blocks
+in `deploy/Caddyfile.single-edge`. They are edge paths on *this* origin
 (`/ot2/hte/ui/`, `/ot2/complexation/ui/`, `/xarm5/web/`), not device URLs —
-that is what makes the frame same-origin, so the session cookie and the
-injected `X-Auth-User` identity carry through without a second login. They are
-deliberately **not** in `equipment.yaml`: the mapping describes the *edge's*
-routing table, whereas the registry's `base_url` is the device port the
-aggregator polls directly, un-proxied.
+so the session cookie and the injected `X-Auth-User` identity carry through
+without a second login. They are deliberately **not** in `equipment.yaml`: the
+mapping describes the *edge's* routing table, whereas the registry's `base_url`
+is the device port the aggregator polls directly, un-proxied.
 
 Adding a third OT-2 needs a `device-panels.ts` entry and an edge route block;
 no new components.
+
+Removed with the direct link (2026-08-07): `/equipment/[equipmentId]/control`,
+its fixed-id aliases `/ot2_hte` and `/ot2_complexation`, and the
+`EmbeddedDevicePanel` component they shared. They were a dashboard page whose
+entire content was an iframe of the panel — a second URL for the same
+interface, with a dashboard chrome and a `100vh-180px` crop as the only
+difference. `/utils/xarm_control` still frames the xArm panel because it is a
+listed utility page in its own right, not a per-equipment wrapper.
 
 ### 1.2 Why the dashboard stopped hosting its own copy
 
@@ -66,14 +75,15 @@ merits: it reads `/status` directly instead of through the aggregator's poll,
 and it holds a **real heartbeated claim** rather than the per-request claim the
 passthrough takes for a single action.
 
-Framed, not linked, for the same reason as `/utils/xarm_control`: a `next/link`
-transition resolves the edge path against this app's route manifest and 404s.
-The gateway sets neither `X-Frame-Options` nor a CSP, so framing is not blocked;
-it also detects being framed (`window.self !== window.top`) and suppresses its
-own auth banner so the host's is the only one shown.
+The link is a plain `<a target="_blank">` (`AuthGatedLink external`), never
+`next/link`: a client-side transition would resolve the edge path against this
+app's route manifest and 404. The gateway's framing accommodations (no
+`X-Frame-Options`/CSP, self-detection of `window.self !== window.top` to
+suppress its own auth banner) are now unused by the dashboard but stay useful
+for `/utils/xarm_control`-style embeds and cost nothing.
 
-**Audit — closed device-side.** Framing the panel opened a gap: a write made
-inside it goes straight to the device and never produces the `control_action`
+**Audit — closed device-side.** Sending operators to the panel opened a gap: a
+write made inside it goes straight to the device and never produces the `control_action`
 row the dashboard passthrough writes (ARCHITECTURE decision #1; ROADMAP's
 control-surface closure plan). `opentrons-server` closed it from the other end
 with its own events exporter (`ee529ad`, live on both gateways 2026-08-06),
@@ -96,7 +106,8 @@ produces only the device row, which is the point.
 
 - **The compact tile** (`LiquidHandlerTile`) — read-only summary: deck mirror
   via `DeckPanel`, light / pipette / SSH / protocol pills, and the
-  "Control interface →" link. It reads deck state; it never writes it.
+  "Control interface ↗" link out to the device panel. It reads deck state; it
+  never writes it.
 - **`web/src/lib/ot2-deck.ts`** — pure `/status` parsing (unit-tested, no
   React), shared by the tile and `DeckPanel`. Its declare-side helpers have no
   caller here any more; see the module docstring for why they are kept.

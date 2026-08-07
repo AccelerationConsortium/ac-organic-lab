@@ -3,12 +3,11 @@
  *
  * Some devices ship their own full operator UI (the OT-2 gateway's SPA, the
  * xArm's panel). Rather than maintain a second implementation of each in this
- * repo, the dashboard frames the device's own panel — see
- * `EmbeddedDevicePanel`. These paths mirror the route blocks in
- * `deploy/Caddyfile.single-edge`; they are edge paths on *this* origin, not
- * device URLs, which is what makes the frame same-origin (so the session
- * cookie and the injected `X-Auth-User` identity carry through without a
- * second login).
+ * repo, the dashboard links straight at the device's own panel — the tile's
+ * "Control interface" opens it in a new tab. These paths mirror the route
+ * blocks in `deploy/Caddyfile.single-edge`; they are edge paths on *this*
+ * origin, not device URLs, so the session cookie and the injected
+ * `X-Auth-User` identity carry through without a second login.
  *
  * Kept here rather than in `equipment.yaml` because the mapping describes the
  * *edge's* routing table, not the device — the registry's `base_url` is the

@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { getDeckLayout } from "@/lib/api";
+import { devicePanelPath } from "@/lib/device-panels";
 import type { EquipmentSnapshot } from "@/types/api";
 import {
   deviceDeckFromStatus,
@@ -39,9 +40,10 @@ const TILE_OWNED_COMPONENTS = new Set([
 
 /**
  * Read-only OT-2 tile. All control (session lifecycle, lights, declaring
- * deck intent) lives on the dedicated full-page interface at
- * `/equipment/<id>/control` (aliases /ot2_hte, /ot2_complexation) — the
- * tile just summarizes state and links there. See docs/UI_DESIGN.md §1.
+ * deck intent) lives in the gateway's own operator panel, which the tile
+ * links to directly at its edge path (`/ot2/<instance>/ui/`) rather than
+ * through a dashboard page that framed it — one interface, not two. See
+ * docs/UI_DESIGN.md §1.
  */
 export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const { status } = snapshot;
@@ -53,6 +55,9 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
   const pipLeft = components["pipette_left"];
   const pipRight = components["pipette_right"];
   const lights = parseLights(snapshot);
+  // Edge path of the gateway's own panel; null for a liquid handler that
+  // hosts none, in which case the tile simply offers no link.
+  const panelPath = devicePanelPath(snapshot.id);
 
   // Deck source: the device's own normalized deck; legacy dashboard-store
   // fallback (read-only here) for gateways that don't publish it yet.
@@ -73,16 +78,19 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
       headerRight={<StatusPill state={status.equipment_status} />}
       bannerExtra={
         <>
-          <AuthGatedLink
-            href={`/equipment/${encodeURIComponent(snapshot.id)}/control`}
-            equipmentId={snapshot.id}
-            className="inline-flex h-7 items-center gap-1 rounded-md bg-orange-600 px-2.5 text-xs font-semibold text-white transition-colors hover:bg-orange-500 dark:bg-orange-600 dark:hover:bg-orange-500"
-            title="Open the full OT-2 control interface (deck declaration, session lifecycle, lights, tips, claim)"
-          >
-            Control interface →
-          </AuthGatedLink>
+          {panelPath && (
+            <AuthGatedLink
+              href={panelPath}
+              equipmentId={snapshot.id}
+              external
+              className="inline-flex h-7 items-center gap-1 rounded-md bg-orange-600 px-2.5 text-xs font-semibold text-white transition-colors hover:bg-orange-500 dark:bg-orange-600 dark:hover:bg-orange-500"
+              title="Open the OT-2 gateway's operator panel (deck declaration, session lifecycle, lights, tips, claim)"
+            >
+              Control interface ↗
+            </AuthGatedLink>
+          )}
           <div className="ml-auto flex items-center gap-1.5">
-            {/* Read-only lights indicator (the toggle lives on the control page). */}
+            {/* Read-only lights indicator (the toggle lives in the device panel). */}
             <span
               className="flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-ink dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"
               title={`Deck lights: ${lights}`}

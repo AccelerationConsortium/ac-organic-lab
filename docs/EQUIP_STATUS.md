@@ -540,12 +540,13 @@ state, track position).
 ## 11) Liquid handler (`kind: liquid_handler`) — OT-2
 
 The Opentrons OT-2 renders as the kind-specific `LiquidHandlerTile`.
-Each OT-2 also has a **full-page interface** at `/equipment/<id>/control`
-(aliases `/ot2_hte`, `/ot2_complexation`) which, since 2026-08-05, **frames
-the gateway's own operator SPA** (`/ot2/{hte,complexation}/ui/` via the edge)
-rather than reimplementing its controls here — the full deck,
-declared-vs-observed state, module telemetry, tip tracking and claim are the
-device panel's. See [`UI_DESIGN.md`](UI_DESIGN.md) §1.
+The tile's "Control interface ↗" opens the **gateway's own operator SPA**
+(`/ot2/hte/ui/` or `/ot2/complexation/ui/` via the edge) in a new tab — the
+full deck, declared-vs-observed state, module telemetry, tip tracking and
+claim are the device panel's. Since 2026-08-07 the dashboard hosts no OT-2
+control page of its own: `/equipment/<id>/control` and the aliases `/ot2_hte`
+/ `/ot2_complexation`, which merely framed that panel, are gone. See
+[`UI_DESIGN.md`](UI_DESIGN.md) §1.
 There are **two** OT-2s, each fronted by its own `opentrons-server`
 gateway process (the gateway is multi-instance by design — one process
 per robot, own port, own robot host, own state files):

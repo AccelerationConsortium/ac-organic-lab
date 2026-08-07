@@ -140,7 +140,7 @@ http://100.64.254.6 {
 	# build serves both instances through their own prefixes, with no
 	# per-instance rebuild. (Before that, the SPA's absolute /ui/assets/...
 	# paths resolved against the edge root and only the HTML loaded.) The
-	# dashboard frames this panel at /equipment/<id>/control; see
+	# dashboard's OT-2 tile links straight here (new tab); see
 	# web/src/lib/device-panels.ts, which mirrors these route blocks.
 	#
 	# forward_auth gates the human at the edge (same ac_auth) and injects
