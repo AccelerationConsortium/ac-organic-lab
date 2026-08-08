@@ -45,10 +45,22 @@ class LabSession:
         *,
         binding: Mapping[str, str] | None = None,
         http_timeout: float = 5.0,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         self._registry = registry
         self._binding: dict[str, str] = dict(binding or {})
         self._http_timeout = http_timeout
+        #: Sent on every device request this session makes. Exists because a
+        #: device may require a verified identity to be claimed at all: the
+        #: OT-2 gateway answers `POST /control/claim` with 401 `login_required`
+        #: unless the caller presents an `X-Api-Key` or a session cookie, and
+        #: the SDK previously had no way to carry one. Found by the first real
+        #: (non-dry) plan run, 2026-08-08, which the device correctly refused.
+        #:
+        #: Session-scoped rather than per-call: one credential belongs to one
+        #: session, and threading it through every command signature would put
+        #: an auth concern into every workflow call site.
+        self._headers: dict[str, str] = dict(headers or {})
         self._http: httpx.AsyncClient | None = None
 
     @property
@@ -60,7 +72,10 @@ class LabSession:
         return dict(self._binding)
 
     async def __aenter__(self) -> "LabSession":
-        self._http = httpx.AsyncClient(timeout=httpx.Timeout(self._http_timeout))
+        self._http = httpx.AsyncClient(
+            timeout=httpx.Timeout(self._http_timeout),
+            headers=self._headers or None,
+        )
         return self
 
     async def __aexit__(

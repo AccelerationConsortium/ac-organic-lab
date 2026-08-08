@@ -236,3 +236,46 @@ def test_lab_session_returns_an_unentered_context_manager() -> None:
         "the endpoint must enter the session before execute_plan; passing an "
         "un-entered one fails at the first step, after the gates have passed"
     )
+
+
+# ── the machine credential (option 1; option 3 is the SDK's own) ────────
+
+
+def test_no_key_configured_sends_no_header(monkeypatch) -> None:
+    """Right for a lab whose devices do not gate claims, and fails *closed*
+    where they do: the device answers 401 and the run stops at step 1 having
+    actuated nothing."""
+    import app.workflow as wf
+
+    monkeypatch.setattr(wf, "_AUTOMATION_KEY_PATH", "")
+    assert wf.automation_headers() == {}
+
+
+def test_a_configured_key_is_presented_as_x_api_key(monkeypatch, tmp_path) -> None:
+    import app.workflow as wf
+
+    key = tmp_path / "automation.key"
+    key.write_text("  sk-lab-abc123\n")  # trailing newline is the common case
+    monkeypatch.setattr(wf, "_AUTOMATION_KEY_PATH", str(key))
+    assert wf.automation_headers() == {"X-Api-Key": "sk-lab-abc123"}
+
+
+def test_an_unreadable_key_does_not_take_the_run_down(monkeypatch, tmp_path) -> None:
+    """A missing key must fail at the device, with its own clear 401, rather
+    than as an unhandled error here that says nothing about why."""
+    import app.workflow as wf
+
+    monkeypatch.setattr(wf, "_AUTOMATION_KEY_PATH", str(tmp_path / "nope.key"))
+    assert wf.automation_headers() == {}
+
+
+def test_the_record_keeps_both_humans() -> None:
+    """The device may see only the automation principal. If the record does not
+    carry who approved AND who launched, the human vanishes from the trail —
+    which AUTH_DESIGN forbids: never "the robot did it" with nobody attached."""
+    row = plan_row_from(
+        _auth(), _Report([_StepReport("home_gantry", "succeeded")], ok=True),
+        launched_by="someone.else@utoronto.ca",
+    )
+    assert row["meta"]["authorized_by"] == "yangcyril.cao@utoronto.ca"
+    assert row["meta"]["launched_by"] == "someone.else@utoronto.ca"

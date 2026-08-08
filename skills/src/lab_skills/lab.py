@@ -33,6 +33,7 @@ class Lab:
         registry_path: str | os.PathLike | None = None,
         binding: Mapping[str, str] | None = None,
         http_timeout: float = 5.0,
+        headers: Mapping[str, str] | None = None,
     ) -> LabSession:
         """Build a ``LabSession`` and return it (use as ``async with``).
 
@@ -40,6 +41,13 @@ class Lab:
         :func:`load_registry` understands. The default (neither) walks parent
         directories looking for ``equipment.yaml`` and works inside the
         monorepo without configuration.
+
+        ``headers`` are sent on every device request this session makes. A
+        device may require a verified identity before it will even issue a
+        claim — the OT-2 gateway answers `/control/claim` with 401
+        `login_required` without an `X-Api-Key` — and until this existed the
+        SDK could not present one, so the sanctioned path to hardware could not
+        drive a hardened device at all.
         """
 
         if registry is None:
@@ -48,6 +56,7 @@ class Lab:
             registry,
             binding=binding,
             http_timeout=http_timeout,
+            headers=headers,
         )
 
 

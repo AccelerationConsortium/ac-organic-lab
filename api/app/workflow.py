@@ -34,6 +34,7 @@ import hashlib
 import json
 import logging
 import os
+import pathlib
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -53,6 +54,41 @@ BITACORA_URL = os.environ.get("BITACORA_URL", "http://127.0.0.1:8050")
 #: answer different questions — "who moved the sash" vs "who ran plate 2" — and
 #: collapsing them would make the per-action series unreadable.
 PLAN_RUN = "plan_run"
+
+#: API key for the platform's automation principal, presented to devices that
+#: require a verified identity before they will issue a claim (AUTH_DESIGN
+#: "Automation accounts"). A file rather than an inline value, like every other
+#: secret here, so it stays out of the unit and out of `systemctl show`.
+#:
+#: Why a machine credential and not the operator's own, which is what
+#: `control.py` forwards for a single click: the runner receives a POST, not a
+#: browser request, so there is no session cookie to forward — and a run can
+#: outlive the session that started it, which for an 18 h incubation is the
+#: normal case rather than the edge one.
+#:
+#: The human is NOT lost. AUTH_DESIGN is explicit that the device may see
+#: `owner=automation@<platform>` while the record keeps `launched_by=<human>`:
+#: the authorization already names who approved, and the audit row below names
+#: who launched. Never "the robot did it" with nobody attached.
+_AUTOMATION_KEY_PATH = os.environ.get("AUTOMATION_API_KEY_PATH", "").strip()
+
+
+def automation_headers() -> dict[str, str]:
+    """The device credential this deployment runs plans with, or none.
+
+    Empty when unconfigured — which is the right behaviour for a lab whose
+    devices do not require login, and which fails *closed* where they do: the
+    device answers 401 and the run stops at the first step having actuated
+    nothing, exactly as it did on 2026-08-08.
+    """
+    if not _AUTOMATION_KEY_PATH:
+        return {}
+    try:
+        key = pathlib.Path(_AUTOMATION_KEY_PATH).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        logger.warning("automation api key unreadable at %s: %s", _AUTOMATION_KEY_PATH, exc)
+        return {}
+    return {"X-Api-Key": key} if key else {}
 
 #: Fields of the published package that are digest inputs. `warnings` rides
 #: along in the same object but is not covered — it is compiler commentary, not
@@ -243,7 +279,7 @@ def notes_from(report, *, authorization_id: str) -> list[dict]:
     return notes
 
 
-def plan_row_from(auth: Authorization, report) -> dict:
+def plan_row_from(auth: Authorization, report, *, launched_by: str | None = None) -> dict:
     """`Plan`-shaped record of the run (DATABASE_DESIGN §"ELN artifacts").
 
     A run is a Plan under the campaign's Experiment. `authorization_id` has no
@@ -264,7 +300,12 @@ def plan_row_from(auth: Authorization, report) -> dict:
         "meta": {
             "authorization_id": auth.authorization_id,
             "package_digest": auth.package_digest,
+            # Two humans, deliberately: who approved the run, and who started
+            # it. They are different facts and often different people. The
+            # device may see only the automation principal, so if these are not
+            # recorded here the human vanishes from the trail entirely.
             "authorized_by": auth.authorized_by,
+            "launched_by": launched_by,
             "binding": auth.binding,
             "ok": report.ok,
             "dry_run": report.dry_run,
@@ -289,7 +330,13 @@ def lab_session(request: Request, auth: Authorization):
     registry = getattr(request.app.state, "registry", None)
     if registry is None:
         raise RunRefused("no equipment registry is loaded on this server")
-    return Lab.connect(registry=registry, binding=auth.binding or None)
+    return Lab.connect(
+        registry=registry,
+        binding=auth.binding or None,
+        # Presented on every device call. A device that gates claims on identity
+        # refuses the whole run without it, at the first step.
+        headers=automation_headers() or None,
+    )
 
 
 def build_workflow_router() -> APIRouter:
@@ -357,7 +404,7 @@ def build_workflow_router() -> APIRouter:
                 for s in report.steps
             ],
             # The record layer's shape, produced but not written (D-23).
-            "record": {"plan": plan_row_from(auth, report),
+            "record": {"plan": plan_row_from(auth, report, launched_by=identity),
                        "notes": notes_from(report, authorization_id=auth.authorization_id)},
         }
 
