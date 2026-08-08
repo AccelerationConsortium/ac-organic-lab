@@ -512,6 +512,15 @@ by the `Plan.experiment_id` that exists today. (The designed-but-deferred
 it is not needed for this mapping and remains deferred.) A protocol carrying an
 *inline* `design:` block is the degenerate case: one `Experiment`, one `Plan`.
 
+> **This section is the authority on Experiment granularity** (confirmed
+> 2026-08-08). Bitácora's `DESIGN_HOIST_PLAN.md` §4 briefly read `Experiment`
+> as one execution — "one plate file run three times is three Experiments" —
+> and was amended the same day this was settled; its `Plan.design_path`
+> recommendation was withdrawn with it (`Plan.experiment_id` already answers
+> "all runs under this design"). What the pending run-authorization ontology
+> bump should carry instead is the design ↔ Experiment linkage: the
+> Experiment row recording which `designs/<slug>.yaml` it materializes.
+
 The fit is not coincidence. `PlanCreate` already takes `source_commit` +
 `protocol_path`, which is exactly what a run authorization pins, and
 `Plan.steps` is the compiled package. `authorization_id` has no column of its
@@ -534,8 +543,14 @@ notes anchored to it could not be told apart. Use `kind` to classify a note
 (deviation / device fault / operator observation) rather than putting everything
 in prose, and `corrects` to amend one — records are never edited.
 
-Two consequences worth deciding before the first campaign, not after:
+Three consequences worth deciding before the first campaign, not after:
 
+- **`Experiment.status` was named for one run.** `designed → running →
+  completed → analyzed` has no honest value for a campaign whose plate 1 ran
+  Monday while plate 3 is unwritten — either derive the status from the
+  `Plan`s beneath it, or accept that `running` can span weeks and means "at
+  least one plate has run and the campaign is not closed". Do not let each
+  writer improvise the answer.
 - **`Experiment.operator` is a single field.** A three-plate campaign run across
   three days by different people has one campaign owner and three run
   operators; those are different facts. The per-run person belongs on
