@@ -7,8 +7,10 @@ limiting, the **`roster.yaml` allow-list** with fail-closed validation, per-scop
 restriction, and **project-based data scope**). What remains: data-isolation
 *enforcement* (`can_read`), finishing claim-authorization + closing the
 direct-device side-door, and automation approval — see *Phasing*. Drafted
-2026-06-23; last revised 2026-07-07 (login dropdown shows **names, not emails**;
-`/auth/request-code` → `/auth/login`; `/auth/*` namespace documented).
+2026-06-23; last revised 2026-08-07 (**standalone installs**: absent banner MUST
+mean open — see *Policy*). Prior revision 2026-07-07 (login dropdown shows
+**names, not emails**; `/auth/request-code` → `/auth/login`; `/auth/*` namespace
+documented).
 **Scope:** central auth/authorization **module inside `ac-organic-lab`** serving
 every platform and device. Single source of truth for *who may do what on which
 equipment, as what role* across a platform↔device graph, plus session
@@ -58,6 +60,133 @@ Reads that are deliberately public (live equipment status / telemetry; see *Read
 vs writes*) stay public **behind** the edge — "carry the central auth" means the
 sign-in surface is present and identity is available, not that every byte is
 gated.
+
+### Standalone installs — an absent banner MUST mean open (normative)
+
+The policy above binds every UI **in this lab**. It does not bind the device
+repos themselves, which are independently installable: another lab can `pip
+install` `opentrons-server` or `xarm-translocation` and run the panel with no
+edge, no `ac_auth`, and no intention of ever having one. That is a supported
+deployment (ARCHITECTURE.md LG1 — multi-lab portability), so:
+
+**A panel MUST remain fully usable when `/auth/banner.js` fails to load.** Absent
+banner ⇒ **open mode**, never locked out. A UI that hides or disables its own
+controls because nobody is signed in would lock a standalone operator out of
+their own robot — the failure is silent, looks like a bug in the device, and has
+no local remedy.
+
+Three properties make this hold; all three are load-bearing, so preserve them
+when touching a panel's shell:
+
+1. **The include is optional by construction.** Inject the tag at runtime with an
+   **absolute** path and `defer` — it resolves at the *edge* origin, not from the
+   panel's own bundle, so with no `ac_auth` there it 404s and a deferred script
+   that 404s blocks neither parsing nor render. Do not `import` it, bundle it, or
+   make first paint wait on it.
+2. **Every read of the contract is guarded.** The host-page contract the banner
+   populates is:
+
+   ```js
+   window.labAuth = { enabled: true, identity: {email, role} | null }
+   document 'labauth:change'             // fires with the identity (or null)
+   window.labAuth.releaseClaimOnSignOut  // optional panel hook; banner awaits it
+   ```
+
+   None of it exists in a standalone install. Read it as `window.labAuth &&
+   window.labAuth.…` and treat undefined as "no auth in play".
+3. **Gate on `enabled`, never on `identity` alone.** `!identity` is true both when
+   auth is on and nobody signed in *and* when there is no auth at all — the two
+   cases need opposite behaviour. The banner makes the distinction expressible:
+
+   ```js
+   window.labAuth = window.labAuth || { enabled: true, identity: null };
+   window.labAuth.enabled = true;   // only runs if the script actually loaded
+   ```
+
+   so a panel may pre-declare `window.labAuth = { enabled: false, identity: null }`
+   in its own `index.html`, and the banner flips `enabled` to `true` **iff** it
+   loaded. No probing, no timeout.
+
+**State as of 2026-08-07.** Both panels already carry the banner and already
+degrade correctly.
+
+| Panel | Consumes `window.labAuth`? | Standalone behaviour |
+|---|---|---|
+| OT-2 (`opentrons-server/ui/`) | No — zero reads in `ui/src/` | Nothing to degrade. Theme is pre-applied inline from `localStorage` before first paint, so even the banner's `class="dark"` coupling has its own path. |
+| xArm (`xarm-translocation/src/web/`) | Yes — claim wiring in `main.js` | Every read guarded; the one that gates behaviour (`main.js`, `Boolean(window.labAuth && window.labAuth.enabled && !window.labAuth.identity)`) evaluates **false** when the banner is absent, i.e. not blocked. Copy this shape rather than re-deriving it. |
+
+Both also suppress their own banner when framed (`window.self !== window.top`),
+since the dashboard embed already shows one — one banner, not two. The xArm
+solved that first; the OT-2 panel mirrors it.
+
+**Accepted cost:** a console 404 for `/auth/banner.js` on every load in a
+standalone or dev install. Cosmetic, and cheaper than a build flag or a runtime
+probe. Say so in the panel's HTML comment so the next reader doesn't "fix" it.
+
+**Not a security position.** Absent banner means absent auth: the panel *and* the
+device's `/control/*` are open to anyone who can reach them. That is a
+deployment-posture question for the installing lab (network isolation), not
+something the UI can or should compensate for — and it is unchanged from the
+Tailnet-only stance this lab runs today. Nothing here weakens the policy above:
+inside this lab, every UI carries the banner and the side-door still has to close.
+
+#### The switch between the two postures
+
+A device repo does not choose standalone-vs-lab at build time; it is **one env
+switch at deploy time**. The OT-2 gateway is the reference implementation
+(`opentrons_server/gateway/api.py`), and its comment names the flag an
+"§6.5-style override flag" — the STATUS_SPEC §6.5 pattern of a runtime override
+that exists for dev and never for production:
+
+| Env var | Default | Effect |
+|---|---|---|
+| `OT2_UI` | `true` | `off` unmounts the operator UI entirely (headless gateway). |
+| `OT2_TRUST_LOCAL_UI` | **`true`** | `true` = **blind trust**: `/ui` + `/labware` are served to anyone who can reach the port, no identity trusted. `false` = **edge-only**: they answer only requests forwarded by the auth edge (`X-Edge-Key` must match `OT2_EDGE_SECRET`), and the edge-asserted `X-Auth-User` is stamped into claim owners. **Direct hits get 404.** |
+| `OT2_EDGE_SECRET` | unset | The shared secret the edge presents as `X-Edge-Key`. Becomes **required** when `OT2_TRUST_LOCAL_UI=false`. |
+| `OT2_REQUIRE_LOGIN` | **`false`** | `true` = `/control/claim` requires a verified principal. Enforced at claim acquisition — the single chokepoint every motion endpoint already sits behind — because claims are cooperative, **not** authentication (STATUS_SPEC §5). |
+| `OT2_API_KEYS` | unset | Machine principals, for callers with no browser session. |
+
+**404, not 401/403, on a direct hit.** From an unauthenticated caller's view the
+UI surface simply does not exist. A 401 would advertise that something worth
+attacking is listening on that port.
+
+**Default-open is deliberate, and it is the standalone case.** A bare checkout
+runs `trust_local_ui=true` so the panel just works with no edge — that is the
+same default the section above depends on. Two things keep it honest:
+
+- **It logs loudly at startup** (`OT2_TRUST_LOCAL_UI=true: operator UI is served
+  without the auth edge (dev bypass — set OT2_TRUST_LOCAL_UI=false in
+  production)`). The warning is the compensating control for the permissive
+  default; do not downgrade it to `info`.
+- **Both closed postures fail *fast*, not silently.** `OT2_TRUST_LOCAL_UI=false`
+  without `OT2_EDGE_SECRET` raises at startup, as does `OT2_REQUIRE_LOGIN=true`
+  with neither `OT2_EDGE_SECRET` nor `OT2_API_KEYS` — the code's reason is worth
+  keeping: *"Fail-closed with no way in is a bricked device, not a secure one."*
+
+**Posture is observable on `/status`, so you never have to read a service's env
+to know how it is running:**
+
+- `details.ui_mode` — `off` | `open` (trust-local) | `edge`
+- `details.control_auth` — `open` | `claim_only` (a claim token is the only gate
+  — cooperative, not authentication) | `identity`
+
+**Live posture, verified 2026-08-07.** Both gateways run
+`control_auth: "identity"`; `/ui/` on the gateway port returns **404** direct
+(`:8020` HTE, `:8021` complexation), the edge path returns **401** without a
+session, and a tokenless `POST /control/claim` returns **401 `login_required`**.
+So for the OT-2s the direct-device side-door in `docs/ROADMAP.md` →
+*Control-surface exposure* is **already closed**, page and control plane both —
+ahead of the rest of the fleet. Residual: a shell user on the device PC can still
+reach `127.0.0.1:8020`, which stays an operational/physical control.
+
+**Generalizing.** Any device repo that ships a browsable operator UI **SHOULD**
+expose an equivalent pair — one switch for the UI surface, one for the control
+plane — rather than hard-wiring either posture. Keep the permissive default so a
+standalone install works out of the box, and pair it with the loud startup
+warning and the fail-fast guards above; this lab's deployment sets both closed.
+Name them per-repo (`<DEV>_TRUST_LOCAL_UI` / `<DEV>_REQUIRE_LOGIN`) and publish
+`ui_mode` / `control_auth` in `details` so a fleet-wide posture sweep is one
+`/status` poll.
 
 ## Requirements (what this design must deliver)
 
