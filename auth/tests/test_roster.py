@@ -346,7 +346,7 @@ def test_cross_check_catches_dead_platform_grant_and_scope():
     from ac_auth.roster import cross_check_ids
 
     r = _xcheck_roster()
-    errors = cross_check_ids(r, equipment_ids={"plateloc", "cam_x"}, platform_ids={"echem"})
+    errors = cross_check_ids(r, equipment_ids={"plateloc", "cam_x"}, platform_ids={"complexation"})
     # u's platform grant AND the automation account's platform: field both die.
     assert len(errors) == 2
     assert any("u@lab.edu" in e and "'hte'" in e for e in errors)

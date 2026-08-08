@@ -45,7 +45,7 @@ straight at the panel's edge path, opened in a new tab:
 | Link target | What it is |
 |---|---|
 | `/ot2/hte/ui/` | The HTE bench OT-2's gateway SPA, edge-routed and `forward_auth`-gated. |
-| `/ot2/complexation/ui/` | The complexation (echem) bench OT-2's gateway SPA, same. |
+| `/ot2/complexation/ui/` | The complexation-platform bench OT-2's gateway SPA, same. |
 
 These paths live in `web/src/lib/device-panels.ts`, mirroring the route blocks
 in `deploy/Caddyfile.single-edge`. They are edge paths on *this* origin

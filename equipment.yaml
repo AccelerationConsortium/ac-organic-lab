@@ -288,7 +288,7 @@ equipment:
 
   # ---------------------------------------------------------------------
   # Echem platform - displayed in the order defined in platforms.yaml.
-  # The `tiles.echem` values drive tile sizes on /platforms/echem.
+  # The `tiles.complexation` values drive tile sizes on /platforms/complexation.
   # ---------------------------------------------------------------------
 
   # The Echem camera is the platform's hero tile — a second Tapo C245D
@@ -307,7 +307,7 @@ equipment:
     # for the first request after a gateway restart.
     poll_timeout_seconds: 5.0
     tiles:
-      echem: { w: 2, h: 3 }
+      complexation: { w: 2, h: 3 }
     pills: {}
     camera:
       host: 172.31.60.15
@@ -322,7 +322,7 @@ equipment:
   # Second Echem camera: a single-lens Tapo C100 watching the OT-2. Listed
   # AFTER cam_echem_tapo_c245 in platforms.yaml on purpose — the Overview
   # card streams only the first camera of a section, so this one appears
-  # there as a status row only (full tile on /platforms/echem).
+  # there as a status row only (full tile on /platforms/complexation).
   - id: cam_echem_tapo_c100
     name: Echem OT2 Camera
     kind: camera
@@ -336,7 +336,7 @@ equipment:
     # for the first request after a gateway restart.
     poll_timeout_seconds: 5.0
     tiles:
-      echem: { w: 2, h: 3 }
+      complexation: { w: 2, h: 3 }
     pills: {}
     camera:
       host: 172.31.60.22
@@ -364,7 +364,7 @@ equipment:
     poll_timeout_seconds: 8.0
     do_not_call_connect: true
     tiles:
-      echem: { w: 2, h: 3 }
+      complexation: { w: 2, h: 3 }
     # "Open" pill -> the edge-gated OT-2 gateway operator SPA at
     # /ot2/complexation/ui/ (Caddy: forward_auth @ot2_complexation -> ac_auth,
     # header_up X-Edge-Key). ABSOLUTE edge URL (port 80) so it lands on the

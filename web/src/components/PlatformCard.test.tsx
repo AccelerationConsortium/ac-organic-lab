@@ -198,7 +198,7 @@ describe("PlatformCard camera preview selection", () => {
       },
     }) as unknown as EquipmentSnapshot;
 
-  // A section may hold more than one camera (echem has the platform C245 plus
+  // A section may hold more than one camera (complexation has the platform C245 plus
   // the OT-2-facing C100). Only the FIRST one gets the preview region, so a
   // second camera is opted out of Overview streaming purely by ordering it
   // later in platforms.yaml — no per-camera flag exists. Ordering is therefore
@@ -206,7 +206,7 @@ describe("PlatformCard camera preview selection", () => {
   it("previews only the first camera when a section has several", () => {
     render(
       <PlatformCard
-        id="echem"
+        id="complexation"
         title="Echem Platform"
         snapshots={[
           cameraSnapshot("cam_echem_tapo_c245", "Echem Platform Camera"),

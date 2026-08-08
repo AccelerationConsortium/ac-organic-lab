@@ -84,10 +84,10 @@ automation:
   # platform the plan actually targets is what stops an authenticated-but-
   # unauthorized 403 that reads like broken plumbing rather than a roster saying
   # no. (`platforms.yaml` decides which platform a device belongs to.)
-  - email: echem-orchestrator@lab.local
-    name: Echem platform principal
+  - email: complexation-orchestrator@lab.local
+    name: Complexation platform principal
     approved: true
-    platform: echem
+    platform: complexation
 
 # --- projects (Phase 2 — data ownership, NOT hardware) --------------------
 # A project is the unit of data ownership. `pis` (one or more) OWN the project's

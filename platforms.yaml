@@ -11,10 +11,10 @@ sections:
     kind: platform
     equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, bitacora_eln, pypoe_web, kasa_tapo_gateway, bambu_gateway, uptime_kuma]
     
-  - id: echem
-    title: Echem Platform
+  - id: complexation
+    title: Complexation Platform
     description: Electrochemistry platform
-    href: /platforms/echem
+    href: /platforms/complexation
     kind: platform
     equipment:
       # The Overview card streams only the FIRST camera in this list;
