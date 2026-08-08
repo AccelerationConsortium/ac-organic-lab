@@ -13,7 +13,7 @@ const STATIC_AFTER = [
   { href: "/utils", label: "Utils" },
 ];
 
-type Tab = { href: string; label: string; external?: boolean };
+type Tab = { href: string; label: string };
 
 export function Nav() {
   const pathname = usePathname();
@@ -27,12 +27,12 @@ export function Nav() {
     ? [{ href: "/platforms", label: "Platforms" }]
     : [];
 
-  // Bitacora (agentic ELN) is a separate Next.js app served same-origin at
-  // /bitacora via Caddy path routing. Link to it directly (full page nav, not
-  // a client-side route transition) — it has its own route manifest, so
-  // next/link would try to resolve /bitacora against this app and 404.
+  // Workflows embeds Bitácora (the agentic ELN) in an iframe at /workflows.
+  // The tab renders only after sign-in so an anonymous visitor never sees the
+  // ELN's own auth screen nested inside this dashboard (the middleware
+  // redirects direct navigations too — this is just the visibility half).
   const workflowsTabs = authenticated
-    ? [{ href: "/bitacora", label: "Workflows", external: true }]
+    ? [{ href: "/workflows", label: "Workflows" }]
     : [];
 
   // Visibility only — the /admin route is enforced by the middleware + sidecar.
@@ -59,12 +59,7 @@ export function Nav() {
             ? "border-sky-600 text-ink dark:border-sky-400 dark:text-slate-100"
             : "border-transparent text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
         }`;
-        // External links (e.g. /bitacora, a separate app) use a plain <a> so
-        // the browser does a full page navigation instead of a client-side
-        // route transition that would 404 against this app's manifest.
-        return tab.external ? (
-          <a key={tab.href} href={tab.href} className={cls}>{tab.label}</a>
-        ) : (
+        return (
           <Link key={tab.href} href={tab.href} className={cls}>{tab.label}</Link>
         );
       })}

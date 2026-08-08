@@ -124,7 +124,39 @@
     return e;
   }
 
+  // Framed inside another lab UI (dashboard /workflows framing Bitácora,
+  // /utils/xarm_control framing the xArm panel, …): the HOST page already
+  // renders this banner, so a second bar inside the frame is pure noise.
+  // Go headless instead of returning outright — panels still consume the
+  // window.labAuth identity contract (claim release, gating), and the theme
+  // must stay in lockstep with the host, which shares our localStorage.
+  var FRAMED = (function () {
+    try { return window.self !== window.top; } catch (e) { return true; }
+  })();
+
+  function headless() {
+    function systemPrefersDark() {
+      try { return window.matchMedia("(prefers-color-scheme: dark)").matches; } catch (e) { return false; }
+    }
+    function applyStoredTheme(stored) {
+      var dark = stored === "dark" || stored === "light" ? stored === "dark" : systemPrefersDark();
+      try { document.documentElement.classList.toggle("dark", dark); } catch (e) { /* no-op */ }
+    }
+    try { applyStoredTheme(localStorage.getItem("theme")); } catch (e) { applyStoredTheme(null); }
+    // The host banner's theme toggle writes localStorage("theme"); the
+    // storage event fires in this frame (same origin, different browsing
+    // context), so the framed UI follows the host's toggle live.
+    window.addEventListener("storage", function (e) {
+      if (e.key === "theme") applyStoredTheme(e.newValue);
+    });
+    jget(A.me).then(function (r) {
+      var id = r.data && r.data.authenticated && r.data.identity ? r.data.identity : null;
+      setIdentity(id);
+    }).catch(function () { setIdentity(null); });
+  }
+
   function mount() {
+    if (FRAMED) { headless(); return; }
     if (!document.body) { document.addEventListener("DOMContentLoaded", mount); return; }
     // Prefer a host-provided slot (e.g. the dashboard renders
     // <div id="ac-auth-banner-slot">) so React owns the light-DOM element and
