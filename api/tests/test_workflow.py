@@ -210,3 +210,29 @@ def test_dry_run_steps_are_not_deviations() -> None:
     wrong."""
     report = _Report([_StepReport("home_gantry", "dry_run")], ok=True, dry_run=True)
     assert notes_from(report, authorization_id="ra_test") == []
+
+
+# ── the session must be entered ────────────────────────────────────────
+
+
+def test_lab_session_returns_an_unentered_context_manager() -> None:
+    """Found live on 2026-08-08: the runner passed `Lab.connect(...)` straight to
+    `execute_plan`, and a LabSession is inert until entered — `session.role(...)`
+    raises `LabSession is not active`. It failed at the *first step*, after every
+    gate had passed, which read like a device problem rather than a lifetime bug.
+
+    None of the unit tests above could see it: they exercise the gates and the
+    translation, never the execution. So this pins the contract instead — the
+    helper hands back something you must `async with`, and the endpoint does."""
+    import inspect
+
+    from app.workflow import build_workflow_router, lab_session
+
+    assert not inspect.iscoroutinefunction(lab_session), (
+        "lab_session must be sync — it returns a context manager, not a session"
+    )
+    src = inspect.getsource(build_workflow_router)
+    assert "async with connection as session:" in src, (
+        "the endpoint must enter the session before execute_plan; passing an "
+        "un-entered one fails at the first step, after the gates have passed"
+    )

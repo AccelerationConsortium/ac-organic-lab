@@ -272,9 +272,18 @@ def plan_row_from(auth: Authorization, report) -> dict:
     }
 
 
-async def _session(request: Request, auth: Authorization):
-    """A LabSession over this deployment's registry, bound as the authorization
-    pinned it — not as this host happens to be configured now."""
+def lab_session(request: Request, auth: Authorization):
+    """An **un-entered** LabSession over this deployment's registry, bound as the
+    authorization pinned it — not as this host happens to be configured now.
+
+    Returns the context manager rather than a live session on purpose:
+    `Lab.connect()` gives back a session that is inert until entered, and
+    `session.role(...)` raises `LabSession is not active` if it is not. Handing
+    an un-entered session to `execute_plan` fails at the *first step*, after
+    every gate has passed — which is late, and looked like a device problem when
+    it happened here on 2026-08-08. Making the caller write `async with` puts
+    the lifetime where it is visible.
+    """
     from lab_skills import Lab
 
     registry = getattr(request.app.state, "registry", None)
@@ -306,7 +315,7 @@ def build_workflow_router() -> APIRouter:
                 assert_executable(auth)
                 verify_package_digest(auth)
                 plan = plan_from(auth)
-                session = await _session(request, auth)
+                connection = lab_session(request, auth)
             except RunRefused as exc:
                 # Refused before any device was touched. Audited anyway: an
                 # attempt to run a revoked or tampered package is exactly the
@@ -319,11 +328,14 @@ def build_workflow_router() -> APIRouter:
 
         from lab_skills import execute_plan
 
-        report = await execute_plan(
-            plan, session,
-            owner=identity or "ac-organic-lab-dashboard",
-            dry_run=body.dry_run,
-        )
+        # The session must be *entered*: outside this block `session.role(...)`
+        # raises and every step fails, after the gates have already passed.
+        async with connection as session:
+            report = await execute_plan(
+                plan, session,
+                owner=identity or "ac-organic-lab-dashboard",
+                dry_run=body.dry_run,
+            )
         duration = time.monotonic() - started
 
         await _record_run_event(
