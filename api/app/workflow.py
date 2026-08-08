@@ -34,7 +34,6 @@ import hashlib
 import json
 import logging
 import os
-import pathlib
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -55,40 +54,38 @@ BITACORA_URL = os.environ.get("BITACORA_URL", "http://127.0.0.1:8050")
 #: collapsing them would make the per-action series unreadable.
 PLAN_RUN = "plan_run"
 
-#: API key for the platform's automation principal, presented to devices that
-#: require a verified identity before they will issue a claim (AUTH_DESIGN
-#: "Automation accounts"). A file rather than an inline value, like every other
-#: secret here, so it stays out of the unit and out of `systemctl show`.
+#: How the runner authenticates to a device that gates claims on identity.
 #:
-#: Why a machine credential and not the operator's own, which is what
-#: `control.py` forwards for a single click: the runner receives a POST, not a
-#: browser request, so there is no session cookie to forward — and a run can
-#: outlive the session that started it, which for an 18 h incubation is the
-#: normal case rather than the edge one.
+#: The same credential `control.py` already presents for an operator's single
+#: click: the edge-injected `X-Auth-User` plus the shared secret proving the
+#: request came through a trusted front. Reused rather than reimplemented —
+#: two definitions of "how this app authenticates to a device" is one too many,
+#: and the OT-2 gateway aliases `X-Edge-Auth` to its own `X-Edge-Key`
+#: specifically so the dashboard's spelling works.
 #:
-#: The human is NOT lost. AUTH_DESIGN is explicit that the device may see
-#: `owner=automation@<platform>` while the record keeps `launched_by=<human>`:
-#: the authorization already names who approved, and the audit row below names
-#: who launched. Never "the robot did it" with nobody attached.
-_AUTOMATION_KEY_PATH = os.environ.get("AUTOMATION_API_KEY_PATH", "").strip()
+#: The first real run tried an `ac_auth` API key instead and was refused. The
+#: key was valid — the sidecar verified it — but the gateway deliberately
+#: contacts no external auth service ("so this gate is usable by anyone who
+#: deploys the gateway, not only by this lab"), so an issued key means nothing
+#: to it. The lesson worth keeping: a credential is only good against the thing
+#: that checks it, and which service does the checking is a per-device fact.
+#:
+#: Consequence for the record: the device stores the **human** in
+#: `details.claimed_by.owner` and in its own audit rows, not a machine name.
+#: For a long run that means a person's name sits on a claim after they have
+#: gone home — more honest than a robot's, and worth knowing.
 
 
-def automation_headers() -> dict[str, str]:
-    """The device credential this deployment runs plans with, or none.
+def device_headers(request: Request) -> dict[str, str]:
+    """Identity headers for outbound device calls, or empty when unconfigured.
 
-    Empty when unconfigured — which is the right behaviour for a lab whose
-    devices do not require login, and which fails *closed* where they do: the
-    device answers 401 and the run stops at the first step having actuated
-    nothing, exactly as it did on 2026-08-08.
+    Empty is right for a lab whose devices do not gate claims, and fails
+    *closed* where they do: the device answers 401 and the run stops at the
+    first step having actuated nothing.
     """
-    if not _AUTOMATION_KEY_PATH:
-        return {}
-    try:
-        key = pathlib.Path(_AUTOMATION_KEY_PATH).read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        logger.warning("automation api key unreadable at %s: %s", _AUTOMATION_KEY_PATH, exc)
-        return {}
-    return {"X-Api-Key": key} if key else {}
+    from .control import _device_auth_headers
+
+    return _device_auth_headers(request)
 
 #: Fields of the published package that are digest inputs. `warnings` rides
 #: along in the same object but is not covered — it is compiler commentary, not
@@ -334,8 +331,8 @@ def lab_session(request: Request, auth: Authorization):
         registry=registry,
         binding=auth.binding or None,
         # Presented on every device call. A device that gates claims on identity
-        # refuses the whole run without it, at the first step.
-        headers=automation_headers() or None,
+        # refuses the whole run without them, at the first step.
+        headers=device_headers(request) or None,
     )
 
 

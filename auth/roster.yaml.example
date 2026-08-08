@@ -79,15 +79,6 @@ automation:
     platform: hte                        # Phase 1 scope
     # expires: 2026-12-31                 # time-box campaign principals
 
-  # One run principal PER PLATFORM, not one for the lab. The Phase F runner
-  # presents this key to devices that gate claims on identity; scoping it to the
-  # platform the plan actually targets is what stops an authenticated-but-
-  # unauthorized 403 that reads like broken plumbing rather than a roster saying
-  # no. (`platforms.yaml` decides which platform a device belongs to.)
-  - email: complexation-orchestrator@lab.local
-    name: Complexation platform principal
-    approved: true
-    platform: complexation
 
 # --- projects (Phase 2 — data ownership, NOT hardware) --------------------
 # A project is the unit of data ownership. `pis` (one or more) OWN the project's

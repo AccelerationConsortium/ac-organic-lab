@@ -238,35 +238,26 @@ def test_lab_session_returns_an_unentered_context_manager() -> None:
     )
 
 
-# ── the machine credential (option 1; option 3 is the SDK's own) ────────
+# ── the device credential ──────────────────────────────────────────────
 
 
-def test_no_key_configured_sends_no_header(monkeypatch) -> None:
-    """Right for a lab whose devices do not gate claims, and fails *closed*
-    where they do: the device answers 401 and the run stops at step 1 having
-    actuated nothing."""
-    import app.workflow as wf
+def test_device_headers_reuses_the_passthrough_definition() -> None:
+    """One definition of "how this app authenticates to a device". The runner
+    presents the same credential `control.py` already sends for an operator's
+    single click — edge-injected identity plus the shared secret — rather than
+    a second scheme.
 
-    monkeypatch.setattr(wf, "_AUTOMATION_KEY_PATH", "")
-    assert wf.automation_headers() == {}
+    The first real run tried an ac_auth API key instead and was refused: the key
+    was valid (the sidecar verified it) but the OT-2 gateway deliberately
+    contacts no external auth service, so an issued key means nothing to it."""
+    import inspect
 
+    from app.workflow import device_headers
 
-def test_a_configured_key_is_presented_as_x_api_key(monkeypatch, tmp_path) -> None:
-    import app.workflow as wf
-
-    key = tmp_path / "automation.key"
-    key.write_text("  sk-lab-abc123\n")  # trailing newline is the common case
-    monkeypatch.setattr(wf, "_AUTOMATION_KEY_PATH", str(key))
-    assert wf.automation_headers() == {"X-Api-Key": "sk-lab-abc123"}
-
-
-def test_an_unreadable_key_does_not_take_the_run_down(monkeypatch, tmp_path) -> None:
-    """A missing key must fail at the device, with its own clear 401, rather
-    than as an unhandled error here that says nothing about why."""
-    import app.workflow as wf
-
-    monkeypatch.setattr(wf, "_AUTOMATION_KEY_PATH", str(tmp_path / "nope.key"))
-    assert wf.automation_headers() == {}
+    src = inspect.getsource(device_headers)
+    assert "_device_auth_headers" in src, (
+        "device auth must come from control.py, not be reimplemented here"
+    )
 
 
 def test_the_record_keeps_both_humans() -> None:
