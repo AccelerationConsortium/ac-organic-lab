@@ -399,6 +399,14 @@ Four things worth keeping when this grows a background runner and an SSE stream:
   `liquid_handler` at the other OT-2 and the byte-identical package runs on a
   different machine. The session is built from `auth.binding`, not from however
   this host is configured now.
+- **It authenticates as the operator, not as a machine** (D-24). The runner
+  presents `control.py`'s own device headers — the edge-injected `X-Auth-User`
+  plus the shared secret — so the device records the *human* in
+  `claimed_by.owner` and in its own audit rows. Established the hard way: the
+  first real run was refused `401 login_required`, and so was a second attempt
+  carrying a valid `ac_auth` API key, because the OT-2 gateway deliberately
+  contacts no external auth service. Which service checks a credential is a
+  per-device fact; there is no lab-wide answer to assume.
 - **The run returns record-layer shapes it does not write** (D-23): a `Plan` row
   under the campaign's `Experiment`, plus `step_id`-anchored `Note`s for the
   steps that failed, blocked or were skipped. Successful steps produce no note —
