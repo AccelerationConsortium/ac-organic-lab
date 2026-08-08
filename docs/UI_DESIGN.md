@@ -365,6 +365,52 @@ keep `api/` presentation-thin, the same module can instead live in a small
 dedicated runner service that `api/` proxies — the endpoint contract below is
 identical either way.
 
+### 3.2b What shipped first: the authorization runner (2026-08-08)
+
+`api/app/workflow.py` — the module this section calls for, built against the
+Phase F seam rather than against a DB draft. **Its input is a bitácora run
+authorization, not a `plan_id`**: the endpoint contract below was written before
+the authorizer existed, and where the two differ, this is what is built.
+
+```
+POST /api/workflow/runs   {authorization_id, dry_run?}
+  1  GET  bitacora /authorizations/{id}   — a pull, so revocation is real (D-21)
+  2  refuse unless `executable`           — revoked or expired, saying which
+  3  recompute `package_digest`           — from the published package alone
+  4  Plan from package.steps              — step_id → Step.id, the one translation
+  5  Lab.connect(binding=auth.binding)    — the machines the authorizer validated
+  6  execute_plan(...)                    — per-step claim, live layer-3/4 re-checks
+  7  one `plan_run` audit row             — same series as control.py's
+                                            `control_action`, distinct type
+```
+
+Four things worth keeping when this grows a background runner and an SSE stream:
+
+- **The digest check is done here, in this repo.** A check only the issuer can
+  perform is not a check. Bitácora publishes every digest input inside the
+  package so a second implementation can verify without reassembling filename
+  stems; if an input goes missing the runner refuses rather than hashing a
+  subset and calling it verified.
+- **Readiness is not taken from the authorization.** Its stored verdict can be a
+  day old — evidence it was sane when approved, never clearance to run now.
+  `execute_plan` re-checks live `allowed_actions` and interlocks immediately
+  before each step, and that is the authority.
+- **The binding is pinned, not looked up.** The package names *roles*; re-point
+  `liquid_handler` at the other OT-2 and the byte-identical package runs on a
+  different machine. The session is built from `auth.binding`, not from however
+  this host is configured now.
+- **The run returns record-layer shapes it does not write** (D-23): a `Plan` row
+  under the campaign's `Experiment`, plus `step_id`-anchored `Note`s for the
+  steps that failed, blocked or were skipped. Successful steps produce no note —
+  the `Plan` row already describes them, and a note each would bury the two that
+  matter.
+
+Not yet built: the background run + SSE stream (this endpoint is synchronous, which
+is honest for a 14-step transfer and wrong for an 18 h incubation), abort, and
+the per-step revocation re-check D-22 calls for — `execute_plan` runs a whole
+plan with no per-step hook, so that needs either a step-driving loop here or a
+callback in the SDK.
+
 ### 3.3 Endpoint contract
 
 #### `POST /api/workflow/plans/{plan_id}/preflight`

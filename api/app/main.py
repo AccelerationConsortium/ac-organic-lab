@@ -28,6 +28,7 @@ from . import __version__
 from .assistant import build_assistant_router
 from .alert_notifier import AlertNotifier
 from .control import build_control_router
+from .workflow import build_workflow_router
 from .db import LabDatabase, resolve_db_path
 from .deck import build_deck_router
 from .events import (
@@ -554,6 +555,10 @@ app.add_middleware(
 # device gateway named by ``equipment.yaml::base_url``. See
 # ``api/app/control.py`` for the routing rules.
 app.include_router(build_control_router())
+
+# Phase F: authorized plan execution (D-20 — the runner lives here, not in
+# bitácora, because this app already owns the claim and the audit row).
+app.include_router(build_workflow_router())
 
 app.include_router(build_deck_router())
 # Central custom-labware definition store (repo-committed + admin uploads).
