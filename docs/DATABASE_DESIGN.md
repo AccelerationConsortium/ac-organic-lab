@@ -490,6 +490,62 @@ contract (`SCHEMA_VERSION`) bump. Shape choice is deferred to the phase that
 builds the run authorizer ([`AGENTIC_ELN_PLAN.md`](AGENTIC_ELN_PLAN.md)
 Track 2 Phase E).
 
+## ELN artifacts → record layer: what a plate, a run and a campaign are (2026-08-08)
+
+Settled while designing the Phase F runner, because "where does the run record
+go" cannot be answered without first saying what a run *is*. Bitácora fixed its
+side when multi-plate designs shipped (template 1.5.0): **each plate is its own
+protocol**, and **one protocol → one compiled package → one digest → one run**.
+That chain is deliberate — it is what lets plate 3 be added without invalidating
+the authorizations of plates 1 and 2. The mapping onto this schema follows from
+it:
+
+| Bitácora artifact | Record layer | What it is |
+|---|---|---|
+| `designs/<slug>.yaml` (the shared claim) | **`Experiment`** | the campaign — spans plates |
+| `protocols/<plate>.yaml` → authorization → run | **`Plan`** | one plate, one run |
+| each executed step | **`Note`** (`step_id`-anchored) | what actually happened |
+
+So an **`Experiment` is the campaign and a `Plan` is one plate's run**, linked
+by the `Plan.experiment_id` that exists today. (The designed-but-deferred
+`Experiment.plan_id` is the reverse pointer — "the version currently executing";
+it is not needed for this mapping and remains deferred.) A protocol carrying an
+*inline* `design:` block is the degenerate case: one `Experiment`, one `Plan`.
+
+The fit is not coincidence. `PlanCreate` already takes `source_commit` +
+`protocol_path`, which is exactly what a run authorization pins, and
+`Plan.steps` is the compiled package. `authorization_id` has no column of its
+own, so it goes in `Plan.meta` — that thread from "this ran" back to "this human
+approved it, against this commit, with this digest" is the whole point of the
+gate and should be written from the first run, not retrofitted.
+
+**Reruns insert, never update.** Re-running a plate creates a fresh `Plan` row
+(`supersedes` links it to the one it replaces), per the amendment rule in
+[`AGENTIC_ELN_DESIGN.md`](AGENTIC_ELN_DESIGN.md) §16. "How many times did plate
+2 run" is therefore a count of `Plan`s under its `Experiment`.
+
+**Why `Note.step_id` is load-bearing.** It is what makes "show me where this run
+went wrong" a query rather than a log grep, and it is why bitácora's compiler
+*requires* a stable `id` on every sub-step and refuses to derive one from the
+skill name — a renamed skill would otherwise silently rename executed records.
+Template 1.7.0 added a CI check that those ids are unique within an action, for
+the same reason: two sub-steps sharing an id compile to one `step_id`, and the
+notes anchored to it could not be told apart. Use `kind` to classify a note
+(deviation / device fault / operator observation) rather than putting everything
+in prose, and `corrects` to amend one — records are never edited.
+
+Two consequences worth deciding before the first campaign, not after:
+
+- **`Experiment.operator` is a single field.** A three-plate campaign run across
+  three days by different people has one campaign owner and three run
+  operators; those are different facts. The per-run person belongs on
+  `Plan.creator` or in a `Note`.
+- **`Sample` is a child of exactly one `Experiment`.** With Experiment-as-
+  campaign, every well of every plate under one design is a sibling, so
+  cross-plate comparison is a query rather than a cross-campaign join. It also
+  means the Experiment boundary is expensive to move later — samples would have
+  to be reparented. Choose it once.
+
 ## Plate identity — the device ↔ record join (2026-08-04, from an OT-2 bench run)
 
 Device services already track "which plate is on the deck and what is in each
