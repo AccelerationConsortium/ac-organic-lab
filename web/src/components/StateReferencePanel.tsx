@@ -24,12 +24,24 @@ export function StateReferencePanel() {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="fixed left-0 top-1/2 z-40 -translate-y-1/2 print:hidden">
+    // `pointer-events-none` is load-bearing, not cosmetic: the wrapper is
+    // `w-44` wide (the aside sizes it) and as tall as the panel, and a CSS
+    // transform moves the collapsed aside visually WITHOUT moving its layout
+    // box. So this fixed wrapper hit-tests over a ~176px invisible column at
+    // the left edge — swallowing taps on anything under it. Harmless on a
+    // wide desktop (empty margin); on a phone in landscape that column is
+    // ~19% of the viewport and eats the left-hand controls. Interactivity is
+    // re-enabled only on the parts that need it (see below).
+    <div className="pointer-events-none fixed left-0 top-1/2 z-40 -translate-y-1/2 print:hidden">
       <aside
         aria-label="Equipment state reference"
         className={[
           "relative w-44 rounded-r-xl border border-l-0 border-slate-200 bg-surface-raised p-3 pr-8 shadow-lg transition-transform duration-200 dark:border-slate-800 dark:bg-slate-900",
           open ? "translate-x-0" : "-translate-x-[calc(100%-26px)]",
+          // Open: the whole panel is interactive (rows hover, no click-through).
+          // Collapsed: nothing but the toggle tag below — so the 26px strip
+          // doesn't silently absorb taps along the panel's full height.
+          open ? "pointer-events-auto" : "pointer-events-none",
         ].join(" ")}
       >
         {/* Vertical tag on the right edge — the toggle in both states. When
@@ -40,7 +52,8 @@ export function StateReferencePanel() {
           aria-expanded={open}
           aria-label={open ? "Hide state reference" : "Show state reference"}
           title={open ? "Collapse" : "Show state reference"}
-          className="absolute right-1.5 top-1/2 -translate-y-1/2 cursor-pointer whitespace-nowrap text-[10px] font-semibold uppercase tracking-widest text-sky-700 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200"
+          // Always interactive — it is the only way back in when collapsed.
+          className="pointer-events-auto absolute right-1.5 top-1/2 -translate-y-1/2 cursor-pointer whitespace-nowrap text-[10px] font-semibold uppercase tracking-widest text-sky-700 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200"
           style={{ writingMode: "vertical-rl" }}
         >
           State Reference
