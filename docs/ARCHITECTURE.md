@@ -122,6 +122,7 @@ ac-organic-lab/
 │       ├── db.py                   # LabDatabase (SQLite, stdlib only)
 │       ├── history.py              # /api/history/* + /api/ingest/* routes
 │       ├── control.py              # control passthrough (cameras, plugs)
+│       ├── workflow.py             # Phase F: authorized-run executor (SSE, abort)
 │       ├── assistant.py            # /api/assistant/chat — Claude Code CLI subprocess (SSE)
 │       ├── mcp_server.py           # lab-history MCP server (read-only tools over lab.db)
 │       └── presentation.py        # dashboard snapshot types + location
@@ -192,6 +193,15 @@ Owns:
   each alert as an `alert_emitted` event. See [`LAB_MONITORING.md`](LAB_MONITORING.md) §6b.
 - **History API** (`history.py`): `GET /api/history/*` read endpoints for
   the dashboard; `POST /api/ingest/*` write endpoints for device services
+- **Authorized-run executor** (`workflow.py`, Phase F — 2026-08-08/09): pulls
+  a **run authorization** from bitácora by id, refuses unless it is still
+  executable, independently recomputes the package digest, then drives the
+  pinned package through `lab-skills`' `execute_plan` (per-step claims, live
+  re-checks) as a background run with an SSE step stream and cooperative
+  abort; the authorization is re-fetched between steps so revocation works
+  mid-run. Lives here rather than in bitácora (AGENTIC_ELN_PLAN D-20) because
+  this process already owns the claim dance and the audit row; every attempt —
+  including refused ones — writes a `plan_run` event.
 - **Operator control passthrough** (`control.py`): mirrors each device's
   `/control/*` surface for operator-initiated writes, runs the per-request
   claim → action → release dance for v1.1 devices, and writes one

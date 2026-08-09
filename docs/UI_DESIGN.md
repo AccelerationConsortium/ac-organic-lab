@@ -297,7 +297,12 @@ points at the ELN agent for anything requiring actuation or planning.
 > → approve → execute → monitor → record) built on the existing dashboard
 > and SDK rather than as a new app. Companion to
 > [`AGENTIC_ELN_DESIGN.md`](AGENTIC_ELN_DESIGN.md) (the why) — this is
-> the how for the *execute + monitor* surface. Nothing here is built yet;
+> the how for the *execute + monitor* surface. **The backend half is built**
+> (2026-08-08/09): the authorization runner + background runs + SSE + abort in
+> `api/app/workflow.py` — see §3.2b, which is the as-built record and wins where
+> it differs from the §3.3 proposal (its input is an `authorization_id`, not a
+> `plan_id`; there is no separate approve endpoint — approval is bitácora's).
+> The *browser* half (a run view in the Workflows tab) is still unbuilt;
 > maturity claims about the SDK trace to [`ROADMAP.md`](ROADMAP.md) /
 > [`INTERLOCKS.md`](INTERLOCKS.md) and should be checked against current code.
 
