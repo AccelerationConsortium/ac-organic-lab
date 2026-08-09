@@ -305,11 +305,19 @@ the agent narrates/acknowledges over AG-UI.
 A **room** *is* the planning session: it owns the working branch, the server
 worktree, and the tabbed surface. Consequences:
 
-- **Open on the work surface, chat collapsed.** A new room opens with the
-  chat panel folded to its rail and the Protocol tab active. The chemist who
-  wants to edit directly never has to touch chat; the chemist who wants to
-  delegate expands the panel. Both paths flow through the same edit service
-  and produce the same commits.
+- **Open on the conversation, work surface on demand.** *(Amended 2026-08-09,
+  at the operator's request, after a week of real use.)* The original bet was
+  the inverse — open on the Protocol tab with chat folded to a rail — on the
+  theory that a chemist editing directly should never have to touch chat. Use
+  falsified it: every substantive change in the first week (design, plate map,
+  controls, parameters, the action map) went *through* conversation, and the
+  tabs were opened only to verify. So a room now lands on its conversation,
+  with a **room rail** on the left (the session switcher) and the tabbed work
+  surface slid off to the right, opened with one control when someone wants to
+  look at or edit an artifact directly. The invariant is unchanged and is what
+  makes the flip safe: **both paths flow through the same edit service and
+  produce the same commits** — only which surface is default moved. The
+  direct-edit path is one click away, not gone.
 - **Lazy branch minting.** Opening a room does not create a branch. The
   working branch (and worktree) is minted on the **first edit** — from either
   the agent or the visual editor. A room in which nothing was edited leaves
