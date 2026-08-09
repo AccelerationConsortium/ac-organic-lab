@@ -44,6 +44,36 @@ class EquipmentUnreachable(LabError):
         self.message = message
 
 
+class CommandOutcomeUnknown(LabError):
+    """A control command was sent and no answer arrived in time.
+
+    Deliberately **not** :class:`EquipmentUnreachable`, and deliberately not a
+    failure. The request left the client and the device may well be executing it
+    right now — a homed gantry, a started seal cycle, an aspirated 100 uL. The
+    one thing the caller knows is that it does not know.
+
+    This exists because treating it as a failure is actively dangerous. On
+    2026-08-08 the first authorized plan run POSTed ``/control/home``, the client
+    gave up after 8 s, and the step was recorded ``failed`` while the OT-2 homed
+    successfully — the record asserting something the robot had just disproved.
+    Home is idempotent so nothing was lost; the same timeout on ``aspirate``
+    would have left liquid moved, the claim released, and the run marked failed,
+    with the physical state and the record disagreeing and nothing saying so.
+
+    The correct response is to **stop and look**, never to retry blindly: re-read
+    ``/status``, and if that cannot settle it, ask a human. Retrying a command
+    that may have run is how one aspirate becomes two.
+    """
+
+    def __init__(self, equipment_id: str, message: str) -> None:
+        super().__init__(
+            f"{equipment_id}: {message} — the device may still be executing it; "
+            "re-read /status before assuming anything, and do not retry blindly"
+        )
+        self.equipment_id = equipment_id
+        self.message = message
+
+
 class WaitTimeout(LabError):
     """Raised by ``wait_until_state`` when the requested state is not reached
     within the allotted timeout.

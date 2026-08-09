@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, ValidationError
 
 from .claims import ClaimManager
-from .exceptions import LabError
+from .exceptions import CommandOutcomeUnknown, LabError
 from .interlocks import Violation, run_interlocks, run_interlocks_async
 from .session import _availability
 from .skill_catalog import SkillDef, skills_for
@@ -130,7 +130,9 @@ class PlanReport(BaseModel):
         return out
 
 
-StepRunStatus = Literal["succeeded", "failed", "blocked", "skipped", "dry_run"]
+StepRunStatus = Literal[
+    "succeeded", "failed", "blocked", "skipped", "dry_run", "unknown"
+]
 
 
 class StepRunReport(BaseModel):
@@ -451,6 +453,16 @@ async def execute_plan(
                     endpoint, step.args, claim_token=claim.token
                 )
                 claim.assert_alive()
+        except CommandOutcomeUnknown as exc:
+            # The command was sent and never answered. The device may have run
+            # it, so this is NOT a failure — recording one would assert
+            # something the hardware may have just disproved. Abort like any
+            # other stop, but say honestly that the outcome is unknown: the
+            # operator has to look before anything else happens, and no
+            # automatic retry is safe (one aspirate could become two).
+            steps_out.append(StepRunReport(status="unknown", error=str(exc), **base))
+            aborted = True
+            continue
         except LabError as exc:
             steps_out.append(StepRunReport(status="failed", error=str(exc), **base))
             aborted = True

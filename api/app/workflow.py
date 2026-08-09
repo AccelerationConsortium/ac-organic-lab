@@ -261,8 +261,13 @@ def notes_from(report, *, authorization_id: str) -> list[dict]:
             v.message for v in (s.violations or []) if getattr(v, "message", None)
         )
         notes.append({
+            # `unknown` is its own kind, never folded into deviation: the step
+            # was sent and never answered, so the device may have performed it.
+            # A note that reads "deviation" invites someone to re-run a step
+            # that may already have moved liquid.
             "kind": {"failed": "device_fault", "blocked": "deviation",
-                     "skipped": "deviation"}.get(s.status, "deviation"),
+                     "skipped": "deviation",
+                     "unknown": "outcome_unknown"}.get(s.status, "deviation"),
             "step_id": s.step_id,
             "body": body or f"step {s.step_id} ended as {s.status}",
             "data": {

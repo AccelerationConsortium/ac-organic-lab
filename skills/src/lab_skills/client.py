@@ -21,6 +21,7 @@ from pydantic import BaseModel, ValidationError
 
 from .exceptions import (
     BadRequest,
+    CommandOutcomeUnknown,
     EquipmentBusy,
     EquipmentUnreachable,
     RequiresInit,
@@ -105,6 +106,7 @@ class EquipmentClient:
         *,
         response_schema: type[BaseModel] | None = None,
         claim_token: str | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """POST ``body`` to ``path`` on this device and return the response.
 
@@ -144,11 +146,17 @@ class EquipmentClient:
                 url,
                 json=payload,
                 headers=headers,
-                timeout=self._entry.poll_timeout_seconds,
+                timeout=(
+                    self._entry.command_timeout_seconds if timeout is None else timeout
+                ),
             )
         except httpx.TimeoutException as exc:
-            raise EquipmentUnreachable(
-                self._entry.id, f"timeout calling {url}: {exc}"
+            # NOT EquipmentUnreachable, and not a failure: the request left the
+            # client, so the device may be executing it right now. See
+            # CommandOutcomeUnknown — a timeout recorded as a failure is the
+            # record contradicting the hardware.
+            raise CommandOutcomeUnknown(
+                self._entry.id, f"no response within the timeout from {url}"
             ) from exc
         except httpx.ConnectError as exc:
             raise EquipmentUnreachable(

@@ -320,3 +320,36 @@ def test_sync_facade_execute_and_validate_plan() -> None:
     assert rreport.ok
     assert rreport.steps[0].status == "succeeded"
     assert rreport.claims_acquired == ["plateloc"]
+
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_a_timed_out_command_is_unknown_not_failed() -> None:
+    """The distinction the exception exists for.
+
+    A command that never answered may have run, so recording `failed` asserts
+    something the hardware may have just disproved — which is exactly what
+    happened on 2026-08-08: /control/home timed out at the client and the step
+    was marked failed while the OT-2 homed successfully. The run must still
+    abort, but it must say `unknown`, so a human looks rather than a retry
+    firing into a device that may have already done the thing.
+    """
+    _mock_status(["stage.in", "stage.out"])
+    _mock_claim_lifecycle()
+    respx.post(f"{BASE}/control/stage/in").mock(
+        side_effect=httpx.TimeoutException("timed out")
+    )
+    out_route = respx.post(f"{BASE}/control/stage/out").mock(
+        return_value=httpx.Response(200)
+    )
+
+    async with Lab.connect(registry=_registry(), binding={"sealer": "plateloc"}) as lab:
+        report = await execute_plan(_two_stage_plan(), lab, owner="tester")
+
+    assert not report.ok
+    assert [s.status for s in report.steps] == ["unknown", "skipped"]
+    assert report.steps[0].status != "failed"
+    assert "do not retry blindly" in (report.steps[0].error or "")
+    # Fail-fast still holds: nothing runs after an outcome nobody can vouch for.
+    assert not out_route.called

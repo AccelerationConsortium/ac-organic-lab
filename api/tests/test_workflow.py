@@ -270,3 +270,19 @@ def test_the_record_keeps_both_humans() -> None:
     )
     assert row["meta"]["authorized_by"] == "yangcyril.cao@utoronto.ca"
     assert row["meta"]["launched_by"] == "someone.else@utoronto.ca"
+
+
+def test_an_unknown_outcome_is_not_recorded_as_a_deviation() -> None:
+    """A timed-out command may have run. Filing it as a deviation invites
+    someone to re-run a step that could already have moved liquid — so it gets
+    its own note kind, and the body keeps the SDK's "do not retry" wording."""
+    report = _Report([
+        _StepReport("a1_aspirate_1", "unknown",
+                    error="no response within the timeout — do not retry blindly"),
+        _StepReport("a1_dispense_1", "skipped"),
+    ])
+    notes = notes_from(report, authorization_id="ra_test")
+    kinds = {n["step_id"]: n["kind"] for n in notes}
+    assert kinds["a1_aspirate_1"] == "outcome_unknown"
+    assert kinds["a1_dispense_1"] == "deviation"
+    assert "do not retry" in notes[0]["body"]

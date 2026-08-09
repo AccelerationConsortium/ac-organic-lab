@@ -17,6 +17,7 @@ import respx
 from pydantic import BaseModel, Field
 
 from lab_skills import (
+    CommandOutcomeUnknown,
     BadRequest,
     EquipmentBusy,
     EquipmentClient,
@@ -239,16 +240,67 @@ async def test_command_5xx_raises_unreachable(http) -> None:
 
 
 @pytest.mark.asyncio
-async def test_command_timeout_raises_unreachable(http) -> None:
+async def test_command_timeout_is_unknown_not_unreachable(http) -> None:
+    """A command that times out is NOT a failure and NOT unreachable.
+
+    The request left the client, so the device may be executing it right now.
+    This test asserted `EquipmentUnreachable` until 2026-08-08, when the first
+    authorized plan run POSTed /control/home, gave up after the poll timeout,
+    and recorded the step failed — while the OT-2 homed successfully. Home is
+    idempotent so nothing was lost; the same timeout on `aspirate` would leave
+    liquid moved and the record saying it wasn't."""
     entry = _entry()
     with respx.mock(base_url=entry.base_url) as router:
         router.post("/control/seal/start").mock(
             side_effect=httpx.TimeoutException("timed out")
         )
         client = EquipmentClient(entry, http)
-        with pytest.raises(EquipmentUnreachable) as exc_info:
+        with pytest.raises(CommandOutcomeUnknown) as exc_info:
             await client.command("/control/seal/start", {"temperature_c": 170})
-    assert "timeout" in exc_info.value.message.lower()
+    # The message must tell the caller what to do, because the safe action is
+    # not obvious: look, do not retry.
+    assert "may still be executing" in str(exc_info.value)
+    assert "do not retry blindly" in str(exc_info.value)
+    assert not isinstance(exc_info.value, EquipmentUnreachable)
+
+
+@pytest.mark.asyncio
+async def test_a_command_gets_the_command_timeout_not_the_poll_timeout(http) -> None:
+    """The two answer different questions: "is this device answering" versus
+    "how long may this operation run". Sharing one field is what made an 8 s
+    status-poll budget the ceiling for homing a gantry."""
+    entry = _entry()
+    seen: dict[str, object] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        seen["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(200, json={"ok": True})
+
+    with respx.mock(base_url=entry.base_url) as router:
+        router.post("/control/seal/start").mock(side_effect=_capture)
+        client = EquipmentClient(entry, http)
+        await client.command("/control/seal/start", {"temperature_c": 170})
+    assert entry.command_timeout_seconds != entry.poll_timeout_seconds
+    # httpx records the effective per-request timeout in extensions.
+    assert seen["timeout"]["read"] == entry.command_timeout_seconds
+
+
+@pytest.mark.asyncio
+async def test_a_caller_can_override_the_timeout_per_command(http) -> None:
+    """A default is not a ceiling: an operation known to run longer passes its
+    own budget rather than inflating it for every call to that device."""
+    entry = _entry()
+    seen: dict[str, object] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        seen["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(200, json={"ok": True})
+
+    with respx.mock(base_url=entry.base_url) as router:
+        router.post("/control/seal/start").mock(side_effect=_capture)
+        client = EquipmentClient(entry, http)
+        await client.command("/control/seal/start", {"temperature_c": 170}, timeout=900.0)
+    assert seen["timeout"]["read"] == 900.0
 
 
 @pytest.mark.asyncio

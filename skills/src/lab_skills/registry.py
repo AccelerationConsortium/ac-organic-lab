@@ -156,7 +156,25 @@ class EquipmentEntry(BaseModel):
     # base_url; this does not affect routing.
     tailscale_ip: str | None = None
     status_path: str = "/status"
+    #: How long to wait for a `/status` READ before calling the device
+    #: unreachable. Small on purpose — the aggregator polls constantly and a
+    #: slow read should not stall it.
     poll_timeout_seconds: float = 2.0
+    #: How long a `/control/*` COMMAND may take. A separate number because it
+    #: answers a different question: not "is this device answering" but "how
+    #: long may this operation run".
+    #:
+    #: They were the same field until 2026-08-08, when the first authorized plan
+    #: run POSTed `/control/home`, gave up after this device's 8 s *poll*
+    #: timeout, and recorded the step failed while the OT-2 homed successfully.
+    #: Physical operations are simply longer than status reads: an OT-2 home is
+    #: tens of seconds, a plate-sealer cycle up to 12 s, and a shaker cycle
+    #: whatever the chemistry says.
+    #:
+    #: 120 s is a default, not a ceiling — an operation known to run longer
+    #: should pass its own timeout to `command()` rather than inflate this for
+    #: every call to the device.
+    command_timeout_seconds: float = 120.0
     # Suppress automatic connection/startup for this device. Explicit,
     # validated plan steps remain governed by live allowed_actions, claims,
     # and interlocks; this flag is not a blanket control prohibition.
