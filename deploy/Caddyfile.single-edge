@@ -155,8 +155,10 @@ http://100.64.254.6 {
 	# the client value, which is the protection we want. Set the SAME secret
 	# on both sides:
 	#   edge:   OT2_EDGE_SECRET=…  in caddy's systemd EnvironmentFile
-	#   device: OT2_EDGE_SECRET=…  in the ot2-gateway NSSM AppEnvironmentExtra
-	#     (read it on the device PC with: nssm get ot2-gateway AppEnvironmentExtra)
+	#   device: OT2_EDGE_SECRET=…  in each gateway's NSSM AppEnvironmentExtra
+	#     (read it on the device PC with:
+	#      nssm get ot2-gateway-hte AppEnvironmentExtra, and
+	#      nssm get ot2-gateway-complexation AppEnvironmentExtra)
 	# The secret is NOT in git. Direct device-port /ui stays 404 (no X-Edge-Key).
 	@ot2_hte path /ot2/hte /ot2/hte/*
 	forward_auth @ot2_hte 100.64.254.6:8009 {

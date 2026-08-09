@@ -189,7 +189,8 @@ The lab account also needs the "Log on as a service" right. NSSM grants this aut
 | `xarm-translocation`      | `xarm`         | 8000 | `run pyxarm web` (superset of `pyxarm api`; starts the API server **and** the `/web/` control panel operators use) | `sdl2-pc-03-cytation.<tailnet>` |
 | `agilent-plateloc-server` | `plateloc`     | 8010 | `run --extra api agilent-plateloc-serve`  | `sdl2-pc-03-cytation.<tailnet>` |
 | `agilent-cytation-server` | `cytation`     | 8040 | `run agilent-cytation-serve`              | `sdl2-pc-03-cytation.<tailnet>` |
-| `opentrons-server`        | `ot2-gateway`  | 8020 | `run uvicorn opentrons_server.gateway.api:app --host 0.0.0.0 --port 8020` | `sdl2-pc-03-cytation.<tailnet>` |
+| `opentrons-server`        | `ot2-gateway-hte` | 8020 | `run --extra labware uvicorn opentrons_server.gateway.api:app --host 0.0.0.0 --port 8020` (renamed from `ot2-gateway` on 2026-08-08) | `sdl2-pc-03-cytation.<tailnet>` |
+| `opentrons-server`        | `ot2-gateway-complexation` | 8021 | same, `--port 8021` — **one clone and one `.venv` serve both robots**; the instances differ only by `AppEnvironmentExtra` (id, robot, and three distinct state paths). `--extra labware` is load-bearing: `uv run` self-syncs at every start and without it prunes `opentrons-shared-data`, silently emptying the panel's labware catalog | `sdl2-pc-03-cytation.<tailnet>` |
 | `torry-pines-shaker-server` | `torry-pines-shaker` | 8030 | `run --extra api torry-pines-shaker-serve` | `sdl2-pc-03-cytation.<tailnet>` |
 | `agilent-biostack4-standalone` | `biostack4`     | 8050 | `run --extra api agilent-biostack4-serve --dry-run` (set `[service].port = 8050` in `config.toml`: the 8030 default is taken by `torry-pines-shaker` on this shared PC) | `sdl2-pc-03-cytation.<tailnet>` |
 | `ac-organic-lab`          | `ac-organic-lab-api` | 8001 | `run uvicorn app.main:app --host 0.0.0.0 --port 8001` (AppDirectory=`api/`) | `sdl2-pc-03-cytation.<tailnet>` |

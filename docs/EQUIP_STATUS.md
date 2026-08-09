@@ -552,7 +552,8 @@ gateway process (the gateway is multi-instance by design — one process
 per robot, own port, own robot host, own state files):
 
 - `ot2_hte` — HTE bench robot `sdl2-ot2-hte` (100.64.254.90, robot name
-  `ot2cytation`), gateway on `sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020`.
+  `ot2cytation`), gateway on `sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020`
+  (service `ot2-gateway-hte`, renamed from `ot2-gateway` on 2026-08-08).
 - `ot2_complexation` — Echem bench robot `sdl2-ot2-complexation`
   (100.64.254.91, robot name `ot2training`), gateway on `…:8021`
   (service `ot2-gateway-complexation`, deployed 2026-07-10; see
