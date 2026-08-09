@@ -413,11 +413,31 @@ Four things worth keeping when this grows a background runner and an SSE stream:
   the `Plan` row already describes them, and a note each would bury the two that
   matter.
 
-Not yet built: the background run + SSE stream (this endpoint is synchronous, which
-is honest for a 14-step transfer and wrong for an 18 h incubation), abort, and
-the per-step revocation re-check D-22 calls for — `execute_plan` runs a whole
-plan with no per-step hook, so that needs either a step-driving loop here or a
-callback in the SDK.
+**Slice 2 (2026-08-09) made it a background run.** `POST /runs` now answers 202
+with a `run_id` as soon as the gates pass — the gates still run inline, so a
+refusal is still a 409 with the reason, never a run_id that dies immediately.
+Progress streams on `GET /runs/{run_id}/events` (SSE, replay-then-follow so a
+late or reconnecting client sees the whole run; ends after `done`), state reads
+on `GET /runs/{run_id}`, and `POST /runs/{run_id}/abort` requests a cooperative
+stop at the next step boundary — mid-step is the device's territory, and
+yanking a claim out from under a seal cycle is how a plate gets stuck in a hot
+chamber.
+
+The SDK grew the two hooks this needed rather than the dashboard re-implementing
+the step loop: `execute_plan(gate=…)` is awaited before each step and aborts
+with a reason (it runs before the per-step claim, so an abort never strands
+one, and a gate that *raises* fails closed — a broken revocation check must not
+quietly stop revoking), and `on_step=…` observes each step's report (exceptions
+swallowed: an observer must not fail the run it watches). The runner's gate
+checks the operator abort flag and re-fetches the authorization from bitácora
+**between every step** — D-22's requirement that an 18 h incubation stays
+revocable, not revocable-at-start-only.
+
+Run state is in-process by design: a run does not survive an API restart, and
+execute_plan's per-step claims die with the process anyway — a persisted row
+pretending to be a live run would be the record overstating reality. The
+durable trail is the `plan_run` audit rows (now also `aborted` / `crashed` /
+`abort_requested` outcomes) plus, later, the D-23 record write.
 
 ### 3.3 Endpoint contract
 

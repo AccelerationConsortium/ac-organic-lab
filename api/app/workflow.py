@@ -30,16 +30,20 @@ evidence it was sane when approved, never clearance to run now.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import os
 import time
+import uuid
+from dataclasses import field as dataclass_field
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("workflow")
@@ -121,6 +125,7 @@ class Authorization:
     executable: bool
     revoked_at: str | None
     expires_at: str
+    revoked_by: str | None = None
 
     @property
     def steps(self) -> list[dict]:
@@ -168,6 +173,7 @@ async def fetch_authorization(
         executable=bool(d.get("executable")),
         revoked_at=d.get("revoked_at"),
         expires_at=d["expires_at"],
+        revoked_by=d.get("revoked_by"),
     )
 
 
@@ -341,20 +347,141 @@ def lab_session(request: Request, auth: Authorization):
     )
 
 
+# ── run registry (in-memory) ───────────────────────────────────────────
+#
+# In-process on purpose, like the aggregator's poll state: one dashboard
+# process owns the lab's runs, and a run does not survive an API restart —
+# execute_plan's per-step claims die with the process anyway, so pretending a
+# persisted row is a live run would be the record overstating reality. The
+# durable trail is the plan_run audit rows plus (D-23, later) the AnaliticaDB
+# Plan; this registry is the *live* view the SSE stream reads from.
+
+@dataclass
+class RunState:
+    run_id: str
+    authorization_id: str
+    launched_by: str
+    dry_run: bool
+    status: str = "running"  # running | finished | refused
+    started_at: float = 0.0
+    events: list[dict] = dataclass_field(default_factory=list)
+    changed: "asyncio.Event" = dataclass_field(default_factory=lambda: asyncio.Event())
+    abort_requested: str | None = None  # who asked
+    result: dict | None = None
+
+    def emit(self, type_: str, data: dict) -> None:
+        self.events.append({"type": type_, "seq": len(self.events), "data": data})
+        self.changed.set()
+        self.changed = asyncio.Event()
+
+
+_RUNS: dict[str, RunState] = {}
+_RUNS_CAP = 200  # oldest finished runs are dropped past this — a bound, not a policy
+
+
+def _remember(state: RunState) -> None:
+    _RUNS[state.run_id] = state
+    if len(_RUNS) > _RUNS_CAP:
+        for rid in [r for r, st in _RUNS.items() if st.status != "running"]:
+            del _RUNS[rid]
+            if len(_RUNS) <= _RUNS_CAP:
+                break
+
+
+async def _drive_run(state: RunState, request: Request, auth: Authorization,
+                     plan, connection) -> None:
+    """The background task that owns one run, start to finish."""
+    identity = state.launched_by
+
+    async def gate(step) -> str | None:
+        # Operator abort — checked first, it is free.
+        if state.abort_requested:
+            return f"aborted by {state.abort_requested}"
+        # D-22: revocation is only real if the runner keeps asking. Between
+        # steps, not just at start: an 18 h incubation must stay revocable.
+        # fetch failures abort too (the SDK gate fails closed) — a revocation
+        # check that cannot run must not quietly stop revoking.
+        async with httpx.AsyncClient() as client:
+            fresh = await fetch_authorization(
+                client, state.authorization_id, identity=identity
+            )
+        if fresh.revoked_at:
+            return (
+                f"authorization {state.authorization_id} was revoked at "
+                f"{fresh.revoked_at} by {fresh.revoked_by or 'unknown'}"
+            )
+        if not fresh.executable:
+            return f"authorization {state.authorization_id} expired mid-run"
+        return None
+
+    async def on_step(step_report) -> None:
+        state.emit("step", {
+            "step_id": step_report.step_id, "status": step_report.status,
+            "role": step_report.role, "skill": step_report.skill,
+            "equipment_id": step_report.equipment_id, "error": step_report.error,
+        })
+
+    from lab_skills import execute_plan
+
+    try:
+        async with connection as session:
+            report = await execute_plan(
+                plan, session, owner=identity,
+                dry_run=state.dry_run, gate=gate, on_step=on_step,
+            )
+    except Exception as exc:  # noqa: BLE001 — the task must always conclude
+        logger.exception("run %s crashed", state.run_id)
+        state.status = "finished"
+        state.result = {"ok": False, "error": f"runner crashed: {exc}"}
+        state.emit("done", state.result)
+        await _record_run_event(request, state.authorization_id, outcome="crashed",
+                                owner=identity, detail=str(exc)[:300],
+                                duration_s=time.monotonic() - state.started_at)
+        return
+
+    duration = time.monotonic() - state.started_at
+    state.status = "finished"
+    state.result = {
+        "authorization_id": auth.authorization_id,
+        "ok": report.ok,
+        "dry_run": report.dry_run,
+        "aborted_reason": report.aborted_reason,
+        "duration_s": round(duration, 3),
+        "steps": [
+            {"step_id": st.step_id, "status": st.status, "role": st.role,
+             "skill": st.skill, "equipment_id": st.equipment_id, "error": st.error}
+            for st in report.steps
+        ],
+        # The record layer's shape, produced but not written (D-23).
+        "record": {"plan": plan_row_from(auth, report, launched_by=identity),
+                   "notes": notes_from(report, authorization_id=auth.authorization_id)},
+    }
+    state.emit("done", state.result)
+    await _record_run_event(
+        request, auth.authorization_id,
+        outcome=("aborted" if report.aborted_reason else
+                 "ok" if report.ok else "failed"),
+        owner=identity,
+        detail={"steps": len(report.steps), "dry_run": report.dry_run,
+                "aborted_reason": report.aborted_reason},
+        duration_s=duration,
+    )
+
+
 def build_workflow_router() -> APIRouter:
     router = APIRouter(prefix="/api/workflow", tags=["workflow"])
 
-    @router.post("/runs")
+    @router.post("/runs", status_code=202)
     async def start_run(body: RunRequest, request: Request) -> dict:
-        """Execute an authorized package. Actuates hardware unless ``dry_run``.
+        """Start an authorized run in the background; progress is on the SSE
+        stream. Returns as soon as the gates pass — a 141 s transfer already
+        outlived a synchronous POST, and an 18 h incubation makes one absurd.
 
-        Sequential and synchronous for this first slice: it returns when the run
-        finishes. That is honest for a 14-step transfer and wrong for an 18 h
-        incubation — the background-run + SSE stream is the next slice, and the
-        return shape here is what it will stream.
+        The gates still run inline, so a refusal is still a 409 with the
+        reason, not a run_id that dies immediately: nothing may be accepted
+        for execution that was not verified first.
         """
-        identity = request.headers.get("X-Auth-User")
-        started = time.monotonic()
+        identity = request.headers.get("X-Auth-User") or "ac-organic-lab-dashboard"
 
         async with httpx.AsyncClient() as client:
             try:
@@ -366,49 +493,98 @@ def build_workflow_router() -> APIRouter:
                 plan = plan_from(auth)
                 connection = lab_session(request, auth)
             except RunRefused as exc:
-                # Refused before any device was touched. Audited anyway: an
-                # attempt to run a revoked or tampered package is exactly the
-                # thing a record should show.
                 await _record_run_event(
                     request, body.authorization_id, outcome="refused",
-                    owner=identity or "unknown", detail=str(exc),
+                    owner=identity, detail=str(exc),
                 )
                 raise HTTPException(status_code=409, detail=str(exc)) from None
 
-        from lab_skills import execute_plan
-
-        # The session must be *entered*: outside this block `session.role(...)`
-        # raises and every step fails, after the gates have already passed.
-        async with connection as session:
-            report = await execute_plan(
-                plan, session,
-                owner=identity or "ac-organic-lab-dashboard",
-                dry_run=body.dry_run,
-            )
-        duration = time.monotonic() - started
-
-        await _record_run_event(
-            request, auth.authorization_id,
-            outcome="ok" if report.ok else "failed",
-            owner=identity or "ac-organic-lab-dashboard",
-            detail={"steps": len(report.steps), "dry_run": report.dry_run},
-            duration_s=duration,
+        state = RunState(
+            run_id=f"run_{uuid.uuid4().hex[:12]}",
+            authorization_id=auth.authorization_id,
+            launched_by=identity,
+            dry_run=body.dry_run,
+            started_at=time.monotonic(),
         )
-        return {
+        _remember(state)
+        state.emit("started", {
             "authorization_id": auth.authorization_id,
-            "ok": report.ok,
-            "dry_run": report.dry_run,
-            "duration_s": round(duration, 3),
-            "steps": [
-                {"step_id": s.step_id, "status": s.status, "role": s.role,
-                 "skill": s.skill, "equipment_id": s.equipment_id,
-                 "error": s.error}
-                for s in report.steps
-            ],
-            # The record layer's shape, produced but not written (D-23).
-            "record": {"plan": plan_row_from(auth, report, launched_by=identity),
-                       "notes": notes_from(report, authorization_id=auth.authorization_id)},
-        }
+            "protocol_path": auth.protocol_path,
+            "steps_total": len(plan.steps),
+            "dry_run": body.dry_run,
+            "launched_by": identity,
+        })
+        asyncio.get_running_loop().create_task(
+            _drive_run(state, request, auth, plan, connection)
+        )
+        return {"run_id": state.run_id, "status": state.status,
+                "authorization_id": auth.authorization_id}
+
+    @router.get("/runs/{run_id}")
+    async def get_run(run_id: str) -> dict:
+        state = _RUNS.get(run_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail=f"no run {run_id!r}")
+        return {"run_id": run_id, "status": state.status,
+                "authorization_id": state.authorization_id,
+                "launched_by": state.launched_by, "dry_run": state.dry_run,
+                "abort_requested": state.abort_requested,
+                "events": len(state.events), "result": state.result}
+
+    @router.get("/runs/{run_id}/events")
+    async def run_events(run_id: str) -> StreamingResponse:
+        """SSE stream of run events, replaying from the start.
+
+        Replay-then-follow so a client that connects late (or reconnects) sees
+        the whole run, not a tail: events carry `seq`, and the stream is the
+        same list `get_run` counts. Ends after the `done` event.
+        """
+        state = _RUNS.get(run_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail=f"no run {run_id!r}")
+
+        async def _stream():
+            i = 0
+            while True:
+                while i < len(state.events):
+                    ev = state.events[i]
+                    yield f"event: {ev['type']}\ndata: {json.dumps(ev)}\n\n"
+                    if ev["type"] == "done":
+                        return
+                    i += 1
+                changed = state.changed
+                if state.status != "running" and i >= len(state.events):
+                    return
+                try:
+                    await asyncio.wait_for(changed.wait(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+
+    @router.post("/runs/{run_id}/abort")
+    async def abort_run(run_id: str, request: Request) -> dict:
+        """Cooperative abort: takes effect at the next step boundary.
+
+        Cooperative because mid-step is the device's territory — yanking a
+        claim out from under a seal cycle is how a plate gets stuck in a hot
+        chamber. The current step finishes (or times out); everything after is
+        skipped with the reason on the report.
+        """
+        state = _RUNS.get(run_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail=f"no run {run_id!r}")
+        who = request.headers.get("X-Auth-User") or "unknown"
+        if state.status != "running":
+            return {"run_id": run_id, "status": state.status,
+                    "detail": "run already finished; nothing to abort"}
+        if not state.abort_requested:
+            state.abort_requested = who
+            state.emit("abort_requested", {"by": who})
+            await _record_run_event(request, state.authorization_id,
+                                    outcome="abort_requested", owner=who)
+        return {"run_id": run_id, "status": state.status,
+                "abort_requested": state.abort_requested}
 
     return router
 

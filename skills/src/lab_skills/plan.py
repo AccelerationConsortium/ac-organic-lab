@@ -37,7 +37,9 @@ everything except the ClaimManager + command POST.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Literal
+import logging
+
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -46,6 +48,8 @@ from .exceptions import CommandOutcomeUnknown, LabError
 from .interlocks import Violation, run_interlocks, run_interlocks_async
 from .session import _availability
 from .skill_catalog import SkillDef, skills_for
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .session import LabSession
@@ -175,6 +179,10 @@ class PlanRunReport(BaseModel):
 
     ok: bool
     dry_run: bool = False
+    #: Why the run stopped early, when it was a *gate* that stopped it (operator
+    #: abort, authorization revoked mid-run) rather than a step failing. None on
+    #: a clean run and on ordinary fail-fast — the failing step carries that.
+    aborted_reason: str | None = None
     validation: PlanReport
     steps: list[StepRunReport] = []
     claims_acquired: list[str] = []
@@ -310,6 +318,19 @@ def validate_plan(plan: Plan, session: LabSession) -> PlanReport:
     )
 
 
+async def _notify(
+    on_step: "Callable[[StepRunReport], Awaitable[None]] | None", report: StepRunReport
+) -> None:
+    """Deliver a step report to the observer, if any. Never raises: a broken
+    observer must not be able to fail the run it is only watching."""
+    if on_step is None:
+        return
+    try:
+        await on_step(report)
+    except Exception:  # noqa: BLE001 — observation must not fail its subject
+        logger.exception("on_step observer raised for %s", report.step_id)
+
+
 async def execute_plan(
     plan: Plan,
     session: LabSession,
@@ -319,6 +340,8 @@ async def execute_plan(
     dry_run: bool = False,
     wait_timeout_s: float = 0.0,
     poll_interval_s: float = 1.0,
+    gate: "Callable[[Step], Awaitable[str | None]] | None" = None,
+    on_step: "Callable[[StepRunReport], Awaitable[None]] | None" = None,
 ) -> PlanRunReport:
     """Execute a validated :class:`Plan` against live hardware, sequentially.
 
@@ -361,6 +384,19 @@ async def execute_plan(
     default (``0.0``) is a single-shot check — no waiting. Layer-4 interlocks
     (step b) are **not** waited on: they are the "should we attempt this at
     all" gate, checked once, not a precondition that clears with time.
+
+    ``gate`` is awaited immediately before each step. Returning a string aborts
+    the run with that reason: this and every remaining step are ``skipped`` and
+    the report carries ``aborted_reason``. It exists for conditions only the
+    caller can see — an operator abort, an authorization revoked mid-run
+    (AGENTIC_ELN_PLAN D-22) — and runs *before* the per-step claim, so aborting
+    never strands one. A gate that raises is treated as "abort with that
+    exception's message": failing open here would mean a broken revocation
+    check quietly stops revoking.
+
+    ``on_step`` is awaited after each step's report is appended, in step order,
+    for progress streaming. Exceptions are swallowed after logging — a broken
+    observer must not be able to fail a run it is only watching.
     """
 
     validation = validate_plan(plan, session)
@@ -370,6 +406,7 @@ async def execute_plan(
     steps_out: list[StepRunReport] = []
     claims_acquired: list[str] = []
     aborted = False
+    aborted_reason: str | None = None
 
     for index, raw_step in enumerate(plan.steps):
         step = raw_step.with_index(index)
@@ -382,7 +419,20 @@ async def execute_plan(
 
         if aborted:
             steps_out.append(StepRunReport(status="skipped", **base))
+            await _notify(on_step, steps_out[-1])
             continue
+
+        if gate is not None:
+            try:
+                reason = await gate(step)
+            except Exception as exc:  # noqa: BLE001 — see docstring: fail closed
+                reason = f"gate raised: {exc}"
+            if reason:
+                aborted = True
+                aborted_reason = reason
+                steps_out.append(StepRunReport(status="skipped", error=reason, **base))
+                await _notify(on_step, steps_out[-1])
+                continue
 
         # (a) resolve the live client. validate_plan already proved the role is
         # bound and not in maintenance, but live state can change under us.
@@ -391,6 +441,7 @@ async def execute_plan(
         except LabError as exc:
             steps_out.append(StepRunReport(status="failed", error=str(exc), **base))
             aborted = True
+            await _notify(on_step, steps_out[-1])
             continue
         base["equipment_id"] = client.equipment_id
         sd = _find_skill_def(client.entry.kind, step.skill)  # not None post-validation
@@ -402,6 +453,7 @@ async def execute_plan(
             steps_out.append(
                 StepRunReport(status="blocked", violations=blocking, **base)
             )
+            await _notify(on_step, steps_out[-1])
             aborted = True
             continue
 
@@ -416,6 +468,7 @@ async def execute_plan(
             )
         except LabError as exc:
             steps_out.append(StepRunReport(status="failed", error=str(exc), **base))
+            await _notify(on_step, steps_out[-1])
             aborted = True
             continue
         if not available:
@@ -435,11 +488,13 @@ async def execute_plan(
                     **base,
                 )
             )
+            await _notify(on_step, steps_out[-1])
             aborted = True
             continue
 
         if dry_run:
             steps_out.append(StepRunReport(status="dry_run", **base))
+            await _notify(on_step, steps_out[-1])
             continue
 
         # (d) execute under a per-step claim.
@@ -461,10 +516,12 @@ async def execute_plan(
             # operator has to look before anything else happens, and no
             # automatic retry is safe (one aspirate could become two).
             steps_out.append(StepRunReport(status="unknown", error=str(exc), **base))
+            await _notify(on_step, steps_out[-1])
             aborted = True
             continue
         except LabError as exc:
             steps_out.append(StepRunReport(status="failed", error=str(exc), **base))
+            await _notify(on_step, steps_out[-1])
             aborted = True
             continue
 
@@ -473,12 +530,14 @@ async def execute_plan(
                 status="succeeded", response=response, claimed=claimed, **base
             )
         )
+        await _notify(on_step, steps_out[-1])
 
     terminal_ok = {"succeeded", "dry_run"}
     ok = all(s.status in terminal_ok for s in steps_out)
     return PlanRunReport(
         ok=ok,
         dry_run=dry_run,
+        aborted_reason=aborted_reason,
         validation=validation,
         steps=steps_out,
         claims_acquired=claims_acquired,

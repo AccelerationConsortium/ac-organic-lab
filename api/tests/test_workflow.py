@@ -226,14 +226,16 @@ def test_lab_session_returns_an_unentered_context_manager() -> None:
     helper hands back something you must `async with`, and the endpoint does."""
     import inspect
 
-    from app.workflow import build_workflow_router, lab_session
+    from app.workflow import lab_session
 
     assert not inspect.iscoroutinefunction(lab_session), (
         "lab_session must be sync — it returns a context manager, not a session"
     )
-    src = inspect.getsource(build_workflow_router)
+    from app.workflow import _drive_run
+
+    src = inspect.getsource(_drive_run)
     assert "async with connection as session:" in src, (
-        "the endpoint must enter the session before execute_plan; passing an "
+        "the run driver must enter the session before execute_plan; passing an "
         "un-entered one fails at the first step, after the gates have passed"
     )
 
@@ -286,3 +288,196 @@ def test_an_unknown_outcome_is_not_recorded_as_a_deviation() -> None:
     assert kinds["a1_aspirate_1"] == "outcome_unknown"
     assert kinds["a1_dispense_1"] == "deviation"
     assert "do not retry" in notes[0]["body"]
+
+
+# ── the background run lifecycle (slice 2: run_id + SSE + abort + D-22) ─
+#
+# Driven through the real endpoints with the run driver monkeypatched at
+# `execute_plan` only — the gates, registry, SSE machinery and abort path are
+# all real. A fake bitácora answers `fetch_authorization`.
+
+
+import asyncio as _asyncio
+
+import pytest as _pytest
+from fastapi.testclient import TestClient as _TestClient
+
+
+def _fake_auth(**over):
+    a = _auth(**over)
+    return a
+
+
+@_pytest.fixture
+def run_rig(monkeypatch):
+    from app.main import app
+    import app.workflow as wf
+
+    wf._RUNS.clear()
+    auth = _fake_auth()
+
+    async def fake_fetch(client, authorization_id, identity=None):
+        if authorization_id != auth.authorization_id:
+            raise wf.RunRefused(f"no authorization {authorization_id!r}")
+        return auth
+
+    class _Conn:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(wf, "fetch_authorization", fake_fetch)
+    monkeypatch.setattr(wf, "lab_session", lambda request, a: _Conn())
+
+    finished = _asyncio.Event()
+
+    def install_execute(fn):
+        """Install a fake execute_plan; the rig signals `finished` after done."""
+        import lab_skills
+
+        async def wrapper(plan, session, *, owner, dry_run=False, gate=None,
+                          on_step=None, **kw):
+            try:
+                return await fn(plan, session, owner=owner, dry_run=dry_run,
+                                gate=gate, on_step=on_step)
+            finally:
+                finished.set()
+
+        monkeypatch.setattr(lab_skills, "execute_plan", wrapper)
+
+    with _TestClient(app) as client:
+        yield client, wf, auth, install_execute, finished
+
+
+def _step_report(step_id, status="succeeded"):
+    class R:  # duck-typed StepRunReport
+        pass
+
+    r = R()
+    r.step_id, r.status, r.error = step_id, status, None
+    r.role, r.skill, r.equipment_id = "liquid_handler", "home", "ot2_complexation"
+    r.violations = []
+    return r
+
+
+class _FakeRunReport:
+    def __init__(self, steps, ok=True, aborted_reason=None, dry_run=False):
+        self.steps, self.ok = steps, ok
+        self.aborted_reason, self.dry_run = aborted_reason, dry_run
+
+
+def test_start_returns_a_run_id_immediately(run_rig):
+    client, wf, auth, install, finished = run_rig
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        for s in ("home_gantry", "tip_on"):
+            await on_step(_step_report(s))
+        return _FakeRunReport([_step_report("home_gantry"), _step_report("tip_on")])
+
+    install(fake_exec)
+    r = client.post("/api/workflow/runs",
+                    json={"authorization_id": auth.authorization_id},
+                    headers={"X-Auth-User": "op@utoronto.ca"})
+    assert r.status_code == 202
+    body = r.json()
+    assert body["run_id"].startswith("run_")
+
+    # TestClient runs the app's event loop between requests; poll until done.
+    for _ in range(50):
+        got = client.get(f"/api/workflow/runs/{body['run_id']}").json()
+        if got["status"] == "finished":
+            break
+    assert got["result"]["ok"] is True
+    assert [s["step_id"] for s in got["result"]["steps"]] == ["home_gantry", "tip_on"]
+    assert got["result"]["record"]["plan"]["meta"]["launched_by"] == "op@utoronto.ca"
+
+
+def test_a_refusal_is_still_a_409_not_a_doomed_run_id(run_rig):
+    client, wf, auth, install, finished = run_rig
+    r = client.post("/api/workflow/runs", json={"authorization_id": "ra_nope"},
+                    headers={"X-Auth-User": "op@utoronto.ca"})
+    assert r.status_code == 409
+    assert "ra_nope" in r.json()["detail"]
+    assert wf._RUNS == {}  # nothing was accepted for execution
+
+
+def test_the_event_stream_replays_from_the_start_and_ends_on_done(run_rig):
+    client, wf, auth, install, finished = run_rig
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        await on_step(_step_report("home_gantry"))
+        return _FakeRunReport([_step_report("home_gantry")])
+
+    install(fake_exec)
+    run_id = client.post("/api/workflow/runs",
+                         json={"authorization_id": auth.authorization_id},
+                         headers={"X-Auth-User": "op@utoronto.ca"}).json()["run_id"]
+    for _ in range(50):
+        if client.get(f"/api/workflow/runs/{run_id}").json()["status"] == "finished":
+            break
+
+    # Connect AFTER the run finished: replay must still deliver everything.
+    with client.stream("GET", f"/api/workflow/runs/{run_id}/events") as resp:
+        text = "".join(chunk for chunk in resp.iter_text())
+    assert "event: started" in text
+    assert "event: step" in text and "home_gantry" in text
+    assert text.rstrip().split("event: ")[-1].startswith("done")
+
+
+def test_abort_reaches_the_gate_and_the_report_names_who(run_rig):
+    client, wf, auth, install, finished = run_rig
+    release = _asyncio.Event()
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        await on_step(_step_report("home_gantry"))
+        await release.wait()                      # run is mid-flight
+        reason = await gate(object())             # next step boundary
+        assert reason and "aborted by" in reason
+        return _FakeRunReport(
+            [_step_report("home_gantry"), _step_report("tip_on", "skipped")],
+            ok=False, aborted_reason=reason,
+        )
+
+    install(fake_exec)
+    run_id = client.post("/api/workflow/runs",
+                         json={"authorization_id": auth.authorization_id},
+                         headers={"X-Auth-User": "op@utoronto.ca"}).json()["run_id"]
+
+    r = client.post(f"/api/workflow/runs/{run_id}/abort",
+                    headers={"X-Auth-User": "someone.else@utoronto.ca"})
+    assert r.json()["abort_requested"] == "someone.else@utoronto.ca"
+    release.set()
+
+    for _ in range(50):
+        got = client.get(f"/api/workflow/runs/{run_id}").json()
+        if got["status"] == "finished":
+            break
+    assert "aborted by someone.else@utoronto.ca" in got["result"]["aborted_reason"]
+
+
+def test_the_gate_rechecks_the_authorization_between_steps(run_rig):
+    """D-22 end to end: revoke in bitácora mid-run, and the next step boundary
+    stops the run with the revocation named — not at start-only."""
+    client, wf, auth, install, finished = run_rig
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        assert await gate(object()) is None       # still executable
+        object.__setattr__(auth, "revoked_at", "2026-08-09T02:00:00+00:00")
+        object.__setattr__(auth, "executable", False)
+        object.__setattr__(auth, "revoked_by", "yangcyril.cao@utoronto.ca")
+        reason = await gate(object())
+        assert reason and "revoked" in reason and "yangcyril.cao" in reason
+        return _FakeRunReport([_step_report("home_gantry", "skipped")],
+                              ok=False, aborted_reason=reason)
+
+    install(fake_exec)
+    run_id = client.post("/api/workflow/runs",
+                         json={"authorization_id": auth.authorization_id},
+                         headers={"X-Auth-User": "op@utoronto.ca"}).json()["run_id"]
+    for _ in range(50):
+        got = client.get(f"/api/workflow/runs/{run_id}").json()
+        if got["status"] == "finished":
+            break
+    assert "revoked" in got["result"]["aborted_reason"]

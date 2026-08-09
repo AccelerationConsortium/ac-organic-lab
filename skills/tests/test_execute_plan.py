@@ -353,3 +353,68 @@ async def test_a_timed_out_command_is_unknown_not_failed() -> None:
     assert "do not retry blindly" in (report.steps[0].error or "")
     # Fail-fast still holds: nothing runs after an outcome nobody can vouch for.
     assert not out_route.called
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_the_gate_aborts_before_the_claim_not_after() -> None:
+    """D-22's hook. The gate runs before the per-step claim, so an abort never
+    strands one — and the remaining steps are skipped with the reason carried
+    on the report, not silently."""
+    _mock_status(["stage.in", "stage.out"])
+    _mock_claim_lifecycle()
+    in_route = respx.post(f"{BASE}/control/stage/in").mock(
+        return_value=httpx.Response(200)
+    )
+
+    calls = []
+
+    async def gate(step):
+        calls.append(step.skill)
+        return "authorization ra_x was revoked at 01:00Z" if len(calls) > 1 else None
+
+    async with Lab.connect(registry=_registry(), binding={"sealer": "plateloc"}) as lab:
+        report = await execute_plan(_two_stage_plan(), lab, owner="tester", gate=gate)
+
+    assert [s.status for s in report.steps] == ["succeeded", "skipped"]
+    assert report.aborted_reason == "authorization ra_x was revoked at 01:00Z"
+    assert in_route.call_count == 1  # step 2 never reached its claim or POST
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_a_gate_that_raises_fails_closed() -> None:
+    """A broken revocation check must stop the run, not quietly stop revoking."""
+    _mock_status(["stage.in", "stage.out"])
+
+    async def gate(step):
+        raise RuntimeError("bitacora unreachable")
+
+    async with Lab.connect(registry=_registry(), binding={"sealer": "plateloc"}) as lab:
+        report = await execute_plan(_two_stage_plan(), lab, owner="tester", gate=gate)
+
+    assert report.ok is False
+    assert all(s.status == "skipped" for s in report.steps)
+    assert "bitacora unreachable" in (report.aborted_reason or "")
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_on_step_sees_every_step_in_order_and_cannot_break_the_run() -> None:
+    _mock_status(["stage.in", "stage.out"])
+    _mock_claim_lifecycle()
+    respx.post(f"{BASE}/control/stage/in").mock(return_value=httpx.Response(200))
+    respx.post(f"{BASE}/control/stage/out").mock(return_value=httpx.Response(200))
+
+    seen = []
+
+    async def on_step(r):
+        seen.append((r.step_id, r.status))
+        raise RuntimeError("broken observer")  # must be swallowed
+
+    async with Lab.connect(registry=_registry(), binding={"sealer": "plateloc"}) as lab:
+        report = await execute_plan(_two_stage_plan(), lab, owner="tester", on_step=on_step)
+
+    assert report.ok is True
+    assert [s for _, s in seen] == ["succeeded", "succeeded"]
+    assert len(seen) == len(report.steps)
