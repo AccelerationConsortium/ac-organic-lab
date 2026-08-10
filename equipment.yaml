@@ -209,7 +209,10 @@ equipment:
     name: Waters Filtration
     kind: press
     adapter: http
-    protocol: "1.1"
+    # v1.2 native since 2026-08-09 (filter-every-well 1.1.0): move-lock
+    # activity, cycles_total counting platen strokes (a stroke is seconds —
+    # invisible to the 60 s poll, so the counter is the utilization record).
+    protocol: "1.2"
     base_url: http://100.64.254.104:8000
     tailscale_ip: 100.64.254.104
     status_path: /status
