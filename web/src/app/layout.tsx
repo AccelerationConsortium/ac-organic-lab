@@ -57,20 +57,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Script src="/auth/banner.js" strategy="afterInteractive" />
         <QueryProvider>
          <UserAuthProvider>
-          {/* Pinned: the tab pills. The page title scrolls away with the
-              content below — on a phone in landscape the chrome would
-              otherwise eat most of the viewport. */}
-          <div className="shrink-0 print:hidden">
-            <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
-              <Nav />
-            </div>
-          </div>
-          {/* The only scrolling region. `min-h-0` is load-bearing: without it
-              a flex item refuses to shrink below its content's height and the
-              page scrolls as a whole again. */}
-          <main className="min-h-0 flex-1 overflow-y-auto print:overflow-visible">
-            <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-              <header className="flex items-center justify-between gap-4">
+          {/* Pinned chrome: title, logo, then the nav tabs beneath them. */}
+          <div className="shrink-0">
+            <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 pt-6 sm:px-6 lg:px-8">
+              <div className="flex items-center justify-between gap-4">
                 <div className="min-w-0">
                   <h1 className="text-2xl font-semibold tracking-tight text-ink dark:text-slate-100 md:text-3xl">
                     Organic Self-driving Lab
@@ -80,7 +70,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </p>
                 </div>
                 <Logo />
-              </header>
+              </div>
+              <Nav />
+            </div>
+          </div>
+          {/* The only scrolling region. `min-h-0` is load-bearing: without it
+              a flex item refuses to shrink below its content's height and the
+              page scrolls as a whole again.
+
+              A page's own filter pills pin themselves to the top of THIS box
+              with `stickyPillRow` (lib/pill.ts) — sticky inside the scroll
+              container, so they need no knowledge of the chrome's height. */}
+          <main className="min-h-0 flex-1 overflow-y-auto print:overflow-visible">
+            <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
               {children}
             </div>
           </main>

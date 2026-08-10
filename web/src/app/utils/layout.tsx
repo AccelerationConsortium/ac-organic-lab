@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { pillClass } from "@/lib/pill";
+import { pillClass, stickyPillRow } from "@/lib/pill";
 
 /**
  * Utils section — operator tools that aren't tied to one piece of equipment.
@@ -37,7 +37,7 @@ export default function UtilsLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname();
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Utilities">
+      <div className={`${stickyPillRow}`} role="tablist" aria-label="Utilities">
         {UTILS.map((u) => {
           const href = `/utils/${u.slug}`;
           const active = pathname.startsWith(href);

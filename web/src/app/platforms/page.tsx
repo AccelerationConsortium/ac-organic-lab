@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { EquipmentGrid } from "@/components/EquipmentGrid";
 import { useEquipmentList } from "@/lib/use-equipment";
-import { HEALTH_DOT, pillClass, platformHealth } from "@/lib/pill";
+import { HEALTH_DOT, pillClass, platformHealth, stickyPillRowBase } from "@/lib/pill";
 import { usePlatforms } from "@/lib/use-platforms";
 import type { EquipmentSnapshot, PlatformSection } from "@/types/api";
 
@@ -98,8 +98,9 @@ export default function PlatformsPage() {
         </p>
       )}
 
-      {/* Platform pills (+ None). */}
-      <div className="flex flex-wrap items-center gap-3">
+      {/* Platform pills (+ None). Pinned to the top of the scroll region so
+          switching platforms doesn't require scrolling back up. */}
+      <div className={`${stickyPillRowBase} flex flex-wrap items-center gap-3`}>
         <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Platforms">
           {platformSections.map((section) => {
             const active = selected?.id === section.id;

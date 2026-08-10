@@ -44,3 +44,28 @@ export const HEALTH_DOT: Record<PlatformHealth, string> = {
   ok: "bg-emerald-500",
   none: "bg-slate-400",
 };
+
+/**
+ * Classes for a page's filter-pill row so it stays put while the tiles
+ * scroll under it.
+ *
+ * `sticky top-0` is relative to the nearest scrolling ancestor, which the
+ * app shell (app/layout.tsx) makes `<main>` — so the row pins to the top of
+ * the content region and needs no knowledge of the chrome's height above it
+ * (the auth banner renders into a shadow root, so that height isn't knowable
+ * at build time anyway).
+ *
+ * The negative margins + matching padding let the opaque background span the
+ * full content column, so tiles don't show through at the edges as they pass
+ * beneath. `z-30` clears page content while staying under the fixed overlays
+ * (State Reference z-40, assistant z-50). Callers add their own `role` /
+ * `aria-label`.
+ */
+export const stickyPillRowBase =
+  "sticky top-0 z-30 -mx-4 bg-surface-subtle px-4 py-2 dark:bg-[#0b1120] sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8";
+
+/** The common case: {@link stickyPillRowBase} plus the standard pill flexbox.
+ *  Rows needing a different gap compose the base themselves rather than
+ *  appending a conflicting `gap-*` (two gap utilities in one class list
+ *  resolve by stylesheet order, not by which was written last). */
+export const stickyPillRow = `${stickyPillRowBase} flex flex-wrap items-center gap-1.5`;

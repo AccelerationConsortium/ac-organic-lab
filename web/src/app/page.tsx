@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { LabMap } from "@/components/LabMap";
 import { PlatformCard } from "@/components/PlatformCard";
 import { useEquipmentList } from "@/lib/use-equipment";
-import { HEALTH_DOT, pillClass, platformHealth } from "@/lib/pill";
+import { HEALTH_DOT, pillClass, platformHealth, stickyPillRow } from "@/lib/pill";
 import { usePlatforms } from "@/lib/use-platforms";
 import type { EquipmentSnapshot, PlatformSection } from "@/types/api";
 
@@ -120,7 +120,7 @@ export default function OverviewPage() {
           None shortcuts, then one toggle pill per section with a health dot
           and equipment count. None sits right after All. */}
       <div
-        className="flex flex-wrap items-center gap-1.5"
+        className={stickyPillRow}
         role="group"
         aria-label="Toggle overview sections"
       >

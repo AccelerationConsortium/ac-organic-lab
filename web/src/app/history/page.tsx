@@ -9,7 +9,7 @@ import {
 } from "@/lib/use-history";
 import type { EquipmentSnapshot } from "@/types/api";
 import type { DeviceUptimeSummary, SensorPoint } from "@/lib/history-api";
-import { pillClass } from "@/lib/pill";
+import { pillClass, stickyPillRow } from "@/lib/pill";
 import {
   ACTIVITY_COLORS,
   ACTIVITY_META,
@@ -887,8 +887,9 @@ export default function HistoryPage() {
         </p>
       </header>
 
-      {/* Section tabs — same pill format as the Platforms tab. */}
-      <div className="flex flex-wrap items-center gap-1.5">
+      {/* Section tabs — same pill format as the Platforms tab. Pinned so
+          they stay reachable while the cards scroll. */}
+      <div className={stickyPillRow}>
         {(
           [
             { id: "uptime",   label: `Uptime (${modules.length})`    },
