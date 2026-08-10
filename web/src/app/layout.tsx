@@ -33,19 +33,44 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {THEME_INIT_SCRIPT}
         </Script>
       </head>
-      <body className="min-h-screen">
+      {/*
+        App shell: the banner, the nav pills and the footer are flex items of
+        a viewport-height column, and <main> is the only scrolling box. The
+        chrome therefore stays put without any `fixed`/`sticky` offsets — which
+        matters because the auth banner's height is unknown at build time (it
+        renders into a shadow root), so any hard-coded `top-…` for a sticky nav
+        would drift the moment that banner changes.
+
+        `100dvh` (not `100vh`) so mobile browsers subtract their collapsing
+        URL bar instead of pushing the footer off-screen. Where `dvh` is
+        unsupported the height simply doesn't apply and the page falls back to
+        ordinary document scrolling — degraded, not broken. Printing likewise
+        opts out, or `overflow-hidden` would clip everything past page one.
+      */}
+      <body className="flex h-[100dvh] flex-col overflow-hidden print:h-auto print:block print:overflow-visible">
         {/* Shared SDL2 auth banner — the same top bar every lab UI shows,
             served once by ac_auth at /auth/banner.js. It attaches its UI into
             this slot's shadow root, so React owns the light-DOM element and
             never reconciles the banner's markup (no hydration conflict).
             Loaded afterInteractive so it mounts once hydration is done. */}
-        <div id="ac-auth-banner-slot" className="sticky top-0 z-50" />
+        <div id="ac-auth-banner-slot" className="z-50 shrink-0" />
         <Script src="/auth/banner.js" strategy="afterInteractive" />
         <QueryProvider>
          <UserAuthProvider>
-          <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-            <header className="flex flex-col gap-4">
-              <div className="flex items-center justify-between gap-4">
+          {/* Pinned: the tab pills. The page title scrolls away with the
+              content below — on a phone in landscape the chrome would
+              otherwise eat most of the viewport. */}
+          <div className="shrink-0 print:hidden">
+            <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+              <Nav />
+            </div>
+          </div>
+          {/* The only scrolling region. `min-h-0` is load-bearing: without it
+              a flex item refuses to shrink below its content's height and the
+              page scrolls as a whole again. */}
+          <main className="min-h-0 flex-1 overflow-y-auto print:overflow-visible">
+            <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+              <header className="flex items-center justify-between gap-4">
                 <div className="min-w-0">
                   <h1 className="text-2xl font-semibold tracking-tight text-ink dark:text-slate-100 md:text-3xl">
                     Organic Self-driving Lab
@@ -55,14 +80,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </p>
                 </div>
                 <Logo />
-              </div>
-              <Nav />
-            </header>
-            <main>{children}</main>
-            <footer className="pt-6 text-xs text-ink-subtle dark:text-slate-500">
+              </header>
+              {children}
+            </div>
+          </main>
+          {/* Pinned. */}
+          <footer className="shrink-0 border-t border-slate-200 dark:border-slate-800 print:hidden">
+            <div className="mx-auto w-full max-w-7xl px-4 py-2 text-xs text-ink-subtle dark:text-slate-500 sm:px-6 lg:px-8">
               Live dashboard · sign in to control · v2
-            </footer>
-          </div>
+            </div>
+          </footer>
           <AssistantBubble />
           <StateReferencePanel />
          </UserAuthProvider>
