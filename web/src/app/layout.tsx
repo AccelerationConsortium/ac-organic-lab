@@ -80,8 +80,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
               A page's own filter pills pin themselves to the top of THIS box
               with `stickyPillRow` (lib/pill.ts) — sticky inside the scroll
-              container, so they need no knowledge of the chrome's height. */}
-          <main className="min-h-0 flex-1 overflow-y-auto print:overflow-visible">
+              container, so they need no knowledge of the chrome's height.
+
+              `overscroll-none` kills the rubber-band bounce: past either end
+              of the list, iOS would otherwise drag the whole scroll box (and
+              the sticky pills riding on it) away from the chrome and let it
+              spring back. It also stops the gesture from chaining outward. */}
+          <main className="min-h-0 flex-1 overflow-y-auto overscroll-none print:overflow-visible">
             <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
               {children}
             </div>

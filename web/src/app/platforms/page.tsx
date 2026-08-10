@@ -98,9 +98,13 @@ export default function PlatformsPage() {
         </p>
       )}
 
-      {/* Platform pills (+ None). Pinned to the top of the scroll region so
-          switching platforms doesn't require scrolling back up. */}
-      <div className={`${stickyPillRowBase} flex flex-wrap items-center gap-3`}>
+      {/* Both pill rows pin as ONE block. Stacking two independently-sticky
+          rows would need the second's `top` to equal the first's rendered
+          height — unknowable here (the row wraps to 2 lines on a narrow
+          screen), and getting it wrong makes them overlap and judder. One
+          container has no such offset to get wrong. */}
+      <div className={`${stickyPillRowBase} flex flex-col gap-2`}>
+      <div className="flex flex-wrap items-center gap-3">
         <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Platforms">
           {platformSections.map((section) => {
             const active = selected?.id === section.id;
@@ -150,7 +154,7 @@ export default function PlatformsPage() {
       </div>
 
       {/* Equipment pills for the selected platform: toggle single tiles,
-          All / None shortcuts. */}
+          All / None shortcuts. Inside the sticky block above. */}
       {selected && (
         <div
           className="flex flex-wrap items-center gap-1.5"
@@ -191,6 +195,7 @@ export default function PlatformsPage() {
           })}
         </div>
       )}
+      </div>
 
       {showNone || !selected ? null : !equipmentReady ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
