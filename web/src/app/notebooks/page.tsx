@@ -38,7 +38,7 @@ export default function NotebooksPage() {
     // and its width then matches every other tab. It earns the space back by
     // floating its chat instead of docking it, so only the rail and the work
     // surface share the column.
-    <div className="mt-4">
+    <div>
       {/* A card edge now that it sits in the column: without one, a framed app
           bleeds into the page and its own top bar reads as this page's. */}
       <iframe
