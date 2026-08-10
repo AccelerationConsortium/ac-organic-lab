@@ -4,7 +4,7 @@
  * xArm Control — the arm's own operator panel (a separate app served by the
  * device service at :8000/web/), framed here same-origin at /xarm5/web/ via
  * the Caddy path route. Framed rather than linked with next/link for the same
- * reason as /workflows: a client-side transition would resolve /xarm5 against
+ * reason as /notebooks: a client-side transition would resolve /xarm5 against
  * this app's route manifest and 404.
  *
  * Access is already enforced at the edge — /xarm5/* sits behind forward_auth
@@ -14,7 +14,7 @@
  */
 export default function XarmControlPage() {
   return (
-    // Full-bleed, like /workflows: the panel is a whole second UI (title tile,
+    // Full-bleed, like /notebooks: the panel is a whole second UI (title tile,
     // camera, Control Modes, log) and the app's max-w-7xl column crops it.
     <div className="relative left-1/2 w-screen max-w-[100vw] -translate-x-1/2 px-4 sm:px-6 lg:px-8">
       {/* No border/radius/shadow: the panel draws its own tiles, so a frame

@@ -9,7 +9,7 @@ import { useUserAuth } from "@/lib/user-auth";
 /**
  * Placeholder for the per-platform **workflow UI** (`/platforms/{name}`).
  *
- * This route is reserved for running/monitoring workflows on a platform; the
+ * This route is reserved for running/monitoring runs on a platform; the
  * old duplicate equipment-grid pages that lived here were removed — live
  * equipment tiles are on the Platforms tab. Every existing link
  * (platforms.yaml `href`, the Overview cards' "GO →", the camera "GO →")
@@ -36,21 +36,21 @@ export default function PlatformWorkflowPlaceholder() {
       </h2>
       <p className="max-w-md text-sm text-ink-muted dark:text-slate-400">
         This page will host the {title} workflow interface (plan, run, and
-        monitor experiments). Until then, workflows are created and run in the
-        Workflows tab (Bitácora), and live equipment tiles and controls are on
+        monitor experiments). Until then, experiments are planned and run in the
+        Notebooks tab (Bitácora), and live equipment tiles and controls are on
         the Platforms tab.
       </p>
       <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-        {/* Same visibility rule as the Nav's Workflows tab: /workflows is
+        {/* Same visibility rule as the Nav's Notebooks tab: /notebooks is
             sign-in-gated by the middleware (a signed-out click would just
             bounce to /), so show the link only to signed-in viewers and say
             why it's absent otherwise. */}
         {!loading && authenticated && (
           <Link
-            href="/workflows"
+            href="/notebooks"
             className="rounded-md bg-orange-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-orange-700 dark:bg-orange-500 dark:hover:bg-orange-600"
           >
-            Create & run workflows →
+            Open the notebook →
           </Link>
         )}
         <Link
@@ -62,7 +62,7 @@ export default function PlatformWorkflowPlaceholder() {
       </div>
       {!loading && !authenticated && (
         <p className="text-xs text-ink-subtle dark:text-slate-500">
-          Sign in to create and run workflows.
+          Sign in to open the lab notebook.
         </p>
       )}
     </div>

@@ -27,12 +27,12 @@ export function Nav() {
     ? [{ href: "/platforms", label: "Platforms" }]
     : [];
 
-  // Workflows embeds Bitácora (the agentic ELN) in an iframe at /workflows.
+  // Notebooks embeds Bitácora (the agentic ELN) in an iframe at /notebooks.
   // The tab renders only after sign-in so an anonymous visitor never sees the
   // ELN's own auth screen nested inside this dashboard (the middleware
   // redirects direct navigations too — this is just the visibility half).
-  const workflowsTabs = authenticated
-    ? [{ href: "/workflows", label: "Workflows" }]
+  const notebooksTabs = authenticated
+    ? [{ href: "/notebooks", label: "Notebooks" }]
     : [];
 
   // Visibility only — the /admin route is enforced by the middleware + sidecar.
@@ -42,7 +42,7 @@ export function Nav() {
   const tabs: Tab[] = [
     ...STATIC_BEFORE,
     ...platformTabs,
-    ...workflowsTabs,
+    ...notebooksTabs,
     ...STATIC_AFTER,
     ...adminTabs,
   ];
