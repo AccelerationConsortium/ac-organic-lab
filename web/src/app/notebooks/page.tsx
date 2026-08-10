@@ -33,18 +33,18 @@ export default function NotebooksPage() {
   }
 
   return (
-    // Full-bleed, like /utils/xarm_control: the ELN is a whole second app (a
-    // three-pane dashboard with a chat rail, work surface and plate grid) and
-    // the app's max-w-7xl column squeezes all three. `left-1/2 / -translate-x-1/2`
-    // centres on the viewport regardless of the parent column; the padding
-    // restores the gutter the container would have given.
-    <div className="relative left-1/2 w-screen max-w-[100vw] -translate-x-1/2 px-4 sm:px-6 lg:px-8">
-      {/* No border/radius/shadow: Bitácora draws its own dashboard chrome, so
-          a frame around it reads as a second, redundant card edge. */}
+    // In the page's own column, not full-bleed: the ELN reads as one tab of
+    // this dashboard rather than a second application that hijacks the window,
+    // and its width then matches every other tab. It earns the space back by
+    // floating its chat instead of docking it, so only the rail and the work
+    // surface share the column.
+    <div className="mt-4">
+      {/* A card edge now that it sits in the column: without one, a framed app
+          bleeds into the page and its own top bar reads as this page's. */}
       <iframe
         src="/bitacora/"
         title="Bitácora — Agentic ELN"
-        className="h-[calc(100vh-180px)] min-h-[720px] w-full border-0 bg-transparent"
+        className="h-[calc(100vh-190px)] min-h-[640px] w-full rounded-xl border border-slate-200 bg-transparent dark:border-slate-800"
       />
     </div>
   );
