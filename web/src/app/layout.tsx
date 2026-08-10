@@ -87,7 +87,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               the sticky pills riding on it) away from the chrome and let it
               spring back. It also stops the gesture from chaining outward. */}
           <main className="min-h-0 flex-1 overflow-y-auto overscroll-none print:overflow-visible">
-            <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+            {/* No top padding: a page's pinned pill row must sit flush under
+                the nav tabs, at rest and while scrolled. Rows carry their own
+                `py-*` (lib/pill.ts); pages without one start flush too. */}
+            <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pb-6 sm:px-6 lg:px-8">
               {children}
             </div>
           </main>

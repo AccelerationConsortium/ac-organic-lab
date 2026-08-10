@@ -62,7 +62,7 @@ export const HEALTH_DOT: Record<PlatformHealth, string> = {
  * `aria-label`.
  */
 export const stickyPillRowBase =
-  "sticky top-0 z-30 -mx-4 bg-surface-subtle px-4 py-2 dark:bg-[#0b1120] sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8";
+  "sticky top-0 z-30 -mx-4 bg-surface-subtle px-4 py-3 dark:bg-[#0b1120] sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8";
 
 /** The common case: {@link stickyPillRowBase} plus the standard pill flexbox.
  *  Rows needing a different gap compose the base themselves rather than
