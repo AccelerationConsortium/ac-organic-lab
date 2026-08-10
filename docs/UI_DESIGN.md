@@ -302,7 +302,7 @@ points at the ELN agent for anything requiring actuation or planning.
 > `api/app/workflow.py` — see §3.2b, which is the as-built record and wins where
 > it differs from the §3.3 proposal (its input is an `authorization_id`, not a
 > `plan_id`; there is no separate approve endpoint — approval is bitácora's).
-> The *browser* half (a run view in the Workflows tab) is still unbuilt;
+> The *browser* half (a run view in the Notebooks tab) is still unbuilt;
 > maturity claims about the SDK trace to [`ROADMAP.md`](ROADMAP.md) /
 > [`INTERLOCKS.md`](INTERLOCKS.md) and should be checked against current code.
 

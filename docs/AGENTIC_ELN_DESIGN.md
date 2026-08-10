@@ -300,24 +300,31 @@ planning:
 Direct manipulation in any tab issues typed edits to the edit service (§9);
 the agent narrates/acknowledges over AG-UI.
 
-### The room is the session container — chat is a panel, not the front door
+### The room is the session container — the experiment is what you navigate
 
 A **room** *is* the planning session: it owns the working branch, the server
 worktree, and the tabbed surface. Consequences:
 
-- **Open on the conversation, work surface on demand.** *(Amended 2026-08-09,
-  at the operator's request, after a week of real use.)* The original bet was
-  the inverse — open on the Protocol tab with chat folded to a rail — on the
-  theory that a chemist editing directly should never have to touch chat. Use
-  falsified it: every substantive change in the first week (design, plate map,
-  controls, parameters, the action map) went *through* conversation, and the
-  tabs were opened only to verify. So a room now lands on its conversation,
-  with a **room rail** on the left (the session switcher) and the tabbed work
-  surface slid off to the right, opened with one control when someone wants to
-  look at or edit an artifact directly. The invariant is unchanged and is what
-  makes the flip safe: **both paths flow through the same edit service and
-  produce the same commits** — only which surface is default moved. The
-  direct-edit path is one click away, not gone.
+- **The experiment is the spine; chat is a floating companion.** *(Amended
+  twice on 2026-08-09, at the operator's request, after a week of real use —
+  the arc is worth keeping, because each step was falsified by use rather than
+  reasoned to.)* The original bet was to open on the Protocol tab with chat
+  folded to a rail, on the theory that a chemist editing directly should never
+  have to touch chat. Use falsified it: every substantive change in the first
+  week (design, plate map, controls, parameters, the action map) went *through*
+  conversation. So the surface flipped to open on the conversation, with a room
+  rail on the left. Use falsified *that* too — a room list is a list of git
+  branches, and what a scientist navigates is **experiments**. The settled
+  shape: an **experiments rail** on the left (each design expanding to the
+  protocols that realize it), the work surface in the centre, and chat as a
+  **draggable, minimisable bubble floating over** it — consulted against the
+  work, never resizing it. A room still exists underneath every view and is
+  still the branch and the PR; it is simply no longer the thing you steer by.
+  The invariant that made both flips safe is unchanged: **both paths flow
+  through the same edit service and produce the same commits** — only which
+  surface is default moved. Layout detail lives in `bitacora`'s
+  `docs/DESIGN_FIRST_UI_PLAN.md`; it is not repeated here, to keep one
+  authority.
 - **Lazy branch minting.** Opening a room does not create a branch. The
   working branch (and worktree) is minted on the **first edit** — from either
   the agent or the visual editor. A room in which nothing was edited leaves
