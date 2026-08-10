@@ -178,4 +178,91 @@ def data_scope(
     )
 
 
-__all__ = ["DeviceRole", "CentralRole", "effective_central_role", "effective_device_role"]
+def path_permitted(policy, uri: str) -> bool:
+    """Is ``uri`` reachable by a principal carrying ``policy`` (Phase 2)?
+
+    ``policy`` is a duck-typed ``.allow`` / ``.deny`` pattern holder
+    (``roster.PathPolicy``) or ``None``. ``None`` means unrestricted, so every
+    principal without a ``paths:`` block behaves exactly as before.
+
+    Why this exists: grants are **service-level**. A grant on ``analytica_db``
+    opens all 24 of its routes, which is right for a human operator and wrong
+    for a machine principal that may read raw measurements but not the
+    experiment design or analysis behind them. See
+    ``docs/HERMES_ACCESS_DESIGN.md``.
+
+    Rules, in order — **deny wins, then allow, else refuse**:
+
+    1. no policy                       → permitted
+    2. matches any ``deny`` pattern    → refused (even if it also matches allow)
+    3. matches any ``allow`` pattern   → permitted
+    4. otherwise                       → refused
+
+    Step 4 is the load-bearing one: a route added to a downstream service later
+    is closed for path-scoped principals until it is opened deliberately. The
+    alternative (default-allow) would silently widen every such principal each
+    time someone adds an endpoint.
+
+    The query string is ignored — patterns match the path only, so a policy
+    cannot be evaded with ``?``, and cannot accidentally depend on parameters.
+    """
+    if policy is None:
+        return True
+
+    path = _normalize_path(uri)
+    deny = list(getattr(policy, "deny", ()) or ())
+    allow = list(getattr(policy, "allow", ()) or ())
+
+    if any(_path_matches(path, pattern) for pattern in deny):
+        return False
+    return any(_path_matches(path, pattern) for pattern in allow)
+
+
+def _normalize_path(uri: str) -> str:
+    """Path portion of a request URI, percent-decoded, without dot segments.
+
+    Decoding and collapsing ``..`` before matching is what stops
+    ``/analytica/measurements/../plans`` or ``/analytica/%2e%2e/plans`` from
+    slipping past a prefix pattern.
+    """
+    from posixpath import normpath
+    from urllib.parse import unquote, urlsplit
+
+    path = urlsplit(uri or "").path
+    # Decode repeatedly: a single pass leaves %252e ("%2e" re-encoded) intact.
+    for _ in range(3):
+        decoded = unquote(path)
+        if decoded == path:
+            break
+        path = decoded
+    path = path.replace("\\", "/")
+    if not path.startswith("/"):
+        path = "/" + path
+    collapsed = normpath(path)
+    # normpath drops a meaningful trailing slash; keep the distinction.
+    if path.endswith("/") and not collapsed.endswith("/"):
+        collapsed += "/"
+    return collapsed
+
+
+def _path_matches(path: str, pattern: str) -> bool:
+    """``fnmatch`` glob, plus the convention that a bare prefix matches its
+    subtree — so ``/analytica/measurements`` covers ``/analytica/measurements/42``
+    without every roster entry needing a ``*`` suffix."""
+    from fnmatch import fnmatchcase
+
+    if fnmatchcase(path, pattern):
+        return True
+    if not any(ch in pattern for ch in "*?["):
+        base = pattern.rstrip("/")
+        return path == base or path.startswith(base + "/")
+    return False
+
+
+__all__ = [
+    "DeviceRole",
+    "CentralRole",
+    "effective_central_role",
+    "effective_device_role",
+    "path_permitted",
+]

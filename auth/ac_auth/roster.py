@@ -100,6 +100,44 @@ class Grant(BaseModel):
         return self
 
 
+class PathPolicy(BaseModel):
+    """Which edge paths a principal may reach at all (Phase 2).
+
+    Grants answer *"may you use this equipment"*; they are service-level, so a
+    grant on ``analytica_db`` opens every one of its routes at once. That is the
+    right granularity for a human operator and the wrong one for a machine
+    principal that should see raw data but not the scientific record — see
+    ``docs/HERMES_ACCESS_DESIGN.md``.
+
+    Semantics, deliberately default-deny:
+
+    * A principal with **no** ``paths`` block is unrestricted (every human
+      today), so this is purely additive.
+    * With a ``paths`` block: ``deny`` wins outright, then the path must match
+      an ``allow`` pattern, else the request is refused. A route added to a
+      downstream service later therefore starts closed for path-scoped
+      principals until someone opens it on purpose.
+
+    Patterns are ``fnmatch`` globs against the **edge** path (``/analytica/…``,
+    not the service-local path), because that is what the request carries when
+    the edge asks us to authorize it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    allow: list[str] = []
+    deny: list[str] = []
+
+    @model_validator(mode="after")
+    def _check_patterns(self) -> "PathPolicy":
+        if not self.allow and not self.deny:
+            raise ValueError("paths policy must list at least one allow or deny pattern")
+        for pattern in [*self.allow, *self.deny]:
+            if not pattern.startswith("/"):
+                raise ValueError(f"path pattern must start with '/': {pattern!r}")
+        return self
+
+
 class RosterUser(BaseModel):
     """A human account on the allow-list."""
 
@@ -114,6 +152,8 @@ class RosterUser(BaseModel):
     status: Literal["active", "disabled"] = "active"
     disabled_reason: str = ""
     grants: list[Grant] = []  # resolved by authz.effective_central_role
+    # Optional edge-path restriction; absent => unrestricted. See PathPolicy.
+    paths: Optional[PathPolicy] = None
 
     @field_validator("email")
     @classmethod
@@ -161,6 +201,10 @@ class RosterAutomation(BaseModel):
     grants: list[Grant] = []
     expires: Optional[date] = None
     notes: str = ""
+    # Optional edge-path restriction; absent => unrestricted. See PathPolicy.
+    # Machine principals are the main consumer: a service-level grant is too
+    # coarse for an agent that may read raw data but not the record built on it.
+    paths: Optional[PathPolicy] = None
 
     @field_validator("email")
     @classmethod
@@ -327,6 +371,17 @@ class Roster(BaseModel):
     def user(self, email: str) -> Optional[RosterUser]:
         e = _norm_email(email)
         return next((u for u in self.users if u.email == e), None)
+
+    def path_policy(self, email: str) -> Optional[PathPolicy]:
+        """The edge-path restriction for a principal, human **or machine**.
+
+        Machine principals live in ``automation``, not ``users``, so looking
+        only at ``users`` would silently leave every agent unrestricted — which
+        is precisely the population this policy exists to bound.
+        """
+        e = _norm_email(email)
+        entry = self.user(e) or next((a for a in self.automation if a.email == e), None)
+        return getattr(entry, "paths", None) if entry is not None else None
 
     def project(self, project_id: str) -> Optional[RosterProject]:
         return next((p for p in self.projects if p.id == project_id), None)

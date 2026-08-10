@@ -51,7 +51,12 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 from pydantic import BaseModel, Field
 
-from .authz import data_scope, effective_central_role, effective_device_role
+from .authz import (
+    data_scope,
+    effective_central_role,
+    effective_device_role,
+    path_permitted,
+)
 from .config import Settings, build_mailer, load_settings
 from .db import Db, User, norm_email
 from .platforms import load_membership
@@ -459,9 +464,31 @@ def create_app(
                 login_url = os.environ.get("AUTH_LOGIN_URL", "/")
                 return RedirectResponse(url=login_url, status_code=302)
             raise HTTPException(status_code=401, detail="not authenticated")
+        roster = _roster(request)
+
+        # Phase 2 — edge-path policy. Grants are service-level, so a machine
+        # principal granted `analytica_db` would otherwise reach the experiment
+        # design and analysis routes alongside the raw measurements it needs.
+        # A principal with a `paths:` block in the roster is restricted to it;
+        # everyone else is unaffected. See docs/HERMES_ACCESS_DESIGN.md.
+        #
+        # The URI comes from the edge (Caddy's forward_auth sends the ORIGINAL
+        # request URI, before handle_path strips a prefix), so patterns are
+        # written against edge paths like /analytica/measurements. If the header
+        # is absent we cannot tell what is being authorized, so a path-scoped
+        # principal is refused rather than waved through — failing open here
+        # would make the whole policy a suggestion.
+        policy = roster.path_policy(user.email)
+        if policy is not None:
+            forwarded_uri = request.headers.get("x-forwarded-uri")
+            if forwarded_uri is None or not path_permitted(policy, forwarded_uri):
+                raise HTTPException(
+                    status_code=403,
+                    detail="path not permitted for this principal",
+                )
+
         # Also propagate the project-based data scope so forward_auth-fronted
         # services (lab.db reads, AnaliticaDB) can authorize without a second call.
-        roster = _roster(request)
         scope = data_scope(
             user,
             member_projects=roster.member_projects(user.email),
