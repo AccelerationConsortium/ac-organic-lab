@@ -259,12 +259,18 @@ equipment:
     name: Agilent UPLC-MS
     kind: hplc
     adapter: http
-    protocol: "1.1"
+    # v1.2 native since 2026-08-09 (agilent-hplcms-server 0.3.0): acquisition
+    # activity observed from the OLSS/sirslt signals, so an error landing
+    # mid-run reports error + activity "running" instead of erasing the run.
+    # No cycles_total by design — runs are minutes-to-hours, so the 60 s
+    # sampled series already sees every one (§2.3.1 recommends the counter
+    # only for sub-poll-interval operations).
+    protocol: "1.2"
     base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8010
     tailscale_ip: 100.64.254.19
     status_path: /status
     poll_timeout_seconds: 5.0
-    # protocol: "1.1" turns on the aggregator's per-request claim dance
+    # protocol >= "1.1" turns on the aggregator's per-request claim dance
     # (api/app/control.py) — the agilent-hplcms-server sidecar hard-enforces
     # X-Claim-Token on /control/*. do_not_call_connect was removed: the sidecar
     # now exposes a claim-gated control surface (run.submit / run.abort /
