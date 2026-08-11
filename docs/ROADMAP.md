@@ -241,7 +241,7 @@ host. Spec is what the device's live `/status` envelope reports.
 | `agilent_biostack` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and verified live 2026-08-03** (commit e531170): `activity` / `activity_since` from the macro-in-flight flag, reserved `cycles_total` counting plate moves (`stage_plate` / `present_plate` / `handoff`; `home` is `running` but carries no plate, so not a cycle), `allowed_actions` gated on activity. No read-off-lock fix was needed — `get_status()` already avoided `_op_lock`, so a poll answers during a ~21 s macro. Claim trio + `/control/{startup,shutdown,home,stage_plate,present_plate,handoff}` on real hardware (`details.com_port: COM8`, `bench_validated: 2026-05-29`), not dry-run. Still not exercised end-to-end from a workflow or a dashboard tile — see the sub-task. |
 | `pypoe_web` | `http` | 1.1 | ✅ `ready` | Internal web service; no control surface. |
 | `analytica_db` | `http` | 1.0 | ✅ `ready` | Record-layer tile; STATUS_SPEC `/status` envelope live alongside the data API. |
-| `env_hte` | `http` | **1.2** | ✅ `ready` | **Live 2026-07-31.** `sense-every-zone` gateway on `sdl2-pi0-environ-01:8030`, `status_path: /zones/env_hte/status`; SEN55 + PiSugar 3, both components `ready`. Monitoring-only, so v1.2 via the §9 read-only clause (`allowed_actions: []`, `activity` always `idle`). Reached over a DERP relay — `poll_timeout_seconds: 8.0`, observed latency ~120 ms. |
+| `env_hte` | `http` | **1.2** | ✅ `ready` | **Live 2026-07-31.** `sense-every-zone` gateway on `sdl2-pi0-environ-01:8030`, `status_path: /zones/env_hte/status`; SEN55 + PiSugar 3, both components `ready`. Monitoring-only, so v1.2 via the §9 read-only clause (`allowed_actions: []`, `activity` always `idle`). Reached over a DERP relay — `poll_timeout_seconds: 8.0`, observed latency ~120 ms. **Reachable only ~56 % of the time** — campus DHCP lease expiry, not a device fault; the tile reads `ready` on both sides of each gap. See open items below. |
 | `env_storage`, `env_lab499_west`, `env_lab499_east` | `mock` | 1.0 | dry_run | Awaiting hardware (`sdl2-pi0-environ-02` enrolled but offline). Synthetic envelopes mirror `env_hte`'s metric shape so readers take one path. |
 
 ### Remaining migration work (priority order)
@@ -626,14 +626,26 @@ successful connect, so this failure mode now self-heals (see the
 
 Zone `env_hte` is live and registered (see the fleet notes above). Open:
 
-- [ ] **Deploy the metric-key rename to the Pi.** Device commit `7f22bf9`
-  (unsuffixed `metrics` keys) is pushed to `main` but **not yet running** —
-  the node still serves `temperature_c` / `humidity_rh` / `voc_index`, which
-  no reader now looks for, so the HTE map marker and its history series stay
-  empty until this lands. On `sdl2-pi0-environ-01`: `git -C
-  /opt/sense-every-zone pull && sudo systemctl restart sense-every-zone`,
-  then confirm `curl -s
-  http://127.0.0.1:8030/zones/env_hte/status | grep -o '"temperature"'`.
+- [x] **Metric-key rename deployed** (device commit `7f22bf9`, unsuffixed
+  `metrics` keys) — live since **2026-07-31 03:00 UTC**, i.e. the day the
+  zone went up. `sensor_readings` records a clean 57-second changeover: the
+  last `temperature_c` / `humidity_pct` / `co2_ppm` rows are stamped
+  `02:59:56Z`, the first `temperature` / `humidity` / `voc` / `nox` /
+  `pm25` / `pm10` / `battery` rows `03:00:53Z`, unbroken since. This entry
+  was stale from the day it was written — the HTE map marker and history
+  series were never actually empty. (Corrected 2026-08-11.)
+- [ ] **`env_hte` is only ~56 % reachable — campus DHCP lease expiry.**
+  Not a device fault: the `compsci` lease is 37800 s (10 h 30 m) and when it
+  expires NetworkManager does not re-acquire, so the node sits with no IPv4
+  for a further ~10 h 40 m. The Pi never reboots and the service never
+  restarts through any of it, so `/status` looks perfectly healthy on either
+  side of the gap. Free-running ~21 h 10 m period that drifts ~2 h 50 m
+  earlier daily, so the window walks through working hours. Full evidence,
+  the hypotheses already ruled out (Wi-Fi power-save, the PiSugar HAT), and
+  the provisioning steps are in the device repo's
+  `docs/REMOTE_ACCESS.md`. Durable fix is a DHCP reservation for
+  `2c:cf:67:e8:9a:4c` from campus IT, or moving the nodes to a lab AP —
+  the latter would also replace the DERP relay with a direct tailnet path.
 - [ ] **`/health` is not §3-conformant** — returns `{"ok": …,
   "dependencies": […], "timestamp": …}` instead of `{"status": "healthy"}`.
   Deliberate (the repo aliases `HealthResponse = ZoneHealthResponse` and
