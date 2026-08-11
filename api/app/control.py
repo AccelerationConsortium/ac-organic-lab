@@ -494,6 +494,13 @@ async def _record_control_event(
         payload["duration_s"] = round(duration_s, 3)
     if detail is not None:
         payload["detail"] = detail[:500] if isinstance(detail, str) else detail
+    # Provenance of the click. Tile controls omit this header; the lab
+    # assistant's Authorize button stamps `X-Control-Origin: assistant`
+    # (UI_DESIGN §5), so the audit trail separates assistant-originated actions
+    # from direct operator clicks. Recorded on the row regardless of outcome.
+    origin = request.headers.get("x-control-origin")
+    if origin:
+        payload["origin"] = origin[:40]
     message = f"{owner} {method} {action} → {outcome} ({status_code})"
     try:
         loop = asyncio.get_event_loop()

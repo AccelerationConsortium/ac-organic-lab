@@ -482,7 +482,16 @@ conversation, and it runs under **one shared** Claude Code OAuth login (not
 per-user). It cannot actuate hardware (`--allowedTools mcp__lab-history__*`) but
 it **can read all lab history**.
 
-Two requirements follow:
+As of 2026-08-11 the bubble also has a **Control** mode (UI_DESIGN §5 Step 1).
+It still **cannot actuate hardware** — the model never holds an actuating tool.
+Control mode adds a second, **propose-only** MCP server (`lab-control`,
+`--allowedTools mcp__lab-history__* mcp__lab-control__*`) whose `propose_action`
+returns a *validated proposal object*; the hardware POST happens later, on the
+operator's *Authorize* click, over the normal `/control/*` passthrough (which
+already enforces identity, per-equipment authorization, the claim dance, and the
+audit row). See requirement 3 below.
+
+Three requirements follow:
 
 1. **Gate the chat behind auth.** ✅ *(Phase 2, 2026-07-03)* `/api/assistant/*`
    joins the authenticated routes via the same Next.js middleware as control
@@ -498,6 +507,18 @@ Two requirements follow:
    read surface subject to the identical auth + ownership scope; it is **not** a
    side-channel around it. (Implementation: pass the requester identity into the
    MCP server and filter results — rides Phase 5.)
+3. **Control mode binds authority to the tool, not the prompt.** ✅ *(2026-08-11)*
+   Control mode is honoured only for a verified `X-Auth-User` and **never** under
+   the `DASHBOARD_CONTROL_OPEN` dev bypass (which has no identity to bind a
+   proposal to). `assistant.py` re-resolves the actor server-side and passes it
+   to the `lab-control` server in its **environment** (`LAB_ACTOR`) — never as a
+   tool argument the model could choose, so it cannot borrow another principal's
+   authority. `propose_action` re-checks `operator`+ on the *target* equipment
+   via the same `GET /authz/check` sidecar the passthrough uses, failing closed
+   on a missing role or an unreachable sidecar. The authorizing click carries
+   `X-Control-Origin: assistant`, recorded on the `control_action` audit row, and
+   the proposal itself is journaled as an `assistant_proposal` event — so the
+   trail shows both the click and what proposed it.
 
 **Memory:** keep it **stateless for now** — no conversation content at rest (chats
 can carry sensitive lab detail); the browser-held transcript suffices for a

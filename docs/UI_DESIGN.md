@@ -657,12 +657,20 @@ single-glyph surfaces; rendering pre-tracking time as zero usage.
 
 ---
 
-## 5. Assistant control mode [PROPOSED]
+## 5. Assistant control mode [IMPLEMENTED — Step 1]
 
-**Drafted 2026-08-07** on branch `actionable-assistant`. Nothing built yet.
-Extends the tier-2 dashboard assistant (§2) from a purely investigative
-surface to one that can *propose* a single equipment action the operator then
-authorizes. Step 2 (autonomy) is sketched at the end and is **not** approved.
+**Drafted 2026-08-07** on branch `actionable-assistant`; **Step 1 implemented
+2026-08-11**. Extends the tier-2 dashboard assistant (§2) from a purely
+investigative surface to one that can *propose* a single equipment action the
+operator then authorizes. Step 1 ships as specified below, with two documented
+deviations: (a) an explicit fail-closed action-name resolver bridges the xArm's
+`move.<node_id>` advertised action to the `graph.move_to` skill / `graph/move_to`
+passthrough (§5 "action naming"); (b) safety-floor actions (`stop`/`connect`/
+`clear_errors`) are excluded from proposals and stay operator-only. It lands as
+the propose-only `lab-control` MCP server (`api/app/assistant_control.py`), a
+`mode` field + per-mode wiring in `assistant.py`, the Ask/Control UI in
+`AssistantBubble.tsx`, and the `X-Control-Origin`/`assistant_proposal` audit
+trail. Step 2 (autonomy) is sketched at the end and is **not** approved.
 
 ### 5.1 The commitment: the assistant proposes, the browser executes
 

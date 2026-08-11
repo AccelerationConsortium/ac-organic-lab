@@ -552,6 +552,9 @@ class LabDatabase:
                     "outcome": payload.get("outcome"),
                     "owner": payload.get("owner"),
                     "duration_s": payload.get("duration_s"),
+                    # Provenance of the click (X-Control-Origin); "assistant"
+                    # for lab-assistant Authorize actions, null for tile clicks.
+                    "origin": payload.get("origin"),
                 }
             )
         return result
