@@ -6,6 +6,10 @@
 `requires_init` throughout, and the one action that was authorized went to a stub. One bug was
 found and fixed along the way (§2).
 
+**Server deploy: 2026-08-11**, onto `sdl2-server-gaia`. It surfaced one further bug, in the same
+spawn Finding 3 already covered but through a different mechanism — recorded in §4.3 and fixed
+in `b542960`.
+
 The design is [`UI_DESIGN.md`](UI_DESIGN.md) §5 — this document does not restate it. This is the
 record of what was actually exercised, what broke, and what remains for the server.
 
@@ -153,9 +157,15 @@ points without touching dependencies.
 
 ---
 
-## 4. Finding 3 — the MCP spawn inherits `uv run`'s self-sync
+## 4. Finding 3 — the MCP spawn went through `uv run` (**fixed**)
 
-`_write_mcp_config` spawns each server as:
+This one bit on **both** hosts, for two unrelated reasons, and cost an hour each time. It is
+fixed at the source in `b542960`: the servers are now launched as the console scripts installed
+beside the running interpreter, and `uv run` survives only as a fallback for a dev checkout.
+
+### 4.1 The original spawn
+
+`_write_mcp_config` spawned each server as:
 
 ```
 uv run --project <repo>/api lab-{history,control}-mcp
@@ -165,7 +175,9 @@ uv run --project <repo>/api lab-{history,control}-mcp
 takes out the assistant's entire tool surface, silently — the failure appears only as the model
 saying its tools are missing.
 
-On this PC the api package depends on `opentrons-shared-data` → `numpy 1.26.4`, which has no
+### 4.2 On the Windows device PC — an unbuildable dependency
+
+On that PC the api package depends on `opentrons-shared-data` → `numpy 1.26.4`, which has no
 cp314 wheel; with the venv on **Python 3.14.4** and no MSVC toolchain, uv tries a source build
 and dies. Both MCP servers failed to start for this reason before it was diagnosed.
 
@@ -177,14 +189,64 @@ UV_NO_SYNC=1 uv run --project <repo>/api lab-control-mcp
 → INFO:app.assistant_control:lab-control MCP server: 32 devices, actor=…, authz_enforced=True
 ```
 
-This is expected to be a **non-issue on the Linux server** (numpy ships wheels there). It is
-recorded because the failure signature is so misleading, and because a self-syncing spawn makes
-the assistant's availability depend on the whole api dependency tree resolving on every turn.
-Worth considering whether the spawn should use the already-installed console script directly.
+> **This paragraph originally predicted the whole thing would be a non-issue on the Linux
+> server, "because numpy ships wheels there". That was wrong** — see §4.3. The dependency tree
+> was never the only way a self-syncing spawn can fail, and the prediction cost an hour of
+> misdiagnosis on the server. Corrected 2026-08-11.
 
 > A PATH shim named `uv.cmd` was tried first and did **not** work: the CLI spawns the MCP
 > command without a shell, and Node cannot execute a `.cmd` that way on Windows. Only an `.exe`
 > or the `UV_NO_SYNC` route works here.
+
+### 4.3 On the Linux server — the unit's own sandbox (2026-08-11)
+
+Same spawn, different mechanism, identical symptom. `uv run` syncs before it runs, and syncing
+needs **`~/.cache/uv` writable**. `ac-organic-lab-api.service` sets `ProtectHome=read-only`
+(deliberately — see the unit's own comment), so under systemd uv cannot write its cache and
+every MCP server failed to start.
+
+What made it expensive is that the failure is invisible from both ends:
+
+- the CLI records it as `status: "failed"` in its **init event**, which the SSE bridge does not
+  forward (it forwards only `text` / `tool_use` / `tool_result` / `proposal` / `done` / `error`);
+- `app.assistant`'s log lines are INFO on an unconfigured logger, so they never reach the
+  journal (Finding 5) — and the code had no error to log anyway, since `claude` exits 0;
+- the model, seeing zero tools, says its tools are unreachable. Every reading of that sentence
+  points at connectivity, an uninstalled entry point (Finding 2), or the MCP config — not at the
+  service unit.
+
+It is **not** control-mode specific: Ask mode was equally toolless. Any `mode=ask` chat that
+answers without ever calling a tool is the cheap check.
+
+**How it was bisected**, with `bwrap` reproducing the unit's `ProtectHome=read-only`:
+
+| condition | init event |
+|---|---|
+| HOME read-only (mimics the unit) | `lab-history=failed` |
+| HOME writable | `lab-history=connected` |
+| read-only HOME, `~/.claude` writable | `failed` |
+| read-only HOME, `~/.cache/uv` writable | `connected` ← pins it to uv, not to the CLI |
+| direct console script, HOME fully read-only | `connected` |
+
+> **`systemd-run --user` is useless for this test.** It silently ignores `ProtectHome` and
+> `PrivateTmp` — a transient user unit asked for `ProtectHome=read-only` still writes to
+> `$HOME`. Three "the sandbox is ruled out" results were produced this way before the check
+> `touch $HOME/x` exposed them as unsandboxed. Use `bwrap`, or a **system** transient unit.
+
+**The fix** (`b542960`): `_mcp_server_command()` prefers the console script beside
+`sys.executable` — the same venv serving the app — which needs no writable HOME at all. Both
+servers were then verified `connected` under a fully read-only home, with `lab-control` answering
+`list_available_actions`. `uv run --project` remains only as the fallback for a dev checkout
+where the api package is not installed into its own environment.
+
+Two consequences worth carrying forward:
+
+- **Finding 2's check is now load-bearing, not merely diagnostic.** If the console script is
+  missing from the venv the resolver falls back to `uv run`, which is exactly the path that
+  fails under systemd. Check it after any deploy, on Linux too:
+  `ls .venv/bin/lab-*-mcp`.
+- The assistant's tool surface no longer depends on the api dependency tree resolving on every
+  chat turn — which is what §4.2 and §4.3 are both really instances of.
 
 **Side effect on the test suite.** Because `opentrons_shared_data` is absent for the same
 reason, `api/tests/test_labware.py` fails two tests on this PC
@@ -429,6 +491,14 @@ Codes are stored hashed, so they cannot be read back out of the DB.
 
 The software path is verified, so what follows is hardware-specific only. Step 2 is the one most
 likely to trip you up.
+
+> **Progress, 2026-08-11 (server).** Steps 1-2 are done: `lab-control-mcp` is installed in the
+> gaia venv, and the arm has been connected by hand — it reports `ready` / `idle`. Step 4 (the
+> node pin) is the current blocker and behaves exactly as described below: with
+> `details.current_node` still `null`, `/status.allowed_actions` is `["stop"]` alone, so the
+> assistant correctly reports that it has no proposable move. `GET /graph/nearest` suggests
+> `opentrons_home` (arm residual 7e-5 deg, rail 0.0 mm, gripper `empty` and matching,
+> `within_tolerance: true`). Steps 5-8 remain.
 
 1. Confirm `lab-control-mcp` is installed on the server venv (Finding 2) — the single check most
    likely to save an hour of misdiagnosis.
