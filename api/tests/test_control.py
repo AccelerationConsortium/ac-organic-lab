@@ -747,3 +747,178 @@ def test_authz_sidecar_down_fails_closed() -> None:
         )
     assert resp.status_code == 503
     assert action.called is False
+
+
+# ---------------------------------------------------------------------------
+# Device credential fallback (401 on the trusted-edge fast path)
+#
+# The fast path is an optimisation, not a commitment: a device that does not
+# implement it answers 401. Before the fallback existed it was tried
+# *exclusively* whenever DEVICE_EDGE_SHARED_SECRET was set, so the operator's
+# own credential was unreachable in production and every dashboard-mediated
+# control action against such a device failed 401 — observed live against
+# xarm_translocation, 2026-08-11.
+# ---------------------------------------------------------------------------
+
+
+def _auth_request_headers() -> dict[str, str]:
+    """What the Next.js middleware injects for a signed-in operator."""
+
+    return {"X-Auth-User": "alice@example.edu", "Cookie": "ac_auth_session=sess-1"}
+
+
+def test_device_auth_candidates_orders_edge_first_then_operator(monkeypatch) -> None:
+    from starlette.datastructures import Headers
+
+    from app import control as control_mod
+
+    monkeypatch.setattr(control_mod, "_EDGE_SHARED_SECRET", "shhh")
+    request = MagicMock()
+    request.headers = Headers({"x-auth-user": "alice@example.edu"})
+    request.cookies = {"ac_auth_session": "sess-1"}
+
+    candidates = control_mod._device_auth_candidates(request)
+    assert [sorted(c) for c in candidates] == [
+        ["X-Auth-User", "X-Edge-Auth"],
+        ["Cookie"],
+    ]
+    # The single-hop helper still yields the preferred one.
+    assert control_mod._device_auth_headers(request) == candidates[0]
+
+
+def test_device_auth_candidates_never_empty(monkeypatch) -> None:
+    from starlette.datastructures import Headers
+
+    from app import control as control_mod
+
+    monkeypatch.setattr(control_mod, "_EDGE_SHARED_SECRET", "")
+    request = MagicMock()
+    request.headers = Headers({})
+    request.cookies = {}
+    # One unauthenticated attempt: open dev deployment / login-disabled device.
+    assert control_mod._device_auth_candidates(request) == [{}]
+
+
+@respx.mock
+def test_claim_falls_back_to_operator_cookie_when_edge_headers_401(monkeypatch) -> None:
+    """The device rejects the shared-secret headers; the cookie must be tried."""
+
+    from app import control as control_mod
+
+    monkeypatch.setattr(control_mod, "_EDGE_SHARED_SECRET", "shhh")
+    monkeypatch.setenv("CONTROL_AUTHZ_ENFORCE", "false")
+    app = _make_app(_fume_hood_entry())
+
+    def claim_responder(request: httpx.Request) -> httpx.Response:
+        if "x-edge-auth" in request.headers:
+            return httpx.Response(401, json={"detail": {"error": "login_required"}})
+        return httpx.Response(200, json={
+            "claim_token": "tok-fallback",
+            "heartbeat_interval_s": 10.0,
+            "expires_at": "2026-08-11T20:00:00Z",
+        })
+
+    claim_route = respx.post("http://100.64.254.100:5000/control/claim").mock(
+        side_effect=claim_responder
+    )
+    action_route = respx.post("http://100.64.254.100:5000/control/sash/move").mock(
+        return_value=httpx.Response(200, json={"equipment_status": "busy"})
+    )
+    release_route = respx.post("http://100.64.254.100:5000/control/release").mock(
+        return_value=httpx.Response(204)
+    )
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/fume_hood_actuator/control/sash/move",
+            json={"position": 3},
+            headers=_auth_request_headers(),
+        )
+
+    assert r.status_code == 200
+    assert len(claim_route.calls) == 2, "edge attempt, then operator credential"
+    # The whole sequence sticks to the credential that worked — no mixing.
+    for route in (action_route, release_route):
+        sent = route.calls.last.request.headers
+        assert "x-edge-auth" not in sent
+        assert sent["cookie"] == "ac_auth_session=sess-1"
+    assert action_route.calls.last.request.headers["x-claim-token"] == "tok-fallback"
+
+
+@respx.mock
+def test_claim_401_surfaces_when_no_other_credential(monkeypatch) -> None:
+    """Nothing left to try: the device's 401 reaches the caller unchanged."""
+
+    from app import control as control_mod
+
+    monkeypatch.setattr(control_mod, "_EDGE_SHARED_SECRET", "shhh")
+    monkeypatch.setenv("CONTROL_AUTHZ_ENFORCE", "false")
+    app = _make_app(_fume_hood_entry())
+    claim_route = respx.post("http://100.64.254.100:5000/control/claim").mock(
+        return_value=httpx.Response(401, json={"detail": {"error": "login_required"}})
+    )
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/fume_hood_actuator/control/sash/move",
+            json={"position": 3},
+            headers={"X-Auth-User": "alice@example.edu"},  # no cookie, no api key
+        )
+
+    assert r.status_code == 401
+    assert len(claim_route.calls) == 1
+
+
+@respx.mock
+def test_claim_403_is_not_retried_with_another_credential(monkeypatch) -> None:
+    """403 means the device identified the caller and refused. Trying a second
+    credential would be working around an authorization decision."""
+
+    from app import control as control_mod
+
+    monkeypatch.setattr(control_mod, "_EDGE_SHARED_SECRET", "shhh")
+    monkeypatch.setenv("CONTROL_AUTHZ_ENFORCE", "false")
+    app = _make_app(_fume_hood_entry())
+    claim_route = respx.post("http://100.64.254.100:5000/control/claim").mock(
+        return_value=httpx.Response(403, json={"detail": "role_forbidden"})
+    )
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/fume_hood_actuator/control/sash/move",
+            json={"position": 3},
+            headers=_auth_request_headers(),
+        )
+
+    assert r.status_code == 403
+    assert len(claim_route.calls) == 1
+
+
+@respx.mock
+def test_claimless_action_also_falls_back(monkeypatch) -> None:
+    """A v1.0 device has no claim hop, so the action itself carries the retry."""
+
+    from app import control as control_mod
+
+    monkeypatch.setattr(control_mod, "_EDGE_SHARED_SECRET", "shhh")
+    monkeypatch.setenv("CONTROL_AUTHZ_ENFORCE", "false")
+    app = _make_app(_entry(protocol="1.0"))
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if "x-edge-auth" in request.headers:
+            return httpx.Response(401, json={"detail": {"error": "login_required"}})
+        return httpx.Response(200, json={"ok": True})
+
+    route = respx.post(
+        "http://127.0.0.1:8002/cameras/cam_lab499_west/control/ptz"
+    ).mock(side_effect=responder)
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/cam_lab499_west/control/ptz",
+            json={"pan": 1},
+            headers=_auth_request_headers(),
+        )
+
+    assert r.status_code == 200
+    assert len(route.calls) == 2
