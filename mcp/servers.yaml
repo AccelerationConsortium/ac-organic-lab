@@ -114,6 +114,55 @@ servers:
         - Hermes `lab-ops` profile on the central server (read + preflight
           allowlist, no --allow-control)
 
+  lab-hostops:
+    description: >-
+      Whitelisted host-operations server (one instance per lab machine):
+      service status/log-tail/restart for services named in that host's
+      config whitelist, serial-port enumeration, and loopback STATUS_SPEC
+      /status probes. No shell tool and no path to device /control/* by
+      design. Transport is stdio (spawned locally or over SSH) or
+      bearer-token streamable-http for the Windows device PCs.
+    transport: stdio
+    command: lab-hostops-serve
+    optional: true
+
+    provenance:
+      repository: https://github.com/AccelerationConsortium/sdl-lab-hostops
+      license: MIT
+      reviewed_version: 0.1.0
+      reviewed_commit: 9d096ec59231a0cd4c6488ae216d7b5ad802e6dc
+      reviewed_at: 2026-08-11
+
+    tools:
+      include:
+        - host_info
+        - service_status
+        - tail_service_log
+        - restart_service
+        - list_serial_ports
+        - probe_local_status
+
+    sampling:
+      enabled: false
+
+    data_policy:
+      confidential_data: prohibited
+      authoritative_inventory_source: false
+      authoritative_safety_source: false
+      notes:
+        - >-
+          restart_service is the only mutating tool; it is double-gated (the
+          per-host `restartable` config subset, plus the client allowlist)
+          and audits to POST /api/ingest/events as `hostops_action`.
+          Read-only instances set `restartable = []`.
+        - >-
+          Per-host whitelists are machine-local config, not part of this
+          registry; this entry approves the tool surface, each host decides
+          its targets.
+      known_clients:
+        - Hermes `lab-ops` profile → `hostops-gaia` instance on the central
+          server (read-only; restart_service excluded from its allowlist)
+
   pubchem:
     description: >-
       Read-only PubChem discovery for compound identity, properties,
