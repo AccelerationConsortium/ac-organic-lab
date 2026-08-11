@@ -601,6 +601,25 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills: {}
 
+  # sdl-lab-hostops instance on the Cytation device PC (deployed 2026-08-11).
+  # Whitelisted host-ops MCP server: service status/logs/restart, serial-port
+  # enumeration, loopback STATUS_SPEC probes for the seven device services on
+  # that PC. GET /status is unauthenticated by design (read-only §9 clause,
+  # v1.2 with no control surface — MCP tools are bearer-token gated); no
+  # "Open" pill, it is not a browsable UI.
+  - id: hostops_cytation_pc
+    name: Host Ops (Cytation PC)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8060
+    tailscale_ip: 100.64.254.16
+    status_path: /status
+    poll_timeout_seconds: 3.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
   # Environmental sensor stations. Add one entry per physical sensor unit.
   # The lab map is rotated 90° clockwise from the building plan, so on screen
   # north is up and south is down. Zones (in % of map width × height):
