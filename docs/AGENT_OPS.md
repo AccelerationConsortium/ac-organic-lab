@@ -85,6 +85,11 @@ Per-instance facts:
 | `hostops_cytation_pc` | `sdl2-pc-03-cytation` (NSSM service `sdl-lab-hostops`, :8060) | streamable-http + bearer token | `plateloc`, `torry-pines-shaker` | 2026-08-11 — verified end-to-end from the central server: serial enumeration (COM6 shaker / COM7 / COM8 BioStack / COM3 Intel AMT, matching ROADMAP's port notes), NSSM `service_status`, loopback `/status` probe of the shaker (200), whitelist refusal of `sshd`, and 401 on tokenless `/mcp` |
 
 | `hostops_uplc_pc` | `sdl2-pc-06-uplc` (NSSM service `sdl-lab-hostops`, :8060) | streamable-http + bearer token | **empty — read-only by design**: the `hplc-ms-status` sidecar owns the run queue and production runs from branch `fix_server_vial`; agent restarts could disrupt a campaign | 2026-08-11 — verified end-to-end: both services (`hplc-ms-status`, `hplc-ms-sensors`) RUNNING, loopback probe of `:8010` returned the `agilent_uplc_ms` envelope (~2.8 s, the known OpenLab WMI latency), and `restart_service` correctly **refused** by the empty `restartable` list |
+| `hostops_pi0_environ_01` | `sdl2-pi0-environ-01` (Pi Zero 2W, `~/sdl-lab-hostops`) | **daemonless stdio-over-SSH** (the lite mode): no daemon, no port, no token — spawned per connection via the `environ-01` alias; zero resident footprint on the 512 MB node | `sense-every-zone` (restart-safe passive gateway; `use_sudo` with the node's existing NOPASSWD) | 2026-08-11 — verified over SSH: service RUNNING, journald tail, probe of `:8030` via the v0.1.1 per-port path override (`/zones/env_hte/status`, 200 — the bare-`/status`-404s-by-design gateway shape). Note this node is ~56 % reachable (campus DHCP lease, see ROADMAP); a connect failure here is usually the node's offline window, not hostops |
+
+Pi instances run stdio-over-SSH, so they expose no HTTP `/status` — unlike the
+Windows instances they get **no** `equipment.yaml` tile; their reachability is
+already tracked via the device service they sit next to.
 
 Both Windows PCs also carry the SSH key-trust grant for the central agent —
 see DEVICE_PC_SETUP §2.4.
