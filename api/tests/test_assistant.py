@@ -33,7 +33,8 @@ def test_write_mcp_config_control_adds_lab_control(tmp_path, monkeypatch) -> Non
     cfg = json.loads(path.read_text())
     assert set(cfg["mcpServers"]) == {"lab-history", "lab-control"}
     ctl = cfg["mcpServers"]["lab-control"]
-    assert ctl["args"][-1] == "lab-control-mcp"
+    # Either launch mode is acceptable here; the command must name the server.
+    assert "lab-control-mcp" in " ".join([ctl["command"], *ctl["args"]])
     assert ctl["env"]["LAB_ACTOR"] == "alice@example.edu"
     assert ctl["env"]["AUTH_SERVICE_BASE"] == "http://authz.test:8009"
     # A distinct filename so a control config never lingers into an ask turn.
@@ -47,6 +48,55 @@ def test_write_mcp_config_control_without_actor_is_history_only(
     path = assistant._write_mcp_config(include_control=True, actor=None)
     cfg = json.loads(path.read_text())
     assert set(cfg["mcpServers"]) == {"lab-history"}
+
+
+def test_mcp_servers_launch_without_uv_when_console_scripts_exist(
+    tmp_path, monkeypatch
+) -> None:
+    """Regression: the spawn must not route through ``uv run`` when the console
+    script is installed.
+
+    ``uv run`` syncs the project first and needs ``~/.cache/uv`` writable. The
+    deployed unit sets ``ProtectHome=read-only``, so under systemd every MCP
+    server failed to start — the CLI reported ``status: "failed"``, the model
+    saw zero tools and said they were unreachable, and nothing surfaced in the
+    journal. Launching the installed script directly needs no writable HOME.
+    """
+
+    monkeypatch.setenv("ASSISTANT_RUNTIME_DIR", str(tmp_path))
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name in ("lab-history-mcp", "lab-control-mcp"):
+        script = bindir / name
+        script.write_text("#!/bin/sh\nexit 0\n")
+        script.chmod(0o755)
+    monkeypatch.setattr(assistant.sys, "executable", str(bindir / "python"))
+
+    cfg = json.loads(
+        assistant._write_mcp_config(
+            include_control=True, actor="alice@example.edu"
+        ).read_text()
+    )
+    for name, script in (
+        ("lab-history", "lab-history-mcp"),
+        ("lab-control", "lab-control-mcp"),
+    ):
+        entry = cfg["mcpServers"][name]
+        assert entry["command"] == str(bindir / script)
+        assert entry["args"] == []
+        assert "uv" not in entry["command"]
+
+
+def test_mcp_server_command_falls_back_to_uv_when_script_missing(
+    tmp_path, monkeypatch
+) -> None:
+    """A dev checkout without the api package installed still works."""
+
+    monkeypatch.setattr(assistant.sys, "executable", str(tmp_path / "python"))
+    monkeypatch.setattr(assistant.shutil, "which", lambda _name: None)
+    command, args = assistant._mcp_server_command("lab-history-mcp")
+    assert args[:2] == ["run", "--project"]
+    assert args[-1] == "lab-history-mcp"
 
 
 # ---------------------------------------------------------------------------

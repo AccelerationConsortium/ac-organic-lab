@@ -52,6 +52,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Literal
@@ -138,6 +139,34 @@ def _uv_binary() -> str:
     return "uv"
 
 
+def _mcp_server_command(script: str) -> tuple[str, list[str]]:
+    """Resolve how to launch one of our MCP servers: ``(command, args)``.
+
+    Prefer the console script installed beside the *running* interpreter — i.e.
+    the same venv serving this app. Going through ``uv run --project`` instead
+    makes every chat turn depend on uv being able to sync the project, and uv
+    needs ``~/.cache/uv`` **writable**. The deployed unit sets
+    ``ProtectHome=read-only``, so under systemd `uv run` fails and the CLI
+    reports the server as ``status: "failed"`` — with no tools, no error frame,
+    and nothing in the journal. The model then says its tools are unreachable,
+    which reads like a connectivity problem rather than a sandbox one.
+
+    Launching the console script directly needs no writable HOME at all
+    (verified against a read-only-home sandbox), so it survives the hardening.
+    The ``uv run`` path is kept as a fallback for a dev checkout where the api
+    package is not installed into the interpreter's own environment.
+    """
+
+    candidates = [Path(sys.executable).parent / script]
+    found = shutil.which(script)
+    if found:
+        candidates.append(Path(found))
+    for c in candidates:
+        if c.is_file() and os.access(c, os.X_OK):
+            return str(c), []
+    return _uv_binary(), ["run", "--project", str(_repo_root() / "api"), script]
+
+
 def _control_server_env(actor: str) -> dict[str, str]:
     """Environment for the spawned ``lab-control`` MCP server.
 
@@ -165,33 +194,26 @@ def _write_mcp_config(*, include_control: bool = False, actor: str | None = None
 
     Always registers the read-only ``lab-history`` server. When
     ``include_control`` (Control mode with a verified ``actor``), also registers
-    the propose-only ``lab-control`` server. Uses an absolute ``--project`` so
-    it resolves regardless of the subprocess cwd.
+    the propose-only ``lab-control`` server. Every path written here is
+    absolute (see :func:`_mcp_server_command`), so the servers resolve
+    regardless of the subprocess cwd.
     """
 
+    history_cmd, history_args = _mcp_server_command("lab-history-mcp")
     servers: dict[str, Any] = {
         "lab-history": {
             "type": "stdio",
-            "command": _uv_binary(),
-            "args": [
-                "run",
-                "--project",
-                str(_repo_root() / "api"),
-                "lab-history-mcp",
-            ],
+            "command": history_cmd,
+            "args": history_args,
             "env": {},
         }
     }
     if include_control and actor:
+        control_cmd, control_args = _mcp_server_command("lab-control-mcp")
         servers["lab-control"] = {
             "type": "stdio",
-            "command": _uv_binary(),
-            "args": [
-                "run",
-                "--project",
-                str(_repo_root() / "api"),
-                "lab-control-mcp",
-            ],
+            "command": control_cmd,
+            "args": control_args,
             "env": _control_server_env(actor),
         }
     # A distinct filename per mode so a control-mode config never lingers into
