@@ -86,8 +86,8 @@ Per-instance facts:
 
 | `hostops_uplc_pc` | `sdl2-pc-06-uplc` (NSSM service `sdl-lab-hostops`, :8060) | streamable-http + bearer token | **empty — read-only by design**: the `hplc-ms-status` sidecar owns the run queue and production runs from branch `fix_server_vial`; agent restarts could disrupt a campaign | 2026-08-11 — verified end-to-end: both services (`hplc-ms-status`, `hplc-ms-sensors`) RUNNING, loopback probe of `:8010` returned the `agilent_uplc_ms` envelope (~2.8 s, the known OpenLab WMI latency), and `restart_service` correctly **refused** by the empty `restartable` list |
 
-The cytation instance also carries the fleet's SSH key-trust grant for the
-central agent — see DEVICE_PC_SETUP §2.4 (the uplc grant is pending).
+Both Windows PCs also carry the SSH key-trust grant for the central agent —
+see DEVICE_PC_SETUP §2.4.
 
 ## Hardware control stance
 
