@@ -3,6 +3,117 @@
 version: 1
 
 servers:
+  lab-history:
+    description: >-
+      First-party read-only observability server (api/app/mcp_server.py in
+      this repo): live equipment snapshot via the aggregator, plus history-DB
+      queries (state events, service uptime, sensor readings, dosing runs,
+      per-well results) and journald tails restricted to a whitelist of
+      dashboard units. Row counts and lookback are capped server-side.
+    transport: stdio
+    # Console script `lab-history-mcp` from the api/ package. Clients resolve
+    # it through the deployment's own venv (e.g. <repo>/.venv/bin/lab-history-mcp)
+    # in their local config — machine paths stay out of this file. Prefer the
+    # venv script directly over `uv run`, which self-syncs on launch.
+    command: lab-history-mcp
+    optional: true
+
+    provenance:
+      repository: https://github.com/AccelerationConsortium/ac-organic-lab
+      license: MIT
+      reviewed_version: api 0.1.0
+      reviewed_commit: aa00a4ddfe761729a48ef0aba90bcd6faba0d75b
+      reviewed_at: 2026-08-10
+
+    tools:
+      # The server's full surface; listed explicitly so client configs can
+      # mirror this allowlist and a future tool addition is a reviewed change
+      # here, not a silent capability grant.
+      include:
+        - list_equipment_now
+        - query_equipment_events
+        - query_service_uptime
+        - query_sensor_readings
+        - query_runs
+        - query_well_results
+        - tail_journald
+
+    sampling:
+      enabled: false
+
+    data_policy:
+      confidential_data: prohibited
+      authoritative_inventory_source: false
+      authoritative_safety_source: false
+      notes:
+        - >-
+          Read-only over operational lab telemetry (data/lab.db + the live
+          aggregator). No control surface: this server must never grow a tool
+          that reaches a device /control/* endpoint — control belongs to the
+          lab-skills MCP server (skills/src/lab_skills/mcp.py), which is a
+          deliberately separate server with a different trust level (see
+          ARCHITECTURE.md decision #10).
+        - >-
+          Project-scoped scientific results live in AnaliticaDB, not here;
+          answers from this server are telemetry, not experimental records.
+      known_clients:
+        - dashboard assistant bubble (api/app/assistant.py, via claude CLI)
+        - Hermes `lab-ops` profile on the central server (allowlist mirrors
+          tools.include above)
+
+  lab-skills:
+    description: >-
+      First-party SDK MCP server (skills/src/lab_skills/mcp.py, launched via
+      `lab-skills mcp serve`): the skill catalog as tools — equipment list,
+      runtime skills, live STATUS_SPEC status, offline plan validation, and
+      live per-step preflight. The actuating execute_plan tool exists but is
+      registered only when the process is started with --allow-control.
+    transport: stdio
+    # Console script `lab-skills` from the skills/ package, args `mcp serve`.
+    # Clients resolve it through the deployment's venv (see lab-history note).
+    command: lab-skills
+    optional: true
+
+    provenance:
+      repository: https://github.com/AccelerationConsortium/ac-organic-lab
+      license: MIT
+      reviewed_version: lab-skills v0.4
+      reviewed_commit: aa00a4ddfe761729a48ef0aba90bcd6faba0d75b
+      reviewed_at: 2026-08-10
+
+    tools:
+      # Approved surface for agent clients: read + preflight only.
+      include:
+        - list_equipment
+        - list_skills
+        - get_status
+        - validate_plan
+        - preflight_plan
+      exclude:
+        - execute_plan
+
+    sampling:
+      enabled: false
+
+    data_policy:
+      confidential_data: prohibited
+      authoritative_inventory_source: true
+      authoritative_safety_source: false
+      notes:
+        - >-
+          Agent clients MUST launch this server WITHOUT --allow-control, so
+          execute_plan is never registered (the exclude above is belt and
+          braces, not the gate). Enabling --allow-control for an agent is a
+          human decision that requires an approval-gated execution design
+          (AGENT_RULES.md §1.3: only validated, human-approved plans execute)
+          — e.g. the authorized-run executor in api/app/workflow.py.
+        - >-
+          preflight_plan reads live device state but issues no control
+          commands; validate_plan is fully offline.
+      known_clients:
+        - Hermes `lab-ops` profile on the central server (read + preflight
+          allowlist, no --allow-control)
+
   pubchem:
     description: >-
       Read-only PubChem discovery for compound identity, properties,
