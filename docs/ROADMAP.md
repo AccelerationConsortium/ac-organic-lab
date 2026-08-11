@@ -743,10 +743,35 @@ out-of-band, un-audited?"):
 | cameras, plugs | **No** — gateway is loopback (`127.0.0.1:8002`) | n/a | **Low** — dashboard is the only network path |
 | press, fume hood, ot2_hte, cytation | Yes | **Yes** (X-Claim-Token → 423) | Rejected *if* a workflow holds the claim; cooperative + un-audited |
 | `plateloc`, `dose_every_well` | Yes | **Yes** (hard-enforced since 2026-05-31) | Rejected if a claim is held; cooperative + un-audited via direct `curl` |
-| `xarm_translocation` | Yes | **Yes** on `/control/*`; native `/web/` claim-awareness **unverified** | The `/web/` side-door is still advertised by the tile deep-link — the single most exposed control path in the lab |
+| `xarm_translocation` | Yes, but `/control/claim` is **login-gated** (401 `login_required`, verified 2026-08-11) | **Yes**; an action with no valid claim → 423 `claim_required` | **The narrowest exposure in the fleet, and the only device where a bare `curl` cannot get a claim at all.** Identity is checked at claim acquisition, and no action is reachable without a claim, so the un-audited direct path is closed for writes; reads (`/status`, `/graph/nearest`) stay open. The `/web/` side-door remains the operator path and is still un-audited. Cost: the dashboard could not drive this arm either until commit `152a87c` — see below. |
 | `agilent_uplc_ms` | Yes | **Yes** (X-Claim-Token → 423) | Rejected if a claim is held. A run can still start out-of-band in OpenLab CDS on the instrument PC — surfaced as `busy`, not preventable. |
 | `agilent_biostack` | Yes | **Yes** (X-Claim-Token → 423, verified 2026-08-03) | It grew a plate-moving `/control/*` surface (`home`, `stage_plate`, `present_plate`, `handoff`) at device v0.2.0, so it is no longer the harmless read-only row it used to be. Enforcement is now confirmed: a tokenless `POST /control/present_plate` returned **423 ahead of the 412** staged-plate interlock, with the device unchanged and no `last_error` — the probe was chosen precisely because that action is interlock-blocked, so it could not have moved a plate even had the claim check failed open. Rejected if a claim is held; cooperative + un-audited via direct `curl`, like every other row. |
 | pypoe | Yes | read-only, no control surface | n/a |
+
+**The xArm has partly closed this on its own (2026-08-11), and it cost us.**
+That device now refuses `/control/claim` without a device-accepted credential —
+step 2 of the plan below, realised device-side rather than at the edge. The
+dashboard, however, presented only the trusted-edge headers
+(`X-Auth-User` + `X-Edge-Auth`) whenever `DEVICE_EDGE_SHARED_SECRET` was set,
+which is always in production, and the deployed arm does not honour them. With
+no fallback, *every* dashboard-mediated action on that arm failed 401 — tiles,
+the workflow executor, and the assistant's Authorize button. Fixed in
+`152a87c` (fall back to the operator's own credential on 401); the executor
+path in `workflow.py` still takes the single-credential route and is untouched.
+Full evidence in [`EQUIP_STATUS.md`](EQUIP_STATUS.md) §10.
+
+Two things this table does **not** yet know:
+
+- **Which credential the xArm accepts** — its hint names an `/web/` email-code
+  login and an `X-Api-Key`; whether that login is ac_auth-backed (so a
+  forwarded session cookie works) is unverified. Until it is, dashboard control
+  of the arm is broken regardless of the fallback.
+- **Whether any other device is login-gated.** Deliberately not probed: the
+  gate sits on claim *acquisition*, so finding out means requesting a claim,
+  which has a side effect on live hardware. A heartbeat probe with an invalid
+  token — which is side-effect-free — returned ordinary claim-token errors from
+  all eleven control-capable devices, but that only proves heartbeat is
+  ungated, not claim. Answer it deliberately, per device, not with a sweep.
 
 **What closes it, in order:**
 

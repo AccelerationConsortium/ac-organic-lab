@@ -443,6 +443,46 @@ Notes:
   `do_not_call_connect: true`, so the SDK never auto-connects — availability
   flows from the device's `allowed_actions` once connected.
 
+### Control is login-gated at claim acquisition (verified live 2026-08-11)
+
+This device asks **who you are** before it will issue a claim, and every action
+sits behind the claim — so one gate closes the whole control surface. It is the
+only device in the fleet known to do this. Probed live against the connected
+arm (an invalid claim token cannot act, so these probes are side-effect-free):
+
+| Request | Result |
+|---|---|
+| `POST /control/claim`, no credential | **401** `{"detail":{"error":"login_required","hint":"sign in via /web/ … or present an X-Api-Key header"}}` |
+| `POST /control/claim`, `X-Auth-User` only | 401 `login_required` |
+| `POST /control/claim`, `X-Auth-User` + `X-Edge-Auth` | 401 `login_required` — the shared-secret fast path is **not** honoured by the deployed build |
+| `POST /control/graph/recover_to`, invalid token | 423 `{"error":"claim_required", …}` — claim gate, not the login gate |
+| `POST /control/heartbeat`, invalid token | 401 "invalid or expired claim token" — ordinary claim-token error |
+| `POST /control/release`, invalid token | 204, idempotent per STATUS_SPEC §5 |
+| `GET /status`, `GET /graph/nearest` | 200 — reads are open |
+
+Note the login gate sits on **claim acquisition specifically**, not on every
+`/control/*` path: heartbeat and release answer their usual claim-protocol
+errors. The effect is the same as gating everything, because no action is
+reachable without a claim.
+
+**What this broke, and the fix.** The dashboard's passthrough presented the
+trusted-edge headers (`X-Auth-User` + `X-Edge-Auth`) whenever
+`DEVICE_EDGE_SHARED_SECRET` was set — always, in production — and had no
+fallback, so *every* dashboard-mediated action on this arm failed 401: tiles,
+the workflow executor, and the assistant's Authorize button alike. The audit
+row recorded it honestly (`POST graph/recover_to → refused (401)`), which is
+how it surfaced. `_device_auth_candidates` (commit `152a87c`) now falls back to
+the operator's own credential — api key, else the ac_auth session cookie — when
+a device answers 401. See [`ARCHITECTURE.md`](ARCHITECTURE.md) decision #1.
+
+**Still open:** *which* credential this device accepts is unverified. Its hint
+names an `/web/` email-code login and an `X-Api-Key`; whether that login is
+ac_auth-backed (so a forwarded session cookie validates) or device-local is
+unknown, and the deployed build does not honour `X-Edge-Auth` at all — so
+`XARM_EDGE_SHARED_SECRET` is either unprovisioned or absent from that build.
+Until one of them is confirmed, dashboard control of this arm does not work and
+pinning a graph node must be done from the device's own `/web/` panel.
+
 ### v1.2 activity and concurrent-move refusal (device commit c91dd05)
 
 `activity` / `activity_since` are **observed from the controller's motion
@@ -525,9 +565,11 @@ state, track position).
   device's `activity` field is wired into `EquipmentSnapshot`,
   disable move buttons on `activity === "running"` instead — the
   device-side source is authoritative (§2.3.2).
-- **Verify claim enforcement live** — once the arm is connected
-  (`POST /connect`), confirm tokenless `/control/graph/*` → 423 and
-  `details.claimed_by` population.
+- **Verify claim enforcement live** — partly done 2026-08-11 against the
+  connected arm: `/control/graph/recover_to` with an invalid token → 423
+  `claim_required` (see the login-gate table above). `details.claimed_by`
+  population is still unconfirmed, because no claim can be acquired until
+  the credential question is settled.
 - **The `/web/` deep-link is the un-audited side-door** — driving the arm
   from the device's own panel bypasses the dashboard's claim + audit path.
   Make the native panel claim-aware or front it at the edge (see the
