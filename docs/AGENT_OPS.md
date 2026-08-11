@@ -1,8 +1,7 @@
 # Agent operations layer — central agent, MCP surfaces, host-ops fleet
 
-**Status:** live since 2026-08-10/11 (Hermes `lab-ops` profile on the central
-server; first `sdl-lab-hostops` instance rolling out to `sdl2-pc-03-cytation`).
-This document records the *operations* agent setup: which MCP surfaces exist,
+**Status:** live since 2026-08-10/11 — Hermes `lab-ops` profile on the central
+server, with the deployed instances listed below. This document records the *operations* agent setup: which MCP surfaces exist,
 their trust tiers, and how the per-machine host-ops fleet is deployed. The
 access **boundary** (what the agent may see) is owned by
 [`HERMES_ACCESS_DESIGN.md`](HERMES_ACCESS_DESIGN.md); the binding conduct rules
@@ -77,6 +76,16 @@ Per-instance facts:
 - The central-server instance (`hostops-gaia`) is **read-only**
   (`restartable = []`): restarts on the live host stay with the human
   operator.
+
+### Deployed instances
+
+| Instance (`equipment_id`) | Host | Transport | `restartable` | Deployed & verified |
+|---|---|---|---|---|
+| `hostops_gaia` | central server | stdio, spawned by the profile | — (read-only by policy: live-host restarts stay human) | 2026-08-10 |
+| `hostops_cytation_pc` | `sdl2-pc-03-cytation` (NSSM service `sdl-lab-hostops`, :8060) | streamable-http + bearer token | `plateloc`, `torry-pines-shaker` | 2026-08-11 — verified end-to-end from the central server: serial enumeration (COM6 shaker / COM7 / COM8 BioStack / COM3 Intel AMT, matching ROADMAP's port notes), NSSM `service_status`, loopback `/status` probe of the shaker (200), whitelist refusal of `sshd`, and 401 on tokenless `/mcp` |
+
+The cytation instance also carries the fleet's SSH key-trust grant for the
+central agent — see DEVICE_PC_SETUP §2.4.
 
 ## Hardware control stance
 

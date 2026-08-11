@@ -75,6 +75,30 @@ New-Item -ItemType Directory -Force C:\SDL_Logs            | Out-Null
 
 Convention: every device repo lives at `C:\Users\sdl2\Projects\<repo-name>\` and writes its logs to `C:\SDL_Logs\<service-name>.{out,err}.log`. Stick to this layout — the troubleshooting and update scripts below assume it. If the service runs under a different lab user, replace `sdl2` with that Windows username consistently.
 
+### 2.4 SSH access from the central server (agent ops)
+
+Device PCs may grant the central server's ops agent SSH access by **key
+trust**, per [`HERMES_ACCESS_DESIGN.md`](HERMES_ACCESS_DESIGN.md) Phase 3.
+(That doc prefers Tailscale SSH, but Tailscale's SSH *server* is unavailable
+on Windows — `authorized_keys` is the mechanism here.) For an admin account
+the operative file is `C:\ProgramData\ssh\administrators_authorized_keys`,
+which must carry a restricted ACL or sshd ignores it:
+
+```powershell
+Add-Content -Path C:\ProgramData\ssh\administrators_authorized_keys -Value "<pubkey>"
+icacls C:\ProgramData\ssh\administrators_authorized_keys /inheritance:r /grant "SYSTEM:F" /grant "BUILTIN\Administrators:F"
+```
+
+Granted keys (one per line, keep this list current):
+
+| Key comment | Purpose | Granted on |
+|---|---|---|
+| `lab-ops@sdl2-server-gaia` (ed25519) | central ops agent — deploy/maintain `sdl-lab-hostops`, incident diagnosis | `sdl2-pc-03-cytation`, 2026-08-11 |
+
+Routine host operations should go through the `sdl-lab-hostops` MCP surface
+(whitelisted, audited — see [`AGENT_OPS.md`](AGENT_OPS.md)); SSH is the
+maintenance/deploy path, not the everyday one.
+
 ## 3. Install a single device service
 
 Run from an elevated PowerShell. Replace `<repo>`, `<svc>`, and `<port>` with the device-specific values from the table in [§7 Conventions](#7-conventions).
@@ -194,7 +218,7 @@ The lab account also needs the "Log on as a service" right. NSSM grants this aut
 | `torry-pines-shaker-server` | `torry-pines-shaker` | 8030 | `run --extra api torry-pines-shaker-serve` | `sdl2-pc-03-cytation.<tailnet>` |
 | `agilent-biostack4-standalone` | `biostack4`     | 8050 | `run --extra api agilent-biostack4-serve --dry-run` (set `[service].port = 8050` in `config.toml`: the 8030 default is taken by `torry-pines-shaker` on this shared PC) | `sdl2-pc-03-cytation.<tailnet>` |
 | `ac-organic-lab`          | `ac-organic-lab-api` | 8001 | `run uvicorn app.main:app --host 0.0.0.0 --port 8001` (AppDirectory=`api/`) | `sdl2-pc-03-cytation.<tailnet>` |
-| `sdl-lab-hostops`         | `sdl-lab-hostops` | 8060 | `run --extra serial lab-hostops-serve --transport http` — whitelisted host-ops MCP server (service status/logs/restart, serial enumeration, local `/status` probes) consumed by the central agent; see [`AGENT_OPS.md`](AGENT_OPS.md). **Documented §5 exception:** runs as `LocalSystem` — it needs service-control rights over its NSSM neighbours and touches no vendor `HKCU` profile or COM port, so neither reason behind §5 applies. Requires `HOSTOPS_TOKEN` in the service env (non-loopback bind refuses to start without it). | `sdl2-pc-03-cytation.<tailnet>` (first instance; one per device PC as rolled out) |
+| `sdl-lab-hostops`         | `sdl-lab-hostops` | 8060 | `run --extra serial lab-hostops-serve --transport http` — whitelisted host-ops MCP server (service status/logs/restart, serial enumeration, local `/status` probes) consumed by the central agent; see [`AGENT_OPS.md`](AGENT_OPS.md). **Documented §5 exception:** runs as `LocalSystem` — it needs service-control rights over its NSSM neighbours and touches no vendor `HKCU` profile or COM port, so neither reason behind §5 applies. Requires `HOSTOPS_TOKEN` in the service env (non-loopback bind refuses to start without it). | `sdl2-pc-03-cytation.<tailnet>` (deployed + verified 2026-08-11; one per device PC as rolled out) |
 | `fume_hood_actuator`      | `fume-hood`    | 5000 | —                                         | `fume-hood-pc.<tailnet>` |
 | `filter_every_well`       | `press`        | 8000 | —                                         | `press-pc.<tailnet>` |
 | `dose_every_well`         | `solid-doser`  | 8000 | —                                         | `solid-doser-pc.<tailnet>` |
