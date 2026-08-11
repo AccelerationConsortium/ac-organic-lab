@@ -84,8 +84,10 @@ Per-instance facts:
 | `hostops_gaia` | central server | stdio, spawned by the profile | — (read-only by policy: live-host restarts stay human) | 2026-08-10 |
 | `hostops_cytation_pc` | `sdl2-pc-03-cytation` (NSSM service `sdl-lab-hostops`, :8060) | streamable-http + bearer token | `plateloc`, `torry-pines-shaker` | 2026-08-11 — verified end-to-end from the central server: serial enumeration (COM6 shaker / COM7 / COM8 BioStack / COM3 Intel AMT, matching ROADMAP's port notes), NSSM `service_status`, loopback `/status` probe of the shaker (200), whitelist refusal of `sshd`, and 401 on tokenless `/mcp` |
 
+| `hostops_uplc_pc` | `sdl2-pc-06-uplc` (NSSM service `sdl-lab-hostops`, :8060) | streamable-http + bearer token | **empty — read-only by design**: the `hplc-ms-status` sidecar owns the run queue and production runs from branch `fix_server_vial`; agent restarts could disrupt a campaign | 2026-08-11 — verified end-to-end: both services (`hplc-ms-status`, `hplc-ms-sensors`) RUNNING, loopback probe of `:8010` returned the `agilent_uplc_ms` envelope (~2.8 s, the known OpenLab WMI latency), and `restart_service` correctly **refused** by the empty `restartable` list |
+
 The cytation instance also carries the fleet's SSH key-trust grant for the
-central agent — see DEVICE_PC_SETUP §2.4.
+central agent — see DEVICE_PC_SETUP §2.4 (the uplc grant is pending).
 
 ## Hardware control stance
 
