@@ -480,11 +480,27 @@ not logged in". Diagnosis cost a day, most of it spent looking for a missing
 credential rather than a mismatched one.
 
 A stopgap on 2026-08-12 pointed `DEVICE_EDGE_SHARED_SECRET` at the xArm's
-value, which unblocked the arm — and, on inspection, had been holding the
-**OT-2's** secret all along. That is why the OT-2 panels worked while the arm
-did not, and why the stopgap risked breaking the OT-2s in turn. One value for a
-fleet of per-device secrets is a game of whack-a-mole; it was replaced the same
-day by the design below.
+value, which unblocked the arm — and, on inspection, the value it replaced was
+the **OT-2's**. One value for a fleet of per-device secrets is a game of
+whack-a-mole; it was replaced the same day by the design below.
+
+**Which devices actually enforce this, measured 2026-08-12** — the answer is
+narrower than the alarm suggested, and worth having written down before the
+next person reasons from the config alone:
+
+| Device | `/control/*` gate |
+|---|---|
+| `xarm_translocation` | **identity** — `/control/claim` refuses without an accepted credential (401 `login_required`), and every action needs the claim |
+| `ot2_hte`, `ot2_complexation` | **claim only** — a wrong `X-Edge-Auth` and no credential at all both return the same `423 missing or invalid X-Claim-Token`; identity is never checked |
+| everything else | unprobed; determining it means requesting a claim, which has a side effect on live hardware |
+
+So the stopgap did **not** break the OT-2s, and the OT-2 entries keep
+`edge_secret_env: OT2_EDGE_SECRET` for a different reason: that *is* their
+secret — Caddy injects it on their panel routes — and the annotation costs
+nothing if the gateway later gates its API the way the xArm does. Note the
+asymmetry it reveals: a device can be identity-gated at the panel and
+claim-only at the API, so "is it behind the edge" does not answer "does it know
+who is calling".
 
 ### The fix (shipped 2026-08-12): resolve the secret per equipment
 

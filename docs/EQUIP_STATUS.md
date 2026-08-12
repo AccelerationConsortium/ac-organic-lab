@@ -488,8 +488,9 @@ indistinguishable from presenting nothing at all.
 Fixed properly the same day: the registry entry names the variable
 (`edge_secret_env: XARM_EDGE_SHARED_SECRET`) and the passthrough resolves it per
 device. The interim single-value stopgap turned out to have been holding the
-*OT-2's* secret all along — which is exactly why the OT-2 panels worked while
-this arm did not. See [`AUTH_DESIGN.md`](AUTH_DESIGN.md) → *How a device learns
+*OT-2's* secret all along. Measured afterwards: the OT-2 gateways gate
+`/control/*` on the **claim** alone and never check identity, so this arm is (so
+far) the only device where the secret is load-bearing for control. See [`AUTH_DESIGN.md`](AUTH_DESIGN.md) → *How a device learns
 who the operator is*.
 
 **Verified end to end 2026-08-12**, once the secrets matched: a pin through the

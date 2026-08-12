@@ -804,7 +804,9 @@ Two things this table does **not** yet know:
   dashboard was sending one device-agnostic value that did not match. Per-equipment
   resolution shipped the same day (`edge_secret_env` on the registry entry), after
   the interim single-value stopgap was found to have been holding the *OT-2's*
-  secret — the reason those panels worked while the arm did not. See
+  secret. Measured 2026-08-12: the OT-2 gateways gate `/control/*` on the claim
+  alone and never check identity, so the arm is the only device where this is
+  load-bearing today; the rest of the fleet is unprobed for the reason below. See
   [`AUTH_DESIGN.md`](AUTH_DESIGN.md). Related: those edge secrets are readable by any
   local user via `systemctl show caddy.service -p Environment` (same doc).
 - **Whether any other device is login-gated.** Deliberately not probed: the
