@@ -58,6 +58,11 @@ servers:
           answers from this server are telemetry, not experimental records.
       known_clients:
         - dashboard assistant bubble (api/app/assistant.py, via claude CLI)
+        - Hermes `lab-ops` profile on the central server (full allowlist)
+        - Hermes `lab-runner` profile under the boxed `hermes` OS user —
+          tail_journald EXCLUDED (journal access needs group membership the
+          boxed principal deliberately lacks, and unit logs can quote
+          secrets); lab.db reached via LabDatabase's read-only fallback
         - Hermes `lab-ops` profile on the central server (allowlist mirrors
           tools.include above)
 
@@ -171,7 +176,9 @@ servers:
           actuation); abort is cooperative at step boundaries. Every start,
           refusal, and abort lands in the plan_run audit trail under the
           bound actor.
-      known_clients: []
+      known_clients:
+        - Hermes `lab-runner` profile under the boxed `hermes` OS user
+          (LAB_ACTOR=hermes@lab.local; full 4-tool allowlist)
 
   lab-hostops:
     description: >-

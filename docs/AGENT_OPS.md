@@ -12,13 +12,26 @@ by [`AGENT_RULES.md`](AGENT_RULES.md). Nothing here weakens either.
 One agent, many small hard-guarded servers — not one agent per machine:
 
 ```
-Hermes profile "lab-ops"  (central server, ~/.hermes/profiles/lab-ops/)
+Hermes profile "lab-ops"  (central server, sdl2, ~/.hermes/profiles/lab-ops/)
  ├── lab-history       stdio   read-only telemetry (api/app/mcp_server.py)
  ├── lab-skills        stdio   read + plan preflight, NO --allow-control
  │                             (skills/src/lab_skills/mcp.py)
  ├── hostops-gaia      stdio   central server host-ops (read-only instance)
  └── hostops-<pc>      http    per-device-PC host-ops (bearer token)
+
+Hermes profile "lab-runner"  (BOXED: OS user hermes, /home/hermes/.hermes/)
+ ├── lab-runs          stdio   authorized-run trigger (api/app/run_trigger.py)
+ │                             LAB_ACTOR=hermes@lab.local bound in env
+ └── lab-history       stdio   telemetry, tail_journald excluded; reads
+                               lab.db via the read-only fallback
 ```
+
+The two profiles split by **attendance** (HERMES_ACCESS_DESIGN Phase 0):
+`lab-ops` is a human-driven ops console under `sdl2`; `lab-runner` is the
+unattended principal — timers, webhooks, and the Slack reporter belong to it
+and never to an `sdl2` profile. It carries no terminal, file, web, or cron
+toolset: ingesting attacker-influenceable text must be harmless by toolset,
+not by prompt.
 
 A co-located agent on a device PC would gain no hardware reach (every device
 is already a Tailnet REST service) while adding an unaudited shell next to

@@ -141,7 +141,30 @@ class LabDatabase:
     # ------------------------------------------------------------------ lifecycle
 
     def open(self) -> None:
-        """Open (or create) the database and apply the schema."""
+        """Open (or create) the database and apply the schema.
+
+        Falls back to a **read-only** connection when the file exists but is
+        not writable by this process — the case for a read-only consumer
+        running as a different OS user (the boxed ``hermes`` principal reading
+        through ``lab-history-mcp``; HERMES_ACCESS_DESIGN Phase 0). SQLite
+        supports read-only WAL access when the ``-shm``/``-wal`` sidecars are
+        readable (3.22+), so no schema write is needed or attempted; a write
+        through a read-only connection raises ``sqlite3.OperationalError``,
+        which is the honest outcome. The API service — the file's owner and
+        single writer (ARCHITECTURE decision #9) — always takes the
+        read-write path.
+        """
+        if self._path.exists() and not os.access(self._path, os.W_OK):
+            conn = sqlite3.connect(
+                f"file:{self._path}?mode=ro",
+                uri=True,
+                check_same_thread=False,
+                timeout=10,
+            )
+            conn.row_factory = sqlite3.Row
+            self._conn = conn
+            logger.info("Lab database open READ-ONLY: %s", self._path)
+            return
         self._path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(
             str(self._path),
