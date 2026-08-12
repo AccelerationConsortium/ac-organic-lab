@@ -204,7 +204,30 @@ The lab account also needs the "Log on as a service" right. NSSM grants this aut
 
 - **Logs.** NSSM appends to `AppStdout` / `AppStderr`. `AppRotateFiles=1` + `AppRotateBytes=10485760` rotates at 10 MB. For richer rotation, send uvicorn's logs to the Windows Event Log via `nxlog` or similar — but for the small log volume of a device service, NSSM's built-in is sufficient.
 - **Health check.** Every device exposes `GET /health` (always 200 unless the process itself is broken) and `GET /status` (always 200 unless the process is broken; reports `requires_init` / `degraded` / `error` in-band). The dashboard's polling already shows you which services are up; you do not need a separate Nagios-style monitor.
-- **Boot ordering.** Almost never needed on modern Windows. If a service depends on a specific virtual interface (Tailscale, etc.) being up, set `nssm set <svc> DependOnService Tailscale` so Windows Service Control Manager waits.
+- **Boot ordering.** Almost never needed on modern Windows — and **do not
+  solve it with `DependOnService`**. This document used to recommend
+  `nssm set <svc> DependOnService Tailscale`; that advice caused a 12.5 h
+  outage and is withdrawn (2026-08-11):
+  - An SCM dependency is a **stop cascade, not just a start ordering**: when
+    the dependency stops, SCM stops every dependent — and it **never restarts
+    dependents** when the dependency comes back.
+  - Tailscale's MSI **auto-updater stops the Tailscale service on every
+    release**. On 2026-08-10 the 1.102.2 update stopped `cytation` (the one
+    service carrying the dependency) mid-update; the stop is *clean* (exit
+    code 0), so NSSM's `AppExit Default Restart` does not fire — that setting
+    governs the *application* exiting, not NSSM itself receiving a STOP
+    control. The reader sat down ~12.5 h until restarted by hand.
+  - The dependency also bought nothing: device services bind `0.0.0.0:<port>`
+    directly, so they start fine before Tailscale is up — clients simply
+    can't reach them until the tailnet interface exists, which is equally
+    true with or without the dependency.
+  - If a service genuinely cannot *start* without another service, prefer a
+    startup retry loop in the service itself (the pattern shaker v0.2.2 /
+    plateloc v1.5.0 ship for USB enumeration) over an SCM dependency.
+  - Removing an existing dependency: `sc config <svc> depend= ""` (note the
+    space after `=`). **`nssm reset <svc> DependOnService` reports success
+    but does not clear it** — `DependOnService` is native SCM config, not an
+    NSSM app parameter; verify with `sc qc <svc>`.
 
 ## 7. Conventions
 
@@ -250,6 +273,8 @@ After install + smoke, register the service in the monorepo's `equipment.yaml` w
 | `uv run` reports "no project found" under NSSM | `--project <path>` not specified | NSSM does not change directory unless `AppDirectory` is set; either set it (preferred) or always pass `--project`. |
 | Service crash-loops with `error: Project virtual environment directory ...\.venv cannot be used ... (no Python executable was found)`; the `.venv` has only a `Lib\` folder (no `Scripts\python.exe` / `pyvenv.cfg`) | A `uv` venv rebuild (Python upgrade or a fleet-wide `uv sync`) **aborted mid-delete** on a hardlinked package file. uv hardlinks wheels from its global cache into every venv, so a shared `.pyd` (e.g. `httptools\...\parser.cp3XX-win_amd64.pyd`) is one physical file across many venvs; when another running uvicorn service has it memory-mapped, the delete hits a sharing violation and leaves the venv with no interpreter. | Rename or remove the corrupt `.venv`, then re-`sync`. See the note below — `Remove-Item`/`takeown` will **not** clear the image-locked hardlink. |
 | `uv sync` exits non-zero with `error: failed to remove file ...\.venv\Lib\site-packages\../../Scripts\<svc>-serve.exe: The process cannot access the file because it is being used by another process. (os error 32)` — while `Scripts\python.exe` and `pyvenv.cfg` are both still present | The **running service holds its own console-script `.exe`**, and the release changed a dependency (or the project version), so uv had to replace that shim. Distinct from the row above: this is the service's *own* lock, not a hardlinked `.pyd` shared with another service. | Stop just that service, re-`sync`, start it: `nssm stop <svc>; C:\SDL_Tools\uv.exe sync --extra api; nssm start <svc>; sc continue <svc>`. Do **not** rename/delete the `.venv` — it is intact. See the note below: **verify the new dependency actually installed.** |
+| One service is `STOPPED` with exit code 0 while every sibling on the PC runs fine; its log ends with a *clean* uvicorn shutdown (`Application shutdown complete`), no error | Something sent SCM a STOP control — a clean stop is **not** a crash, so NSSM's `AppExit Default Restart` never fires. Prime suspect: an SCM **dependency cascade** (`DependOnService`) — e.g. the Tailscale MSI auto-updater stopping its service and SCM stopping dependents with it, then restarting nobody (the 2026-08-10 cytation outage). | Correlate the Application event log: `nssm` event 1040 (`received STOP control`) against `MsiInstaller` events at the same timestamp. Check `sc qc <svc>` for `DEPENDENCIES`; clear with `sc config <svc> depend= ""` (**not** `nssm reset` — see §6), then `sc start <svc>`. |
+| A service that mutates hardware/services fails with `'<tool>' is not available on this host` under NSSM but works fine in your shell | Windows services do **not** inherit the interactive user's `PATH` — `C:\SDL_Tools` (uv, nssm) is not on the machine `PATH`, so a bare `nssm`/`uv` argv raises `FileNotFoundError` under `LocalSystem` or the lab account. | Invoke by absolute path (`C:\SDL_Tools\<tool>.exe`) or resolve with `shutil.which()` + an explicit fallback, as `sdl-lab-hostops` does since v0.1.1 (`5484fca`). This is the same reasoning §2.1 gives for copying `uv.exe` to a stable path. |
 
 > **Corrupt-venv / hardlink-lock recovery (all uv device PCs).** The trap:
 > the corrupt `.venv` can't be deleted because its `.pyd` files are uv

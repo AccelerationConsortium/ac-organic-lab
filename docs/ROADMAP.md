@@ -571,6 +571,13 @@ Open:
   reader came up `requires_init`. `AppParameters` now carries
   `--extra api --extra plr --extra windows`; the same trap applies to any
   device whose driver lives behind an extra.
+- [x] **Tailscale `DependOnService` removed** (2026-08-11) — the service
+  was offline ~12.5 h on 2026-08-10 because it alone carried
+  `DependOnService: Tailscale` and a Tailscale MSI auto-update stopped it
+  via SCM's dependency cascade (a clean stop, so NSSM never restarted it).
+  Dependency cleared, stale NSSM description refreshed, recommendation
+  withdrawn from DEVICE_PC_SETUP §6. Full write-up under *Operational
+  regressions* below.
 - [ ] **pylabrobot v1 is coming.** PR #1000 ("v1b1 changes", merged to
   `main` 2026-08-01, 759 files) restructures machine interfaces and touches
   `biotek_backend.py`; branch `cytation-10x-fov` carries a
@@ -672,7 +679,36 @@ Zone `env_hte` is live and registered (see the fleet notes above). Open:
 (camera gateway down; `dose_every_well` placeholder hostname; `plateloc`
 COM driver failure — details in git history).
 
+**Cytation offline ~12.5 h, 2026-08-10 → cleared 2026-08-11.** The
+`cytation` service was the only NSSM service on the Cytation PC configured
+with `DependOnService: Tailscale`. Tailscale's MSI auto-updater (1.102.2,
+2026-08-10 11:11) stopped the Tailscale service mid-update, so Windows SCM
+stopped `cytation` with it — and SCM never restarts dependents when the
+dependency returns. The stop is *clean* (exit code 0, tidy uvicorn
+shutdown), so NSSM's `AppExit Default Restart` does not fire: that setting
+governs the app crashing, not NSSM receiving a STOP control. The reader sat
+`STOPPED` until restarted by hand ~12.5 h later; every sibling service
+(no dependency) was unaffected. Fixed by clearing the dependency
+(`sc config cytation depend= ""` — note `nssm reset ... DependOnService`
+reports success but does **not** clear it, the field is native SCM config),
+and verified no other service on the PC carries a Tailscale dependency.
+The `DependOnService Tailscale` recommendation this configuration came from
+is withdrawn from DEVICE_PC_SETUP §6, with the failure mode documented and
+a §8 troubleshooting row (clean-stop + MsiInstaller correlation) so the
+next instance is a minutes-long diagnosis. This incident class — a service
+left dead by an external event, discovered hours later — is what the
+`sdl-lab-hostops` fleet (AGENT_OPS.md) now exists to catch and, where
+whitelisted, remediate remotely. Residual watch item below.
+
 Active watch items (not regressions; behavioural notes):
+
+- **Tailscale auto-updates stop the Tailscale service on every release**
+  (MSI upgrade path). With the `cytation` dependency removed, no service on
+  the Cytation PC stops with it anymore — but a mid-update window still
+  drops tailnet reachability for a few seconds fleet-wide, and any *future*
+  `DependOnService Tailscale` reintroduces the 2026-08-10 outage class.
+  Never add that dependency (DEVICE_PC_SETUP §6); if update timing ever
+  matters, pin/stage Tailscale updates on the device PCs instead.
 
 - **`agilent_uplc_ms` poll latency** — ~1.5 s against a 5 s
   `poll_timeout_seconds`. Raise to 8 s if it ever errors.
