@@ -733,6 +733,35 @@ function ModeToggle({
   );
 }
 
+/** Render one proposal argument for the confirm card.
+ *
+ * `String(v)` turns every object and array into `[object Object]`, which is
+ * worse than terse — an unreadable card is a rubber stamp rather than a gate,
+ * and record-edit proposals (`plate.load` wells, `deck.declare` slots) carry
+ * exactly those shapes. JSON keeps them checkable; the clamp keeps one large
+ * argument from burying the authoritative fields above it.
+ */
+function formatArg(v: unknown): string {
+  if (v === null || typeof v !== "object") return String(v);
+  const json = JSON.stringify(v);
+  return json.length > 160 ? `${json.slice(0, 157)}…` : json;
+}
+
+/** `deck.declare` with an empty `slots` map wipes the whole declaration.
+ *
+ * It is the one proposal whose argument table reads as a no-op while doing
+ * something destructive (`slots={}`), so the card says so in words.
+ */
+function isDeckClear(proposal: Proposal): boolean {
+  if (proposal.action !== "deck.declare") return false;
+  const slots = (proposal.args ?? {})["slots"];
+  return (
+    typeof slots === "object" &&
+    slots !== null &&
+    Object.keys(slots as Record<string, unknown>).length === 0
+  );
+}
+
 function ProposalCard({
   proposal,
   expired,
@@ -749,6 +778,7 @@ function ProposalCard({
   onDismiss: () => void;
 }) {
   const argEntries = Object.entries(proposal.args ?? {});
+  const clearsDeck = isDeckClear(proposal);
   return (
     <div className="rounded-lg border border-purple-300 bg-purple-50 p-2 text-[12px] dark:border-purple-700 dark:bg-purple-950/40">
       <div className="mb-1 flex items-center justify-between">
@@ -766,7 +796,7 @@ function ProposalCard({
         {argEntries.length > 0 && (
           <Row
             label="Args"
-            value={argEntries.map(([k, v]) => `${k}=${String(v)}`).join(", ")}
+            value={argEntries.map(([k, v]) => `${k}=${formatArg(v)}`).join(", ")}
           />
         )}
         <Row
@@ -774,6 +804,11 @@ function ProposalCard({
           value={`${proposal.device_state.equipment_status} · ${proposal.device_state.activity}`}
         />
       </dl>
+      {clearsDeck && (
+        <p className="mt-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+          Clears the entire deck declaration — every slot is unset.
+        </p>
+      )}
       {proposal.reason && (
         <p className="mt-1 text-[11px] italic text-purple-800 dark:text-purple-300">
           {proposal.reason}

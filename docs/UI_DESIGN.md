@@ -657,7 +657,7 @@ single-glyph surfaces; rendering pre-tracking time as zero usage.
 
 ---
 
-## 5. Assistant control mode [IMPLEMENTED — Step 1]
+## 5. Assistant control mode [IMPLEMENTED — Step 1 + 1b]
 
 **Drafted 2026-08-07** on branch `actionable-assistant`; **Step 1 implemented
 2026-08-11**. Extends the tier-2 dashboard assistant (§2) from a purely
@@ -670,7 +670,8 @@ passthrough (§5 "action naming"); (b) safety-floor actions (`stop`/`connect`/
 the propose-only `lab-control` MCP server (`api/app/assistant_control.py`), a
 `mode` field + per-mode wiring in `assistant.py`, the Ask/Control UI in
 `AssistantBubble.tsx`, and the `X-Control-Origin`/`assistant_proposal` audit
-trail. Step 2 (autonomy) is sketched at the end and is **not** approved.
+trail. **Step 1b (2026-08-12)** extends the resolver to the OT-2 — see §5.3b.
+Step 2 (autonomy) is sketched at the end and is **not** approved.
 
 ### 5.1 The commitment: the assistant proposes, the browser executes
 
@@ -758,6 +759,55 @@ existing `control_action` row so assistant-originated actions separate from
 tile clicks on the admin page. The proposal itself is written as an
 `assistant_proposal` event — otherwise the trail records the click but not
 what talked the operator into it.
+
+### 5.3b Step 1b — which OT-2 actions are proposable
+
+**Implemented 2026-08-12.** The Step 1 resolver hard-coded `robot_arm` move
+targets; the per-kind allowlist now lives in `_PROPOSABLE`
+(`api/app/assistant_control.py`), which carries the full rationale. Fail-closed
+is unchanged: a kind or action absent from the table is refused.
+
+The scoping line is deliberately **not** "is this action dangerous" — nothing
+in either mode actuates, and the confirm card is the gate. It is:
+
+> proposable **iff** the card is humanly evaluable at a glance **and** the
+> action is correct as a standalone act.
+
+Both halves do work. A card nobody can check is a rubber stamp rather than a
+gate — which disqualifies `setup`, whose nested labware/instrument lists carry
+free-form `config` JSON. And an action that is only meaningful mid-sequence
+cannot be bound to one confirm click, since a proposal is one action on one
+device — which disqualifies the liquid verbs. That second half is §5.4's
+"belongs in a plan, not a chat turn" applied *within* a single device: a lone
+`aspirate` is not wrong, it is incomplete, and the passthrough runs no
+interlocks to catch the half-executed remainder.
+
+| Tier | Actions | Why |
+|---|---|---|
+| **A — propose** | `lights.set`, `home`, `pause` | Zero or one scalar arg; each moves the robot toward a safer or more legible state. `home` is the tier's one real motion — the canonical make-it-safe pose, no args, idempotent, and the documented prerequisite for a hand entering the deck. |
+| **B — propose (record edits)** | `plate.load`, `plate.unload`, `well.update`, `deck.declare` | No motion, evaluable cards. They mutate the lab's *belief* about the deck, so a wrong one silently desyncs belief from reality — the reason they still confirm, not a reason to withhold them. |
+| **C — operator-only** | `startup`, `shutdown`, `setup`, `resume`, `tips.reset`, `move_to`, `pick_up_tip`, `aspirate`, `dispense`, `drop_tip`, `move_labware` | Sequence-bound (the six motion/liquid verbs), unevaluable (`setup`), secret-bearing (`startup` carries `password`, which would land on the card and in the `assistant_proposal` row), safety-floor inverse (`resume` — somebody paused, possibly with hands in the deck), or interlock-adjacent (`tips.reset` declares used tips fresh, disarming the contamination guard). |
+
+Two consequences worth keeping:
+
+- **Tier A+B needed no new mechanism.** No allowlisted schema carries an
+  interlock-weakening or secret field, so an action table sufficed. Admitting
+  any tier-C motion verb later requires a **field-level guard first** —
+  `pick_up_tip.force` overrides the contamination guard and
+  `move_to.force_direct` opts out of the arced collision-safe path, and neither
+  may ever be model-settable. A test pins this property so the table cannot
+  quietly acquire such a field.
+- **The confirm card had to learn to render objects.** `String(v)` flattened
+  every nested argument to `[object Object]`, which tier B's shapes
+  (`plate.load` wells, `deck.declare` slots) hit immediately — an unreadable
+  card fails the first half of the criterion. Arguments now render as JSON, and
+  `deck.declare` with an empty `slots` map (which wipes the whole declaration
+  while reading as a no-op) is called out in words on the card.
+
+Operator-only is a property of the **action**, not of the asker. The
+control-mode prompt addendum says so explicitly, because the first version
+reported excluded actions as "needing an operator" — true of every proposal,
+and misread as a permissions problem.
 
 ### 5.4 What control mode does *not* change
 

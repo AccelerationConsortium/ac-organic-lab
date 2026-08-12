@@ -252,3 +252,190 @@ async def test_list_available_actions_marks_proposable() -> None:
 async def test_list_available_actions_unknown_equipment() -> None:
     out = json.loads(await ac._list_available_actions(_registry(), "nope"))
     assert out["code"] == "unknown_equipment"
+
+
+# ---------------------------------------------------------------------------
+# liquid_handler (OT-2) — tier A + B proposals (UI_DESIGN §5 Step 1b)
+# ---------------------------------------------------------------------------
+
+OT2_BASE = "http://ot2.test:8020"
+
+# Every OT-2 action the gateway can advertise, so the refusal tests exercise
+# the real surface rather than a hand-picked subset.
+_OT2_ADVERTISED = [
+    "startup", "shutdown", "home", "setup", "pause", "resume",
+    "move_to", "pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware",
+    "plate.load", "plate.unload", "well.update", "tips.reset",
+    "lights.set", "deck.declare",
+]
+
+# The scoping decision itself, pinned. Tier A moves the robot toward a safer or
+# more legible state; tier B edits records without motion.
+_TIER_AB = {
+    "lights.set", "home", "pause",
+    "plate.load", "plate.unload", "well.update", "deck.declare",
+}
+
+
+def _ot2_registry() -> Registry:
+    return Registry(
+        equipment=[
+            EquipmentEntry(
+                id="ot2_hte",
+                name="Opentrons OT-2 HTE",
+                kind="liquid_handler",
+                adapter="http",
+                base_url=OT2_BASE,
+                status_path="/status",
+                protocol="1.2",
+            )
+        ]
+    )
+
+
+def _mock_ot2_status(allowed_actions: list[str]) -> None:
+    respx.get(f"{OT2_BASE}/status").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "equipment_id": "ot2_hte",
+                "equipment_name": "Opentrons OT-2 HTE",
+                "equipment_kind": "liquid_handler",
+                "equipment_status": "ready",
+                "message": "idle",
+                "allowed_actions": allowed_actions,
+                "activity": "idle",
+                "device_time": "2026-08-12T12:00:00Z",
+            },
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("action", "passthrough"),
+    [
+        ("lights.set", "lights"),
+        ("home", "home"),
+        ("pause", "pause"),
+        ("plate.load", "plate/load"),
+        ("plate.unload", "plate/unload"),
+        ("well.update", "well/update"),
+        ("deck.declare", "deck/declare"),
+    ],
+)
+def test_resolve_ot2_tier_ab(action: str, passthrough: str) -> None:
+    """Dotted catalog names resolve by direct lookup (no xArm-style bridging),
+    and their endpoints map to the passthrough's URL segment."""
+
+    entry = _ot2_registry().equipment[0]
+    sd, resolved_passthrough, args = ac._resolve(entry, action, {})
+    assert sd.name == action
+    assert resolved_passthrough == passthrough
+    assert args == {}
+
+
+@pytest.mark.parametrize("action", sorted(set(_OT2_ADVERTISED) - _TIER_AB))
+def test_resolve_ot2_refuses_operator_only(action: str) -> None:
+    """Sequence-bound liquid verbs, ``setup``, ``startup``, ``resume`` and
+    ``tips.reset`` stay operator-only. Parametrized over the advertised surface
+    so a new gateway verb defaults to refused until scoped deliberately."""
+
+    entry = _ot2_registry().equipment[0]
+    with pytest.raises(ac.ProposalRefused) as exc:
+        ac._resolve(entry, action, {})
+    assert exc.value.code == "unmappable_action"
+
+
+def test_proposable_names_are_all_cataloged() -> None:
+    """Every allowlisted name must exist in the catalog for its kind — the
+    resolver looks skills up by name, so a typo would refuse at runtime."""
+
+    for kind, actions in ac._PROPOSABLE.items():
+        for action in actions:
+            assert ac._find_skill_def(kind, action) is not None, f"{kind}/{action}"
+
+
+def test_proposable_liquid_handler_is_subset_of_gateway_surface() -> None:
+    """Guards against allowlisting a name the OT-2 gateway never advertises,
+    which would sit in the table looking supported and always refuse."""
+
+    assert ac._PROPOSABLE["liquid_handler"] <= set(_OT2_ADVERTISED)
+
+
+def test_no_proposable_action_exposes_a_guard_bypass() -> None:
+    """The tier A/B line rests on no allowlisted schema carrying a field that
+    weakens an interlock or a secret. If one ever does, the field-level guard
+    must land first (see the ``_PROPOSABLE`` docstring)."""
+
+    forbidden = {"force", "force_direct", "password"}
+    for kind, actions in ac._PROPOSABLE.items():
+        for action in actions:
+            sd = ac._find_skill_def(kind, action)
+            assert sd is not None
+            overlap = forbidden & set(sd.args_schema.model_fields)
+            assert not overlap, f"{kind}/{action} exposes {overlap}"
+
+
+@respx.mock
+async def test_propose_ot2_record_edit() -> None:
+    _mock_ot2_status(_OT2_ADVERTISED)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(),
+            "ot2_hte",
+            "well.update",
+            {"well": "A1", "volume_ul": 50.0, "sample_id": "stock-7"},
+            "record the aliquot",
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "well.update"
+    assert prop["passthrough_action"] == "well/update"
+    assert prop["args"]["well"] == "A1"
+    assert prop["kind"] == "liquid_handler"
+
+
+@respx.mock
+async def test_propose_ot2_aspirate_refused() -> None:
+    """Advertised by the device and cataloged, but not proposable: correctness
+    lives in the whole pick-up-tip -> aspirate -> dispense -> drop-tip sequence,
+    which one confirm click cannot bind."""
+
+    _mock_ot2_status(_OT2_ADVERTISED)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(),
+            "ot2_hte",
+            "aspirate",
+            {"pipette": "p300", "volume_ul": 50.0,
+             "location": {"labware_nickname": "plate", "position": "A1"}},
+            "",
+        )
+    )
+    assert out["code"] == "unmappable_action"
+
+
+@respx.mock
+async def test_propose_ot2_bad_args_rejected() -> None:
+    _mock_ot2_status(_OT2_ADVERTISED)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(), "ot2_hte", "lights.set", {"on": "maybe"}, ""
+        )
+    )
+    assert out["code"] == "invalid_args"
+
+
+@respx.mock
+async def test_list_available_actions_ot2_splits_proposable() -> None:
+    _mock_ot2_status(_OT2_ADVERTISED)
+    out = json.loads(await ac._list_available_actions(_ot2_registry(), "ot2_hte"))
+    by_action = {a["action"]: a for a in out["actions"]}
+    assert by_action["home"]["proposable"] is True
+    assert by_action["home"]["passthrough_action"] == "home"
+    assert "args_schema" in by_action["well.update"]
+    for operator_only in ("aspirate", "setup", "startup", "resume", "tips.reset"):
+        assert by_action[operator_only]["proposable"] is False

@@ -191,4 +191,69 @@ describe("AssistantBubble control mode", () => {
       (screen.getByRole("button", { name: "Authorize" }) as HTMLButtonElement).disabled
     ).toBe(true);
   });
+
+  it("renders record-edit args as JSON rather than [object Object]", async () => {
+    installFetch([
+      `data: ${JSON.stringify({
+        type: "proposal",
+        proposal: {
+          ...PROPOSAL.proposal,
+          equipment_id: "ot2_hte",
+          equipment_name: "Opentrons OT-2 HTE",
+          kind: "liquid_handler",
+          action: "plate.load",
+          passthrough_action: "plate/load",
+          args: {
+            plate_id: "p-7",
+            model: "corning_96_wellplate_360ul_flat",
+            wells: [{ well: "A1", volume_ul: 50 }],
+          },
+        },
+      })}\n\n`,
+      'data: {"type":"done"}\n\n',
+    ]);
+    await openPanel();
+    const control = await screen.findByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const box = screen.getByPlaceholderText(/operate a device/i);
+    fireEvent.change(box, { target: { value: "record the plate" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("Authorize action");
+    // The nested wells list must stay checkable; String(v) would flatten it.
+    expect(screen.getByText(/wells=\[\{"well":"A1","volume_ul":50\}\]/)).toBeTruthy();
+    expect(screen.queryByText(/\[object Object\]/)).toBeNull();
+  });
+
+  it("warns that a deck.declare with no slots clears the whole declaration", async () => {
+    installFetch([
+      `data: ${JSON.stringify({
+        type: "proposal",
+        proposal: {
+          ...PROPOSAL.proposal,
+          equipment_id: "ot2_hte",
+          equipment_name: "Opentrons OT-2 HTE",
+          kind: "liquid_handler",
+          action: "deck.declare",
+          passthrough_action: "deck/declare",
+          args: { slots: {} },
+          reason: "reset the layout",
+        },
+      })}\n\n`,
+      'data: {"type":"done"}\n\n',
+    ]);
+    await openPanel();
+    const control = await screen.findByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const box = screen.getByPlaceholderText(/operate a device/i);
+    fireEvent.change(box, { target: { value: "clear the deck" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // slots={} reads as a no-op in the arg table, so the card says it in words.
+    await screen.findByText("Authorize action");
+    expect(screen.getByText(/Clears the entire deck declaration/)).toBeTruthy();
+  });
+
 });

@@ -25,12 +25,16 @@ before a proposal is returned; the check fails closed.
 
 Scope
 -----
-Step 1 proposes exactly one action on one device. The action-name resolver
-covers ``robot_arm`` move targets only (``move.<node_id>`` -> the
-``graph.move_to`` skill -> ``POST /control/graph/move_to``). Safety-floor
-actions (``stop`` / ``connect`` / ``clear_errors``) are deliberately **not**
-proposable — they are operator buttons and must stay reachable without the
-assistant. Anything the resolver cannot map is refused.
+A proposal is exactly one action on one device. Two kinds are in scope:
+
+* ``robot_arm`` move targets (``move.<node_id>`` -> the ``graph.move_to``
+  skill -> ``POST /control/graph/move_to``) — the Step 1 surface.
+* ``liquid_handler`` (OT-2) tier A + B — see :data:`_PROPOSABLE`, which carries
+  the full per-action rationale and the exclusions.
+
+Safety-floor actions (``stop`` / ``connect`` / ``clear_errors``) are
+deliberately **not** proposable — they are operator buttons and must stay
+reachable without the assistant. Anything the resolver cannot map is refused.
 
 Transport
 ---------
@@ -147,11 +151,78 @@ def _passthrough_action(sd: SkillDef) -> str:
     return ep.lstrip("/")
 
 
+# Per-kind allowlist of actions the assistant may propose. Fail-closed: a kind
+# absent from this table, or an action absent from its set, is refused.
+#
+# The line is deliberately NOT "is this action dangerous" — nothing here
+# actuates and the confirm card is the gate. It is:
+#
+#     proposable iff the card is humanly evaluable at a glance
+#                AND the action is correct as a standalone act.
+#
+# Both halves do real work. A card nobody can check is a rubber stamp, not a
+# gate; and an action that is only meaningful mid-sequence cannot be bound to
+# one confirm click, because a proposal is one action on one device.
+#
+# What that excludes on the OT-2, and why — each an operator-only decision, not
+# an oversight:
+#
+# * ``aspirate`` / ``dispense`` / ``pick_up_tip`` / ``drop_tip`` / ``move_to``
+#   / ``move_labware`` — sequence-bound. A lone aspirate is not *wrong*, it is
+#   *incomplete*: correctness lives in pick-up-tip -> aspirate -> dispense ->
+#   drop-tip. The passthrough runs no skill preconditions and no project
+#   interlocks (ARCHITECTURE decision #1), so proposing these one at a time
+#   invites exactly the half-executed sequence layer 4 exists to prevent. They
+#   belong to ``execute_plan`` (UI_DESIGN §5.5), not to a chat turn.
+# * ``setup`` — nested labware/instrument/module lists carrying free-form
+#   ``config`` JSON. Unevaluable in a chat card, and it is recipe authorship,
+#   which belongs in a protocol.
+# * ``startup`` — its schema carries ``password``. A model-supplied value would
+#   render on the confirm card and land in the ``assistant_proposal`` audit
+#   row. Also contradicts the registry's ``do_not_call_connect: true``.
+# * ``resume`` — the inverse of a safety-floor action: somebody paused, and may
+#   have hands in the deck. ``pause`` is proposable precisely because it is the
+#   safe direction; ``resume`` stays operator-only for the reason ``stop`` does.
+# * ``tips.reset`` — declares used tips fresh, disarming the gateway's
+#   cross-contamination guard. Metadata-only is not harmless when the metadata
+#   *is* an interlock's input (AGENT_RULES: never weaken an interlock).
+# * ``shutdown`` — disruptive, and nothing an operator needs a proposal for.
+#
+# Admitting any motion/liquid verb later requires a field-level guard FIRST:
+# ``pick_up_tip.force`` overrides the contamination guard and
+# ``move_to.force_direct`` opts out of the arced collision-safe path, and
+# neither may ever be model-settable. No action below carries such a field —
+# which is why this table needs no such mechanism yet. Do not add one that does
+# without building the guard.
+_PROPOSABLE: dict[str, frozenset[str]] = {
+    "liquid_handler": frozenset(
+        {
+            # Tier A — zero or one scalar arg, each moving the robot toward a
+            # safer or more legible state. ``home`` is the tier's one real
+            # motion: the canonical make-it-safe pose, no args, idempotent, and
+            # the documented prerequisite for a hand entering the deck.
+            "lights.set",
+            "home",
+            "pause",
+            # Tier B — record edits. No motion and evaluable cards, but they
+            # mutate the lab's *belief* about the deck, so a wrong one silently
+            # desyncs belief from reality. That is why they still confirm, not
+            # why they are withheld.
+            "plate.load",
+            "plate.unload",
+            "well.update",
+            "deck.declare",
+        }
+    ),
+}
+
+
 def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[SkillDef, str, dict[str, Any]]:
     """Map a device ``allowed_actions`` string to a proposable action.
 
     Returns ``(skill_def, passthrough_action, resolved_args)`` or raises
-    :class:`ProposalRefused`. Step 1 scope: ``robot_arm`` move targets only.
+    :class:`ProposalRefused`. Scope: ``robot_arm`` move targets plus the
+    per-kind allowlist in :data:`_PROPOSABLE`. Anything else is refused.
     """
 
     if entry.kind == "robot_arm" and action.startswith("move."):
@@ -169,10 +240,24 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
         resolved = {**(args or {}), "node_id": node_id}
         return sd, _passthrough_action(sd), resolved
 
+    if action in _PROPOSABLE.get(entry.kind or "", frozenset()):
+        # Direct name lookup: these catalog names are byte-for-byte the strings
+        # the device advertises, so no bridging is needed (unlike the xArm's
+        # ``move.<node_id>``). ``_passthrough_action`` maps the dotted name's
+        # endpoint to its URL segment (``plate.load`` -> ``plate/load``).
+        sd = _find_skill_def(entry.kind, action)
+        if sd is None:  # pragma: no cover - guarded by the catalog parity test
+            raise ProposalRefused(
+                "unmappable_action",
+                f"{action!r} is allowlisted for kind {entry.kind!r} but is not "
+                "registered in the skill catalog",
+            )
+        return sd, _passthrough_action(sd), dict(args or {})
+
     raise ProposalRefused(
         "unmappable_action",
         f"action {action!r} on kind {entry.kind!r} is not proposable by the assistant "
-        "(Step 1 supports robot_arm move targets only; safety-floor actions stay "
+        "(safety-floor, sequence-bound, and interlock-adjacent actions stay "
         "operator-only)",
     )
 
@@ -359,7 +444,9 @@ def _build_server(registry: Registry):
         """The device's live ``allowed_actions`` plus, for each action the
         assistant can propose, its argument JSON-Schema. Call this before
         propose_action to learn what is legal instead of guessing endpoints.
-        Only ``robot_arm`` move targets are proposable in this mode."""
+        Not every advertised action is proposable: sequence-bound liquid verbs,
+        safety-floor actions, and interlock-adjacent ones stay operator-only,
+        and are returned with ``proposable: false``."""
 
         return await _list_available_actions(registry, equipment_id)
 
