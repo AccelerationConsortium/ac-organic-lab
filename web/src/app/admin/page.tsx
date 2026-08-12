@@ -16,6 +16,12 @@ import { useUserAuth } from "@/lib/user-auth";
 // bodies scroll independently under a sticky table header.
 // ---------------------------------------------------------------------------
 
+interface AdminGrant {
+  scope: "global" | "platform" | "equipment";
+  id?: string;
+  role: string;
+}
+
 interface AdminAccount {
   email: string;
   name: string;
@@ -26,6 +32,7 @@ interface AdminAccount {
   expires_at: number | null;
   is_expired: boolean;
   disabled_reason: string;
+  grants: AdminGrant[];
   last_login_at: number | null;
   active_sessions: number;
 }
@@ -247,6 +254,50 @@ function ErrorNote({ error }: { error: unknown }) {
       {error instanceof Error ? error.message : "Failed to load."}
     </p>
   );
+}
+
+// One chip per grant. Platform scope reads `hte · platform` (one grant, every
+// device in the section); equipment scope is just the device id. A flat
+// role (admin/operator) is an implicit global grant, shown as its own chip so
+// the column never reads empty for an account that can in fact reach devices.
+function GrantChips({ role, grants }: { role: string; grants: AdminGrant[] }) {
+  const chip = (key: string, label: string, cls: string, title: string) => (
+    <span
+      key={key}
+      className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}
+      title={title}
+    >
+      {label}
+    </span>
+  );
+  const chips: React.ReactNode[] = [];
+  if (role !== "none") {
+    chips.push(
+      chip(
+        "flat",
+        `all · ${role}`,
+        "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300",
+        `flat role "${role}" — implicit global grant on every equipment`,
+      ),
+    );
+  }
+  for (const g of grants) {
+    const label =
+      g.scope === "platform" ? `${g.id} · platform` : g.scope === "global" ? `all · ${g.role}` : g.id ?? "?";
+    const cls =
+      g.scope === "platform"
+        ? "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300"
+        : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+    chips.push(chip(`${g.scope}:${g.id ?? "*"}`, label, cls, `${g.scope} grant · role ${g.role}`));
+  }
+  if (chips.length === 0) {
+    return (
+      <span className="text-xs text-ink-subtle dark:text-slate-500" title="Sign-in only: public reads, no device control">
+        login only
+      </span>
+    );
+  }
+  return <div className="flex max-w-xs flex-wrap gap-1">{chips}</div>;
 }
 
 function StatCard({ label, value, tone }: { label: string; value: string; tone?: "warn" | "bad" }) {
@@ -576,7 +627,7 @@ export default function AdminPage() {
         <Tile
           wide
           title="Accounts"
-          sub="The full roster.yaml allow-list (including disabled/expired). Edits go through roster.yaml, not this page."
+          sub="Who exists (the full roster.yaml allow-list, incl. disabled/expired). Grants = what each account may use. Edits go through roster.yaml, not this page."
         >
           {accounts.error ? (
             <ErrorNote error={accounts.error} />
@@ -584,7 +635,7 @@ export default function AdminPage() {
             <Empty message="Loading…" />
           ) : (
             <>
-              <Table head={["Name", "Email", "Role", "Status", "Group", "Last login", "Sessions", "Expires"]}>
+              <Table head={["Name", "Email", "Role", "Grants", "Status", "Group", "Last login", "Sessions", "Expires"]}>
                 {accounts.data.users.map((u) => (
                   <tr
                     key={u.email}
@@ -593,8 +644,21 @@ export default function AdminPage() {
                     <td className="px-4 py-2 font-medium text-ink dark:text-slate-100">
                       {u.name || "—"}
                     </td>
-                    <td className="px-4 py-2">{u.email}</td>
+                    <td className="px-4 py-2">
+                      {u.email}
+                      {u.email.startsWith("agent:") && (
+                        <span
+                          className="ml-1.5 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                          title="Machine principal: exists so devices can resolve this claim-owner string to a role. Cannot sign in."
+                        >
+                          agent
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-2">{u.role}</td>
+                    <td className="px-4 py-2">
+                      <GrantChips role={u.role} grants={u.grants ?? []} />
+                    </td>
                     <td className="px-4 py-2">
                       {u.is_expired ? "expired" : u.status}
                       {u.disabled_reason && (
@@ -644,7 +708,7 @@ export default function AdminPage() {
         {/* ---- API keys ------------------------------------------------------ */}
         <Tile
           title="API keys"
-          sub="Machine-principal keys; last_used_at separates dead keys from load-bearing ones."
+          sub="How automation accounts authenticate (X-Api-Key; humans use sessions instead). last_used_at separates dead keys from load-bearing ones."
         >
           {apiKeys.error ? (
             <ErrorNote error={apiKeys.error} />
