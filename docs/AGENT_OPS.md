@@ -89,17 +89,18 @@ Per-instance facts:
 
 | `hostops_pi0_fumehood3` | `sdl2-pi0-fumehood3-actuator` (Pi Zero, `~/sdl-lab-hostops`) | daemonless stdio-over-SSH (`fumehood-pi` alias) | **empty — read-only**: `sdl2` on that Pi has no passwordless sudo yet; arm restarts later with a sudoers drop-in for `systemctl restart actuator.service` | 2026-08-11 — verified over SSH: `actuator.service` RUNNING, journald readable, probe of `:5000` returned the `fume_hood_actuator` envelope (200), restart correctly refused |
 
+| `hostops_pi5_minicnc` | `sdl2-pi5-minicnc` (the live `dose_every_well` host; `~caoyang/sdl-lab-hostops`) | daemonless stdio-over-SSH (`doser-pi` alias, user `caoyang`) | `platedoser-api` (restart armed via the node's existing passwordless sudo; the doser boots to `requires_init`, so a restart is recoverable) | 2026-08-12 — verified over SSH: `platedoser-api.service` RUNNING, journald readable, probe of `:8000` returned the `dose_every_well` envelope (`ready`), whitelist refusal of `tailscaled` |
+
 Pi instances run stdio-over-SSH, so they expose no HTTP `/status` — unlike the
 Windows instances they get **no** `equipment.yaml` tile; their reachability is
 already tracked via the device service they sit next to.
 
-Pending Pi targets (2026-08-11): `sdl2-pi5-minicnc` (the live `dose_every_well`
-host — key grant pending; note `sdl2-pi5-cnc-doser-sam` holds only a dev clone,
-no running service, and gets no instance), `sdl2-pi0-waters-filtration` (the
-press — that node runs **Tailscale SSH**, so access is a tailnet-ACL `ssh`
-rule, not `authorized_keys`; the one node already on HERMES_ACCESS_DESIGN's
-preferred mechanism), and `sdl2-pi0-environ-02` (offline, awaiting hardware;
-trusts the key from provisioning).
+Pending Pi targets (2026-08-12): `sdl2-pi0-waters-filtration` (the press —
+that node runs **Tailscale SSH**, so access is a tailnet-ACL `ssh` rule, not
+`authorized_keys`; the one node already on HERMES_ACCESS_DESIGN's preferred
+mechanism) and `sdl2-pi0-environ-02` (offline, awaiting hardware; trusts the
+key from provisioning). `sdl2-pi5-cnc-doser-sam` holds only a dev clone of
+the doser, no running service — deliberately no instance.
 
 Both Windows PCs also carry the SSH key-trust grant for the central agent —
 see DEVICE_PC_SETUP §2.4.
