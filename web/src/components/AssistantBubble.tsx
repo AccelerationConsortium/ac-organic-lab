@@ -718,7 +718,9 @@ function ModeToggle({
   const disabled = !eligible;
   return (
     <div
-      className="mr-1 flex overflow-hidden rounded border border-slate-300 text-[10px] font-medium dark:border-slate-600"
+      // Sized to match the Clear chip beside it (text-[11px], py-1) so the
+      // header buttons read as one control family at equal height.
+      className="mr-1 flex overflow-hidden rounded border border-slate-300 text-[11px] font-medium dark:border-slate-600"
       title={
         disabled
           ? "Control mode requires an operator role on at least one device"
@@ -728,7 +730,7 @@ function ModeToggle({
       <button
         type="button"
         onClick={() => onChange("ask")}
-        className={`px-2 py-0.5 ${
+        className={`px-2 py-1 ${
           mode === "ask"
             ? "bg-emerald-600 text-white"
             : "text-ink-subtle hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
@@ -741,7 +743,7 @@ function ModeToggle({
         onClick={() => !disabled && onChange("control")}
         disabled={disabled}
         aria-disabled={disabled}
-        className={`px-2 py-0.5 ${
+        className={`px-2 py-1 ${
           mode === "control"
             ? "bg-purple-600 text-white"
             : disabled
