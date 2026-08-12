@@ -492,7 +492,8 @@ next person reasons from the config alone:
 |---|---|
 | `xarm_translocation` | **identity** — `/control/claim` refuses without an accepted credential (401 `login_required`), and every action needs the claim |
 | `ot2_hte`, `ot2_complexation` | **claim only** — a wrong `X-Edge-Auth` and no credential at all both return the same `423 missing or invalid X-Claim-Token`; identity is never checked |
-| everything else | unprobed; determining it means requesting a claim, which has a side effect on live hardware |
+| `cytation_5`, `plateloc`, `torry_pines_shaker`, `agilent_biostack` | **claim only** — established by **code inspection** (2026-08-12, on the Cytation PC where all four repos live), which needs no probe and is stronger than one: no reference to `X-Edge-Auth` / `X-Auth-User` / any edge secret exists anywhere in their `src/`, while all four hard-enforce `X-Claim-Token`. There is no identity path to mis-probe. None of these carry `edge_secret_env` (nothing to name) |
+| everything else | unprobed; determining it live means requesting a claim, which has a side effect on live hardware — but where the device's source is at hand, inspection answers it side-effect-free, as the row above did |
 
 So the stopgap did **not** break the OT-2s, and the OT-2 entries keep
 `edge_secret_env: OT2_EDGE_SECRET` for a different reason: that *is* their
