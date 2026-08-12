@@ -29,6 +29,7 @@ next-env.d.ts
 
 # Local secrets and overrides
 .env
+.env.bak-*
 .env.local
 .env.*.local
 api/.env

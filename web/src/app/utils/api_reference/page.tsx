@@ -53,6 +53,37 @@ interface CatalogResponse {
   platforms: Record<string, PlatformCatalog>;
 }
 
+// --- the dashboard's own HTTP surface, read from its OpenAPI document ---
+
+interface OpenApiParameter {
+  name: string;
+  in: string;
+  required?: boolean;
+  description?: string;
+  schema?: JsonSchemaProperty & { $ref?: string };
+}
+
+interface OpenApiOperation {
+  summary?: string;
+  description?: string;
+  tags?: string[];
+  parameters?: OpenApiParameter[];
+  requestBody?: {
+    content?: Record<string, { schema?: JsonSchema & { $ref?: string } }>;
+  };
+}
+
+interface OpenApiDoc {
+  paths: Record<string, Record<string, OpenApiOperation>>;
+  components?: { schemas?: Record<string, JsonSchema> };
+}
+
+interface Endpoint {
+  method: string;
+  path: string;
+  op: OpenApiOperation;
+}
+
 // ---------------------------------------------------------------------------
 // Data fetching
 // ---------------------------------------------------------------------------
@@ -71,6 +102,24 @@ function useCatalog() {
     queryKey: ["catalog"],
     queryFn: fetchCatalog,
     staleTime: Infinity, // catalog is static — no polling needed
+  });
+}
+
+async function fetchOpenApi(): Promise<OpenApiDoc> {
+  // Served by the API under /api so the Next proxy reaches it (main.py).
+  const res = await fetch("/api/openapi.json", {
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json() as Promise<OpenApiDoc>;
+}
+
+function useOpenApi() {
+  return useQuery<OpenApiDoc, Error>({
+    queryKey: ["openapi"],
+    queryFn: fetchOpenApi,
+    staleTime: Infinity, // changes only when the server is redeployed
   });
 }
 
@@ -355,10 +404,259 @@ function PlatformTile({
 }
 
 // ---------------------------------------------------------------------------
+// Dashboard API (from this server's OpenAPI document)
+// ---------------------------------------------------------------------------
+
+// Tags in the order an operator meets them, not alphabetically: what the lab
+// *is* (meta, equipment), what you can do to it (control), what it recorded
+// (history), then the specialised surfaces. Anything unlisted sorts last, so a
+// newly-tagged router shows up rather than disappearing.
+const TAG_ORDER = [
+  "meta",
+  "equipment",
+  "equipment-control",
+  "history",
+  "workflow",
+  "labware",
+  "deck",
+  "assistant",
+];
+
+const TAG_BLURB: Record<string, string> = {
+  meta: "Server identity, health, and the two reference documents (this one and the device catalog).",
+  equipment: "Aggregated device state — the poll loop's view of the lab.",
+  "equipment-control":
+    "Operator-initiated writes. Each call runs claim → action → release against the device and writes one audit row.",
+  history: "Read the history DB; the /api/ingest/* routes are how device services write to it.",
+  workflow: "Authorized plan runs: start, watch the step stream, abort.",
+  labware: "Custom labware definitions plus the read-only standard Opentrons set.",
+  deck: "Per-equipment deck layout the OT-2 surfaces share.",
+  assistant: "The chat bubble's backend. Read-only in Ask mode; propose-only in Control mode.",
+};
+
+function resolveSchema(
+  schema: (JsonSchema & { $ref?: string }) | undefined,
+  doc: OpenApiDoc,
+): JsonSchema | undefined {
+  if (!schema) return undefined;
+  if (!schema.$ref) return schema;
+  const name = schema.$ref.split("/").pop();
+  if (!name) return undefined;
+  return doc.components?.schemas?.[name];
+}
+
+function ParamTable({ params }: { params: OpenApiParameter[] }) {
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="border-b border-slate-100 dark:border-slate-800">
+          <th className="pb-1 pr-3 text-left font-medium text-ink-subtle dark:text-slate-500">
+            Parameter
+          </th>
+          <th className="pb-1 pr-3 text-left font-medium text-ink-subtle dark:text-slate-500">
+            In
+          </th>
+          <th className="pb-1 text-left font-medium text-ink-subtle dark:text-slate-500">
+            Notes
+          </th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-50 dark:divide-slate-800/60">
+        {params.map((param) => (
+          <tr key={`${param.in}-${param.name}`}>
+            <td className="py-1 pr-3 font-mono font-medium text-ink dark:text-slate-200">
+              {param.name}
+              {!param.required && (
+                <span className="ml-1 font-sans font-normal text-ink-subtle dark:text-slate-500">
+                  ?
+                </span>
+              )}
+            </td>
+            <td className="py-1 pr-3 font-mono text-sky-700 dark:text-sky-400">{param.in}</td>
+            <td className="py-1 text-ink-muted dark:text-slate-400">{param.description ?? ""}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function EndpointRow({ endpoint, doc }: { endpoint: Endpoint; doc: OpenApiDoc }) {
+  const [open, setOpen] = useState(false);
+  const { method, path, op } = endpoint;
+  const params = op.parameters ?? [];
+  const body = resolveSchema(
+    op.requestBody?.content?.["application/json"]?.schema,
+    doc,
+  );
+  const hasDetail = params.length > 0 || body !== undefined || Boolean(op.description);
+
+  return (
+    <div>
+      <button
+        onClick={() => hasDetail && setOpen((p) => !p)}
+        className={`flex w-full items-center gap-2 px-4 py-2 text-left ${
+          hasDetail ? "hover:bg-slate-50 dark:hover:bg-slate-900/40" : "cursor-default"
+        }`}
+        aria-expanded={hasDetail ? open : undefined}
+      >
+        <span
+          className={`w-14 shrink-0 rounded px-1.5 py-0.5 text-center text-[10px] font-semibold ${methodBadge(
+            method,
+          )}`}
+        >
+          {method}
+        </span>
+        <span className="shrink-0 font-mono text-xs text-ink dark:text-slate-200">{path}</span>
+        <span className="truncate text-xs text-ink-muted dark:text-slate-400">
+          {op.summary ?? ""}
+        </span>
+        <span className="ml-auto w-3 shrink-0 text-xs text-ink-subtle dark:text-slate-500">
+          {hasDetail ? (open ? "−" : "+") : ""}
+        </span>
+      </button>
+
+      {open && (
+        <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/60 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/30">
+          {op.description && (
+            <p className="whitespace-pre-line text-xs text-ink-muted dark:text-slate-400">
+              {op.description}
+            </p>
+          )}
+          {params.length > 0 && <ParamTable params={params} />}
+          {body && <SchemaTable schema={body} actionName={`${method}-${path}`} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TagGroup({
+  tag,
+  endpoints,
+  doc,
+}: {
+  tag: string;
+  endpoints: Endpoint[];
+  doc: OpenApiDoc;
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+      <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/60">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+            {tag}
+          </h4>
+          <span className="text-xs text-ink-subtle dark:text-slate-500">
+            {endpoints.length} endpoint{endpoints.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+        {TAG_BLURB[tag] && (
+          <p className="mt-1 text-xs text-ink-subtle dark:text-slate-500">{TAG_BLURB[tag]}</p>
+        )}
+      </div>
+      <div className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-950/20">
+        {endpoints.map((e) => (
+          <EndpointRow key={`${e.method}-${e.path}`} endpoint={e} doc={doc} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function groupByTag(doc: OpenApiDoc): [string, Endpoint[]][] {
+  const groups = new Map<string, Endpoint[]>();
+  for (const [path, methods] of Object.entries(doc.paths ?? {})) {
+    for (const [method, op] of Object.entries(methods)) {
+      const tag = op.tags?.[0] ?? "other";
+      const list = groups.get(tag) ?? [];
+      list.push({ method: method.toUpperCase(), path, op });
+      groups.set(tag, list);
+    }
+  }
+  const rank = (tag: string) => {
+    const i = TAG_ORDER.indexOf(tag);
+    return i === -1 ? TAG_ORDER.length : i;
+  };
+  return [...groups.entries()]
+    .map(([tag, list]) => {
+      list.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
+      return [tag, list] as [string, Endpoint[]];
+    })
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
+}
+
+function DashboardApiSection() {
+  const { data, isPending, error } = useOpenApi();
+
+  if (isPending) {
+    return <p className="text-sm text-ink-muted dark:text-slate-400">Loading dashboard API…</p>;
+  }
+  if (error || !data) {
+    return (
+      <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
+        Could not load the dashboard API document: {error?.message ?? "empty response"}
+      </p>
+    );
+  }
+
+  const groups = groupByTag(data);
+  const total = groups.reduce((n, [, list]) => n + list.length, 0);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-sm text-ink-muted dark:text-slate-400">
+        {total} endpoints on this server, read live from its own OpenAPI document — so this
+        list cannot drift from what the server actually serves. Click an endpoint for
+        parameters and request body.
+      </p>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        {groups.map(([tag, endpoints]) => (
+          <TagGroup key={tag} tag={tag} endpoints={endpoints} doc={data} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 export default function ApiReferencePage() {
+  return (
+    <div className="flex flex-col gap-10">
+      <section className="flex flex-col gap-4">
+        <header>
+          <h3 className="text-sm font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+            Dashboard API
+          </h3>
+          <p className="mt-1 text-sm text-ink-muted dark:text-slate-400">
+            What this server exposes: the aggregated equipment view, the operator control
+            passthrough, the history DB, workflow runs, and the assistant.
+          </p>
+        </header>
+        <DashboardApiSection />
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <header>
+          <h3 className="text-sm font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+            Device actions
+          </h3>
+          <p className="mt-1 text-sm text-ink-muted dark:text-slate-400">
+            What the <em>instruments</em> expose, from the static skill catalog, grouped by
+            platform. Reach these through the control passthrough above rather than calling a
+            device directly — that is what claims the device and writes the audit row.
+          </p>
+        </header>
+        <DeviceCatalogSection />
+      </section>
+    </div>
+  );
+}
+
+function DeviceCatalogSection() {
   const { data, isPending, error } = useCatalog();
 
   if (isPending) {
@@ -375,31 +673,24 @@ export default function ApiReferencePage() {
 
   const platforms = Object.entries(data?.platforms ?? {});
 
-  return (
-    <div className="flex flex-col gap-6">
-      <header>
-        <p className="text-sm text-ink-muted dark:text-slate-400">
-          Static skill catalog — all registered instrument actions grouped by platform.
-          Click an instrument to expand its actions; click an action for parameter details.
+  if (platforms.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center dark:border-slate-700">
+        <p className="text-sm font-medium text-ink-muted dark:text-slate-400">
+          No platforms in catalog.
         </p>
-      </header>
+        <p className="mt-1 text-xs text-ink-subtle dark:text-slate-500">
+          Add equipment entries in <span className="font-mono">equipment.yaml</span>.
+        </p>
+      </div>
+    );
+  }
 
-      {platforms.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center dark:border-slate-700">
-          <p className="text-sm font-medium text-ink-muted dark:text-slate-400">
-            No platforms in catalog.
-          </p>
-          <p className="mt-1 text-xs text-ink-subtle dark:text-slate-500">
-            Add equipment entries in <span className="font-mono">equipment.yaml</span>.
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {platforms.map(([id, catalog]) => (
-            <PlatformTile key={id} platformId={id} catalog={catalog} />
-          ))}
-        </div>
-      )}
+  return (
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      {platforms.map(([id, catalog]) => (
+        <PlatformTile key={id} platformId={id} catalog={catalog} />
+      ))}
     </div>
   );
 }

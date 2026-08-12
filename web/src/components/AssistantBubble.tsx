@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ApiError, authorizeAssistantAction } from "@/lib/api";
+import { useUserAuth } from "@/lib/user-auth";
+
 /**
  * Floating bottom-right chat bubble that talks to the dashboard's
  * `/api/assistant/chat` endpoint. The endpoint streams Server-Sent Events:
@@ -9,12 +12,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
  *   data: {"type":"text","delta":"..."}
  *   data: {"type":"tool_use","name":"...","input":{...}}
  *   data: {"type":"tool_result","name":"..."}
+ *   data: {"type":"proposal","proposal":{...}}   // Control mode only
  *   data: {"type":"done"}
  *   data: {"type":"error","message":"..."}
  *
- * The bubble is read-only -- the backend tools can only query the history DB
- * and tail whitelisted systemd units, never actuate hardware. The UI mirrors
- * that by not exposing any "do X" verbs.
+ * Two modes (UI_DESIGN §5):
+ *  - Ask (default): read-only. The backend tools only query the history DB and
+ *    tail whitelisted systemd units, never actuate hardware.
+ *  - Control: adds the propose-only `lab-control` server. The model can PROPOSE
+ *    one equipment action; a `proposal` frame renders a confirm card the
+ *    operator must click *Authorize* on. Nothing actuates until that click,
+ *    which runs the existing control passthrough as the human. The model never
+ *    holds an actuating tool — the safety property is the toolset, not the
+ *    prompt.
  */
 
 type Role = "user" | "assistant";
@@ -26,6 +36,27 @@ interface ChatTurn {
   /** Tool calls observed during this assistant turn, oldest first. */
   tools: { name: string; ok: boolean }[];
 }
+
+/** A validated, propose-only action from the lab-control MCP server. */
+interface Proposal {
+  equipment_id: string;
+  equipment_name: string;
+  kind: string;
+  action: string;
+  /** The `{action}` segment the control passthrough expects (e.g. graph/move_to). */
+  passthrough_action: string;
+  args: Record<string, unknown>;
+  reason: string;
+  actor: string;
+  expires_in_s: number;
+  device_state: {
+    equipment_status: string;
+    activity: string;
+    message: string | null;
+  };
+}
+
+type Mode = "ask" | "control";
 
 const STORAGE_KEY = "ac-assistant-history-v1";
 const POSITION_KEY = "ac-assistant-position-v1";
@@ -50,11 +81,25 @@ function defaultPosition(): { x: number; y: number } {
 }
 
 export function AssistantBubble() {
+  const { authenticated, identity } = useUserAuth();
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Ask (read-only) vs Control (propose-only). Deliberately NOT persisted:
+  // resets to Ask on reload / panel close (UI_DESIGN §5.2). The server decides
+  // the real toolset from the verified identity regardless of this value.
+  const [mode, setMode] = useState<Mode>("ask");
+  // null = not yet resolved. True when the signed-in user holds a role on at
+  // least one equipment (operator+), from /api/auth/mine + identity role.
+  const [controlEligible, setControlEligible] = useState<boolean | null>(null);
+  // The single outstanding proposal (one at a time, UI_DESIGN §5.3).
+  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [proposalExpired, setProposalExpired] = useState(false);
+  const [authorizing, setAuthorizing] = useState(false);
+  const [authorizeResult, setAuthorizeResult] = useState<string | null>(null);
+  const [authorizeError, setAuthorizeError] = useState<string | null>(null);
   // null = still checking; once resolved, we know whether to render at all.
   // The bubble only renders if the backend's health endpoint reports it can
   // spawn `claude` (the Claude Code CLI subprocess backend). If the CLI
@@ -70,11 +115,14 @@ export function AssistantBubble() {
   const [dragging, setDragging] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const expiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Captured at pointerdown; (px,py) = pointer at start, (bx,by) = panel
   // top-left at start. Cleared on pointerup.
   const dragStartRef = useRef<
     null | { px: number; py: number; bx: number; by: number }
   >(null);
+
+  const controlMode = mode === "control";
 
   // One-shot health check on mount. Fail closed -- if the endpoint is
   // missing or we can't parse a JSON body, just hide the bubble.
@@ -97,6 +145,39 @@ export function AssistantBubble() {
       cancelled = true;
     };
   }, []);
+
+  // Control-mode eligibility: signed in AND operator+ on >=1 equipment. A
+  // global operator/admin qualifies even if the per-equipment map is empty;
+  // a role:none account qualifies only through its equipment grants. The
+  // server (assistant.py + propose_action) re-checks this — the gate here is
+  // UX only (UI_DESIGN §5.2).
+  useEffect(() => {
+    if (!authenticated) {
+      setControlEligible(false);
+      return;
+    }
+    const roleEligible =
+      identity?.role === "operator" || identity?.role === "admin";
+    let cancelled = false;
+    fetch("/api/auth/mine", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { equipment?: Record<string, string | null> } | null) => {
+        if (cancelled) return;
+        const anyGrant = Object.values(d?.equipment ?? {}).some((v) => v != null);
+        setControlEligible(roleEligible || anyGrant);
+      })
+      .catch(() => {
+        if (!cancelled) setControlEligible(roleEligible);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authenticated, identity]);
+
+  // If the user loses eligibility (e.g. logout), fall back to Ask.
+  useEffect(() => {
+    if (controlEligible === false && mode === "control") setMode("ask");
+  }, [controlEligible, mode]);
 
   // Restore prior conversation on mount (per-tab; sessionStorage clears on close).
   useEffect(() => {
@@ -151,7 +232,7 @@ export function AssistantBubble() {
   // header element.
   const onDragStart = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      // Let header buttons (minimize / clear) handle their own clicks.
+      // Let header buttons (minimize / clear / mode toggle) handle their own clicks.
       if ((e.target as HTMLElement).closest("button")) return;
       e.preventDefault();
       const base = position ?? defaultPosition();
@@ -193,19 +274,35 @@ export function AssistantBubble() {
     if (scrollerRef.current) {
       scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
     }
-  }, [turns, open]);
+  }, [turns, open, proposal]);
 
-  // Cancel any in-flight stream when the panel closes or the component unmounts.
+  const clearProposal = useCallback(() => {
+    if (expiryRef.current) {
+      clearTimeout(expiryRef.current);
+      expiryRef.current = null;
+    }
+    setProposal(null);
+    setProposalExpired(false);
+    setAuthorizeError(null);
+  }, []);
+
+  // Cancel any in-flight stream when the panel closes or the component
+  // unmounts, and reset control mode + drop any outstanding proposal.
   useEffect(() => {
     if (!open && abortRef.current) {
       abortRef.current.abort();
       abortRef.current = null;
       setSending(false);
     }
-  }, [open]);
+    if (!open) {
+      setMode("ask");
+      clearProposal();
+    }
+  }, [open, clearProposal]);
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      if (expiryRef.current) clearTimeout(expiryRef.current);
     };
   }, []);
 
@@ -214,6 +311,9 @@ export function AssistantBubble() {
       const trimmed = text.trim();
       if (!trimmed || sending) return;
       setError(null);
+      // A new turn supersedes any pending proposal / result banner.
+      clearProposal();
+      setAuthorizeResult(null);
 
       const nextTurns: ChatTurn[] = [
         ...turns,
@@ -233,6 +333,7 @@ export function AssistantBubble() {
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
           body: JSON.stringify({
+            mode,
             messages: nextTurns
               .filter((t) => t.role === "user" || (t.role === "assistant" && t.text))
               .map((t) => ({ role: t.role, content: t.text })),
@@ -280,11 +381,24 @@ export function AssistantBubble() {
         setSending(false);
       }
     },
-    [turns, sending]
+    [turns, sending, mode, clearProposal]
   );
 
   const applyEvent = useCallback(
     (event: { type: string; [k: string]: unknown }) => {
+      // A control proposal is not part of an assistant text turn — surface it
+      // as a confirm card rather than folding it into the transcript.
+      if (event.type === "proposal" && event.proposal && typeof event.proposal === "object") {
+        const p = event.proposal as Proposal;
+        setAuthorizeError(null);
+        setAuthorizeResult(null);
+        setProposalExpired(false);
+        setProposal(p);
+        if (expiryRef.current) clearTimeout(expiryRef.current);
+        const ttlMs = Math.max(5, Number(p.expires_in_s) || 120) * 1000;
+        expiryRef.current = setTimeout(() => setProposalExpired(true), ttlMs);
+        return;
+      }
       setTurns((prev) => {
         const last = prev[prev.length - 1];
         if (!last || last.role !== "assistant") return prev;
@@ -313,18 +427,58 @@ export function AssistantBubble() {
     []
   );
 
+  const authorizeProposal = useCallback(async () => {
+    if (!proposal || authorizing || proposalExpired) return;
+    setAuthorizing(true);
+    setAuthorizeError(null);
+    try {
+      await authorizeAssistantAction(
+        proposal.equipment_id,
+        proposal.passthrough_action,
+        proposal.args
+      );
+      setAuthorizeResult(
+        `Authorized ${proposal.action} on ${proposal.equipment_name}.`
+      );
+      clearProposal();
+    } catch (e) {
+      // The device's 412/423 (precondition / claim) is the real backstop and
+      // arrives here as an ApiError; surface its structured detail.
+      const msg =
+        e instanceof ApiError
+          ? `${e.status}: ${e.message}`
+          : (e as Error).message;
+      setAuthorizeError(msg);
+    } finally {
+      setAuthorizing(false);
+    }
+  }, [proposal, authorizing, proposalExpired, clearProposal]);
+
   const clearHistory = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
     setTurns([]);
     setError(null);
-    sessionStorage.removeItem(STORAGE_KEY);
-  }, []);
+    clearProposal();
+    setAuthorizeResult(null);
+  }, [clearProposal]);
 
   // Suppress the launcher entirely if the dashboard host has no API key.
   // The MCP path (Claude Code) is the supported alternative; see the deploy
   // README for `claude mcp add`.
   if (configured !== true) return null;
+
+  // Mode-driven accent. Purple must be unmistakable and panel-wide in Control
+  // mode (UI_DESIGN §5.2), not a small badge.
+  const launcherClass = controlMode
+    ? "bg-purple-600 hover:bg-purple-700 focus-visible:ring-purple-400"
+    : "bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-400";
+  const sendClass = controlMode
+    ? "bg-purple-600 hover:bg-purple-700"
+    : "bg-emerald-600 hover:bg-emerald-700";
+  const focusClass = controlMode
+    ? "focus:border-purple-500"
+    : "focus:border-emerald-500";
 
   return (
     <>
@@ -333,7 +487,7 @@ export function AssistantBubble() {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label={open ? "Close lab assistant" : "Open lab assistant"}
-        className="fixed bottom-5 right-5 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2"
+        className={`fixed bottom-5 right-5 z-50 flex h-12 w-12 items-center justify-center rounded-full text-white shadow-lg transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${launcherClass}`}
       >
         {open ? (
           <svg
@@ -374,13 +528,19 @@ export function AssistantBubble() {
             left: (position ?? defaultPosition()).x,
             top: (position ?? defaultPosition()).y,
           }}
-          className="fixed z-50 flex h-[520px] w-[380px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-surface-raised shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+          className={`fixed z-50 flex h-[520px] w-[380px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border bg-surface-raised shadow-2xl dark:bg-slate-900 ${
+            controlMode
+              ? "border-purple-300 dark:border-purple-800"
+              : "border-slate-200 dark:border-slate-700"
+          }`}
         >
           <header
             onPointerDown={onDragStart}
-            className={`flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-700 ${
-              dragging ? "cursor-grabbing" : "cursor-grab"
-            } select-none touch-none`}
+            className={`flex items-center justify-between gap-2 border-b px-3 py-2 ${
+              controlMode
+                ? "border-purple-200 bg-purple-50/60 dark:border-purple-800 dark:bg-purple-950/30"
+                : "border-slate-200 dark:border-slate-700"
+            } ${dragging ? "cursor-grabbing" : "cursor-grab"} select-none touch-none`}
             title="Drag to move"
           >
             <div className="flex flex-col">
@@ -388,10 +548,20 @@ export function AssistantBubble() {
                 Lab Assistant
               </span>
               <span className="text-[10px] text-ink-subtle dark:text-slate-500">
-                Read-only · history + journald
+                {controlMode
+                  ? "Control · proposes actions you authorize"
+                  : "Read-only · history + journald"}
               </span>
             </div>
             <div className="flex items-center gap-1">
+              <ModeToggle
+                mode={mode}
+                eligible={controlEligible === true}
+                onChange={(m) => {
+                  setMode(m);
+                  if (m === "ask") clearProposal();
+                }}
+              />
               {turns.length > 0 && (
                 <button
                   type="button"
@@ -421,17 +591,45 @@ export function AssistantBubble() {
           >
             {turns.length === 0 && (
               <div className="text-xs text-ink-subtle dark:text-slate-500">
-                Ask about lab equipment history — for example:
-                <ul className="mt-2 list-disc space-y-1 pl-4">
-                  <li>Has the plateloc had any errors today?</li>
-                  <li>Which devices are unreachable right now?</li>
-                  <li>What does the API log look like over the past hour?</li>
-                </ul>
+                {controlMode ? (
+                  <>
+                    Control mode. Ask me to operate a device — I&apos;ll propose
+                    a single action for you to authorize. For example:
+                    <ul className="mt-2 list-disc space-y-1 pl-4">
+                      <li>Move the xArm to the plateloc-out node.</li>
+                      <li>What can the xArm do right now?</li>
+                    </ul>
+                  </>
+                ) : (
+                  <>
+                    Ask about lab equipment history — for example:
+                    <ul className="mt-2 list-disc space-y-1 pl-4">
+                      <li>Has the plateloc had any errors today?</li>
+                      <li>Which devices are unreachable right now?</li>
+                      <li>What does the API log look like over the past hour?</li>
+                    </ul>
+                  </>
+                )}
               </div>
             )}
             {turns.map((turn, i) => (
-              <Turn key={i} turn={turn} />
+              <Turn key={i} turn={turn} controlMode={controlMode} />
             ))}
+            {proposal && (
+              <ProposalCard
+                proposal={proposal}
+                expired={proposalExpired}
+                authorizing={authorizing}
+                error={authorizeError}
+                onAuthorize={() => void authorizeProposal()}
+                onDismiss={clearProposal}
+              />
+            )}
+            {authorizeResult && (
+              <div className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200">
+                {authorizeResult}
+              </div>
+            )}
             {error && (
               <div className="rounded border border-rose-300 bg-rose-50 px-2 py-1 text-xs text-rose-800 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-200">
                 {error}
@@ -440,7 +638,11 @@ export function AssistantBubble() {
           </div>
 
           <form
-            className="border-t border-slate-200 px-3 py-2 dark:border-slate-700"
+            className={`border-t px-3 py-2 ${
+              controlMode
+                ? "border-purple-200 dark:border-purple-800"
+                : "border-slate-200 dark:border-slate-700"
+            }`}
             onSubmit={(e) => {
               e.preventDefault();
               void sendMessage(input);
@@ -456,15 +658,21 @@ export function AssistantBubble() {
                     void sendMessage(input);
                   }
                 }}
-                placeholder={sending ? "Working…" : "Ask about the lab…"}
+                placeholder={
+                  sending
+                    ? "Working…"
+                    : controlMode
+                      ? "Ask me to operate a device…"
+                      : "Ask about the lab…"
+                }
                 rows={2}
                 disabled={sending}
-                className="flex-1 resize-none rounded border border-slate-300 bg-white px-2 py-1 text-sm text-ink shadow-inner focus:border-emerald-500 focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className={`flex-1 resize-none rounded border border-slate-300 bg-white px-2 py-1 text-sm text-ink shadow-inner focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${focusClass}`}
               />
               <button
                 type="submit"
                 disabled={sending || !input.trim()}
-                className="self-stretch rounded bg-emerald-600 px-3 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
+                className={`self-stretch rounded px-3 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700 ${sendClass}`}
               >
                 Send
               </button>
@@ -476,14 +684,151 @@ export function AssistantBubble() {
   );
 }
 
-function Turn({ turn }: { turn: ChatTurn }) {
+function ModeToggle({
+  mode,
+  eligible,
+  onChange,
+}: {
+  mode: Mode;
+  eligible: boolean;
+  onChange: (m: Mode) => void;
+}) {
+  const disabled = !eligible;
+  return (
+    <div
+      className="mr-1 flex overflow-hidden rounded border border-slate-300 text-[10px] font-medium dark:border-slate-600"
+      title={
+        disabled
+          ? "Control mode requires an operator role on at least one device"
+          : "Switch between read-only and propose-only control"
+      }
+    >
+      <button
+        type="button"
+        onClick={() => onChange("ask")}
+        className={`px-2 py-0.5 ${
+          mode === "ask"
+            ? "bg-emerald-600 text-white"
+            : "text-ink-subtle hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+        }`}
+      >
+        Ask
+      </button>
+      <button
+        type="button"
+        onClick={() => !disabled && onChange("control")}
+        disabled={disabled}
+        aria-disabled={disabled}
+        className={`px-2 py-0.5 ${
+          mode === "control"
+            ? "bg-purple-600 text-white"
+            : disabled
+              ? "cursor-not-allowed text-slate-300 dark:text-slate-600"
+              : "text-ink-subtle hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+        }`}
+      >
+        Control
+      </button>
+    </div>
+  );
+}
+
+function ProposalCard({
+  proposal,
+  expired,
+  authorizing,
+  error,
+  onAuthorize,
+  onDismiss,
+}: {
+  proposal: Proposal;
+  expired: boolean;
+  authorizing: boolean;
+  error: string | null;
+  onAuthorize: () => void;
+  onDismiss: () => void;
+}) {
+  const argEntries = Object.entries(proposal.args ?? {});
+  return (
+    <div className="rounded-lg border border-purple-300 bg-purple-50 p-2 text-[12px] dark:border-purple-700 dark:bg-purple-950/40">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-semibold text-purple-900 dark:text-purple-100">
+          Authorize action
+        </span>
+        <span className="text-[10px] text-purple-700 dark:text-purple-300">
+          proposed to {proposal.actor}
+        </span>
+      </div>
+      {/* Authoritative fields first; the model's reason is subordinate. */}
+      <dl className="space-y-0.5 text-ink dark:text-slate-100">
+        <Row label="Device" value={`${proposal.equipment_name} (${proposal.equipment_id})`} />
+        <Row label="Action" value={proposal.action} />
+        {argEntries.length > 0 && (
+          <Row
+            label="Args"
+            value={argEntries.map(([k, v]) => `${k}=${String(v)}`).join(", ")}
+          />
+        )}
+        <Row
+          label="Device state"
+          value={`${proposal.device_state.equipment_status} · ${proposal.device_state.activity}`}
+        />
+      </dl>
+      {proposal.reason && (
+        <p className="mt-1 text-[11px] italic text-purple-800 dark:text-purple-300">
+          {proposal.reason}
+        </p>
+      )}
+      {error && (
+        <p className="mt-1 text-[11px] text-rose-700 dark:text-rose-300">{error}</p>
+      )}
+      {expired && !error && (
+        <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+          This proposal expired. Ask again to get a fresh one.
+        </p>
+      )}
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onAuthorize}
+          disabled={authorizing || expired}
+          className="rounded bg-purple-600 px-3 py-1 text-[11px] font-medium text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
+        >
+          {authorizing ? "Authorizing…" : "Authorize"}
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          disabled={authorizing}
+          className="rounded px-2 py-1 text-[11px] text-ink-subtle hover:bg-purple-100 disabled:opacity-60 dark:text-slate-400 dark:hover:bg-purple-900/40"
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-2">
+      <dt className="w-20 shrink-0 text-[10px] uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+        {label}
+      </dt>
+      <dd className="break-words font-mono text-[11px]">{value}</dd>
+    </div>
+  );
+}
+
+function Turn({ turn, controlMode }: { turn: ChatTurn; controlMode: boolean }) {
   const isUser = turn.role === "user";
+  const userBg = controlMode ? "bg-purple-600 text-white" : "bg-emerald-600 text-white";
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
         className={`max-w-[85%] whitespace-pre-wrap break-words rounded-lg px-3 py-2 text-[13px] leading-relaxed ${
           isUser
-            ? "bg-emerald-600 text-white"
+            ? userBg
             : "bg-slate-100 text-ink dark:bg-slate-800 dark:text-slate-100"
         }`}
       >

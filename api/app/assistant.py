@@ -47,13 +47,15 @@ Safety
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import os
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -69,6 +71,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = os.environ.get("ASSISTANT_CLAUDE_MODEL", "sonnet")
 DEFAULT_TIMEOUT_S = float(os.environ.get("ASSISTANT_CLAUDE_TIMEOUT_S", "120"))
 ALLOWED_TOOL_GLOB = "mcp__lab-history__*"
+# Control mode (UI_DESIGN §5) adds the propose-only lab-control server. Neither
+# of its tools actuates; the model's most privileged act is returning a
+# validated proposal the operator then authorizes in the browser.
+CONTROL_TOOL_GLOB = "mcp__lab-control__*"
 
 
 def _repo_root() -> Path:
@@ -133,30 +139,88 @@ def _uv_binary() -> str:
     return "uv"
 
 
-def _write_mcp_config() -> Path:
-    """Materialise the explicit ``lab-history`` MCP config and return its path.
+def _mcp_server_command(script: str) -> tuple[str, list[str]]:
+    """Resolve how to launch one of our MCP servers: ``(command, args)``.
 
-    Mirrors the Local-scope registration in ``~/.claude.json`` but with an
-    absolute ``--project``, so it resolves regardless of the subprocess cwd.
+    Prefer the console script installed beside the *running* interpreter — i.e.
+    the same venv serving this app. Going through ``uv run --project`` instead
+    makes every chat turn depend on uv being able to sync the project, and uv
+    needs ``~/.cache/uv`` **writable**. The deployed unit sets
+    ``ProtectHome=read-only``, so under systemd `uv run` fails and the CLI
+    reports the server as ``status: "failed"`` — with no tools, no error frame,
+    and nothing in the journal. The model then says its tools are unreachable,
+    which reads like a connectivity problem rather than a sandbox one.
+
+    Launching the console script directly needs no writable HOME at all
+    (verified against a read-only-home sandbox), so it survives the hardening.
+    The ``uv run`` path is kept as a fallback for a dev checkout where the api
+    package is not installed into the interpreter's own environment.
     """
 
-    config = {
-        "mcpServers": {
-            "lab-history": {
-                "type": "stdio",
-                "command": _uv_binary(),
-                "args": [
-                    "run",
-                    "--project",
-                    str(_repo_root() / "api"),
-                    "lab-history-mcp",
-                ],
-                "env": {},
-            }
+    candidates = [Path(sys.executable).parent / script]
+    found = shutil.which(script)
+    if found:
+        candidates.append(Path(found))
+    for c in candidates:
+        if c.is_file() and os.access(c, os.X_OK):
+            return str(c), []
+    return _uv_binary(), ["run", "--project", str(_repo_root() / "api"), script]
+
+
+def _control_server_env(actor: str) -> dict[str, str]:
+    """Environment for the spawned ``lab-control`` MCP server.
+
+    The verified actor is bound here (``LAB_ACTOR``) rather than passed as a
+    tool argument, so the model cannot choose whose authority it borrows
+    (UI_DESIGN §5.3). Selected config vars are forwarded so the control server
+    resolves the same registry + authz sidecar as the dashboard.
+    """
+
+    env = {"LAB_ACTOR": actor}
+    for key in (
+        "AUTH_SERVICE_BASE",
+        "CONTROL_AUTHZ_ENFORCE",
+        "LAB_REGISTRY_PATH",
+        "LAB_DASHBOARD_API_URL",
+    ):
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
+    return env
+
+
+def _write_mcp_config(*, include_control: bool = False, actor: str | None = None) -> Path:
+    """Materialise the explicit MCP config and return its path.
+
+    Always registers the read-only ``lab-history`` server. When
+    ``include_control`` (Control mode with a verified ``actor``), also registers
+    the propose-only ``lab-control`` server. Every path written here is
+    absolute (see :func:`_mcp_server_command`), so the servers resolve
+    regardless of the subprocess cwd.
+    """
+
+    history_cmd, history_args = _mcp_server_command("lab-history-mcp")
+    servers: dict[str, Any] = {
+        "lab-history": {
+            "type": "stdio",
+            "command": history_cmd,
+            "args": history_args,
+            "env": {},
         }
     }
-    path = _runtime_dir() / "mcp.json"
-    path.write_text(json.dumps(config, indent=2))
+    if include_control and actor:
+        control_cmd, control_args = _mcp_server_command("lab-control-mcp")
+        servers["lab-control"] = {
+            "type": "stdio",
+            "command": control_cmd,
+            "args": control_args,
+            "env": _control_server_env(actor),
+        }
+    # A distinct filename per mode so a control-mode config never lingers into
+    # a later ask-mode turn (and vice versa).
+    name = "mcp.control.json" if include_control and actor else "mcp.json"
+    path = _runtime_dir() / name
+    path.write_text(json.dumps({"mcpServers": servers}, indent=2))
     return path
 
 
@@ -201,6 +265,29 @@ Be terse. Operators are glancing at a small chat panel, not reading prose.
   rather than speculate."""
 
 
+# Appended to SYSTEM_PROMPT only when the operator is in Control mode and a
+# verified actor is bound. Even then, no tool actuates hardware — see
+# assistant_control.py.
+CONTROL_PROMPT_ADDENDUM = """
+
+CONTROL MODE IS ACTIVE.
+You may now PROPOSE a single equipment action for the operator to authorize,
+using the lab-control tools. You still cannot actuate hardware yourself: a
+proposal only renders a confirm card that a human must read and click.
+
+When the user asks you to make a device do something:
+1. Call list_available_actions(equipment_id) to see what the device currently
+   allows and which actions are proposable (each with its argument schema).
+   Use list_equipment_now first if you need the canonical equipment_id.
+2. Call propose_action(equipment_id, action, args, reason) for exactly ONE
+   action on ONE device. `action` must be a string from the device's live
+   allowed_actions; `reason` is a short human-facing justification.
+
+Only robot_arm move targets are proposable in this mode. Safety-floor actions
+(stop / connect / clear_errors) are operator-only and not proposable. If a
+proposal is refused, relay the reason plainly — never try to route around it."""
+
+
 # ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
@@ -213,6 +300,10 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+    # UI_DESIGN §5: "ask" (default, read-only) or "control" (propose-only).
+    # The server decides the actual toolset from the verified identity — a
+    # client that lies about its mode gains nothing.
+    mode: Literal["ask", "control"] = "ask"
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +377,42 @@ def _rate_limit_block_message(info: dict[str, Any] | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _proposal_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract a control proposal from a tool_result block, if present.
+
+    ``lab-control``'s ``propose_action`` returns a JSON string of the shape
+    ``{"proposal": {...}}``. Claude relays a tool result's content either as a
+    plain string or as a list of ``{"type":"text","text":...}`` blocks; handle
+    both. Returns the inner proposal dict, or None for any other tool result
+    (including refusals, which carry ``error``/``code`` instead)."""
+
+    content = block.get("content")
+    texts: list[str] = []
+    if isinstance(content, str):
+        texts.append(content)
+    elif isinstance(content, list):
+        for c in content:
+            if isinstance(c, dict) and isinstance(c.get("text"), str):
+                texts.append(c["text"])
+    for text in texts:
+        try:
+            data = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        # Claude Code wraps MCP tool output as {"result": "<json string>"};
+        # other builds pass the tool's JSON through unchanged. The envelope is
+        # a CLI implementation detail, not a contract, so accept both rather
+        # than pinning to whichever one this host happens to emit.
+        if isinstance(data, dict) and isinstance(data.get("result"), str):
+            try:
+                data = json.loads(data["result"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if isinstance(data, dict) and isinstance(data.get("proposal"), dict):
+            return data["proposal"]
+    return None
+
+
 def _translate_event(event: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert one ``claude -p --output-format stream-json`` line into zero
     or more frames suitable for the AssistantBubble SSE consumer.
@@ -330,6 +457,12 @@ def _translate_event(event: dict[str, Any]) -> list[dict[str, Any]]:
                     # the Bubble's match-most-recent logic accepts any name
                     # so we pass through "tool" if absent.
                     out.append({"type": "tool_result", "name": "tool"})
+                    # Control mode: a propose_action result carries a validated
+                    # proposal. Surface it as a dedicated frame so the Bubble
+                    # can render a confirm card the operator must authorize.
+                    proposal = _proposal_from_tool_result(block)
+                    if proposal is not None:
+                        out.append({"type": "proposal", "proposal": proposal})
 
     elif etype == "result":
         # Final wrap-up. is_error=true means a hard failure that didn't
@@ -359,7 +492,13 @@ def _translate_event(event: dict[str, Any]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-async def _run_claude(messages: list[ChatMessage]) -> AsyncIterator[bytes]:
+async def _run_claude(
+    messages: list[ChatMessage],
+    *,
+    control: bool = False,
+    actor: str | None = None,
+    on_proposal: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
+) -> AsyncIterator[bytes]:
     binary = _claude_binary()
     if binary is None:
         yield _sse(
@@ -373,8 +512,13 @@ async def _run_claude(messages: list[ChatMessage]) -> AsyncIterator[bytes]:
         )
         return
 
+    include_control = control and bool(actor)
     prompt = _format_prompt(messages)
-    mcp_config_path = _write_mcp_config()
+    mcp_config_path = _write_mcp_config(include_control=include_control, actor=actor)
+    system_prompt = SYSTEM_PROMPT + (CONTROL_PROMPT_ADDENDUM if include_control else "")
+    allowed_tools = ALLOWED_TOOL_GLOB
+    if include_control:
+        allowed_tools = f"{ALLOWED_TOOL_GLOB} {CONTROL_TOOL_GLOB}"
     args = [
         binary,
         "--print",
@@ -384,12 +528,12 @@ async def _run_claude(messages: list[ChatMessage]) -> AsyncIterator[bytes]:
         "--verbose",  # required alongside stream-json
         "--no-session-persistence",
         "--append-system-prompt",
-        SYSTEM_PROMPT,
+        system_prompt,
         "--mcp-config",
         str(mcp_config_path),
         "--strict-mcp-config",
         "--allowedTools",
-        ALLOWED_TOOL_GLOB,
+        allowed_tools,
         "--model",
         DEFAULT_MODEL,
         "--permission-mode",
@@ -453,6 +597,13 @@ async def _run_claude(messages: list[ChatMessage]) -> AsyncIterator[bytes]:
             for frame in _translate_event(event):
                 if frame.get("type") in ("done", "error"):
                     saw_terminal = True
+                if frame.get("type") == "proposal" and on_proposal is not None:
+                    proposal = frame.get("proposal")
+                    if isinstance(proposal, dict):
+                        try:
+                            await on_proposal(proposal)
+                        except Exception:  # noqa: BLE001 - audit must not break the stream
+                            logger.warning("assistant_proposal audit failed", exc_info=True)
                 yield _sse(frame)
     finally:
         if timeout_handle is not None:
@@ -531,15 +682,67 @@ def build_assistant_router() -> APIRouter:
         # Attribution (Phase 2): X-Auth-User is set by the Next.js middleware
         # after verifying the session — never client-supplied. The backend
         # Claude account is shared, so who-asked lives in this log line.
+        actor = request.headers.get("x-auth-user")
+
+        # Control mode is only honoured for a verified actor, and never under
+        # the DASHBOARD_CONTROL_OPEN dev bypass (which has no identity to bind
+        # a proposal to). The client's requested mode is advisory; the server
+        # decides the toolset. Per-equipment authorization is enforced inside
+        # the lab-control server's propose_action, against this same actor.
+        control_open = os.environ.get("DASHBOARD_CONTROL_OPEN") == "true"
+        control = body.mode == "control" and bool(actor) and not control_open
+
         logger.info(
-            "assistant chat: user=%s messages=%d",
-            request.headers.get("x-auth-user") or "unauthenticated(dev-open)",
+            "assistant chat: user=%s mode=%s->%s messages=%d",
+            actor or "unauthenticated(dev-open)",
+            body.mode,
+            "control" if control else "ask",
             len(body.messages),
         )
 
+        db = getattr(request.app.state, "db", None)
+
+        async def record_proposal(proposal: dict[str, Any]) -> None:
+            """Audit the proposal itself (not just the eventual click) so the
+            trail shows what talked the operator into authorizing. Best-effort;
+            never blocks or breaks the stream. Paired with the ``origin`` field
+            on the later ``control_action`` row (control.py)."""
+
+            if db is None:
+                return
+            equipment_id = str(proposal.get("equipment_id") or "unknown")
+            payload = {
+                "actor": actor,
+                "action": proposal.get("action"),
+                "passthrough_action": proposal.get("passthrough_action"),
+                "args": proposal.get("args"),
+                "reason": proposal.get("reason"),
+                "device_state": proposal.get("device_state"),
+            }
+            message = (
+                f"assistant proposed {proposal.get('action')} on "
+                f"{equipment_id} to {actor}"
+            )
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                functools.partial(
+                    db.record_equipment_event,
+                    equipment_id,
+                    "assistant_proposal",
+                    message=message,
+                    payload=payload,
+                ),
+            )
+
         async def gen() -> AsyncIterator[bytes]:
             try:
-                async for frame in _run_claude(body.messages):
+                async for frame in _run_claude(
+                    body.messages,
+                    control=control,
+                    actor=actor,
+                    on_proposal=record_proposal if control else None,
+                ):
                     yield frame
             except asyncio.CancelledError:
                 raise

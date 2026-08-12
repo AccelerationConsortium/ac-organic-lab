@@ -73,6 +73,27 @@ def test_get_control_actions_tolerates_missing_payload(tmp_path):
     db.close()
 
 
+def test_get_control_actions_surfaces_origin(tmp_path):
+    db = _db(tmp_path)
+    db.record_equipment_event(
+        "xarm",
+        "control_action",
+        message="graph/move_to",
+        payload={"action": "graph/move_to", "owner": "a", "origin": "assistant"},
+    )
+    db.record_equipment_event(
+        "xarm",
+        "control_action",
+        message="stop",
+        payload={"action": "stop", "owner": "a"},
+    )
+    rows = db.get_control_actions()
+    origin_by_action = {r["action"]: r["origin"] for r in rows}
+    assert origin_by_action["graph/move_to"] == "assistant"
+    assert origin_by_action["stop"] is None
+    db.close()
+
+
 def test_get_equipment_events_filters_by_event_type(tmp_path):
     db = _db(tmp_path)
     db.record_equipment_event("ot2_hte", "state_transition", from_state="ready", to_state="busy")

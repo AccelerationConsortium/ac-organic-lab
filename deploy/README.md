@@ -170,6 +170,121 @@ The units include systemd hardening directives:
 free defense-in-depth. `ReadWritePaths` is limited to each service's own
 directory inside `/opt/ac-organic-lab/`.
 
+## Secrets in service environments (`Environment=` vs `EnvironmentFile=`)
+
+**Rule: a secret never goes in `Environment=`.** Put it in an
+`EnvironmentFile=` with mode `0640 root:<service-user>`, and keep it out of the
+process's own startup logging.
+
+The reason is not file permissions — it is that systemd re-publishes
+`Environment=` values through a world-readable property:
+
+```bash
+systemctl show caddy.service -p Environment      # prints values, no root needed
+```
+
+Locking the file down does **not** help. As of 2026-08-12 the edge secrets live
+in `/etc/systemd/system/caddy.service.d/edge-secret.conf`, mode `600 root:root`
+— unreadable as `sdl2` — and `systemctl show` prints every one of them anyway,
+because systemd parsed them at load time. Contrast
+`ac-organic-lab-api.service`, which uses `EnvironmentFile=` and whose
+`Environment` property is empty; file contents are never exposed that way.
+
+**Why it matters here.** Those values are the per-device edge secrets
+(`XARM_EDGE_SHARED_SECRET`, `OT2_EDGE_SECRET`, `GRAPHCHAT_EDGE_SECRET`) that
+let a device trust an injected `X-Auth-User` (see
+[`AUTH_DESIGN.md`](../docs/AUTH_DESIGN.md) → *How a device learns who the
+operator is*). Anyone with a shell on this host can read one, then POST
+straight to a device on the Tailnet with `X-Auth-User: <anyone>` and act as
+that person — bypassing the edge, the dashboard passthrough, and the
+`control_action` audit row. Bounded, in that a shell here already implies lab
+control, but it converts "has shell" into "can impersonate a named operator in
+the audit trail", which is a different and worse thing.
+
+**Second leak on the same service:** `ExecStart` runs `caddy run --environ`,
+which prints the entire environment to stdout at every start, i.e. into the
+journal for anyone in `adm` / `systemd-journal`. Moving to an
+`EnvironmentFile` does not fix that — `--environ` has to go too.
+
+### Onboarding an edge-fronted device: the secret goes in **two** places
+
+A device that trusts injected identity needs its secret in three environments,
+and it is easy to stop at two:
+
+1. **the device's own service env** (`XARM_EDGE_SHARED_SECRET` in its NSSM/systemd config)
+2. **Caddy's env**, so the edge can inject it on that device's panel routes
+3. **the dashboard API's env** (`/home/sdl2/caoyang/ac-organic-lab/.env`), so the
+   *control passthrough* — tile buttons, the workflow executor, the assistant's
+   Authorize — can present it too
+
+Step 3 is the one that gets missed, because the panel works without it: the
+panel goes through Caddy, the passthrough does not. Symptom is a device that
+operates fine from its own framed UI while every dashboard control returns 401.
+`equipment.yaml` names the variable (`edge_secret_env:`) but cannot supply its
+value.
+
+The dashboard logs this rather than failing quietly — grep the journal after
+adding a device:
+
+```bash
+journalctl -u ac-organic-lab-api -S -10min | grep edge_secret_env
+# edge_secret_env=XARM_EDGE_SHARED_SECRET is set on xarm_translocation
+# but that variable is empty; falling back to DEVICE_EDGE_SHARED_SECRET
+```
+
+That line means step 3 is missing. Add the variable to `.env` and restart
+`ac-organic-lab-api` (an `EnvironmentFile` is read at unit start, so a reload is
+not enough).
+
+### Migration (do it when nobody is mid-run — restarting Caddy drops the edge)
+
+Every dashboard URL goes through Caddy, so this is a brief full outage of the
+web UI, the device panels and the auth flow. Nothing device-side changes: each
+device keeps its own copy of its secret.
+
+```bash
+# 1. Copy the current values into a locked file, without ever printing them.
+sudo install -m 0640 -o root -g caddy /dev/null /etc/caddy/caddy.env
+systemctl show caddy.service -p Environment --value | tr ' ' '\n' \
+  | grep -E '^(XARM_EDGE_SHARED_SECRET|OT2_EDGE_SECRET|GRAPHCHAT_EDGE_SECRET)=' \
+  | sudo tee /etc/caddy/caddy.env >/dev/null
+sudo wc -l /etc/caddy/caddy.env          # expect 3
+
+# 2. Replace the drop-in: EnvironmentFile instead of Environment, and drop
+#    --environ so the values stop being printed at startup.
+sudo tee /etc/systemd/system/caddy.service.d/edge-secret.conf >/dev/null <<'CONF'
+[Service]
+EnvironmentFile=/etc/caddy/caddy.env
+# Clear the inherited ExecStart before setting our own (systemd requires the
+# reset), and run without --environ: it dumps the environment to the journal.
+ExecStart=
+ExecStart=/usr/bin/caddy run --config /etc/caddy/Caddyfile
+CONF
+
+sudo systemctl daemon-reload
+sudo systemctl restart caddy.service
+```
+
+Verify — the first command should now print nothing, and the panels should
+still answer their auth gate rather than 502:
+
+```bash
+systemctl show caddy.service -p Environment          # expect: Environment=
+curl -s -o /dev/null -w '%{http_code}\n' http://100.64.254.6/xarm5/web/    # 401 (gate), not 502
+curl -s -o /dev/null -w '%{http_code}\n' http://100.64.254.6/              # 200
+```
+
+A 502 on the panel means Caddy started without the secret — check that
+`/etc/caddy/caddy.env` is readable by the `caddy` user and that the variable
+names match the `{env.*}` placeholders in the Caddyfile.
+
+**Rollback:** restore the previous drop-in content (`Environment=` lines) and
+`daemon-reload` + `restart`. Keep a copy before step 2.
+
+**While you are there:** the same reasoning applies to any future service that
+needs a secret — and to `equipment.yaml`, which must keep naming *variables*
+rather than carrying values, since it is committed.
+
 ## Service dependencies
 
 - **API** waits for `network-online.target` and `tailscaled.service` so

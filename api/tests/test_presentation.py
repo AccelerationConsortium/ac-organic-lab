@@ -254,3 +254,30 @@ def test_committed_yaml_round_trips_through_presentation() -> None:
     for s in listing.equipment:
         assert s.tile is not None
         assert s.enabled in (True, False)
+
+
+def test_openapi_document_is_served_under_api_prefix() -> None:
+    """The API Reference page reaches this server only through the Next proxy,
+    which forwards `/api/*` alone — so the OpenAPI document has to live there
+    too, not just at FastAPI's default `/openapi.json`."""
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        r = client.get("/api/openapi.json")
+
+    assert r.status_code == 200
+    doc = r.json()
+    assert doc["openapi"].startswith("3.")
+    paths = doc["paths"]
+    # A few load-bearing routes across different routers.
+    for path in (
+        "/api/equipment",
+        "/api/catalog",
+        "/api/history/uptime",
+        "/api/assistant/chat",
+        "/api/openapi.json",
+    ):
+        assert path in paths, f"{path} missing from the served document"

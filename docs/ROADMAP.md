@@ -241,7 +241,7 @@ host. Spec is what the device's live `/status` envelope reports.
 | `agilent_biostack` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and verified live 2026-08-03** (commit e531170): `activity` / `activity_since` from the macro-in-flight flag, reserved `cycles_total` counting plate moves (`stage_plate` / `present_plate` / `handoff`; `home` is `running` but carries no plate, so not a cycle), `allowed_actions` gated on activity. No read-off-lock fix was needed — `get_status()` already avoided `_op_lock`, so a poll answers during a ~21 s macro. Claim trio + `/control/{startup,shutdown,home,stage_plate,present_plate,handoff}` on real hardware (`details.com_port: COM8`, `bench_validated: 2026-05-29`), not dry-run. Still not exercised end-to-end from a workflow or a dashboard tile — see the sub-task. |
 | `pypoe_web` | `http` | 1.1 | ✅ `ready` | Internal web service; no control surface. |
 | `analytica_db` | `http` | 1.0 | ✅ `ready` | Record-layer tile; STATUS_SPEC `/status` envelope live alongside the data API. |
-| `env_hte` | `http` | **1.2** | ✅ `ready` | **Live 2026-07-31.** `sense-every-zone` gateway on `sdl2-pi0-environ-01:8030`, `status_path: /zones/env_hte/status`; SEN55 + PiSugar 3, both components `ready`. Monitoring-only, so v1.2 via the §9 read-only clause (`allowed_actions: []`, `activity` always `idle`). Reached over a DERP relay — `poll_timeout_seconds: 8.0`, observed latency ~120 ms. |
+| `env_hte` | `http` | **1.2** | ✅ `ready` | **Live 2026-07-31.** `sense-every-zone` gateway on `sdl2-pi0-environ-01:8030`, `status_path: /zones/env_hte/status`; SEN55 + PiSugar 3, both components `ready`. Monitoring-only, so v1.2 via the §9 read-only clause (`allowed_actions: []`, `activity` always `idle`). Reached over a DERP relay — `poll_timeout_seconds: 8.0`, observed latency ~120 ms. **Reachable only ~56 % of the time** — campus DHCP lease expiry, not a device fault; the tile reads `ready` on both sides of each gap. See open items below. |
 | `env_storage`, `env_lab499_west`, `env_lab499_east` | `mock` | 1.0 | dry_run | Awaiting hardware (`sdl2-pi0-environ-02` enrolled but offline). Synthetic envelopes mirror `env_hte`'s metric shape so readers take one path. |
 
 ### Remaining migration work (priority order)
@@ -571,6 +571,13 @@ Open:
   reader came up `requires_init`. `AppParameters` now carries
   `--extra api --extra plr --extra windows`; the same trap applies to any
   device whose driver lives behind an extra.
+- [x] **Tailscale `DependOnService` removed** (2026-08-11) — the service
+  was offline ~12.5 h on 2026-08-10 because it alone carried
+  `DependOnService: Tailscale` and a Tailscale MSI auto-update stopped it
+  via SCM's dependency cascade (a clean stop, so NSSM never restarted it).
+  Dependency cleared, stale NSSM description refreshed, recommendation
+  withdrawn from DEVICE_PC_SETUP §6. Full write-up under *Operational
+  regressions* below.
 - [ ] **pylabrobot v1 is coming.** PR #1000 ("v1b1 changes", merged to
   `main` 2026-08-01, 759 files) restructures machine interfaces and touches
   `biotek_backend.py`; branch `cytation-10x-fov` carries a
@@ -626,14 +633,26 @@ successful connect, so this failure mode now self-heals (see the
 
 Zone `env_hte` is live and registered (see the fleet notes above). Open:
 
-- [ ] **Deploy the metric-key rename to the Pi.** Device commit `7f22bf9`
-  (unsuffixed `metrics` keys) is pushed to `main` but **not yet running** —
-  the node still serves `temperature_c` / `humidity_rh` / `voc_index`, which
-  no reader now looks for, so the HTE map marker and its history series stay
-  empty until this lands. On `sdl2-pi0-environ-01`: `git -C
-  /opt/sense-every-zone pull && sudo systemctl restart sense-every-zone`,
-  then confirm `curl -s
-  http://127.0.0.1:8030/zones/env_hte/status | grep -o '"temperature"'`.
+- [x] **Metric-key rename deployed** (device commit `7f22bf9`, unsuffixed
+  `metrics` keys) — live since **2026-07-31 03:00 UTC**, i.e. the day the
+  zone went up. `sensor_readings` records a clean 57-second changeover: the
+  last `temperature_c` / `humidity_pct` / `co2_ppm` rows are stamped
+  `02:59:56Z`, the first `temperature` / `humidity` / `voc` / `nox` /
+  `pm25` / `pm10` / `battery` rows `03:00:53Z`, unbroken since. This entry
+  was stale from the day it was written — the HTE map marker and history
+  series were never actually empty. (Corrected 2026-08-11.)
+- [ ] **`env_hte` is only ~56 % reachable — campus DHCP lease expiry.**
+  Not a device fault: the `compsci` lease is 37800 s (10 h 30 m) and when it
+  expires NetworkManager does not re-acquire, so the node sits with no IPv4
+  for a further ~10 h 40 m. The Pi never reboots and the service never
+  restarts through any of it, so `/status` looks perfectly healthy on either
+  side of the gap. Free-running ~21 h 10 m period that drifts ~2 h 50 m
+  earlier daily, so the window walks through working hours. Full evidence,
+  the hypotheses already ruled out (Wi-Fi power-save, the PiSugar HAT), and
+  the provisioning steps are in the device repo's
+  `docs/REMOTE_ACCESS.md`. Durable fix is a DHCP reservation for
+  `2c:cf:67:e8:9a:4c` from campus IT, or moving the nodes to a lab AP —
+  the latter would also replace the DERP relay with a direct tailnet path.
 - [ ] **`/health` is not §3-conformant** — returns `{"ok": …,
   "dependencies": […], "timestamp": …}` instead of `{"status": "healthy"}`.
   Deliberate (the repo aliases `HealthResponse = ZoneHealthResponse` and
@@ -660,7 +679,36 @@ Zone `env_hte` is live and registered (see the fleet notes above). Open:
 (camera gateway down; `dose_every_well` placeholder hostname; `plateloc`
 COM driver failure — details in git history).
 
+**Cytation offline ~12.5 h, 2026-08-10 → cleared 2026-08-11.** The
+`cytation` service was the only NSSM service on the Cytation PC configured
+with `DependOnService: Tailscale`. Tailscale's MSI auto-updater (1.102.2,
+2026-08-10 11:11) stopped the Tailscale service mid-update, so Windows SCM
+stopped `cytation` with it — and SCM never restarts dependents when the
+dependency returns. The stop is *clean* (exit code 0, tidy uvicorn
+shutdown), so NSSM's `AppExit Default Restart` does not fire: that setting
+governs the app crashing, not NSSM receiving a STOP control. The reader sat
+`STOPPED` until restarted by hand ~12.5 h later; every sibling service
+(no dependency) was unaffected. Fixed by clearing the dependency
+(`sc config cytation depend= ""` — note `nssm reset ... DependOnService`
+reports success but does **not** clear it, the field is native SCM config),
+and verified no other service on the PC carries a Tailscale dependency.
+The `DependOnService Tailscale` recommendation this configuration came from
+is withdrawn from DEVICE_PC_SETUP §6, with the failure mode documented and
+a §8 troubleshooting row (clean-stop + MsiInstaller correlation) so the
+next instance is a minutes-long diagnosis. This incident class — a service
+left dead by an external event, discovered hours later — is what the
+`sdl-lab-hostops` fleet (AGENT_OPS.md) now exists to catch and, where
+whitelisted, remediate remotely. Residual watch item below.
+
 Active watch items (not regressions; behavioural notes):
+
+- **Tailscale auto-updates stop the Tailscale service on every release**
+  (MSI upgrade path). With the `cytation` dependency removed, no service on
+  the Cytation PC stops with it anymore — but a mid-update window still
+  drops tailnet reachability for a few seconds fleet-wide, and any *future*
+  `DependOnService Tailscale` reintroduces the 2026-08-10 outage class.
+  Never add that dependency (DEVICE_PC_SETUP §6); if update timing ever
+  matters, pin/stage Tailscale updates on the device PCs instead.
 
 - **`agilent_uplc_ms` poll latency** — ~1.5 s against a 5 s
   `poll_timeout_seconds`. Raise to 8 s if it ever errors.
@@ -731,10 +779,42 @@ out-of-band, un-audited?"):
 | cameras, plugs | **No** — gateway is loopback (`127.0.0.1:8002`) | n/a | **Low** — dashboard is the only network path |
 | press, fume hood, ot2_hte, cytation | Yes | **Yes** (X-Claim-Token → 423) | Rejected *if* a workflow holds the claim; cooperative + un-audited |
 | `plateloc`, `dose_every_well` | Yes | **Yes** (hard-enforced since 2026-05-31) | Rejected if a claim is held; cooperative + un-audited via direct `curl` |
-| `xarm_translocation` | Yes | **Yes** on `/control/*`; native `/web/` claim-awareness **unverified** | The `/web/` side-door is still advertised by the tile deep-link — the single most exposed control path in the lab |
+| `xarm_translocation` | Yes, but `/control/claim` is **login-gated** (401 `login_required`, verified 2026-08-11) | **Yes**; an action with no valid claim → 423 `claim_required` | **The narrowest exposure in the fleet, and the only device where a bare `curl` cannot get a claim at all.** Identity is checked at claim acquisition, and no action is reachable without a claim, so the un-audited direct path is closed for writes; reads (`/status`, `/graph/nearest`) stay open. The `/web/` side-door remains the operator path and is still un-audited. Cost: the dashboard could not drive this arm either until commit `152a87c` — see below. |
 | `agilent_uplc_ms` | Yes | **Yes** (X-Claim-Token → 423) | Rejected if a claim is held. A run can still start out-of-band in OpenLab CDS on the instrument PC — surfaced as `busy`, not preventable. |
 | `agilent_biostack` | Yes | **Yes** (X-Claim-Token → 423, verified 2026-08-03) | It grew a plate-moving `/control/*` surface (`home`, `stage_plate`, `present_plate`, `handoff`) at device v0.2.0, so it is no longer the harmless read-only row it used to be. Enforcement is now confirmed: a tokenless `POST /control/present_plate` returned **423 ahead of the 412** staged-plate interlock, with the device unchanged and no `last_error` — the probe was chosen precisely because that action is interlock-blocked, so it could not have moved a plate even had the claim check failed open. Rejected if a claim is held; cooperative + un-audited via direct `curl`, like every other row. |
 | pypoe | Yes | read-only, no control surface | n/a |
+
+**The xArm has partly closed this on its own (2026-08-11), and it cost us.**
+That device now refuses `/control/claim` without a device-accepted credential —
+step 2 of the plan below, realised device-side rather than at the edge. The
+dashboard, however, presented only the trusted-edge headers
+(`X-Auth-User` + `X-Edge-Auth`) whenever `DEVICE_EDGE_SHARED_SECRET` was set,
+which is always in production, and the deployed arm does not honour them. With
+no fallback, *every* dashboard-mediated action on that arm failed 401 — tiles,
+the workflow executor, and the assistant's Authorize button. Fixed in
+`152a87c` (fall back to the operator's own credential on 401); the executor
+path in `workflow.py` still takes the single-credential route and is untouched.
+Full evidence in [`EQUIP_STATUS.md`](EQUIP_STATUS.md) §10.
+
+Two things this table does **not** yet know:
+
+- ~~**Which credential the xArm accepts**~~ — **answered 2026-08-12.** It
+  honours the same `X-Auth-User` + `X-Edge-Auth` the passthrough already sends;
+  the secret is **per device** (Caddy injects `XARM_EDGE_SHARED_SECRET`) and the
+  dashboard was sending one device-agnostic value that did not match. Per-equipment
+  resolution shipped the same day (`edge_secret_env` on the registry entry), after
+  the interim single-value stopgap was found to have been holding the *OT-2's*
+  secret. Measured 2026-08-12: the OT-2 gateways gate `/control/*` on the claim
+  alone and never check identity, so the arm is the only device where this is
+  load-bearing today; the rest of the fleet is unprobed for the reason below. See
+  [`AUTH_DESIGN.md`](AUTH_DESIGN.md). Related: those edge secrets are readable by any
+  local user via `systemctl show caddy.service -p Environment` (same doc).
+- **Whether any other device is login-gated.** Deliberately not probed: the
+  gate sits on claim *acquisition*, so finding out means requesting a claim,
+  which has a side effect on live hardware. A heartbeat probe with an invalid
+  token — which is side-effect-free — returned ordinary claim-token errors from
+  all eleven control-capable devices, but that only proves heartbeat is
+  ungated, not claim. Answer it deliberately, per device, not with a sweep.
 
 **What closes it, in order:**
 

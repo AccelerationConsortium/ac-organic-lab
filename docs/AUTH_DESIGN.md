@@ -439,6 +439,127 @@ An invariant, with the claim doubling as the per-user gate:
   revocation may be* (how long a device's cached auth list lags central). Suggest
   **30–60 s** — a revoked user can still act for at most that long.
 
+## How a device learns who the operator is (edge-injected identity)
+
+**Status: partly built, and the built part has a structural limit — recorded
+2026-08-12 after it broke xArm control for a day.**
+
+A login-gated device needs to know *which human* is acting. There are two ways
+it can find out, and the lab uses both:
+
+1. **The device's own login.** The operator signs into the device's panel
+   (email one-time code) and the device holds its own session.
+2. **Identity injected at the edge.** Caddy authenticates the human against
+   ac_auth (`forward_auth` → `/auth/verify`), then forwards
+   `X-Auth-User` / `X-Auth-Role` to the device, plus **`X-Edge-Auth`, a shared
+   secret**. The device trusts the injected identity *only* when that secret
+   matches its own copy — which is what stops anyone on the Tailnet from
+   simply asserting `X-Auth-User: someone-else` straight at port 8000. It is
+   the reason the framed panels (`/xarm5/web/`, `/ot2/*/ui/`) don't ask for a
+   second login.
+
+The secret is **per device**. The deployed edge carries
+`XARM_EDGE_SHARED_SECRET`, `OT2_EDGE_SECRET` and `GRAPHCHAT_EDGE_SECRET` as
+separate values (the repo's `Caddyfile.single-edge` adds
+`ANALYTICA_EDGE_SECRET`), each paired with a copy in that device's own service
+environment. That is the right shape: one leaked secret compromises one
+device's header trust, not the fleet's.
+
+### The limit: the passthrough holds exactly one secret
+
+`api/app/control.py` reads a single `DEVICE_EDGE_SHARED_SECRET` and sends it to
+**every** device. Against a fleet of per-device secrets it can satisfy at most
+one of them, and every other login-gated device answers 401 `login_required`.
+
+This is not hypothetical: it is what broke xArm control end to end. The
+dashboard was holding a 48-character secret while the arm's was 64 characters,
+so the panel (through Caddy, with the right secret) worked while the tile, the
+workflow executor and the assistant's Authorize button (through the passthrough,
+with the wrong one) all failed — with an error indistinguishable from "you are
+not logged in". Diagnosis cost a day, most of it spent looking for a missing
+credential rather than a mismatched one.
+
+A stopgap on 2026-08-12 pointed `DEVICE_EDGE_SHARED_SECRET` at the xArm's
+value, which unblocked the arm — and, on inspection, the value it replaced was
+the **OT-2's**. One value for a fleet of per-device secrets is a game of
+whack-a-mole; it was replaced the same day by the design below.
+
+**Which devices actually enforce this, measured 2026-08-12** — the answer is
+narrower than the alarm suggested, and worth having written down before the
+next person reasons from the config alone:
+
+| Device | `/control/*` gate |
+|---|---|
+| `xarm_translocation` | **identity** — `/control/claim` refuses without an accepted credential (401 `login_required`), and every action needs the claim |
+| `ot2_hte`, `ot2_complexation` | **claim only** — a wrong `X-Edge-Auth` and no credential at all both return the same `423 missing or invalid X-Claim-Token`; identity is never checked |
+| `cytation_5`, `plateloc`, `torry_pines_shaker`, `agilent_biostack` | **claim only** — established by **code inspection** (2026-08-12, on the Cytation PC where all four repos live), which needs no probe and is stronger than one: no reference to `X-Edge-Auth` / `X-Auth-User` / any edge secret exists anywhere in their `src/`, while all four hard-enforce `X-Claim-Token`. There is no identity path to mis-probe. None of these carry `edge_secret_env` (nothing to name) |
+| everything else | unprobed; determining it live means requesting a claim, which has a side effect on live hardware — but where the device's source is at hand, inspection answers it side-effect-free, as the row above did |
+
+So the stopgap did **not** break the OT-2s, and the OT-2 entries keep
+`edge_secret_env: OT2_EDGE_SECRET` for a different reason: that *is* their
+secret — Caddy injects it on their panel routes — and the annotation costs
+nothing if the gateway later gates its API the way the xArm does. Note the
+asymmetry it reveals: a device can be identity-gated at the panel and
+claim-only at the API, so "is it behind the edge" does not answer "does it know
+who is calling".
+
+### The fix (shipped 2026-08-12): resolve the secret per equipment
+
+Give the registry the same authority over *how to authenticate to* a device
+that it already has over *where to reach* it (`base_url`), naming the
+environment variable rather than the value, so nothing secret enters git:
+
+```yaml
+  - id: xarm_translocation
+    base_url: http://sdl2-pc-03-cytation…:8000
+    edge_secret_env: XARM_EDGE_SHARED_SECRET   # name, never the value
+```
+
+`EquipmentEntry.edge_secret_env` (in `lab_skills.registry`) carries the name;
+`control._edge_secret_for(entry)` resolves it from this process's environment,
+falls back to `DEVICE_EDGE_SHARED_SECRET` when the entry names none (so nothing
+regresses), and — when an entry *names* a variable that is unset — falls back
+too but logs a warning, because a typo is otherwise indistinguishable from a
+device that simply does not gate. When neither resolves there is no edge
+candidate at all, at which point the 401 fallback (`152a87c`) tries the
+operator's own credential instead.
+
+Annotated as of 2026-08-12: `xarm_translocation` → `XARM_EDGE_SHARED_SECRET`,
+`ot2_hte` and `ot2_complexation` → `OT2_EDGE_SECRET`. Everything else uses the
+fallback, unchanged. Deploying a *new* edge-fronted device means adding its
+secret to the dashboard service environment alongside Caddy's — the same
+operational step already required on the device side.
+
+**Not covered: `workflow.py`.** The authorized-run executor builds one header
+set for a whole multi-device run (`Lab.connect(headers=…)`), so it cannot vary
+the secret per step without threading the target through `lab_skills`. It uses
+the global fallback; a run touching a device with its own secret fails closed at
+that step rather than actuating with the wrong identity.
+
+The alternative — a naming convention like `DEVICE_EDGE_SECRET_<EQUIPMENT_ID>`
+with no registry field — needs no schema change, but it hides the wiring: you
+cannot tell from `equipment.yaml` whether a device expects edge identity at
+all, which is exactly the question that took a day to answer.
+
+### Operational note: the edge secrets are world-readable
+
+`systemctl show caddy.service -p Environment` prints every `Environment=` value
+to **any local user** — no root, no journal access. All three edge secrets are
+readable that way today (confirmed as `sdl2`, 2026-08-12). Anyone with a shell
+on the dashboard host can therefore mint trusted-edge headers for those devices
+and act as any user, un-audited.
+
+Note the drop-in holding them is already `600 root:root` — file permissions do
+not help, because systemd re-publishes `Environment=` values through that
+property regardless. `caddy run --environ` additionally prints them into the
+journal at every start.
+
+That is a smaller hole than it sounds while shell access to this host is
+already equivalent to lab control — but it converts "has a shell" into "can
+impersonate a named operator in the audit trail", and it is free to close.
+Step-by-step migration to an `EnvironmentFile` (plus dropping `--environ`) is in
+[`deploy/README.md`](../deploy/README.md) → *Secrets in service environments*.
+
 ## Data isolation (requirement 4)
 
 Experiment data becomes **project-scoped**; lab telemetry stays public. Data is
@@ -482,7 +603,16 @@ conversation, and it runs under **one shared** Claude Code OAuth login (not
 per-user). It cannot actuate hardware (`--allowedTools mcp__lab-history__*`) but
 it **can read all lab history**.
 
-Two requirements follow:
+As of 2026-08-11 the bubble also has a **Control** mode (UI_DESIGN §5 Step 1).
+It still **cannot actuate hardware** — the model never holds an actuating tool.
+Control mode adds a second, **propose-only** MCP server (`lab-control`,
+`--allowedTools mcp__lab-history__* mcp__lab-control__*`) whose `propose_action`
+returns a *validated proposal object*; the hardware POST happens later, on the
+operator's *Authorize* click, over the normal `/control/*` passthrough (which
+already enforces identity, per-equipment authorization, the claim dance, and the
+audit row). See requirement 3 below.
+
+Three requirements follow:
 
 1. **Gate the chat behind auth.** ✅ *(Phase 2, 2026-07-03)* `/api/assistant/*`
    joins the authenticated routes via the same Next.js middleware as control
@@ -498,6 +628,18 @@ Two requirements follow:
    read surface subject to the identical auth + ownership scope; it is **not** a
    side-channel around it. (Implementation: pass the requester identity into the
    MCP server and filter results — rides Phase 5.)
+3. **Control mode binds authority to the tool, not the prompt.** ✅ *(2026-08-11)*
+   Control mode is honoured only for a verified `X-Auth-User` and **never** under
+   the `DASHBOARD_CONTROL_OPEN` dev bypass (which has no identity to bind a
+   proposal to). `assistant.py` re-resolves the actor server-side and passes it
+   to the `lab-control` server in its **environment** (`LAB_ACTOR`) — never as a
+   tool argument the model could choose, so it cannot borrow another principal's
+   authority. `propose_action` re-checks `operator`+ on the *target* equipment
+   via the same `GET /authz/check` sidecar the passthrough uses, failing closed
+   on a missing role or an unreachable sidecar. The authorizing click carries
+   `X-Control-Origin: assistant`, recorded on the `control_action` audit row, and
+   the proposal itself is journaled as an `assistant_proposal` event — so the
+   trail shows both the click and what proposed it.
 
 **Memory:** keep it **stateless for now** — no conversation content at rest (chats
 can carry sensitive lab detail); the browser-held transcript suffices for a

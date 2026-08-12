@@ -101,6 +101,7 @@ equipment:
     kind: robot_arm
     adapter: http
     protocol: "1.2"
+    edge_secret_env: XARM_EDGE_SHARED_SECRET
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000
     tailscale_ip: 100.64.254.16
     status_path: /status
@@ -147,6 +148,7 @@ equipment:
     kind: liquid_handler
     adapter: http
     protocol: "1.2"
+    edge_secret_env: OT2_EDGE_SECRET
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020
     tailscale_ip: 100.64.254.16
     status_path: /status
@@ -367,6 +369,7 @@ equipment:
     kind: liquid_handler
     adapter: http
     protocol: "1.2"
+    edge_secret_env: OT2_EDGE_SECRET
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8021
     tailscale_ip: 100.64.254.91
     status_path: /status
@@ -595,6 +598,38 @@ equipment:
     # Tailnet-bound (the unit binds tailscale0 100.64.254.6, not loopback, so
     # the device plane can reach the roster endpoint); loopback would be refused.
     base_url: http://100.64.254.6:8009
+    status_path: /status
+    poll_timeout_seconds: 3.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
+  # sdl-lab-hostops instance on the Cytation device PC (deployed 2026-08-11).
+  # Whitelisted host-ops MCP server: service status/logs/restart, serial-port
+  # enumeration, loopback STATUS_SPEC probes for the seven device services on
+  # that PC. GET /status is unauthenticated by design (read-only §9 clause,
+  # v1.2 with no control surface — MCP tools are bearer-token gated); no
+  # "Open" pill, it is not a browsable UI.
+  - id: hostops_cytation_pc
+    name: Host Ops (Cytation PC)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8060
+    tailscale_ip: 100.64.254.16
+    status_path: /status
+    poll_timeout_seconds: 3.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
+  - id: hostops_uplc_pc
+    name: Host Ops (UPLC PC)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8060
+    tailscale_ip: 100.64.254.19
     status_path: /status
     poll_timeout_seconds: 3.0
     tiles:

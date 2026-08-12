@@ -121,6 +121,29 @@ async function controlPost<TBody extends object, TResp = ControlAck>(
   });
 }
 
+/**
+ * Authorize an assistant-proposed control action (UI_DESIGN §5). Reuses the
+ * exact operator control passthrough — identity, per-equipment authorization,
+ * the claim/act/release dance, and the audit row all apply — and stamps
+ * `X-Control-Origin: assistant` so the audit trail separates assistant-
+ * originated actions from tile clicks. `action` is the proposal's
+ * `passthrough_action` (e.g. `graph/move_to`); `args` its validated body.
+ */
+export async function authorizeAssistantAction(
+  equipmentId: string,
+  action: string,
+  args: Record<string, unknown>,
+): Promise<ControlAck> {
+  return fetchJson<ControlAck>(controlUrl(equipmentId, action), {
+    method: "POST",
+    body: JSON.stringify(args ?? {}),
+    headers: {
+      "Content-Type": "application/json",
+      "X-Control-Origin": "assistant",
+    },
+  });
+}
+
 async function controlDelete<TResp = ControlAck>(
   equipmentId: string,
   action: string,

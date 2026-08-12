@@ -92,6 +92,9 @@ interface ControlAction {
    *  Null on rows written before 2026-07-24 and on refusals that never
    *  reached the device. */
   duration_s: number | null;
+  /** Provenance of the click (X-Control-Origin). "assistant" when authorized
+   *  from the lab assistant's confirm card; null for direct tile clicks. */
+  origin: string | null;
 }
 
 interface ClaimedBy {
@@ -480,7 +483,7 @@ export default function AdminPage() {
           ) : filteredActions.length === 0 ? (
             <Empty message="No operator control writes recorded." />
           ) : (
-            <Table head={["Time", "Device", "Action", "Operator", "Outcome", "Duration"]}>
+            <Table head={["Time", "Device", "Action", "Operator", "Origin", "Outcome", "Duration"]}>
               {filteredActions.map((a, i) => (
                 <tr key={`${a.ts}-${i}`}>
                   <td className="whitespace-nowrap px-4 py-2 text-xs">{fmtIso(a.ts)}</td>
@@ -492,6 +495,15 @@ export default function AdminPage() {
                     {a.action ?? a.message ?? "—"}
                   </td>
                   <td className="px-4 py-2 text-xs">{a.owner ?? "—"}</td>
+                  <td className="px-4 py-2 text-xs">
+                    {a.origin === "assistant" ? (
+                      <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-800 dark:bg-purple-950/50 dark:text-purple-200">
+                        assistant
+                      </span>
+                    ) : (
+                      <span className="text-ink-subtle dark:text-slate-500">tile</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2 text-xs">
                     <span
                       className={

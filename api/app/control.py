@@ -25,7 +25,7 @@ import functools
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import uuid
 
@@ -252,30 +252,164 @@ _EDGE_SHARED_SECRET = os.environ.get("DEVICE_EDGE_SHARED_SECRET", "").strip()
 _AUTH_COOKIE_NAME = os.environ.get("AUTH_COOKIE_NAME", "ac_auth_session")
 
 
-def _device_auth_headers(request: Request) -> dict[str, str]:
-    """Identity headers to attach to outbound calls to a login-gated device.
+# Device replies that mean "I do not know who you are" — i.e. the credential
+# we presented was not accepted. 401 only: a 403 means the device *did*
+# identify the caller and refused them, which another credential should not
+# be used to work around.
+_AUTH_FALLBACK_STATUS = frozenset({401})
 
-    Forwards only the ac_auth session cookie (never the full cookie jar) or
-    the machine api key. Empty when the caller presented no credential —
-    an open deployment (dev) or a device with login disabled.
+
+def _edge_secret_for(entry: Any | None) -> str:
+    """The edge shared secret to present to *this* device.
+
+    Per-device by design: each device behind the edge trusts a different
+    secret, so one dashboard-wide value can satisfy at most one of them. The
+    registry entry names the environment variable
+    (``edge_secret_env: XARM_EDGE_SHARED_SECRET``) and the value is read from
+    this process's environment, so nothing secret is committed.
+
+    Falls back to the global ``DEVICE_EDGE_SHARED_SECRET`` when the entry names
+    no variable or the named one is unset — the pre-2026-08-12 behaviour, kept
+    so devices that were never given an entry keep working exactly as before.
     """
-    # Optional trusted-edge fast path (both sides must share the secret).
-    if _EDGE_SHARED_SECRET:
+
+    name = getattr(entry, "edge_secret_env", None) if entry is not None else None
+    if name:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+        # Named but absent: fall through to the global rather than sending
+        # nothing, and say so once — a typo'd variable name is otherwise
+        # indistinguishable from a device that simply does not gate.
+        logger.warning(
+            "edge_secret_env=%s is set on %s but that variable is empty; "
+            "falling back to DEVICE_EDGE_SHARED_SECRET",
+            name, getattr(entry, "id", "?"),
+        )
+    return _EDGE_SHARED_SECRET
+
+
+def _device_auth_candidates(
+    request: Request, entry: Any | None = None
+) -> list[dict[str, str]]:
+    """Identity headers to try against a login-gated device, best first.
+
+    Two ways to prove who the operator is, and a device may accept either:
+
+    1. **Trusted-edge fast path** — present the already-verified identity as
+       ``X-Auth-User`` + ``X-Edge-Auth``. Header-only on the device, no second
+       sidecar round-trip. Requires the device to share the secret
+       (``XARM_EDGE_SHARED_SECRET`` and friends).
+    2. **The operator's own credential** — their machine api key, else the
+       ac_auth session cookie (only that cookie, never the full jar).
+
+    Both are returned, in that order, because a device that does not implement
+    the fast path answers **401** to it — and before this returned a list, the
+    fast path was tried *exclusively* whenever the shared secret happened to be
+    set, so the operator credential below it was unreachable in production.
+    Every dashboard-mediated control action against such a device failed 401:
+    tiles, the workflow executor, and the assistant's Authorize button alike.
+    Trying the next candidate on 401 makes the fast path what its comment
+    always claimed it was — an optimisation, not a commitment.
+
+    The list is never empty: with no credential at all it is ``[{}]``, one
+    unauthenticated attempt, which is what an open dev deployment or a device
+    with login disabled expects.
+    """
+
+    candidates: list[dict[str, str]] = []
+    edge_secret = _edge_secret_for(entry)
+    if edge_secret:
         user = request.headers.get("x-auth-user")
         if user:
-            headers = {"X-Auth-User": user, "X-Edge-Auth": _EDGE_SHARED_SECRET}
+            headers = {"X-Auth-User": user, "X-Edge-Auth": edge_secret}
             role = request.headers.get("x-auth-role")
             if role:
                 headers["X-Auth-Role"] = role
-            return headers
-    # Default: act on the operator's behalf with their own credential.
+            candidates.append(headers)
     api_key = request.headers.get("x-api-key")
     if api_key:
-        return {"X-Api-Key": api_key}
+        candidates.append({"X-Api-Key": api_key})
     token = request.cookies.get(_AUTH_COOKIE_NAME)
     if token:
-        return {"Cookie": f"{_AUTH_COOKIE_NAME}={token}"}
-    return {}
+        candidates.append({"Cookie": f"{_AUTH_COOKIE_NAME}={token}"})
+    return candidates or [{}]
+
+
+def _device_auth_headers(
+    request: Request, entry: Any | None = None
+) -> dict[str, str]:
+    """The preferred identity headers — first of :func:`_device_auth_candidates`.
+
+    Kept for callers that issue a single hop and cannot retry (``workflow.py``),
+    which inherit the pre-fallback behaviour. ``workflow.py`` also passes no
+    entry: it builds **one** header set for a whole multi-device run, so it
+    cannot do per-device secrets without threading the target through
+    ``lab_skills``. It therefore gets the global fallback, and a run touching a
+    device with its own secret still fails closed at that step.
+    """
+
+    return _device_auth_candidates(request, entry)[0]
+
+
+async def _acquire_claim_with_fallback(
+    client: httpx.AsyncClient,
+    base_url: str,
+    status_path: str,
+    equipment_id: str,
+    owner: str,
+    candidates: list[dict[str, str]],
+) -> tuple[str, dict[str, str]]:
+    """Claim, trying each credential until one is not rejected as unknown.
+
+    Returns ``(claim_token, headers_that_worked)`` — the caller reuses those
+    headers for the action and the release, so one sequence never mixes
+    credentials.
+    """
+
+    for index, headers in enumerate(candidates):
+        try:
+            token = await _acquire_claim(
+                client, base_url, status_path, equipment_id, owner,
+                extra_headers=headers or None,
+            )
+            return token, headers
+        except HTTPException as exc:
+            if (
+                exc.status_code not in _AUTH_FALLBACK_STATUS
+                or index + 1 >= len(candidates)
+            ):
+                raise
+            logger.info(
+                "claim on %s rejected credential %d/%d (401); trying the next",
+                equipment_id, index + 1, len(candidates),
+            )
+    raise AssertionError("unreachable: candidates is never empty")  # pragma: no cover
+
+
+async def _send_with_auth_fallback(
+    send: Callable[[dict[str, str] | None], Awaitable[httpx.Response]],
+    candidates: list[dict[str, str]],
+) -> tuple[httpx.Response, dict[str, str]]:
+    """Same fallback for a lone hop that carries no claim.
+
+    ``send`` must be safe to repeat: it is only re-issued when the device
+    answered 401, which means it refused to act on the first attempt.
+    """
+
+    for index, headers in enumerate(candidates):
+        response = await send(headers or None)
+        if (
+            response.status_code in _AUTH_FALLBACK_STATUS
+            and index + 1 < len(candidates)
+        ):
+            logger.info(
+                "device rejected credential %d/%d (401); trying the next",
+                index + 1, len(candidates),
+            )
+            continue
+        return response, headers
+    raise AssertionError("unreachable: candidates is never empty")  # pragma: no cover
 
 
 def _claim_owner(request: Request) -> str:
@@ -494,6 +628,13 @@ async def _record_control_event(
         payload["duration_s"] = round(duration_s, 3)
     if detail is not None:
         payload["detail"] = detail[:500] if isinstance(detail, str) else detail
+    # Provenance of the click. Tile controls omit this header; the lab
+    # assistant's Authorize button stamps `X-Control-Origin: assistant`
+    # (UI_DESIGN §5), so the audit trail separates assistant-originated actions
+    # from direct operator clicks. Recorded on the row regardless of outcome.
+    origin = request.headers.get("x-control-origin")
+    if origin:
+        payload["origin"] = origin[:40]
     message = f"{owner} {method} {action} → {outcome} ({status_code})"
     try:
         loop = asyncio.get_event_loop()
@@ -562,30 +703,41 @@ async def _proxy(
     # Operator credential forwarded on every device hop (claim, action,
     # release) so login-gated claims (XARM_REQUIRE_LOGIN_FOR_CLAIM) pass and
     # the device stamps/audits the real operator. Empty when unauthenticated.
-    edge_headers = _device_auth_headers(request)
+    auth_candidates = _device_auth_candidates(request, entry)
+    edge_headers = auth_candidates[0]
     # Wall-clock of the whole device interaction (claim → action → release),
     # stamped into the audit payload as `duration_s`. Started here — after
     # auth, before the first device hop — so refusals that never reach the
     # device carry no duration.
     started = time.monotonic()
     try:
+        async def _send(headers: dict[str, str] | None) -> httpx.Response:
+            if method == "POST":
+                return await client.post(target, json=body or {}, headers=headers)
+            if method == "GET":
+                return await client.get(target, headers=headers)
+            if method == "DELETE":
+                return await client.delete(target, headers=headers)
+            # pragma: no cover - guarded by FastAPI routing
+            raise HTTPException(status_code=405, detail=f"Unsupported method: {method}")
+
         token: str | None = None
         if needs_claim:
-            token = await _acquire_claim(
+            # The claim is the first hop, so it is where the credential gets
+            # settled; the action and release below reuse whatever worked.
+            token, edge_headers = await _acquire_claim_with_fallback(
                 client, entry.base_url, entry.status_path, equipment_id, owner,
-                extra_headers=edge_headers,
+                auth_candidates,
             )
         try:
-            headers = {**edge_headers, **({"X-Claim-Token": token} if token else {})}
-            headers = headers or None
-            if method == "POST":
-                response = await client.post(target, json=body or {}, headers=headers)
-            elif method == "GET":
-                response = await client.get(target, headers=headers)
-            elif method == "DELETE":
-                response = await client.delete(target, headers=headers)
-            else:  # pragma: no cover - guarded by FastAPI routing
-                raise HTTPException(status_code=405, detail=f"Unsupported method: {method}")
+            if token is not None:
+                response = await _send({**edge_headers, "X-Claim-Token": token})
+            else:
+                # No claim on this device, so the action itself is the first
+                # hop and carries the fallback.
+                response, edge_headers = await _send_with_auth_fallback(
+                    _send, auth_candidates
+                )
         finally:
             if token is not None:
                 await _release_claim_best_effort(
@@ -716,10 +868,13 @@ async def _device_action_proxy(
     target = _device_url(entry.base_url, entry.status_path, normalized)
     # Forward the operator's credential so the device's `require_login` passes
     # and its audit records the real actor (empty when unauthenticated).
-    edge_headers = _device_auth_headers(request)
+    auth_candidates = _device_auth_candidates(request, entry)
     started = time.monotonic()
     try:
-        response = await client.post(target, json=body or {}, headers=edge_headers or None)
+        response, _used = await _send_with_auth_fallback(
+            lambda headers: client.post(target, json=body or {}, headers=headers),
+            auth_candidates,
+        )
     except httpx.TimeoutException as exc:
         logger.warning("device action timeout %s -> %s: %s", equipment_id, target, exc)
         await _record_control_event(
