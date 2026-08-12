@@ -42,8 +42,9 @@ def _status_json(
     *,
     equipment_status: str = "ready",
     activity: str = "idle",
+    details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "equipment_id": "xarm",
         "equipment_name": "UFactory xArm5",
         "equipment_kind": "robot_arm",
@@ -53,6 +54,9 @@ def _status_json(
         "activity": activity,
         "device_time": "2026-08-11T12:00:00Z",
     }
+    if details is not None:
+        payload["details"] = details
+    return payload
 
 
 def _mock_status(allowed_actions: list[str], **kw: Any) -> None:
@@ -252,6 +256,50 @@ async def test_list_available_actions_marks_proposable() -> None:
 async def test_list_available_actions_unknown_equipment() -> None:
     out = json.loads(await ac._list_available_actions(_registry(), "nope"))
     assert out["code"] == "unknown_equipment"
+
+
+# The shape the xArm publishes under details.motion_graph
+# (status_builder.py::_build_motion_graph_details). travel_targets is the
+# multi-hop superset of reachable_nodes — the path context the assistant
+# reasons with, deliberately wider than what is proposable.
+_MOTION_GRAPH = {
+    "current_node": "robot_home",
+    "reachable_nodes": ["uplc_draw_home"],
+    "travel_targets": ["uplc_draw_home", "uplc_draw_up", "deck_home"],
+    "graph_mode": "strict",
+    "gripper_stroke": 850.0,
+    "gripper_state": "open",
+    "allowed_gripper_targets": ["closed"],
+    "arm_pose_name": "robot_home",
+    "rail_location_name": "home",
+}
+
+
+@respx.mock
+async def test_list_available_actions_forwards_motion_graph() -> None:
+    """details.motion_graph is forwarded verbatim as read-only path context —
+    the model can see multi-hop travel_targets, but only the single-hop
+    move.<node_id> entries in `actions` are proposable."""
+
+    _mock_status(
+        ["stop", "move.uplc_draw_home"], details={"motion_graph": _MOTION_GRAPH}
+    )
+    out = json.loads(await ac._list_available_actions(_registry(), "xarm"))
+    assert out["motion_graph"] == _MOTION_GRAPH
+    # Forwarding widened visibility, not the proposable surface: the multi-hop
+    # targets gained no action entries.
+    actions = {a["action"] for a in out["actions"]}
+    assert actions == {"stop", "move.uplc_draw_home"}
+
+
+@respx.mock
+async def test_list_available_actions_no_motion_graph_key_when_absent() -> None:
+    """Devices that publish no graph snapshot (non-arm kinds; an arm with no
+    graph loaded) simply lack the key — never an empty placeholder."""
+
+    _mock_status(["stop", "move.deck"])
+    out = json.loads(await ac._list_available_actions(_registry(), "xarm"))
+    assert "motion_graph" not in out
 
 
 # ---------------------------------------------------------------------------

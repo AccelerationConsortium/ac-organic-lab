@@ -28,7 +28,10 @@ Scope
 A proposal is exactly one action on one device. Two kinds are in scope:
 
 * ``robot_arm`` move targets (``move.<node_id>`` -> the ``graph.move_to``
-  skill -> ``POST /control/graph/move_to``) — the Step 1 surface.
+  skill -> ``POST /control/graph/move_to``) — the Step 1 surface. Moves are
+  proposed one graph hop at a time; for route *reasoning*,
+  ``list_available_actions`` forwards the device's read-only
+  ``details.motion_graph`` snapshot (see :func:`_list_available_actions`).
 * the ``liquid_handler`` (OT-2) control surface — see :data:`_PROPOSABLE` for
   the scope history and :data:`_FORBIDDEN_ARG_FIELDS` for the argument fields
   that are never model-settable (interlock overrides, device credentials).
@@ -345,7 +348,16 @@ async def _read_status(registry: Registry, equipment_id: str):
 
 async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
     """Live ``allowed_actions`` for a device, each annotated with whether the
-    assistant can propose it and (when it can) the JSON-Schema for its args."""
+    assistant can propose it and (when it can) the JSON-Schema for its args.
+
+    When the device publishes a ``details.motion_graph`` snapshot (today: the
+    xArm), it is forwarded verbatim under ``motion_graph`` — read-only path
+    context (``current_node``, single-hop ``reachable_nodes``, multi-hop
+    ``travel_targets``) so the model can reason about routes instead of seeing
+    only the current node's outgoing hops. This widens what the model can
+    *see*, never what it can *propose*: multi-hop travel is not proposable,
+    and every hop of a route is its own ``move.<node_id>`` proposal with its
+    own confirm card."""
 
     entry = registry.by_id(equipment_id)
     if entry is None:
@@ -386,17 +398,19 @@ async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
             info["operator_only_fields"] = stripped
         actions.append(info)
 
-    return _dumps(
-        {
-            "equipment_id": entry.id,
-            "equipment_name": entry.name,
-            "kind": entry.kind,
-            "equipment_status": status.equipment_status,
-            "activity": status.activity,
-            "message": status.message,
-            "actions": actions,
-        }
-    )
+    payload: dict[str, Any] = {
+        "equipment_id": entry.id,
+        "equipment_name": entry.name,
+        "kind": entry.kind,
+        "equipment_status": status.equipment_status,
+        "activity": status.activity,
+        "message": status.message,
+        "actions": actions,
+    }
+    motion_graph = (status.details or {}).get("motion_graph")
+    if isinstance(motion_graph, dict):
+        payload["motion_graph"] = motion_graph
+    return _dumps(payload)
 
 
 async def _propose_action(
@@ -491,7 +505,11 @@ def _build_server(registry: Registry):
         propose_action to learn what is legal instead of guessing endpoints.
         Safety-floor actions stay operator-only (``proposable: false``), and
         each proposable action's schema omits its operator-only argument
-        fields (listed under ``operator_only_fields``) — never supply those."""
+        fields (listed under ``operator_only_fields``) — never supply those.
+        Graph-constrained arms also return a read-only ``motion_graph``
+        snapshot (current_node, single-hop reachable_nodes, multi-hop
+        travel_targets) for planning and explaining routes; a route is still
+        proposed one ``move.<node_id>`` hop at a time."""
 
         return await _list_available_actions(registry, equipment_id)
 

@@ -733,6 +733,16 @@ actuating:
   `allowed_actions`, its `equipment_status` / `activity`, and the matching
   `SkillDef` argument schema (`api/` already imports `SKILL_REGISTRY`). This
   is how the model learns what is legal instead of guessing at endpoints.
+  For a graph-constrained arm it also forwards the device's read-only
+  `details.motion_graph` snapshot verbatim (added 2026-08-12) —
+  `current_node`, single-hop `reachable_nodes`, multi-hop `travel_targets` —
+  because the xArm advertises only the current node's outgoing hops as
+  `move.<node_id>` actions, so without it the assistant could not reason
+  about or explain a route. This widens what the model *sees*, never what it
+  may *propose*: the device's multi-hop `travel_to` stays outside the skill
+  catalog and `allowed_actions`, so a route is proposed one `move.<node_id>`
+  hop per confirm card, re-checking device state between hops (the prompt
+  addendum says so explicitly).
 - **`propose_action(equipment_id, action, args, reason)`** — validates and
   returns a normalized proposal. It refuses unless *all* hold: the equipment
   exists and is enabled; `action ∈ status.allowed_actions` (the device is the
