@@ -657,7 +657,7 @@ single-glyph surfaces; rendering pre-tracking time as zero usage.
 
 ---
 
-## 5. Assistant control mode [IMPLEMENTED — Step 1 + 1b]
+## 5. Assistant control mode [IMPLEMENTED — Steps 1, 1b, 1c]
 
 **Drafted 2026-08-07** on branch `actionable-assistant`; **Step 1 implemented
 2026-08-11**. Extends the tier-2 dashboard assistant (§2) from a purely
@@ -670,8 +670,10 @@ passthrough (§5 "action naming"); (b) safety-floor actions (`stop`/`connect`/
 the propose-only `lab-control` MCP server (`api/app/assistant_control.py`), a
 `mode` field + per-mode wiring in `assistant.py`, the Ask/Control UI in
 `AssistantBubble.tsx`, and the `X-Control-Origin`/`assistant_proposal` audit
-trail. **Step 1b (2026-08-12)** extends the resolver to the OT-2 — see §5.3b.
-Step 2 (autonomy) is sketched at the end and is **not** approved.
+trail. **Step 1b (2026-08-12)** extends the resolver to the OT-2, and
+**Step 1c (same day)** to that device's full advertised surface behind a
+field-level guard — see §5.3b. Step 2 (autonomy) is sketched at the end and is
+**not** approved.
 
 ### 5.1 The commitment: the assistant proposes, the browser executes
 
@@ -760,7 +762,7 @@ tile clicks on the admin page. The proposal itself is written as an
 `assistant_proposal` event — otherwise the trail records the click but not
 what talked the operator into it.
 
-### 5.3b Step 1b — which OT-2 actions are proposable
+### 5.3b Steps 1b/1c — which OT-2 actions are proposable
 
 **Implemented 2026-08-12.** The Step 1 resolver hard-coded `robot_arm` move
 targets; the per-kind allowlist now lives in `_PROPOSABLE`
@@ -788,15 +790,48 @@ interlocks to catch the half-executed remainder.
 | **B — propose (record edits)** | `plate.load`, `plate.unload`, `well.update`, `deck.declare` | No motion, evaluable cards. They mutate the lab's *belief* about the deck, so a wrong one silently desyncs belief from reality — the reason they still confirm, not a reason to withhold them. |
 | **C — operator-only** | `startup`, `shutdown`, `setup`, `resume`, `tips.reset`, `move_to`, `pick_up_tip`, `aspirate`, `dispense`, `drop_tip`, `move_labware` | Sequence-bound (the six motion/liquid verbs), unevaluable (`setup`), secret-bearing (`startup` carries `password`, which would land on the card and in the `assistant_proposal` row), safety-floor inverse (`resume` — somebody paused, possibly with hands in the deck), or interlock-adjacent (`tips.reset` declares used tips fresh, disarming the contamination guard). |
 
+#### Step 1c — the full surface, behind a field guard (2026-08-12)
+
+Tier C was admitted the same day, by operator decision, after the tier table
+above was reviewed: **the operator is the sequencer**. A liquid-handling
+sequence runs as consecutive confirm cards — one click binds one step — and
+the control-mode prompt instructs the model to propose steps strictly in
+order, one at a time, re-checking device state between them, and to recommend
+a validated workflow plan once the work grows beyond a handful of steps.
+`execute_plan` (§5.5) remains the right surface for real multi-step work; what
+changed hands is only who may *suggest* the next single step.
+
+The admission price named by Step 1b was paid first, not skipped:
+
+- **The field-level guard** (`_FORBIDDEN_ARG_FIELDS`): `force` (contamination-
+  guard override), `force_direct` (collision-safe-path override), `password`
+  and `host_alias` (device credentials the gateway supplies from its own env)
+  are never model-settable. Supplying one refuses the whole proposal (code
+  `forbidden_field`) — by field, not by value, so the invariant never depends
+  on reading a boolean — and `list_available_actions` strips them from the
+  advertised schemas (reporting them as `operator_only_fields`) so the model
+  never sees them as settable. A test pins that every risky field reachable
+  through a proposable schema is guarded.
+- **Card evaluability for `setup`-sized bodies**: past a compact threshold the
+  confirm card renders the full argument set as pretty-printed, scrollable
+  JSON instead of a truncated line. The args are exactly the payload Authorize
+  POSTs, so nothing may be truncated.
+
+What Step 1c resolves from the tier-C list: the six liquid/motion verbs
+(operator-sequenced), `setup` (evaluable via the block render), `startup`
+(credential fields guarded; a human authorizing it is the "explicit
+invocation" the catalog blesses despite `do_not_call_connect`), `resume` and
+`tips.reset` (the confirm card is the gate — the operator reads what they are
+un-pausing or re-arming). The xArm's safety-floor actions (`stop` / `connect`
+/ `clear_errors`) remain non-proposable; that Step 1 deviation is unchanged.
+
 Two consequences worth keeping:
 
-- **Tier A+B needed no new mechanism.** No allowlisted schema carries an
-  interlock-weakening or secret field, so an action table sufficed. Admitting
-  any tier-C motion verb later requires a **field-level guard first** —
-  `pick_up_tip.force` overrides the contamination guard and
-  `move_to.force_direct` opts out of the arced collision-safe path, and neither
-  may ever be model-settable. A test pins this property so the table cannot
-  quietly acquire such a field.
+- **Tier A+B needed no new mechanism** — no schema in those tiers carries an
+  interlock-weakening or secret field, so an action table sufficed. Step 1c is
+  where the field-level guard became load-bearing (above), and the pinning
+  test flipped from "no proposable schema exposes such a field" to "every
+  exposed risky field is guarded".
 - **The confirm card had to learn to render objects.** `String(v)` flattened
   every nested argument to `[object Object]`, which tier B's shapes
   (`plate.load` wells, `deck.declare` slots) hit immediately — an unreadable

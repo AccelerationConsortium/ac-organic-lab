@@ -256,4 +256,51 @@ describe("AssistantBubble control mode", () => {
     expect(screen.getByText(/Clears the entire deck declaration/)).toBeTruthy();
   });
 
+
+  it("renders a large setup body as a full pretty-printed block, untruncated", async () => {
+    const setupArgs = {
+      labware: [
+        { nickname: "tips", location: "1", ot_default: true, loadname: "opentrons_96_tiprack_300ul" },
+        { nickname: "plate", location: "2", ot_default: true, loadname: "corning_96_wellplate_360ul_flat" },
+        { nickname: "reservoir", location: "3", ot_default: true, loadname: "nest_12_reservoir_15ml" },
+      ],
+      instruments: [
+        { nickname: "p300", mount: "right", ot_default: true, instrument_name: "p300_multi_gen2" },
+      ],
+    };
+    installFetch([
+      `data: ${JSON.stringify({
+        type: "proposal",
+        proposal: {
+          ...PROPOSAL.proposal,
+          equipment_id: "ot2_hte",
+          equipment_name: "Opentrons OT-2 HTE",
+          kind: "liquid_handler",
+          action: "setup",
+          passthrough_action: "setup",
+          args: setupArgs,
+        },
+      })}\n\n`,
+      'data: {"type":"done"}\n\n',
+    ]);
+    await openPanel();
+    const control = await screen.findByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const box = screen.getByPlaceholderText(/operate a device/i);
+    fireEvent.change(box, { target: { value: "set up the deck" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("Authorize action");
+    // Past the compact threshold the card switches to a scrollable block —
+    // the args ARE the Authorize payload, so nothing may be truncated.
+    const pre = document.querySelector("pre");
+    expect(pre).toBeTruthy();
+    expect(pre?.textContent).toContain("opentrons_96_tiprack_300ul");
+    expect(pre?.textContent).toContain("nest_12_reservoir_15ml");
+    expect(pre?.textContent).toContain("p300_multi_gen2");
+    expect(pre?.textContent).not.toContain("…");
+    expect(screen.queryByText(/\[object Object\]/)).toBeNull();
+  });
+
 });

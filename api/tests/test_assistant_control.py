@@ -255,26 +255,38 @@ async def test_list_available_actions_unknown_equipment() -> None:
 
 
 # ---------------------------------------------------------------------------
-# liquid_handler (OT-2) — tier A + B proposals (UI_DESIGN §5 Step 1b)
+# liquid_handler (OT-2) proposals — full surface + field guard
+# (UI_DESIGN §5 Steps 1b/1c)
 # ---------------------------------------------------------------------------
 
 OT2_BASE = "http://ot2.test:8020"
 
-# Every OT-2 action the gateway can advertise, so the refusal tests exercise
-# the real surface rather than a hand-picked subset.
-_OT2_ADVERTISED = [
-    "startup", "shutdown", "home", "setup", "pause", "resume",
-    "move_to", "pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware",
-    "plate.load", "plate.unload", "well.update", "tips.reset",
-    "lights.set", "deck.declare",
-]
-
-# The scoping decision itself, pinned. Tier A moves the robot toward a safer or
-# more legible state; tier B edits records without motion.
-_TIER_AB = {
-    "lights.set", "home", "pause",
-    "plate.load", "plate.unload", "well.update", "deck.declare",
+# Every OT-2 action the gateway can advertise, mapped to the passthrough URL
+# segment its proposal must carry. Step 1c scoped the full surface, so this is
+# also the scoping decision, pinned: an entry leaving this map must be a
+# deliberate re-scoping, and a new gateway verb is refused until added here
+# AND to _PROPOSABLE.
+_OT2_SURFACE = {
+    "startup": "startup",
+    "shutdown": "shutdown",
+    "home": "home",
+    "setup": "setup",
+    "pause": "pause",
+    "resume": "resume",
+    "move_to": "move-to",
+    "pick_up_tip": "pick-up-tip",
+    "aspirate": "aspirate",
+    "dispense": "dispense",
+    "drop_tip": "drop-tip",
+    "move_labware": "move-labware",
+    "plate.load": "plate/load",
+    "plate.unload": "plate/unload",
+    "well.update": "well/update",
+    "tips.reset": "tips/reset",
+    "lights.set": "lights",
+    "deck.declare": "deck/declare",
 }
+_OT2_ADVERTISED = list(_OT2_SURFACE)
 
 
 def _ot2_registry() -> Registry:
@@ -311,21 +323,11 @@ def _mock_ot2_status(allowed_actions: list[str]) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("action", "passthrough"),
-    [
-        ("lights.set", "lights"),
-        ("home", "home"),
-        ("pause", "pause"),
-        ("plate.load", "plate/load"),
-        ("plate.unload", "plate/unload"),
-        ("well.update", "well/update"),
-        ("deck.declare", "deck/declare"),
-    ],
-)
-def test_resolve_ot2_tier_ab(action: str, passthrough: str) -> None:
-    """Dotted catalog names resolve by direct lookup (no xArm-style bridging),
-    and their endpoints map to the passthrough's URL segment."""
+@pytest.mark.parametrize(("action", "passthrough"), sorted(_OT2_SURFACE.items()))
+def test_resolve_ot2_full_surface(action: str, passthrough: str) -> None:
+    """Every advertised OT-2 action resolves by direct catalog-name lookup (no
+    xArm-style bridging), with its endpoint mapped to the passthrough's URL
+    segment (dotted names and hyphenated endpoints both covered)."""
 
     entry = _ot2_registry().equipment[0]
     sd, resolved_passthrough, args = ac._resolve(entry, action, {})
@@ -334,16 +336,49 @@ def test_resolve_ot2_tier_ab(action: str, passthrough: str) -> None:
     assert args == {}
 
 
-@pytest.mark.parametrize("action", sorted(set(_OT2_ADVERTISED) - _TIER_AB))
-def test_resolve_ot2_refuses_operator_only(action: str) -> None:
-    """Sequence-bound liquid verbs, ``setup``, ``startup``, ``resume`` and
-    ``tips.reset`` stay operator-only. Parametrized over the advertised surface
-    so a new gateway verb defaults to refused until scoped deliberately."""
+def test_resolve_ot2_refuses_unscoped_verb() -> None:
+    """``reconcile`` is the gateway's operator recovery hook — never in
+    allowed_actions, never cataloged, and deliberately not in _PROPOSABLE. It
+    stands in for any future gateway verb: refused until scoped."""
 
     entry = _ot2_registry().equipment[0]
     with pytest.raises(ac.ProposalRefused) as exc:
-        ac._resolve(entry, action, {})
+        ac._resolve(entry, "reconcile", {})
     assert exc.value.code == "unmappable_action"
+
+
+@pytest.mark.parametrize(
+    ("action", "args"),
+    [
+        ("startup", {"password": "hunter2"}),
+        ("startup", {"simulation": True, "host_alias": "ot2-evil"}),
+        ("pick_up_tip", {"pipette": "p300", "force": True}),
+        # force=False is still refused: "never model-settable" means the field,
+        # not the value — the invariant must not depend on reading a boolean.
+        ("pick_up_tip", {"pipette": "p300", "force": False}),
+        ("drop_tip", {"pipette": "p300", "force": True}),
+        ("move_to", {"pipette": "p300", "force_direct": True}),
+    ],
+)
+def test_resolve_refuses_forbidden_fields(action: str, args: dict) -> None:
+    """The Step 1c field guard: interlock overrides and device credentials are
+    never model-settable, whatever the value."""
+
+    entry = _ot2_registry().equipment[0]
+    with pytest.raises(ac.ProposalRefused) as exc:
+        ac._resolve(entry, action, args)
+    assert exc.value.code == "forbidden_field"
+
+
+def test_resolve_startup_without_credentials_ok() -> None:
+    """``startup`` is proposable exactly because the guard keeps credentials
+    out: the gateway supplies its own from service env."""
+
+    entry = _ot2_registry().equipment[0]
+    sd, passthrough, args = ac._resolve(entry, "startup", {"simulation": True})
+    assert sd.name == "startup"
+    assert passthrough == "startup"
+    assert args == {"simulation": True}
 
 
 def test_proposable_names_are_all_cataloged() -> None:
@@ -355,25 +390,29 @@ def test_proposable_names_are_all_cataloged() -> None:
             assert ac._find_skill_def(kind, action) is not None, f"{kind}/{action}"
 
 
-def test_proposable_liquid_handler_is_subset_of_gateway_surface() -> None:
-    """Guards against allowlisting a name the OT-2 gateway never advertises,
-    which would sit in the table looking supported and always refuse."""
+def test_proposable_liquid_handler_equals_gateway_surface() -> None:
+    """Step 1c admitted the full advertised surface — pinned as equality so a
+    silent narrowing or an allowlisted-but-never-advertised name both fail."""
 
-    assert ac._PROPOSABLE["liquid_handler"] <= set(_OT2_ADVERTISED)
+    assert ac._PROPOSABLE["liquid_handler"] == set(_OT2_ADVERTISED)
 
 
-def test_no_proposable_action_exposes_a_guard_bypass() -> None:
-    """The tier A/B line rests on no allowlisted schema carrying a field that
-    weakens an interlock or a secret. If one ever does, the field-level guard
-    must land first (see the ``_PROPOSABLE`` docstring)."""
+def test_risky_schema_fields_are_all_guarded() -> None:
+    """Step 1c's admission price: every interlock-override / credential field
+    reachable through a proposable schema must be covered by the field guard.
+    A new proposable action carrying such a field fails here until the guard
+    knows it (see the ``_FORBIDDEN_ARG_FIELDS`` docstring)."""
 
-    forbidden = {"force", "force_direct", "password"}
+    risky = {"force", "force_direct", "password", "host_alias"}
     for kind, actions in ac._PROPOSABLE.items():
+        guarded = ac._FORBIDDEN_ARG_FIELDS.get(kind, frozenset())
         for action in actions:
             sd = ac._find_skill_def(kind, action)
             assert sd is not None
-            overlap = forbidden & set(sd.args_schema.model_fields)
-            assert not overlap, f"{kind}/{action} exposes {overlap}"
+            exposed = risky & set(sd.args_schema.model_fields)
+            assert exposed <= guarded, f"{kind}/{action} exposes unguarded {exposed - guarded}"
+    # And the guard is doing real work, not vacuously satisfied.
+    assert ac._FORBIDDEN_ARG_FIELDS["liquid_handler"] == risky
 
 
 @respx.mock
@@ -397,10 +436,9 @@ async def test_propose_ot2_record_edit() -> None:
 
 
 @respx.mock
-async def test_propose_ot2_aspirate_refused() -> None:
-    """Advertised by the device and cataloged, but not proposable: correctness
-    lives in the whole pick-up-tip -> aspirate -> dispense -> drop-tip sequence,
-    which one confirm click cannot bind."""
+async def test_propose_ot2_aspirate() -> None:
+    """Step 1c: liquid verbs are proposable one step at a time — the operator
+    is the sequencer, authorizing consecutive cards."""
 
     _mock_ot2_status(_OT2_ADVERTISED)
     _mock_authz(True)
@@ -411,10 +449,28 @@ async def test_propose_ot2_aspirate_refused() -> None:
             "aspirate",
             {"pipette": "p300", "volume_ul": 50.0,
              "location": {"labware_nickname": "plate", "position": "A1"}},
-            "",
+            "step 2 of 4: draw 50 uL from the stock plate",
         )
     )
-    assert out["code"] == "unmappable_action"
+    prop = out["proposal"]
+    assert prop["action"] == "aspirate"
+    assert prop["passthrough_action"] == "aspirate"
+    assert prop["args"]["volume_ul"] == 50.0
+
+
+@respx.mock
+async def test_propose_ot2_forbidden_field_refused_end_to_end() -> None:
+    """The guard fires through _propose_action too, before authz — a
+    credential never reaches the card or the audit row."""
+
+    _mock_ot2_status(_OT2_ADVERTISED)
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(), "ot2_hte", "startup", {"password": "hunter2"}, ""
+        )
+    )
+    assert out["code"] == "forbidden_field"
+    assert "hunter2" not in json.dumps(out)
 
 
 @respx.mock
@@ -430,12 +486,23 @@ async def test_propose_ot2_bad_args_rejected() -> None:
 
 
 @respx.mock
-async def test_list_available_actions_ot2_splits_proposable() -> None:
+async def test_list_available_actions_ot2_full_surface_and_stripped_schemas() -> None:
     _mock_ot2_status(_OT2_ADVERTISED)
     out = json.loads(await ac._list_available_actions(_ot2_registry(), "ot2_hte"))
     by_action = {a["action"]: a for a in out["actions"]}
-    assert by_action["home"]["proposable"] is True
-    assert by_action["home"]["passthrough_action"] == "home"
-    assert "args_schema" in by_action["well.update"]
-    for operator_only in ("aspirate", "setup", "startup", "resume", "tips.reset"):
-        assert by_action[operator_only]["proposable"] is False
+    # Everything advertised is proposable (Step 1c), with the right passthrough.
+    for action, passthrough in _OT2_SURFACE.items():
+        assert by_action[action]["proposable"] is True, action
+        assert by_action[action]["passthrough_action"] == passthrough
+    # Operator-only fields are stripped from what the model is shown, and
+    # reported by name so their absence is explainable.
+    startup = by_action["startup"]
+    assert startup["operator_only_fields"] == ["host_alias", "password"]
+    assert "password" not in startup["args_schema"]["properties"]
+    assert "host_alias" not in startup["args_schema"]["properties"]
+    assert "simulation" in startup["args_schema"]["properties"]
+    assert by_action["pick_up_tip"]["operator_only_fields"] == ["force"]
+    assert "force" not in by_action["pick_up_tip"]["args_schema"]["properties"]
+    assert by_action["move_to"]["operator_only_fields"] == ["force_direct"]
+    # Actions with no risky fields carry no operator_only_fields key at all.
+    assert "operator_only_fields" not in by_action["home"]

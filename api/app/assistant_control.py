@@ -29,8 +29,9 @@ A proposal is exactly one action on one device. Two kinds are in scope:
 
 * ``robot_arm`` move targets (``move.<node_id>`` -> the ``graph.move_to``
   skill -> ``POST /control/graph/move_to``) — the Step 1 surface.
-* ``liquid_handler`` (OT-2) tier A + B — see :data:`_PROPOSABLE`, which carries
-  the full per-action rationale and the exclusions.
+* the ``liquid_handler`` (OT-2) control surface — see :data:`_PROPOSABLE` for
+  the scope history and :data:`_FORBIDDEN_ARG_FIELDS` for the argument fields
+  that are never model-settable (interlock overrides, device credentials).
 
 Safety-floor actions (``stop`` / ``connect`` / ``clear_errors``) are
 deliberately **not** proposable — they are operator buttons and must stay
@@ -152,68 +153,87 @@ def _passthrough_action(sd: SkillDef) -> str:
 
 
 # Per-kind allowlist of actions the assistant may propose. Fail-closed: a kind
-# absent from this table, or an action absent from its set, is refused.
+# absent from this table, or an action absent from its set, is refused — a new
+# gateway verb stays operator-only until somebody scopes it here deliberately
+# (which is why the table survives even now that it lists the OT-2's whole
+# advertised surface).
 #
-# The line is deliberately NOT "is this action dangerous" — nothing here
-# actuates and the confirm card is the gate. It is:
+# Nothing here actuates and the confirm card is the gate, so the bar is not
+# "is this action dangerous". Two things keep that card a real gate rather
+# than a rubber stamp, and both are enforced in code, not by this comment:
 #
-#     proposable iff the card is humanly evaluable at a glance
-#                AND the action is correct as a standalone act.
+# * **Operator-only argument fields** (:data:`_FORBIDDEN_ARG_FIELDS`). A field
+#   that weakens an interlock or carries a credential is never model-settable:
+#   ``pick_up_tip.force`` overrides the gateway's cross-contamination guard
+#   (AGENT_RULES: never weaken an interlock at any layer),
+#   ``move_to.force_direct`` opts out of the arced collision-safe path, and
+#   ``startup.password`` / ``host_alias`` are the gateway's to supply from its
+#   own service env — a model-supplied secret would render on the confirm card
+#   and land in the ``assistant_proposal`` audit row. Supplying any of them
+#   refuses the whole proposal (code ``forbidden_field``), and
+#   list_available_actions strips them from the advertised schema so the model
+#   never sees them as settable.
+# * **Card evaluability.** Nested argument sets (``setup`` labware lists,
+#   ``plate.load`` wells) render on the confirm card as full pretty-printed
+#   JSON, never a truncated one-liner — a card nobody can check is a rubber
+#   stamp (AssistantBubble's ProposalCard).
 #
-# Both halves do real work. A card nobody can check is a rubber stamp, not a
-# gate; and an action that is only meaningful mid-sequence cannot be bound to
-# one confirm click, because a proposal is one action on one device.
-#
-# What that excludes on the OT-2, and why — each an operator-only decision, not
-# an oversight:
-#
-# * ``aspirate`` / ``dispense`` / ``pick_up_tip`` / ``drop_tip`` / ``move_to``
-#   / ``move_labware`` — sequence-bound. A lone aspirate is not *wrong*, it is
-#   *incomplete*: correctness lives in pick-up-tip -> aspirate -> dispense ->
-#   drop-tip. The passthrough runs no skill preconditions and no project
-#   interlocks (ARCHITECTURE decision #1), so proposing these one at a time
-#   invites exactly the half-executed sequence layer 4 exists to prevent. They
-#   belong to ``execute_plan`` (UI_DESIGN §5.5), not to a chat turn.
-# * ``setup`` — nested labware/instrument/module lists carrying free-form
-#   ``config`` JSON. Unevaluable in a chat card, and it is recipe authorship,
-#   which belongs in a protocol.
-# * ``startup`` — its schema carries ``password``. A model-supplied value would
-#   render on the confirm card and land in the ``assistant_proposal`` audit
-#   row. Also contradicts the registry's ``do_not_call_connect: true``.
-# * ``resume`` — the inverse of a safety-floor action: somebody paused, and may
-#   have hands in the deck. ``pause`` is proposable precisely because it is the
-#   safe direction; ``resume`` stays operator-only for the reason ``stop`` does.
-# * ``tips.reset`` — declares used tips fresh, disarming the gateway's
-#   cross-contamination guard. Metadata-only is not harmless when the metadata
-#   *is* an interlock's input (AGENT_RULES: never weaken an interlock).
-# * ``shutdown`` — disruptive, and nothing an operator needs a proposal for.
-#
-# Admitting any motion/liquid verb later requires a field-level guard FIRST:
-# ``pick_up_tip.force`` overrides the contamination guard and
-# ``move_to.force_direct`` opts out of the arced collision-safe path, and
-# neither may ever be model-settable. No action below carries such a field —
-# which is why this table needs no such mechanism yet. Do not add one that does
-# without building the guard.
+# Scope history. Step 1b (2026-08-12) admitted tier A (lights.set / home /
+# pause) and tier B record edits only, holding the liquid/motion verbs back as
+# sequence-bound — one confirm click cannot bind pick-up-tip -> aspirate ->
+# dispense -> drop-tip, and the passthrough runs no interlocks to catch a
+# half-executed remainder. Step 1c (same day, operator decision) admitted the
+# full surface: the operator IS the sequencer, authorizing consecutive cards
+# one step at a time, with the field guard shipped first as the price of
+# admission. The control-mode prompt instructs the model to propose sequence
+# steps strictly in order, one at a time, and to recommend a workflow plan
+# once a sequence grows beyond a handful of steps — execute_plan (UI_DESIGN
+# §5.5) remains the right surface for real multi-step work.
 _PROPOSABLE: dict[str, frozenset[str]] = {
     "liquid_handler": frozenset(
         {
-            # Tier A — zero or one scalar arg, each moving the robot toward a
-            # safer or more legible state. ``home`` is the tier's one real
-            # motion: the canonical make-it-safe pose, no args, idempotent, and
-            # the documented prerequisite for a hand entering the deck.
+            # Session lifecycle. ``startup`` is only proposable because the
+            # guard forbids ``password``/``host_alias`` (the gateway uses its
+            # own env); a human authorizing it is the "explicit invocation"
+            # the catalog blesses despite ``do_not_call_connect: true``.
+            "startup",
+            "shutdown",
+            # Deck state / convenience.
             "lights.set",
             "home",
             "pause",
-            # Tier B — record edits. No motion and evaluable cards, but they
-            # mutate the lab's *belief* about the deck, so a wrong one silently
-            # desyncs belief from reality. That is why they still confirm, not
-            # why they are withheld.
+            "resume",
+            "setup",
+            # Liquid handling — sequence-bound; the operator sequences via
+            # consecutive confirm cards (Step 1c above).
+            "move_to",
+            "pick_up_tip",
+            "aspirate",
+            "dispense",
+            "drop_tip",
+            "move_labware",
+            # Record edits — no motion, but they mutate the lab's *belief*
+            # about the deck; a wrong one silently desyncs belief from
+            # reality, which is why they still confirm. ``tips.reset``
+            # additionally re-arms/disarms the contamination guard's input
+            # (a physical rack swap), so its card deserves a careful read.
             "plate.load",
             "plate.unload",
             "well.update",
+            "tips.reset",
             "deck.declare",
         }
     ),
+}
+
+# Argument fields the model may never set, per kind — see the rationale above.
+# Enforced in :func:`_resolve` (refusal code ``forbidden_field``) and stripped
+# from the schemas :func:`_list_available_actions` advertises. Flat per kind on
+# purpose: none of these names has a legitimate model-settable use on any
+# action of the kind, and a flat set cannot drift when a schema is reused
+# across actions (TipArgs serves both tip verbs).
+_FORBIDDEN_ARG_FIELDS: dict[str, frozenset[str]] = {
+    "liquid_handler": frozenset({"force", "force_direct", "password", "host_alias"}),
 }
 
 
@@ -222,8 +242,20 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
 
     Returns ``(skill_def, passthrough_action, resolved_args)`` or raises
     :class:`ProposalRefused`. Scope: ``robot_arm`` move targets plus the
-    per-kind allowlist in :data:`_PROPOSABLE`. Anything else is refused.
+    per-kind allowlist in :data:`_PROPOSABLE`. Anything else is refused, as is
+    any proposal supplying an operator-only argument field.
     """
+
+    supplied_forbidden = sorted(
+        _FORBIDDEN_ARG_FIELDS.get(entry.kind or "", frozenset()) & set(args or {})
+    )
+    if supplied_forbidden:
+        raise ProposalRefused(
+            "forbidden_field",
+            f"{', '.join(supplied_forbidden)} is operator-only and never "
+            "model-settable (interlock override or device credential); omit it "
+            "and re-propose",
+        )
 
     if entry.kind == "robot_arm" and action.startswith("move."):
         node_id = action[len("move."):]
@@ -257,7 +289,7 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
     raise ProposalRefused(
         "unmappable_action",
         f"action {action!r} on kind {entry.kind!r} is not proposable by the assistant "
-        "(safety-floor, sequence-bound, and interlock-adjacent actions stay "
+        "(safety-floor actions and verbs not yet scoped into the allowlist stay "
         "operator-only)",
     )
 
@@ -333,12 +365,25 @@ async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
         except ProposalRefused:
             actions.append(info)
             continue
+        # Operator-only fields are stripped from the schema the model sees —
+        # advertising them as settable would invite a proposal the guard must
+        # then refuse. They are reported by name so the model can explain the
+        # omission if asked.
+        schema = sd.args_schema.model_json_schema()
+        forbidden = _FORBIDDEN_ARG_FIELDS.get(entry.kind or "", frozenset())
+        stripped = sorted(f for f in forbidden if f in schema.get("properties", {}))
+        for field in stripped:
+            schema["properties"].pop(field)
+            if field in schema.get("required", []):
+                schema["required"].remove(field)
         info.update(
             proposable=True,
             passthrough_action=passthrough,
             description=sd.description,
-            args_schema=sd.args_schema.model_json_schema(),
+            args_schema=schema,
         )
+        if stripped:
+            info["operator_only_fields"] = stripped
         actions.append(info)
 
     return _dumps(
@@ -444,9 +489,9 @@ def _build_server(registry: Registry):
         """The device's live ``allowed_actions`` plus, for each action the
         assistant can propose, its argument JSON-Schema. Call this before
         propose_action to learn what is legal instead of guessing endpoints.
-        Not every advertised action is proposable: sequence-bound liquid verbs,
-        safety-floor actions, and interlock-adjacent ones stay operator-only,
-        and are returned with ``proposable: false``."""
+        Safety-floor actions stay operator-only (``proposable: false``), and
+        each proposable action's schema omits its operator-only argument
+        fields (listed under ``operator_only_fields``) — never supply those."""
 
         return await _list_available_actions(registry, equipment_id)
 

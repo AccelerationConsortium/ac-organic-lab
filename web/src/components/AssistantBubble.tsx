@@ -733,18 +733,25 @@ function ModeToggle({
   );
 }
 
-/** Render one proposal argument for the confirm card.
+/** Render one proposal argument inline for the confirm card.
  *
  * `String(v)` turns every object and array into `[object Object]`, which is
  * worse than terse — an unreadable card is a rubber stamp rather than a gate,
  * and record-edit proposals (`plate.load` wells, `deck.declare` slots) carry
- * exactly those shapes. JSON keeps them checkable; the clamp keeps one large
- * argument from burying the authoritative fields above it.
+ * exactly those shapes. JSON keeps them checkable. Only used when the args are
+ * compact (see `argsNeedBlock`); large sets get the full pretty-printed block.
  */
 function formatArg(v: unknown): string {
   if (v === null || typeof v !== "object") return String(v);
-  const json = JSON.stringify(v);
-  return json.length > 160 ? `${json.slice(0, 157)}…` : json;
+  return JSON.stringify(v);
+}
+
+/** Large argument sets (`setup` labware lists, multi-well `plate.load`) can't
+ * be truncated — a card the operator can't fully read is a rubber stamp, and
+ * the args ARE the payload the Authorize click POSTs. Past this size the card
+ * switches from the inline `k=v` row to a scrollable pretty-printed block. */
+function argsNeedBlock(args: Record<string, unknown>): boolean {
+  return JSON.stringify(args).length > 200;
 }
 
 /** `deck.declare` with an empty `slots` map wipes the whole declaration.
@@ -778,6 +785,7 @@ function ProposalCard({
   onDismiss: () => void;
 }) {
   const argEntries = Object.entries(proposal.args ?? {});
+  const blockArgs = argEntries.length > 0 && argsNeedBlock(proposal.args ?? {});
   const clearsDeck = isDeckClear(proposal);
   return (
     <div className="rounded-lg border border-purple-300 bg-purple-50 p-2 text-[12px] dark:border-purple-700 dark:bg-purple-950/40">
@@ -793,11 +801,23 @@ function ProposalCard({
       <dl className="space-y-0.5 text-ink dark:text-slate-100">
         <Row label="Device" value={`${proposal.equipment_name} (${proposal.equipment_id})`} />
         <Row label="Action" value={proposal.action} />
-        {argEntries.length > 0 && (
+        {argEntries.length > 0 && !blockArgs && (
           <Row
             label="Args"
             value={argEntries.map(([k, v]) => `${k}=${formatArg(v)}`).join(", ")}
           />
+        )}
+        {blockArgs && (
+          <div className="flex gap-2">
+            <dt className="w-20 shrink-0 text-[10px] uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+              Args
+            </dt>
+            <dd className="min-w-0 flex-1">
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-purple-100/60 p-1.5 font-mono text-[10px] leading-snug dark:bg-purple-900/30">
+                {JSON.stringify(proposal.args, null, 2)}
+              </pre>
+            </dd>
+          </div>
         )}
         <Row
           label="Device state"
