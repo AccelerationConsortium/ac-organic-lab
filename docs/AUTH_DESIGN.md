@@ -479,11 +479,14 @@ with the wrong one) all failed — with an error indistinguishable from "you are
 not logged in". Diagnosis cost a day, most of it spent looking for a missing
 credential rather than a mismatched one.
 
-Stopgap in force since 2026-08-12: `DEVICE_EDGE_SHARED_SECRET` in the
-dashboard's `.env` is set to the xArm's value. That unblocks exactly one
-device, and silently mis-authenticates the next one to gate itself.
+A stopgap on 2026-08-12 pointed `DEVICE_EDGE_SHARED_SECRET` at the xArm's
+value, which unblocked the arm — and, on inspection, had been holding the
+**OT-2's** secret all along. That is why the OT-2 panels worked while the arm
+did not, and why the stopgap risked breaking the OT-2s in turn. One value for a
+fleet of per-device secrets is a game of whack-a-mole; it was replaced the same
+day by the design below.
 
-### The proper fix: resolve the secret per equipment
+### The fix (shipped 2026-08-12): resolve the secret per equipment
 
 Give the registry the same authority over *how to authenticate to* a device
 that it already has over *where to reach* it (`base_url`), naming the
@@ -495,14 +498,26 @@ environment variable rather than the value, so nothing secret enters git:
     edge_secret_env: XARM_EDGE_SHARED_SECRET   # name, never the value
 ```
 
-`_device_auth_candidates` then resolves `entry.edge_secret_env` →
-`os.environ[...]` for the target device, falling back to
-`DEVICE_EDGE_SHARED_SECRET` when the entry names none (so nothing regresses),
-and omitting the edge candidate entirely when neither resolves — at which point
-the 401 fallback already in place (commit `152a87c`) tries the operator's own
-credential instead. Deploying it means adding each device's secret to the
-dashboard service environment alongside Caddy's, which is the same operational
-step already required on the device side.
+`EquipmentEntry.edge_secret_env` (in `lab_skills.registry`) carries the name;
+`control._edge_secret_for(entry)` resolves it from this process's environment,
+falls back to `DEVICE_EDGE_SHARED_SECRET` when the entry names none (so nothing
+regresses), and — when an entry *names* a variable that is unset — falls back
+too but logs a warning, because a typo is otherwise indistinguishable from a
+device that simply does not gate. When neither resolves there is no edge
+candidate at all, at which point the 401 fallback (`152a87c`) tries the
+operator's own credential instead.
+
+Annotated as of 2026-08-12: `xarm_translocation` → `XARM_EDGE_SHARED_SECRET`,
+`ot2_hte` and `ot2_complexation` → `OT2_EDGE_SECRET`. Everything else uses the
+fallback, unchanged. Deploying a *new* edge-fronted device means adding its
+secret to the dashboard service environment alongside Caddy's — the same
+operational step already required on the device side.
+
+**Not covered: `workflow.py`.** The authorized-run executor builds one header
+set for a whole multi-device run (`Lab.connect(headers=…)`), so it cannot vary
+the secret per step without threading the target through `lab_skills`. It uses
+the global fallback; a run touching a device with its own secret fails closed at
+that step rather than actuating with the wrong identity.
 
 The alternative — a naming convention like `DEVICE_EDGE_SECRET_<EQUIPMENT_ID>`
 with no registry field — needs no schema change, but it hides the wiring: you

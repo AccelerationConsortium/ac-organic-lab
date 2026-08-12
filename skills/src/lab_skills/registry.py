@@ -189,6 +189,15 @@ class EquipmentEntry(BaseModel):
     # device follows the v1.0 contract and the SDK degrades claim semantics
     # to a no-op for it.
     protocol: DeviceProtocol = "1.0"
+    #: Name of the environment variable holding this device's edge shared
+    #: secret — the **name**, never the value, so the registry stays committable.
+    #: A device behind the single edge trusts an injected ``X-Auth-User`` only
+    #: when the accompanying ``X-Edge-Auth`` matches its own copy, and those
+    #: secrets are per device (``XARM_EDGE_SHARED_SECRET``, ``OT2_EDGE_SECRET``,
+    #: …). Readers that talk to devices resolve this per entry and fall back to
+    #: a global ``DEVICE_EDGE_SHARED_SECRET`` when it is unset. See
+    #: ``docs/AUTH_DESIGN.md`` → "How a device learns who the operator is".
+    edge_secret_env: str | None = None
 
     # Soft maintenance toggling. ``enabled: false`` (or a non-null
     # ``maintenance``) makes ``Lab.get(<id>)`` raise

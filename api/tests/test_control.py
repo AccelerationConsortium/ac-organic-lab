@@ -922,3 +922,88 @@ def test_claimless_action_also_falls_back(monkeypatch) -> None:
 
     assert r.status_code == 200
     assert len(route.calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Per-device edge secrets
+#
+# Each device behind the single edge trusts a *different* X-Edge-Auth secret, so
+# one dashboard-wide value satisfies at most one of them. Sending the wrong one
+# is indistinguishable from sending none: the device answers 401 login_required.
+# That is what broke xArm control for two weeks while the OT-2s worked — the
+# global happened to hold the OT-2 secret.
+# ---------------------------------------------------------------------------
+
+
+def _entry_with_secret(env_name: str | None, **overrides: Any) -> Any:
+    base = {
+        "id": "xarm_translocation",
+        "kind": "robot_arm",
+        "adapter": "http",
+        "protocol": "1.1",
+        "base_url": "http://100.64.254.16:8000",
+        "status_path": "/status",
+        "edge_secret_env": env_name,
+    }
+    base.update(overrides)
+    obj = MagicMock(spec_set=list(base.keys()))
+    for key, value in base.items():
+        setattr(obj, key, value)
+    return obj
+
+
+def test_edge_secret_resolves_per_equipment(monkeypatch) -> None:
+    from app import control as control_mod
+
+    monkeypatch.setattr(control_mod, "_EDGE_SHARED_SECRET", "global-secret")
+    monkeypatch.setenv("XARM_EDGE_SHARED_SECRET", "xarm-secret")
+    monkeypatch.setenv("OT2_EDGE_SECRET", "ot2-secret")
+
+    xarm = _entry_with_secret("XARM_EDGE_SHARED_SECRET")
+    ot2 = _entry_with_secret("OT2_EDGE_SECRET", id="ot2_hte", kind="liquid_handler")
+
+    assert control_mod._edge_secret_for(xarm) == "xarm-secret"
+    assert control_mod._edge_secret_for(ot2) == "ot2-secret"
+    # The regression this exists for: two devices, two secrets, one process.
+    assert control_mod._edge_secret_for(xarm) != control_mod._edge_secret_for(ot2)
+
+
+def test_edge_secret_falls_back_to_global(monkeypatch) -> None:
+    """Entries that name no variable keep the pre-2026-08-12 behaviour."""
+
+    from app import control as control_mod
+
+    monkeypatch.setattr(control_mod, "_EDGE_SHARED_SECRET", "global-secret")
+    assert control_mod._edge_secret_for(_entry_with_secret(None)) == "global-secret"
+    assert control_mod._edge_secret_for(None) == "global-secret"
+
+
+def test_edge_secret_named_but_unset_falls_back_loudly(monkeypatch, caplog) -> None:
+    """A typo'd variable name is otherwise indistinguishable from a device that
+    does not gate at all — so it falls back, and says so."""
+
+    from app import control as control_mod
+
+    monkeypatch.setattr(control_mod, "_EDGE_SHARED_SECRET", "global-secret")
+    monkeypatch.delenv("TYPOED_SECRET_NAME", raising=False)
+    with caplog.at_level("WARNING"):
+        resolved = control_mod._edge_secret_for(_entry_with_secret("TYPOED_SECRET_NAME"))
+    assert resolved == "global-secret"
+    assert "TYPOED_SECRET_NAME" in caplog.text
+
+
+def test_candidates_use_the_entry_secret(monkeypatch) -> None:
+    from starlette.datastructures import Headers
+
+    from app import control as control_mod
+
+    monkeypatch.setattr(control_mod, "_EDGE_SHARED_SECRET", "global-secret")
+    monkeypatch.setenv("XARM_EDGE_SHARED_SECRET", "xarm-secret")
+    request = MagicMock()
+    request.headers = Headers({"x-auth-user": "alice@example.edu"})
+    request.cookies = {}
+
+    candidates = control_mod._device_auth_candidates(
+        request, _entry_with_secret("XARM_EDGE_SHARED_SECRET")
+    )
+    assert candidates[0]["X-Edge-Auth"] == "xarm-secret"

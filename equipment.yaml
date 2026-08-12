@@ -101,6 +101,7 @@ equipment:
     kind: robot_arm
     adapter: http
     protocol: "1.2"
+    edge_secret_env: XARM_EDGE_SHARED_SECRET
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000
     tailscale_ip: 100.64.254.16
     status_path: /status
@@ -147,6 +148,7 @@ equipment:
     kind: liquid_handler
     adapter: http
     protocol: "1.2"
+    edge_secret_env: OT2_EDGE_SECRET
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020
     tailscale_ip: 100.64.254.16
     status_path: /status
@@ -367,6 +369,7 @@ equipment:
     kind: liquid_handler
     adapter: http
     protocol: "1.2"
+    edge_secret_env: OT2_EDGE_SECRET
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8021
     tailscale_ip: 100.64.254.91
     status_path: /status

@@ -801,11 +801,11 @@ Two things this table does **not** yet know:
 - ~~**Which credential the xArm accepts**~~ — **answered 2026-08-12.** It
   honours the same `X-Auth-User` + `X-Edge-Auth` the passthrough already sends;
   the secret is **per device** (Caddy injects `XARM_EDGE_SHARED_SECRET`) and the
-  dashboard was sending one device-agnostic value that did not match. Stopgap:
-  `DEVICE_EDGE_SHARED_SECRET` now carries the arm's value — which by
-  construction can satisfy only one device. Per-equipment resolution is designed
-  in [`AUTH_DESIGN.md`](AUTH_DESIGN.md) and is the thing to build before a
-  second device gates itself. Related: those edge secrets are readable by any
+  dashboard was sending one device-agnostic value that did not match. Per-equipment
+  resolution shipped the same day (`edge_secret_env` on the registry entry), after
+  the interim single-value stopgap was found to have been holding the *OT-2's*
+  secret — the reason those panels worked while the arm did not. See
+  [`AUTH_DESIGN.md`](AUTH_DESIGN.md). Related: those edge secrets are readable by any
   local user via `systemctl show caddy.service -p Environment` (same doc).
 - **Whether any other device is login-gated.** Deliberately not probed: the
   gate sits on claim *acquisition*, so finding out means requesting a claim,

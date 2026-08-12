@@ -485,10 +485,12 @@ a 48-character value against the arm's 64-character one. Same mechanism,
 different secret, and the device reports the mismatch as `login_required`,
 indistinguishable from presenting nothing at all.
 
-Stopgap in force: the dashboard's `DEVICE_EDGE_SHARED_SECRET` now carries the
-xArm's value, which fixes this arm and cannot fix a second device with its own
-secret. The per-equipment design that does is in
-[`AUTH_DESIGN.md`](AUTH_DESIGN.md) → *How a device learns who the operator is*.
+Fixed properly the same day: the registry entry names the variable
+(`edge_secret_env: XARM_EDGE_SHARED_SECRET`) and the passthrough resolves it per
+device. The interim single-value stopgap turned out to have been holding the
+*OT-2's* secret all along — which is exactly why the OT-2 panels worked while
+this arm did not. See [`AUTH_DESIGN.md`](AUTH_DESIGN.md) → *How a device learns
+who the operator is*.
 
 **Verified end to end 2026-08-12**, once the secrets matched: a pin through the
 dashboard passthrough returned 200

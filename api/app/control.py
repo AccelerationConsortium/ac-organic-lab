@@ -259,7 +259,39 @@ _AUTH_COOKIE_NAME = os.environ.get("AUTH_COOKIE_NAME", "ac_auth_session")
 _AUTH_FALLBACK_STATUS = frozenset({401})
 
 
-def _device_auth_candidates(request: Request) -> list[dict[str, str]]:
+def _edge_secret_for(entry: Any | None) -> str:
+    """The edge shared secret to present to *this* device.
+
+    Per-device by design: each device behind the edge trusts a different
+    secret, so one dashboard-wide value can satisfy at most one of them. The
+    registry entry names the environment variable
+    (``edge_secret_env: XARM_EDGE_SHARED_SECRET``) and the value is read from
+    this process's environment, so nothing secret is committed.
+
+    Falls back to the global ``DEVICE_EDGE_SHARED_SECRET`` when the entry names
+    no variable or the named one is unset — the pre-2026-08-12 behaviour, kept
+    so devices that were never given an entry keep working exactly as before.
+    """
+
+    name = getattr(entry, "edge_secret_env", None) if entry is not None else None
+    if name:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+        # Named but absent: fall through to the global rather than sending
+        # nothing, and say so once — a typo'd variable name is otherwise
+        # indistinguishable from a device that simply does not gate.
+        logger.warning(
+            "edge_secret_env=%s is set on %s but that variable is empty; "
+            "falling back to DEVICE_EDGE_SHARED_SECRET",
+            name, getattr(entry, "id", "?"),
+        )
+    return _EDGE_SHARED_SECRET
+
+
+def _device_auth_candidates(
+    request: Request, entry: Any | None = None
+) -> list[dict[str, str]]:
     """Identity headers to try against a login-gated device, best first.
 
     Two ways to prove who the operator is, and a device may accept either:
@@ -286,10 +318,11 @@ def _device_auth_candidates(request: Request) -> list[dict[str, str]]:
     """
 
     candidates: list[dict[str, str]] = []
-    if _EDGE_SHARED_SECRET:
+    edge_secret = _edge_secret_for(entry)
+    if edge_secret:
         user = request.headers.get("x-auth-user")
         if user:
-            headers = {"X-Auth-User": user, "X-Edge-Auth": _EDGE_SHARED_SECRET}
+            headers = {"X-Auth-User": user, "X-Edge-Auth": edge_secret}
             role = request.headers.get("x-auth-role")
             if role:
                 headers["X-Auth-Role"] = role
@@ -303,14 +336,20 @@ def _device_auth_candidates(request: Request) -> list[dict[str, str]]:
     return candidates or [{}]
 
 
-def _device_auth_headers(request: Request) -> dict[str, str]:
+def _device_auth_headers(
+    request: Request, entry: Any | None = None
+) -> dict[str, str]:
     """The preferred identity headers — first of :func:`_device_auth_candidates`.
 
-    Kept for callers that issue a single hop and cannot retry (``workflow.py``);
-    they inherit the pre-fallback behaviour.
+    Kept for callers that issue a single hop and cannot retry (``workflow.py``),
+    which inherit the pre-fallback behaviour. ``workflow.py`` also passes no
+    entry: it builds **one** header set for a whole multi-device run, so it
+    cannot do per-device secrets without threading the target through
+    ``lab_skills``. It therefore gets the global fallback, and a run touching a
+    device with its own secret still fails closed at that step.
     """
 
-    return _device_auth_candidates(request)[0]
+    return _device_auth_candidates(request, entry)[0]
 
 
 async def _acquire_claim_with_fallback(
@@ -664,7 +703,7 @@ async def _proxy(
     # Operator credential forwarded on every device hop (claim, action,
     # release) so login-gated claims (XARM_REQUIRE_LOGIN_FOR_CLAIM) pass and
     # the device stamps/audits the real operator. Empty when unauthenticated.
-    auth_candidates = _device_auth_candidates(request)
+    auth_candidates = _device_auth_candidates(request, entry)
     edge_headers = auth_candidates[0]
     # Wall-clock of the whole device interaction (claim → action → release),
     # stamped into the audit payload as `duration_s`. Started here — after
@@ -829,7 +868,7 @@ async def _device_action_proxy(
     target = _device_url(entry.base_url, entry.status_path, normalized)
     # Forward the operator's credential so the device's `require_login` passes
     # and its audit records the real actor (empty when unauthenticated).
-    auth_candidates = _device_auth_candidates(request)
+    auth_candidates = _device_auth_candidates(request, entry)
     started = time.monotonic()
     try:
         response, _used = await _send_with_auth_fallback(
