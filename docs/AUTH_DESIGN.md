@@ -517,11 +517,16 @@ readable that way today (confirmed as `sdl2`, 2026-08-12). Anyone with a shell
 on the dashboard host can therefore mint trusted-edge headers for those devices
 and act as any user, un-audited.
 
+Note the drop-in holding them is already `600 root:root` — file permissions do
+not help, because systemd re-publishes `Environment=` values through that
+property regardless. `caddy run --environ` additionally prints them into the
+journal at every start.
+
 That is a smaller hole than it sounds while shell access to this host is
-already equivalent to lab control, but it is free to close: move the values
-into an `EnvironmentFile=` with mode `0640 root:caddy`. systemd does not expose
-an environment file's contents through `systemctl show`, so the secret stops
-being readable by unprivileged local users while nothing else changes.
+already equivalent to lab control — but it converts "has a shell" into "can
+impersonate a named operator in the audit trail", and it is free to close.
+Step-by-step migration to an `EnvironmentFile` (plus dropping `--environ`) is in
+[`deploy/README.md`](../deploy/README.md) → *Secrets in service environments*.
 
 ## Data isolation (requirement 4)
 

@@ -490,10 +490,22 @@ xArm's value, which fixes this arm and cannot fix a second device with its own
 secret. The per-equipment design that does is in
 [`AUTH_DESIGN.md`](AUTH_DESIGN.md) → *How a device learns who the operator is*.
 
-Note what this means for **pinning a graph node**: it needs no dashboard
-control at all. The arm's own panel is already framed at `/utils/xarm_control`,
-reached through the edge with your session — that is the operator path, and it
-works today.
+**Verified end to end 2026-08-12**, once the secrets matched: a pin through the
+dashboard passthrough returned 200
+(`{"recovered_to":"opentrons_home","current_node":"opentrons_home"}`), the claim
+was released cleanly, and the audit row reads
+`yangcyril.cao@utoronto.ca POST graph/recover_to → ok (200)` — directly above
+the `refused (401)` row from the same request before the fix. With a node
+pinned, `allowed_actions` grew from `["stop"]` to
+`["stop", "move.robot_home", "move.opentrons_2_high"]`.
+
+Worth knowing this had been broken for a while, silently: the audit table also
+carries a `2026-07-30 … POST graph/move_to → refused (401)` row from the
+dashboard's own owner identity. Nobody chased it, because a 401 on a robot arm
+reads as "not signed in".
+
+Pinning is also reachable **without** the passthrough: the arm's own panel is
+framed at `/utils/xarm_control` and carries your session through the edge.
 
 ### v1.2 activity and concurrent-move refusal (device commit c91dd05)
 

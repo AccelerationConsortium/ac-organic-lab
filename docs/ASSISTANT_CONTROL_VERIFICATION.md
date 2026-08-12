@@ -492,7 +492,23 @@ Codes are stored hashed, so they cannot be read back out of the DB.
 The software path is verified, so what follows is hardware-specific only. Step 2 is the one most
 likely to trip you up.
 
-> **Progress, 2026-08-11 (server).** Steps 1-2 are done: `lab-control-mcp` is installed in the
+> **Steps 1-6 done, 2026-08-12 — the assistant proposed a real move on real
+> hardware.** With the arm connected and `opentrons_home` pinned through the
+> audited passthrough, a Control-mode turn produced a validated proposal:
+> `move.robot_home` → `graph/move_to {"node_id":"robot_home"}`, actor bound to
+> the verified operator, 120 s expiry, device state attached. The model's path
+> was clean — `list_equipment_now` → `list_available_actions` → `propose_action`.
+> **Nothing was authorized, so nothing moved**; steps 7-8 (authorize, then check
+> both audit rows) are what remain, and they are a deliberate human decision
+> rather than a verification chore.
+>
+> Getting there required two fixes found on the server, neither of them in this
+> feature: the MCP spawn (§4.3) and a per-device edge-secret mismatch that made
+> *every* dashboard control action on this arm fail 401
+> ([`AUTH_DESIGN.md`](AUTH_DESIGN.md) → *How a device learns who the operator
+> is*).
+>
+> **Earlier progress, 2026-08-11 (server).** Steps 1-2 were done: `lab-control-mcp` is installed in the
 > gaia venv, and the arm has been connected by hand — it reports `ready` / `idle`. Step 4 (the
 > node pin) is the current blocker and behaves exactly as described below: with
 > `details.current_node` still `null`, `/status.allowed_actions` is `["stop"]` alone, so the
