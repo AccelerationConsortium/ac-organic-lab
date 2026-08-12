@@ -1,9 +1,11 @@
 # Hermes access design — a platform agent, not a science agent
 
 **Status:** design note, 2026-08-09. Phase 2 (the edge-path policy) is
-**implemented** in `auth/`; **Phase 0 (the `hermes` OS user) is implemented
-2026-08-12** — see the record at the end of its section; Phases 1/3/4 are
-proposed and not yet done.
+**implemented** in `auth/`; **Phases 0 and 1 are implemented 2026-08-12** —
+the `hermes` OS user (record at the end of its section) and the
+`hermes@lab.local` roster principal (hot-reloaded and probe-verified:
+`analytica_db` allowed under the §2 path policy, `bitacora_eln` and all
+hardware refused). Phases 3/4 are proposed and not yet done.
 
 **The requirement, in the operator's words:** Hermes should *learn from platform
 operation* and *help work on other devices over SSH so only the server needs
@@ -171,6 +173,14 @@ so no new mechanism is needed:
 - Add `hermes@lab.local` under `automation:` in `roster.yaml`, `approved: true`.
 - Grant `analytica_db`. **Do not grant `bitacora_eln`** — that single omission
   denies the whole design ELN, with no code.
+
+**Implemented 2026-08-12**, with the Phase-2 `paths:` block attached in the
+same entry (mirroring `test_path_policy.py::HERMES` verbatim). One divergence
+from §2, accepted knowingly: `/uploads/experiments` sits on the allow side of
+the §2 table but is **not** in the pinned allow list, so default-deny closes
+it — widen deliberately if raw-upload reads are ever needed. The pattern is
+documented in `roster.yaml.example` (the live roster is gitignored). Key
+issuance (`ac-auth issue-key`) deferred to run-trigger profile wiring.
 
 ### Phase 2 — edge-path policy — **implemented**
 
