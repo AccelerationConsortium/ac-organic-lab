@@ -439,6 +439,90 @@ An invariant, with the claim doubling as the per-user gate:
   revocation may be* (how long a device's cached auth list lags central). Suggest
   **30–60 s** — a revoked user can still act for at most that long.
 
+## How a device learns who the operator is (edge-injected identity)
+
+**Status: partly built, and the built part has a structural limit — recorded
+2026-08-12 after it broke xArm control for a day.**
+
+A login-gated device needs to know *which human* is acting. There are two ways
+it can find out, and the lab uses both:
+
+1. **The device's own login.** The operator signs into the device's panel
+   (email one-time code) and the device holds its own session.
+2. **Identity injected at the edge.** Caddy authenticates the human against
+   ac_auth (`forward_auth` → `/auth/verify`), then forwards
+   `X-Auth-User` / `X-Auth-Role` to the device, plus **`X-Edge-Auth`, a shared
+   secret**. The device trusts the injected identity *only* when that secret
+   matches its own copy — which is what stops anyone on the Tailnet from
+   simply asserting `X-Auth-User: someone-else` straight at port 8000. It is
+   the reason the framed panels (`/xarm5/web/`, `/ot2/*/ui/`) don't ask for a
+   second login.
+
+The secret is **per device**. The deployed edge carries
+`XARM_EDGE_SHARED_SECRET`, `OT2_EDGE_SECRET` and `GRAPHCHAT_EDGE_SECRET` as
+separate values (the repo's `Caddyfile.single-edge` adds
+`ANALYTICA_EDGE_SECRET`), each paired with a copy in that device's own service
+environment. That is the right shape: one leaked secret compromises one
+device's header trust, not the fleet's.
+
+### The limit: the passthrough holds exactly one secret
+
+`api/app/control.py` reads a single `DEVICE_EDGE_SHARED_SECRET` and sends it to
+**every** device. Against a fleet of per-device secrets it can satisfy at most
+one of them, and every other login-gated device answers 401 `login_required`.
+
+This is not hypothetical: it is what broke xArm control end to end. The
+dashboard was holding a 48-character secret while the arm's was 64 characters,
+so the panel (through Caddy, with the right secret) worked while the tile, the
+workflow executor and the assistant's Authorize button (through the passthrough,
+with the wrong one) all failed — with an error indistinguishable from "you are
+not logged in". Diagnosis cost a day, most of it spent looking for a missing
+credential rather than a mismatched one.
+
+Stopgap in force since 2026-08-12: `DEVICE_EDGE_SHARED_SECRET` in the
+dashboard's `.env` is set to the xArm's value. That unblocks exactly one
+device, and silently mis-authenticates the next one to gate itself.
+
+### The proper fix: resolve the secret per equipment
+
+Give the registry the same authority over *how to authenticate to* a device
+that it already has over *where to reach* it (`base_url`), naming the
+environment variable rather than the value, so nothing secret enters git:
+
+```yaml
+  - id: xarm_translocation
+    base_url: http://sdl2-pc-03-cytation…:8000
+    edge_secret_env: XARM_EDGE_SHARED_SECRET   # name, never the value
+```
+
+`_device_auth_candidates` then resolves `entry.edge_secret_env` →
+`os.environ[...]` for the target device, falling back to
+`DEVICE_EDGE_SHARED_SECRET` when the entry names none (so nothing regresses),
+and omitting the edge candidate entirely when neither resolves — at which point
+the 401 fallback already in place (commit `152a87c`) tries the operator's own
+credential instead. Deploying it means adding each device's secret to the
+dashboard service environment alongside Caddy's, which is the same operational
+step already required on the device side.
+
+The alternative — a naming convention like `DEVICE_EDGE_SECRET_<EQUIPMENT_ID>`
+with no registry field — needs no schema change, but it hides the wiring: you
+cannot tell from `equipment.yaml` whether a device expects edge identity at
+all, which is exactly the question that took a day to answer.
+
+### Operational note: the edge secrets are world-readable
+
+`systemctl show caddy.service -p Environment` prints every `Environment=` value
+to **any local user** — no root, no journal access. All three edge secrets are
+readable that way today (confirmed as `sdl2`, 2026-08-12). Anyone with a shell
+on the dashboard host can therefore mint trusted-edge headers for those devices
+and act as any user, un-audited.
+
+That is a smaller hole than it sounds while shell access to this host is
+already equivalent to lab control, but it is free to close: move the values
+into an `EnvironmentFile=` with mode `0640 root:caddy`. systemd does not expose
+an environment file's contents through `systemctl show`, so the secret stops
+being readable by unprivileged local users while nothing else changes.
+
 ## Data isolation (requirement 4)
 
 Experiment data becomes **project-scoped**; lab telemetry stays public. Data is

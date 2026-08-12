@@ -798,10 +798,15 @@ Full evidence in [`EQUIP_STATUS.md`](EQUIP_STATUS.md) §10.
 
 Two things this table does **not** yet know:
 
-- **Which credential the xArm accepts** — its hint names an `/web/` email-code
-  login and an `X-Api-Key`; whether that login is ac_auth-backed (so a
-  forwarded session cookie works) is unverified. Until it is, dashboard control
-  of the arm is broken regardless of the fallback.
+- ~~**Which credential the xArm accepts**~~ — **answered 2026-08-12.** It
+  honours the same `X-Auth-User` + `X-Edge-Auth` the passthrough already sends;
+  the secret is **per device** (Caddy injects `XARM_EDGE_SHARED_SECRET`) and the
+  dashboard was sending one device-agnostic value that did not match. Stopgap:
+  `DEVICE_EDGE_SHARED_SECRET` now carries the arm's value — which by
+  construction can satisfy only one device. Per-equipment resolution is designed
+  in [`AUTH_DESIGN.md`](AUTH_DESIGN.md) and is the thing to build before a
+  second device gates itself. Related: those edge secrets are readable by any
+  local user via `systemctl show caddy.service -p Environment` (same doc).
 - **Whether any other device is login-gated.** Deliberately not probed: the
   gate sits on claim *acquisition*, so finding out means requesting a claim,
   which has a side effect on live hardware. A heartbeat probe with an invalid

@@ -475,13 +475,25 @@ how it surfaced. `_device_auth_candidates` (commit `152a87c`) now falls back to
 the operator's own credential — api key, else the ac_auth session cookie — when
 a device answers 401. See [`ARCHITECTURE.md`](ARCHITECTURE.md) decision #1.
 
-**Still open:** *which* credential this device accepts is unverified. Its hint
-names an `/web/` email-code login and an `X-Api-Key`; whether that login is
-ac_auth-backed (so a forwarded session cookie validates) or device-local is
-unknown, and the deployed build does not honour `X-Edge-Auth` at all — so
-`XARM_EDGE_SHARED_SECRET` is either unprovisioned or absent from that build.
-Until one of them is confirmed, dashboard control of this arm does not work and
-pinning a graph node must be done from the device's own `/web/` panel.
+**Answered 2026-08-12: the arm honours `X-Edge-Auth` — the dashboard was
+sending the wrong secret.** These are *per-device* secrets: Caddy injects
+`XARM_EDGE_SHARED_SECRET` on `/xarm5/*` (see `deploy/Caddyfile.single-edge`)
+and the device trusts the identity only when its own copy matches, which is why
+the framed panel at `/utils/xarm_control` works without a second login. The
+passthrough, meanwhile, sends one device-agnostic `DEVICE_EDGE_SHARED_SECRET` —
+a 48-character value against the arm's 64-character one. Same mechanism,
+different secret, and the device reports the mismatch as `login_required`,
+indistinguishable from presenting nothing at all.
+
+Stopgap in force: the dashboard's `DEVICE_EDGE_SHARED_SECRET` now carries the
+xArm's value, which fixes this arm and cannot fix a second device with its own
+secret. The per-equipment design that does is in
+[`AUTH_DESIGN.md`](AUTH_DESIGN.md) → *How a device learns who the operator is*.
+
+Note what this means for **pinning a graph node**: it needs no dashboard
+control at all. The arm's own panel is already framed at `/utils/xarm_control`,
+reached through the edge with your session — that is the operator path, and it
+works today.
 
 ### v1.2 activity and concurrent-move refusal (device commit c91dd05)
 
