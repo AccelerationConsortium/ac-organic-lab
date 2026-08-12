@@ -1,7 +1,9 @@
 # Hermes access design — a platform agent, not a science agent
 
 **Status:** design note, 2026-08-09. Phase 2 (the edge-path policy) is
-**implemented** in `auth/`; Phases 0/1/3/4 are proposed and not yet done.
+**implemented** in `auth/`; **Phase 0 (the `hermes` OS user) is implemented
+2026-08-12** — see the record at the end of its section; Phases 1/3/4 are
+proposed and not yet done.
 
 **The requirement, in the operator's words:** Hermes should *learn from platform
 operation* and *help work on other devices over SSH so only the server needs
@@ -124,6 +126,42 @@ under `sdl2`.** Re-checkable via `~/.hermes/cron`, `processes.json`, and
 principal only. A human driving Hermes interactively reaches project design and
 analysis with their own credentials — correct, because that is a person with
 access, not an agent acting alone. This design bounds *unsupervised* access.
+
+#### Phase 0 — implemented 2026-08-12 (record)
+
+Executed as specified, verified by the failing probes (secret reads denied,
+repos readable, `hermes --version` runs, `id hermes` shows no extra groups).
+Four things the design did not anticipate, recorded so the next reader trusts
+the boundary for the right reasons:
+
+- **File permissions were not the only leak.** `systemctl show <unit> -p
+  Environment` exposes unit environments to *any* local user over D-Bus,
+  regardless of the drop-in file's `600` — `caddy.service` was leaking
+  `XARM_EDGE_SHARED_SECRET` / `OT2_EDGE_SECRET` / `GRAPHCHAT_EDGE_SECRET` and
+  `ac-organic-lab-web.service` leaked `CONTROL_PASSWORD` this way. Closed by
+  moving the values into root-`600` `EnvironmentFile`s
+  (`/etc/caddy/edge-secrets.env`, `/etc/ac-organic-lab/web-secrets.env`) —
+  `show` prints `EnvironmentFile` *paths*, never contents. This closes the
+  leak AUTH_DESIGN recorded. **Follow-up, deliberately not done in-phase:**
+  those four values were world-readable-at-rest until this date and should be
+  rotated at a calm moment (the xArm one touches the device host, the Caddy
+  env file, and the dashboard `.env` — mis-rotation reproduces the 2026-08-11
+  401 incident).
+- **The `.env` sweep was too narrow.** `~/.claude`, `~/.codex`, and
+  `~/.config/gh` were `755`/`751`; agent session transcripts can quote
+  secrets, so they were tightened to `700` before the ACL — same
+  chmod-before-setfacl reasoning, wider net. Git remotes were scanned for
+  embedded `https://user:token@` credentials (none found).
+- **The `acl` package was not installed** on the host; `setfacl` needed
+  `apt-get install acl` first. The ACL itself was then applied by `sdl2` (the
+  file owner) with no root.
+- **The venv cannot be copied** (editable install, absolute shebangs). The
+  install is a local `git clone` of `~sdl2/.hermes/hermes-agent` (same commit,
+  `e57918ac8`) plus a fresh `python3 -m venv` + `pip install -e .` as
+  `hermes`, with the wrapper at `/usr/local/bin/hermes` (the PATH split as
+  designed). `/home/hermes` is `700`. Sessions, memories, profiles, and
+  `auth.json` were **not** copied — the boxed principal starts fresh, and its
+  model key should be its own.
 
 ### Phase 1 — a machine principal (configuration only)
 
