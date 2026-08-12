@@ -87,9 +87,19 @@ Per-instance facts:
 | `hostops_uplc_pc` | `sdl2-pc-06-uplc` (NSSM service `sdl-lab-hostops`, :8060) | streamable-http + bearer token | **empty — read-only by design**: the `hplc-ms-status` sidecar owns the run queue and production runs from branch `fix_server_vial`; agent restarts could disrupt a campaign | 2026-08-11 — verified end-to-end: both services (`hplc-ms-status`, `hplc-ms-sensors`) RUNNING, loopback probe of `:8010` returned the `agilent_uplc_ms` envelope (~2.8 s, the known OpenLab WMI latency), and `restart_service` correctly **refused** by the empty `restartable` list |
 | `hostops_pi0_environ_01` | `sdl2-pi0-environ-01` (Pi Zero 2W, `~/sdl-lab-hostops`) | **daemonless stdio-over-SSH** (the lite mode): no daemon, no port, no token — spawned per connection via the `environ-01` alias; zero resident footprint on the 512 MB node | `sense-every-zone` (restart-safe passive gateway; `use_sudo` with the node's existing NOPASSWD) | 2026-08-11 — verified over SSH: service RUNNING, journald tail, probe of `:8030` via the v0.1.1 per-port path override (`/zones/env_hte/status`, 200 — the bare-`/status`-404s-by-design gateway shape). Note this node is ~56 % reachable (campus DHCP lease, see ROADMAP); a connect failure here is usually the node's offline window, not hostops |
 
+| `hostops_pi0_fumehood3` | `sdl2-pi0-fumehood3-actuator` (Pi Zero, `~/sdl-lab-hostops`) | daemonless stdio-over-SSH (`fumehood-pi` alias) | **empty — read-only**: `sdl2` on that Pi has no passwordless sudo yet; arm restarts later with a sudoers drop-in for `systemctl restart actuator.service` | 2026-08-11 — verified over SSH: `actuator.service` RUNNING, journald readable, probe of `:5000` returned the `fume_hood_actuator` envelope (200), restart correctly refused |
+
 Pi instances run stdio-over-SSH, so they expose no HTTP `/status` — unlike the
 Windows instances they get **no** `equipment.yaml` tile; their reachability is
 already tracked via the device service they sit next to.
+
+Pending Pi targets (2026-08-11): `sdl2-pi5-minicnc` (the live `dose_every_well`
+host — key grant pending; note `sdl2-pi5-cnc-doser-sam` holds only a dev clone,
+no running service, and gets no instance), `sdl2-pi0-waters-filtration` (the
+press — that node runs **Tailscale SSH**, so access is a tailnet-ACL `ssh`
+rule, not `authorized_keys`; the one node already on HERMES_ACCESS_DESIGN's
+preferred mechanism), and `sdl2-pi0-environ-02` (offline, awaiting hardware;
+trusts the key from provisioning).
 
 Both Windows PCs also carry the SSH key-trust grant for the central agent —
 see DEVICE_PC_SETUP §2.4.
