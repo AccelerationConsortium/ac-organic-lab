@@ -849,6 +849,41 @@ Two consequences worth keeping:
   `deck.declare` with an empty `slots` map (which wipes the whole declaration
   while reading as a no-op) is called out in words on the card.
 
+#### Step 1d — fume hood, shaker, press (2026-08-12); HPLC stays out
+
+Three more bench kinds admitted, same criterion, **no new mechanism** — every
+admitted action is one card-evaluable act with zero-or-few scalar,
+range-clamped args, and no schema in these kinds carries an
+interlock-override or credential field, so `_FORBIDDEN_ARG_FIELDS` gains no
+entries (the risky-field pinning test covers every kind in `_PROPOSABLE`
+automatically). Catalog names were verified byte-for-byte against the live
+`allowed_actions` of all three devices before scoping.
+
+| Kind | Proposable | Operator-only |
+|---|---|---|
+| `fume_hood` | `sash.move` | `sash.stop` |
+| `shaker` | `startup`, `shutdown`, `shake.start`, `shake.set_temperature`, `shake.set_speed` | `shake.stop` |
+| `press` | `init`, `press.up`, `press.down`, `plate.in`, `plate.out` | `stop` |
+
+Two decisions worth recording:
+
+- **The xArm's safety-floor deviation generalized into a rule: stop verbs are
+  never proposable on any kind.** `sash.stop`, `shake.stop`, and the press's
+  emergency `stop` (which additionally forces re-init) stay operator buttons,
+  reachable without the assistant; the prompt addendum forbids proposing an
+  alternative action to "work around" a stop. The press cycle (`plate.in` →
+  `press.down` → `press.up` → `plate.out`) is sequence-shaped and runs under
+  Step 1c's discipline — the operator is the sequencer, one card per step.
+- **The HPLC (`agilent_uplc_ms`, kind `hplc`) is deliberately not scoped** —
+  operator decision, 2026-08-12. Beyond the decision itself, its verbs fit
+  the criterion poorly: `run.submit` enqueues an acquisition whose
+  correctness lives in the method/sequence, not on a card; `workflow.start` /
+  `workflow.end` manage the equipment-blocking campaign lock with role
+  semantics (`automation`-role claims the assistant's human actor would not
+  hold); `instrument.standby` parks the instrument against a FIFO queue the
+  card cannot show. It stays operator/workflow-only, and the prompt addendum
+  tells the model to route HPLC control requests to those surfaces.
+
 Operator-only is a property of the **action**, not of the asker. The
 control-mode prompt addendum says so explicitly, because the first version
 reported excluded actions as "needing an operator" — true of every proposal,

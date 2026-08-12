@@ -25,20 +25,25 @@ before a proposal is returned; the check fails closed.
 
 Scope
 -----
-A proposal is exactly one action on one device. Two kinds are in scope:
+A proposal is exactly one action on one device. In scope:
 
 * ``robot_arm`` move targets (``move.<node_id>`` -> the ``graph.move_to``
   skill -> ``POST /control/graph/move_to``) — the Step 1 surface. Moves are
   proposed one graph hop at a time; for route *reasoning*,
   ``list_available_actions`` forwards the device's read-only
   ``details.motion_graph`` snapshot (see :func:`_list_available_actions`).
-* the ``liquid_handler`` (OT-2) control surface — see :data:`_PROPOSABLE` for
-  the scope history and :data:`_FORBIDDEN_ARG_FIELDS` for the argument fields
-  that are never model-settable (interlock overrides, device credentials).
+* the per-kind allowlist in :data:`_PROPOSABLE` — the ``liquid_handler``
+  (OT-2) control surface plus, since Step 1d, ``fume_hood`` / ``shaker`` /
+  ``press``. The table carries the scope history and per-kind rationale;
+  :data:`_FORBIDDEN_ARG_FIELDS` holds the argument fields that are never
+  model-settable (interlock overrides, device credentials). The ``hplc``
+  kind is deliberately absent — see the table's Step 1d note.
 
-Safety-floor actions (``stop`` / ``connect`` / ``clear_errors``) are
-deliberately **not** proposable — they are operator buttons and must stay
-reachable without the assistant. Anything the resolver cannot map is refused.
+Safety-floor actions are deliberately **not** proposable — they are operator
+buttons and must stay reachable without the assistant. That is the xArm's
+``stop`` / ``connect`` / ``clear_errors``, and every kind's stop verb
+(``sash.stop``, ``shake.stop``, the press's ``stop``). Anything the resolver
+cannot map is refused.
 
 Transport
 ---------
@@ -225,6 +230,52 @@ _PROPOSABLE: dict[str, frozenset[str]] = {
             "well.update",
             "tips.reset",
             "deck.declare",
+        }
+    ),
+    # Step 1d (2026-08-12): three more bench kinds, same criterion, no new
+    # mechanism. Every admitted action is one card-evaluable act with zero or
+    # a few scalar, range-clamped args, and no schema in these kinds carries
+    # an interlock-override or credential field, so _FORBIDDEN_ARG_FIELDS
+    # gains no entries (the risky-field pinning test covers every kind here
+    # automatically). The xArm's safety-floor deviation generalizes into a
+    # rule: STOP VERBS ARE NEVER PROPOSABLE ON ANY KIND — ``sash.stop``,
+    # ``shake.stop``, and the press's emergency ``stop`` (which forces
+    # re-init) stay operator buttons, reachable without the assistant.
+    #
+    # The HPLC (kind ``hplc``) is deliberately NOT scoped — operator decision,
+    # 2026-08-12. Its verbs also fit the criterion poorly: ``run.submit``
+    # enqueues an acquisition whose correctness lives in the method/sequence,
+    # not on a card; ``workflow.start``/``end`` manage the equipment-blocking
+    # campaign lock with role semantics (automation-role claims the
+    # assistant's human actor would not hold); ``instrument.standby`` parks
+    # the instrument against a FIFO queue the card cannot show.
+    "fume_hood": frozenset({"sash.move"}),
+    "shaker": frozenset(
+        {
+            # startup opens a serial port (no credentials — unlike the OT-2's
+            # startup, nothing here needs the field guard) and is the routine
+            # recovery for the USB-enumeration drops this device has hit.
+            "startup",
+            "shutdown",
+            # One complete cycle: the device owns the duration timer and its
+            # watchdog stops the motor, so a lone shake.start is a whole act.
+            "shake.start",
+            "shake.set_temperature",
+            "shake.set_speed",
+        }
+    ),
+    "press": frozenset(
+        {
+            # init (endpoint /control/startup) restores the known-safe pose:
+            # press up, plate out, system ACTIVE.
+            "init",
+            # The press cycle (plate.in -> press.down -> press.up ->
+            # plate.out) is sequence-shaped; Step 1c's discipline applies —
+            # the operator is the sequencer, one card per step.
+            "press.up",
+            "press.down",
+            "plate.in",
+            "plate.out",
         }
     ),
 }

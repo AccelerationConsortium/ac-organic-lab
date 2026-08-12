@@ -533,6 +533,167 @@ async def test_propose_ot2_bad_args_rejected() -> None:
     assert out["code"] == "invalid_args"
 
 
+# ---------------------------------------------------------------------------
+# fume hood / shaker / press proposals (UI_DESIGN §5 Step 1d) — HPLC excluded
+# ---------------------------------------------------------------------------
+
+# Proposable surface per bench kind, mapped to the passthrough URL segment.
+# Names are byte-for-byte what the devices advertise (verified live
+# 2026-08-12). Note press `init` maps to the /control/startup endpoint.
+_BENCH_SURFACES: dict[str, dict[str, str]] = {
+    "fume_hood": {"sash.move": "sash/move"},
+    "shaker": {
+        "startup": "startup",
+        "shutdown": "shutdown",
+        "shake.start": "shake/start",
+        "shake.set_temperature": "shake/set_temperature",
+        "shake.set_speed": "shake/set_speed",
+    },
+    "press": {
+        "init": "startup",
+        "press.up": "press/up",
+        "press.down": "press/down",
+        "plate.in": "plate/in",
+        "plate.out": "plate/out",
+    },
+}
+
+# Stop verbs are the safety floor on every kind — never proposable.
+_STOP_VERBS = {"fume_hood": "sash.stop", "shaker": "shake.stop", "press": "stop"}
+
+BENCH_BASE = "http://bench.test:9000"
+
+
+def _bench_registry(kind: str) -> Registry:
+    return Registry(
+        equipment=[
+            EquipmentEntry(
+                id=f"{kind}_test",
+                name=f"{kind} under test",
+                kind=kind,
+                adapter="http",
+                base_url=BENCH_BASE,
+                status_path="/status",
+                protocol="1.1",
+            )
+        ]
+    )
+
+
+def _mock_bench_status(kind: str, allowed_actions: list[str]) -> None:
+    respx.get(f"{BENCH_BASE}/status").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "equipment_id": f"{kind}_test",
+                "equipment_name": f"{kind} under test",
+                "equipment_kind": kind,
+                "equipment_status": "ready",
+                "message": "idle",
+                "allowed_actions": allowed_actions,
+                "device_time": "2026-08-12T12:00:00Z",
+            },
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "action", "passthrough"),
+    [
+        (kind, action, passthrough)
+        for kind, surface in sorted(_BENCH_SURFACES.items())
+        for action, passthrough in sorted(surface.items())
+    ],
+)
+def test_resolve_bench_surfaces(kind: str, action: str, passthrough: str) -> None:
+    """Every Step 1d action resolves by direct catalog-name lookup with its
+    endpoint mapped to the passthrough URL segment."""
+
+    entry = _bench_registry(kind).equipment[0]
+    sd, resolved_passthrough, args = ac._resolve(entry, action, {})
+    assert sd.name == action
+    assert resolved_passthrough == passthrough
+    assert args == {}
+
+
+@pytest.mark.parametrize(("kind", "action"), sorted(_STOP_VERBS.items()))
+def test_resolve_refuses_stop_verbs(kind: str, action: str) -> None:
+    """The safety floor generalized: stop verbs stay operator-only on every
+    kind, exactly like the xArm's stop / connect / clear_errors."""
+
+    entry = _bench_registry(kind).equipment[0]
+    with pytest.raises(ac.ProposalRefused) as exc:
+        ac._resolve(entry, action, {})
+    assert exc.value.code == "unmappable_action"
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["run.submit", "run.abort", "queue.cancel", "instrument.standby",
+     "workflow.start", "workflow.end"],
+)
+def test_resolve_refuses_all_hplc_actions(action: str) -> None:
+    """The hplc kind is deliberately absent from _PROPOSABLE (operator
+    decision, 2026-08-12): every advertised verb is refused."""
+
+    entry = _bench_registry("hplc").equipment[0]
+    with pytest.raises(ac.ProposalRefused) as exc:
+        ac._resolve(entry, action, {})
+    assert exc.value.code == "unmappable_action"
+
+
+@respx.mock
+async def test_propose_fume_hood_sash_move() -> None:
+    _mock_bench_status("fume_hood", ["sash.move", "sash.stop"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("fume_hood"),
+            "fume_hood_test",
+            "sash.move",
+            {"position": 3},
+            "open the sash halfway for the transfer",
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "sash.move"
+    assert prop["passthrough_action"] == "sash/move"
+    assert prop["args"] == {"position": 3}
+
+
+@respx.mock
+async def test_propose_shake_start_with_cycle_args() -> None:
+    _mock_bench_status("shaker", ["shake.start", "shake.stop"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("shaker"),
+            "shaker_test",
+            "shake.start",
+            {"speed_level": 5, "temperature_c": 25.0, "duration_s": 30.0},
+            "30 s mix at level 5",
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "shake.start"
+    assert prop["passthrough_action"] == "shake/start"
+    assert prop["args"]["duration_s"] == 30.0
+
+
+@respx.mock
+async def test_propose_bench_bad_args_rejected() -> None:
+    # position is clamped 1..5 by the MoveArgs schema.
+    _mock_bench_status("fume_hood", ["sash.move"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("fume_hood"), "fume_hood_test", "sash.move",
+            {"position": 9}, ""
+        )
+    )
+    assert out["code"] == "invalid_args"
+
+
 @respx.mock
 async def test_list_available_actions_ot2_full_surface_and_stripped_schemas() -> None:
     _mock_ot2_status(_OT2_ADVERTISED)
