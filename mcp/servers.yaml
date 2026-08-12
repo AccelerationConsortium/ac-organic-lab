@@ -114,6 +114,65 @@ servers:
         - Hermes `lab-ops` profile on the central server (read + preflight
           allowlist, no --allow-control)
 
+  lab-runs:
+    description: >-
+      First-party authorized-run trigger (api/app/run_trigger.py in this
+      repo): start, watch (bounded SSE window with a seq cursor), and
+      cooperatively abort runs of plans a HUMAN already authorized in
+      bitácora, over the dashboard's workflow-executor routes
+      (api/app/workflow.py). A thin HTTP client — the executor is the
+      authority and re-verifies executability, package digest, and
+      revocation (including between steps); refusals are relayed verbatim.
+    transport: stdio
+    # Console script `lab-runs-mcp` from the api/ package; resolve through
+    # the deployment's venv (see the lab-history note). Requires LAB_ACTOR in
+    # the environment (never a tool argument) and reaches the dashboard API
+    # at DASHBOARD_API_BASE (default loopback :8001).
+    command: lab-runs-mcp
+    optional: true
+
+    provenance:
+      repository: https://github.com/AccelerationConsortium/ac-organic-lab
+      license: MIT
+      reviewed_version: api 0.1.0
+      reviewed_commit: 29283c2eef6dd7c5834c8faa97b558ad03c81ad0
+      reviewed_at: 2026-08-12
+
+    tools:
+      include:
+        - start_run
+        - get_run
+        - watch_run
+        - abort_run
+
+    sampling:
+      enabled: false
+
+    data_policy:
+      confidential_data: prohibited
+      authoritative_inventory_source: false
+      authoritative_safety_source: false
+      notes:
+        - >-
+          The agent pulls a trigger a human already loaded, nothing more:
+          this server MUST NOT grow a tool that composes, edits, lists, or
+          approves plans/authorizations (AGENT_OPS.md trust tiers). The
+          authorization_id reaches the agent from a human (e.g. a Slack
+          message), not from a discovery tool here — that absence is part of
+          the design, not a gap.
+        - >-
+          Attribution rides LAB_ACTOR -> X-Auth-User, trusted by network
+          position at the dashboard API. Deployment target is therefore the
+          boxed `hermes` OS principal (HERMES_ACCESS_DESIGN Phase 0) with
+          LAB_ACTOR pinned to its roster identity (Phase 1); do not wire
+          this server into a profile running as sdl2.
+        - >-
+          start_run(dry_run=true) is the live preflight (no claims, no
+          actuation); abort is cooperative at step boundaries. Every start,
+          refusal, and abort lands in the plan_run audit trail under the
+          bound actor.
+      known_clients: []
+
   lab-hostops:
     description: >-
       Whitelisted host-operations server (one instance per lab machine):

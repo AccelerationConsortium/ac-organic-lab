@@ -33,7 +33,7 @@ session that produced this; the operative rule is below.
 | `lab-history` | read telemetry, whitelisted journald tails | grow a control tool |
 | `lab-skills` (no `--allow-control`) | list equipment/skills, live status, `validate_plan`, `preflight_plan` | register `execute_plan` for an agent client |
 | `sdl-lab-hostops` instances | service status/log-tail, serial enumeration, loopback `/status` probes; `restart_service` for that host's `restartable` subset | touch device `/control/*`, run arbitrary shell |
-| *(future)* authorized-run trigger | start/abort/watch a run a human already authorized (`api/app/workflow.py`) | compose or approve plans itself |
+| `lab-runs` (authorized-run trigger, `api/app/run_trigger.py`) | start/watch/abort a run a human already authorized — a thin client over `api/app/workflow.py`, which re-verifies everything | compose, edit, list, or approve plans itself |
 
 Two enforcement layers, deliberately redundant:
 
@@ -109,12 +109,17 @@ see DEVICE_PC_SETUP §2.4.
 
 The agent has **no execution path to hardware**: `execute_plan` is never
 registered, hostops has no route to `/control/*`, and AGENT_RULES §1.1/§1.3
-bind any future change. The agreed direction for execution is a thin
-authorized-run MCP surface over `api/app/workflow.py` — the agent may pull a
-trigger a human has already loaded (bitácora run authorization, digest-pinned
-package, revocable mid-run), and nothing more. Enabling `--allow-control`
-for an agent client without that gate is a spec violation of the
-`mcp/servers.yaml` `lab-skills` entry, not a config choice.
+bind any future change. The agreed direction for execution — a thin
+authorized-run MCP surface over `api/app/workflow.py`, where the agent may
+pull a trigger a human has already loaded (bitácora run authorization,
+digest-pinned package, revocable mid-run) and nothing more — **shipped
+2026-08-12 as `lab-runs`** (`api/app/run_trigger.py`, registered in
+`mcp/servers.yaml`). It is deliberately **wired into no agent profile yet**:
+its attribution rides `LAB_ACTOR` trusted by network position, so the named
+prerequisite is the boxed `hermes` OS principal (HERMES_ACCESS_DESIGN
+Phase 0) with a Phase-1 roster identity — never a profile running as `sdl2`.
+Enabling `--allow-control` for an agent client remains a spec violation of
+the `mcp/servers.yaml` `lab-skills` entry, not a config choice.
 
 ## See also
 
