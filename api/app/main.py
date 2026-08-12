@@ -634,6 +634,21 @@ async def list_equipment() -> EquipmentList:
     )
 
 
+@app.get("/api/openapi.json", tags=["meta"])
+async def openapi_document() -> dict:
+    """This server's own OpenAPI document, served under ``/api``.
+
+    FastAPI already publishes it at ``/openapi.json``, but the Next.js app only
+    proxies ``/api/*`` to this server — so the dashboard's API Reference page
+    could not reach it. Serving the same document here lets that page render
+    the *dashboard's* HTTP surface from the app itself, which means it cannot
+    drift: a route added anywhere in this app shows up without touching the UI.
+    Complements ``/api/catalog``, which describes the **devices'** actions.
+    """
+
+    return app.openapi()
+
+
 @app.get("/api/catalog", tags=["meta"])
 async def skill_catalog() -> dict:
     """Return the static skill catalog grouped by platform.
