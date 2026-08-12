@@ -35,6 +35,11 @@ interface ChatTurn {
   text: string;
   /** Tool calls observed during this assistant turn, oldest first. */
   tools: { name: string; ok: boolean }[];
+  /** Which mode the turn was sent under — history keeps its original accent
+   * (Ask emerald / Control purple) when the toggle later flips. Absent on
+   * turns persisted before this field existed; those render as Ask, which
+   * matches the old behavior exactly (mode resets to Ask on reload). */
+  mode?: Mode;
 }
 
 /** A validated, propose-only action from the lab-control MCP server. */
@@ -61,7 +66,9 @@ type Mode = "ask" | "control";
 const STORAGE_KEY = "ac-assistant-history-v1";
 const POSITION_KEY = "ac-assistant-position-v1";
 const MAX_STORED_TURNS = 20;
-const PANEL_W = 380;
+// Keep in sync with the literal w-[…px] class on the panel div (Tailwind
+// needs literal class names at build time).
+const PANEL_W = 460;
 const PANEL_H = 520;
 // How much of the header must stay on screen so the user can always grab it
 // to drag the panel back into view.
@@ -107,6 +114,12 @@ export function AssistantBubble() {
   // reachable directly via the `lab-history` MCP server in a terminal
   // session of Claude Code.
   const [configured, setConfigured] = useState<boolean | null>(null);
+  // Which model/backend answers the chat (from /api/assistant/health), shown
+  // under the input so operators know what they are talking to.
+  const [backendInfo, setBackendInfo] = useState<{
+    model?: string;
+    backend?: string;
+  } | null>(null);
   // Pixel coords of the panel's top-left corner. Null while the user hasn't
   // dragged yet -- we compute a default on first open from the viewport
   // size. Persisted to sessionStorage so the panel stays where the user
@@ -136,7 +149,10 @@ export function AssistantBubble() {
           return;
         }
         const body = await r.json();
-        if (!cancelled) setConfigured(Boolean(body?.configured));
+        if (!cancelled) {
+          setConfigured(Boolean(body?.configured));
+          setBackendInfo({ model: body?.model, backend: body?.backend });
+        }
       } catch {
         if (!cancelled) setConfigured(false);
       }
@@ -317,8 +333,8 @@ export function AssistantBubble() {
 
       const nextTurns: ChatTurn[] = [
         ...turns,
-        { role: "user", text: trimmed, tools: [] },
-        { role: "assistant", text: "", tools: [] },
+        { role: "user", text: trimmed, tools: [], mode },
+        { role: "assistant", text: "", tools: [], mode },
       ];
       setTurns(nextTurns);
       setInput("");
@@ -528,7 +544,7 @@ export function AssistantBubble() {
             left: (position ?? defaultPosition()).x,
             top: (position ?? defaultPosition()).y,
           }}
-          className={`fixed z-50 flex h-[520px] w-[380px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border bg-surface-raised shadow-2xl dark:bg-slate-900 ${
+          className={`fixed z-50 flex h-[520px] w-[460px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border bg-surface-raised shadow-2xl dark:bg-slate-900 ${
             controlMode
               ? "border-purple-300 dark:border-purple-800"
               : "border-slate-200 dark:border-slate-700"
@@ -562,15 +578,15 @@ export function AssistantBubble() {
                   if (m === "ask") clearProposal();
                 }}
               />
-              {turns.length > 0 && (
-                <button
-                  type="button"
-                  onClick={clearHistory}
-                  className="rounded px-2 py-1 text-[11px] text-ink-subtle hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
-                >
-                  Clear
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={clearHistory}
+                disabled={turns.length === 0}
+                title="Clear the conversation (proposals and authorized actions stay in the audit trail)"
+                className="rounded border border-slate-300 px-2 py-1 text-[11px] font-medium text-ink-subtle transition hover:bg-slate-100 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              >
+                Clear
+              </button>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -613,7 +629,7 @@ export function AssistantBubble() {
               </div>
             )}
             {turns.map((turn, i) => (
-              <Turn key={i} turn={turn} controlMode={controlMode} />
+              <Turn key={i} turn={turn} />
             ))}
             {proposal && (
               <ProposalCard
@@ -677,6 +693,12 @@ export function AssistantBubble() {
                 Send
               </button>
             </div>
+            {backendInfo?.model && (
+              <p className="mt-1 text-center text-[10px] text-ink-subtle dark:text-slate-500">
+                model: {backendInfo.model}
+                {backendInfo.backend ? ` · ${backendInfo.backend}` : ""}
+              </p>
+            )}
           </form>
         </div>
       )}
@@ -875,9 +897,15 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Turn({ turn, controlMode }: { turn: ChatTurn; controlMode: boolean }) {
+function Turn({ turn }: { turn: ChatTurn }) {
   const isUser = turn.role === "user";
-  const userBg = controlMode ? "bg-purple-600 text-white" : "bg-emerald-600 text-white";
+  // Accent follows the mode the turn was SENT under, so flipping the toggle
+  // never repaints history — a purple bubble is a durable "this was said in
+  // Control mode" marker, in the same spirit as the audit trail.
+  const userBg =
+    turn.mode === "control"
+      ? "bg-purple-600 text-white"
+      : "bg-emerald-600 text-white";
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div

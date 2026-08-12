@@ -70,7 +70,10 @@ function installFetch(chatFrames: string[]) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/assistant/health")) {
-      return Promise.resolve({ ok: true, json: async () => ({ configured: true }) });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ configured: true, model: "sonnet", backend: "claude-code-cli" }),
+      });
     }
     if (url.includes("/api/auth/mine")) {
       return Promise.resolve({ ok: true, json: async () => ({ equipment: mineEquipment }) });
@@ -301,6 +304,48 @@ describe("AssistantBubble control mode", () => {
     expect(pre?.textContent).toContain("p300_multi_gen2");
     expect(pre?.textContent).not.toContain("…");
     expect(screen.queryByText(/\[object Object\]/)).toBeNull();
+  });
+
+
+  it("shows the backing model under the chat box and a disabled Clear chip when empty", async () => {
+    // jsdom sessionStorage survives across tests; drop turns persisted by
+    // earlier ones so this panel opens genuinely empty.
+    sessionStorage.clear();
+    installFetch([]);
+    await openPanel();
+    // Model attribution comes from /api/assistant/health.
+    expect((await screen.findByText(/model: sonnet/)).textContent).toContain(
+      "claude-code-cli"
+    );
+    // Clear is always rendered for discoverability; disabled until there are turns.
+    const clear = screen.getByRole("button", { name: "Clear" });
+    expect((clear as HTMLButtonElement).disabled).toBe(true);
+  });
+
+
+  it("keeps each turn's accent from the mode it was sent under", async () => {
+    sessionStorage.clear();
+    installFetch(['data: {"type":"text","delta":"ok"}\n\n', 'data: {"type":"done"}\n\n']);
+    await openPanel();
+
+    // Send one message in Ask mode -> emerald bubble.
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what ran today?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const askBubble = await screen.findByText("what ran today?");
+    expect(askBubble.className).toContain("bg-emerald-600");
+
+    // Flip to Control and send another -> purple bubble, history untouched.
+    const control = screen.getByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const box2 = screen.getByPlaceholderText(/operate a device/i);
+    fireEvent.change(box2, { target: { value: "home the ot2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const controlBubble = await screen.findByText("home the ot2");
+    expect(controlBubble.className).toContain("bg-purple-600");
+    // The earlier Ask turn did NOT get repainted by the toggle.
+    expect(screen.getByText("what ran today?").className).toContain("bg-emerald-600");
   });
 
 });
