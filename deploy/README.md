@@ -206,6 +206,36 @@ which prints the entire environment to stdout at every start, i.e. into the
 journal for anyone in `adm` / `systemd-journal`. Moving to an
 `EnvironmentFile` does not fix that — `--environ` has to go too.
 
+### Onboarding an edge-fronted device: the secret goes in **two** places
+
+A device that trusts injected identity needs its secret in three environments,
+and it is easy to stop at two:
+
+1. **the device's own service env** (`XARM_EDGE_SHARED_SECRET` in its NSSM/systemd config)
+2. **Caddy's env**, so the edge can inject it on that device's panel routes
+3. **the dashboard API's env** (`/home/sdl2/caoyang/ac-organic-lab/.env`), so the
+   *control passthrough* — tile buttons, the workflow executor, the assistant's
+   Authorize — can present it too
+
+Step 3 is the one that gets missed, because the panel works without it: the
+panel goes through Caddy, the passthrough does not. Symptom is a device that
+operates fine from its own framed UI while every dashboard control returns 401.
+`equipment.yaml` names the variable (`edge_secret_env:`) but cannot supply its
+value.
+
+The dashboard logs this rather than failing quietly — grep the journal after
+adding a device:
+
+```bash
+journalctl -u ac-organic-lab-api -S -10min | grep edge_secret_env
+# edge_secret_env=XARM_EDGE_SHARED_SECRET is set on xarm_translocation
+# but that variable is empty; falling back to DEVICE_EDGE_SHARED_SECRET
+```
+
+That line means step 3 is missing. Add the variable to `.env` and restart
+`ac-organic-lab-api` (an `EnvironmentFile` is read at unit start, so a reload is
+not enough).
+
 ### Migration (do it when nobody is mid-run — restarting Caddy drops the edge)
 
 Every dashboard URL goes through Caddy, so this is a brief full outage of the
