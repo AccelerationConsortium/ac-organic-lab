@@ -597,6 +597,11 @@ async def _run_claude(
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # stream-json is one JSON object per line, and a single tool_result
+            # event carries the whole tool payload — an OT-2 deck/tip snapshot
+            # alone clears asyncio's 64 KiB default, which readline() answers
+            # with "Separator is found, but chunk is longer than limit".
+            limit=10 * 1024 * 1024,
         )
     except FileNotFoundError:
         yield _sse({"type": "error", "message": f"could not spawn {binary}"})
