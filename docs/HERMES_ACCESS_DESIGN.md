@@ -5,7 +5,8 @@
 the `hermes` OS user (record at the end of its section) and the
 `hermes@lab.local` roster principal (hot-reloaded and probe-verified:
 `analytica_db` allowed under the §2 path policy, `bitacora_eln` and all
-hardware refused). Phases 3/4 are proposed and not yet done.
+hardware refused). Phase 3 is proposed and not yet done; **Phase 4 (the
+learning policy) is drafted 2026-08-12** — rules 4.1–4.6 in its section.
 
 **The requirement, in the operator's words:** Hermes should *learn from platform
 operation* and *help work on other devices over SSH so only the server needs
@@ -222,7 +223,7 @@ pins each of those evasions.
   `authorized_keys` scattered across Windows boxes. Document in
   [`DEVICE_PC_SETUP.md`](DEVICE_PC_SETUP.md), which mentions no SSH today.
 
-### Phase 4 — learning policy
+### Phase 4 — learning policy [DRAFTED 2026-08-12]
 
 Per decision #11 and `AGENTS.md` §5, which already name Hermes:
 
@@ -234,6 +235,59 @@ Per decision #11 and `AGENTS.md` §5, which already name Hermes:
   graph. Knowledge accumulating only there defeats decision #11's *no hidden
   state that silently steers agent behavior*; durable platform knowledge belongs
   in the committed files.
+
+The rules below were settled 2026-08-12, when the boxed `lab-runner` profile
+went live and plan-drafting-through-conversation became the agreed rung-3
+shape. They exist because a **learning agent's memory is an access-control
+bypass waiting to happen**: people will *tell* the agent project details in
+conversation, its memory has no `can_read(project, caller)`, and anything it
+remembers can potentially be extracted by anyone allowed to talk to it.
+
+**4.1 Memory holds the platform, never the science.** The agent's durable
+memory (files, MEMORY.md, state) may hold operational knowledge only — device
+quirks, timing, failure patterns, workflow lessons: the facility manager's
+knowledge. Project details heard in conversation (goals, compounds, designs,
+results) are used for the task at hand and are **never promoted to durable
+memory**. This is §1's principle ("the instrument and platform layer, not the
+scientific record") extended from *access* into *retention*.
+
+**4.2 The audience defines the confidentiality domain.** Whoever can message
+an agent instance must be trusted with everything that instance has ever been
+told. One shared lab agent = one shared confidentiality domain. When that
+stops being true (mutually confidential projects), the answer is per-project
+agent instances with separate memories — mirroring `can_read` — never one
+omniscient agent with a promise to be discreet.
+
+**4.3 Memory stays reviewable.** Agent memory lives in human-readable files
+that can be read, diffed, edited, and deleted (decision #11). Periodic review
+is a real control; the `state.db` watch item above is the standing threat to
+it.
+
+**4.4 Conversations transit third parties — know which.** Every turn with a
+lab agent leaves the building: the dashboard assistant goes to Anthropic (the
+operator's Claude Code account); Hermes profiles go to the configured model
+provider (today OpenRouter → Z.AI for GLM). Local persistence differs — the
+dashboard bubble keeps no server-side transcript (browser sessionStorage
+only), while Hermes profiles keep session logs under their own profile dir,
+boxed with the OS user. **Choice of model provider is therefore a
+confidentiality decision**, made per agent, with the provider's retention
+settings checked — not a convenience default.
+
+**4.5 Audit rows are lab-public; keep them operational.** Fragments of
+conversation become permanent, lab-wide-readable records by design: a
+Control-mode proposal's `reason` line and every `plan_run` / `control_action`
+row land in `lab.db`, which every lab-history client (dashboard assistant,
+`lab-ops`, `lab-runner`) can read. That is the audit trail working. The rule
+it implies: the *stated reason* for an action is operational text, never
+project-confidential text.
+
+**4.6 The record stores stay behind people.** Standing decision, same date:
+**no API key is issued for `hermes@lab.local`** — the AnaliticaDB grant and
+path policy (Phases 1/2) remain in the roster as defense-in-depth should a
+key ever be issued deliberately, but today the agent cannot reach the record
+store at all, and plan drafts enter bitácora through the human who approves
+them, never by agent write. Issuing a key is a human decision that reopens
+this section.
 
 ## 5. Decided against — do not relitigate
 
