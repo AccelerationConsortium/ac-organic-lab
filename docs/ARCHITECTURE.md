@@ -255,8 +255,10 @@ Three pieces:
   cwd outside the repo tree so Claude Code doesn't auto-load the ~50k-token
   `CLAUDE.md` doc bundle on every turn. Model defaults to `sonnet`.
 - **`api/app/mcp_server.py`** — the `lab-history` MCP server (stdio,
-  `lab-history-mcp` entry point). Exposes **seven read-only tools**:
+  `lab-history-mcp` entry point). Exposes **eight read-only tools**:
   `list_equipment_now` (live, via the aggregator's `/api/equipment`),
+  `get_equipment_status` (one device's full envelope — components, details,
+  metrics — where `list_equipment_now` returns only a summary row),
   `query_equipment_events`, `query_service_uptime`, `query_sensor_readings`,
   `query_runs`, `query_well_results` (all over `data/lab.db`), and
   `tail_journald` (last N lines of a **whitelisted** dashboard systemd unit).

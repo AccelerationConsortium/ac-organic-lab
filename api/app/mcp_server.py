@@ -96,14 +96,20 @@ def _clamp_since_hours(value: Any, default: float = 24.0) -> float:
     return max(0.1, min(float(MAX_SINCE_HOURS), h))
 
 
+async def _fetch_equipment() -> dict[str, Any]:
+    """One aggregator read shared by the live-snapshot tools. Raises on failure."""
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(f"{DASHBOARD_API_URL}/api/equipment")
+        r.raise_for_status()
+        return r.json()
+
+
 async def _list_equipment_now() -> str:
     """Live snapshot from the dashboard's aggregator."""
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(f"{DASHBOARD_API_URL}/api/equipment")
-            r.raise_for_status()
-            data = r.json()
+        data = await _fetch_equipment()
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"could not reach dashboard API: {exc}"})
 
@@ -121,6 +127,41 @@ async def _list_equipment_now() -> str:
         for e in data.get("equipment", [])
     ]
     return json.dumps({"equipment": rows})
+
+
+async def _get_equipment_status(equipment_id: str) -> str:
+    """Full status envelope for one device.
+
+    `list_equipment_now` deliberately flattens every device to one summary row;
+    everything below `equipment_status` — components (an OT-2's pipette mounts),
+    `details` (deck snapshot, tip racks, loaded plate), metrics, allowed_actions
+    — was invisible to the assistant until this tool existed."""
+
+    try:
+        data = await _fetch_equipment()
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"could not reach dashboard API: {exc}"})
+
+    for e in data.get("equipment", []):
+        if e.get("id") == equipment_id:
+            return json.dumps(
+                {
+                    "id": e["id"],
+                    "name": e.get("name"),
+                    "kind": e.get("kind"),
+                    "fetch_error": e.get("fetch_error"),
+                    "fetched_at": e.get("fetched_at"),
+                    "status": e.get("status"),
+                }
+            )
+    return json.dumps(
+        {
+            "error": f"no equipment with id {equipment_id!r}",
+            "known_ids": sorted(
+                x.get("id", "") for x in data.get("equipment", [])
+            ),
+        }
+    )
 
 
 async def _query_equipment_events(
@@ -248,6 +289,16 @@ def _build_server():
         "what's running right now"."""
 
         return await _list_equipment_now()
+
+    @mcp.tool()
+    async def get_equipment_status(equipment_id: str) -> str:
+        """Full live status envelope for ONE device: components (e.g. the
+        OT-2's pipette mounts), details (deck snapshot, tip racks, loaded
+        plate, motion graph), metrics, allowed_actions, activity. Use it when
+        asked what hardware a device carries or what state its subsystems are
+        in — list_equipment_now only returns one summary row per device."""
+
+        return await _get_equipment_status(equipment_id)
 
     @mcp.tool()
     async def query_equipment_events(

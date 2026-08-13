@@ -6,7 +6,7 @@ the Anthropic API directly (which would need ``ANTHROPIC_API_KEY``), this
 endpoint shells out to the locally-installed ``claude`` CLI in
 non-interactive mode. That subprocess uses the dashboard user's Claude
 Code OAuth login and automatically inherits the ``lab-history`` MCP server
-that was registered with ``claude mcp add``, so the same seven read-only
+that was registered with ``claude mcp add``, so the same eight read-only
 tools are available without any API plumbing.
 
 Configuration
@@ -240,6 +240,11 @@ You have one MCP server connected: lab-history. Its tools are all read-only:
 * list_equipment_now -- live snapshot of every device (id, kind, equipment_status,
   message, fetch_error, latency_ms). Use this first when you need the canonical
   equipment_id for other tools, or to answer "what's running right now".
+* get_equipment_status -- the full live envelope for ONE device: components
+  (e.g. the OT-2's pipette mounts), details (deck snapshot, tip racks, loaded
+  plate), metrics, allowed_actions, activity. Use it whenever the question is
+  about a device's hardware, subsystems, or what it is equipped with —
+  list_equipment_now alone cannot answer those.
 * query_equipment_events -- past state transitions, errors, startup/shutdown
   for one device.
 * query_service_uptime -- reachability transitions + overall uptime % over a
