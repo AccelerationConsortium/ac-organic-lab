@@ -366,7 +366,8 @@ class RunState:
     launched_by: str
     dry_run: bool
     status: str = "running"  # running | finished | refused
-    started_at: float = 0.0
+    started_at: float = 0.0  # monotonic, for durations
+    started_at_utc: str = ""  # wall-clock ISO-8601 — the record layer's Experiment start
     events: list[dict] = dataclass_field(default_factory=list)
     changed: "asyncio.Event" = dataclass_field(default_factory=lambda: asyncio.Event())
     abort_requested: str | None = None  # who asked
@@ -468,7 +469,7 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
         plan=plan_row, notes=notes,
         design_ref=(auth.package or {}).get("design_ref"),
         operator=identity,
-        started_at=datetime.now(timezone.utc).isoformat(),
+        started_at=state.started_at_utc,
     )
     state.emit("done", state.result)
     await _record_run_event(
@@ -519,6 +520,7 @@ def build_workflow_router() -> APIRouter:
             launched_by=identity,
             dry_run=body.dry_run,
             started_at=time.monotonic(),
+            started_at_utc=datetime.now(timezone.utc).isoformat(),
         )
         _remember(state)
         state.emit("started", {
