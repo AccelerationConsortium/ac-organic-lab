@@ -123,7 +123,8 @@ ac-organic-lab/
 │       ├── history.py              # /api/history/* + /api/ingest/* routes
 │       ├── control.py              # control passthrough (cameras, plugs)
 │       ├── workflow.py             # Phase F: authorized-run executor (SSE, abort)
-│       ├── assistant.py            # /api/assistant/chat — Claude Code CLI subprocess (SSE)
+│       ├── assistant.py            # /api/assistant/chat — claude-cli backend + backend dispatch (SSE)
+│       ├── assistant_openai.py     # OpenAI-compatible backend (OpenRouter) over the same MCP servers
 │       ├── mcp_server.py           # lab-history MCP server (read-only tools over lab.db)
 │       └── presentation.py        # dashboard snapshot types + location
 └── web/                            # Next.js UI
@@ -248,18 +249,31 @@ Three pieces:
   `tool_use` / `tool_result` / `done` / `error` frames), and persists ~20
   turns in `sessionStorage`. It only renders if `GET /api/assistant/health`
   reports `configured: true`.
-- **`api/app/assistant.py`** — `POST /api/assistant/chat`. Instead of calling
-  the Anthropic API (which would need an `ANTHROPIC_API_KEY` in the dashboard
-  env), it shells out to the locally-installed **`claude` CLI** in
-  `--print --output-format stream-json` mode, translates each stream-json
-  event into an SSE frame, and streams it to the browser. Auth/billing
-  piggyback on the dashboard user's Claude Code OAuth login. The subprocess
-  is locked down: `--allowedTools mcp__lab-history__*` (no Bash/file/web),
-  `--mcp-config … --strict-mcp-config` (injects only the lab MCP server,
-  ignores the user's other MCP config), `--no-session-persistence` (history
-  is re-sent in the prompt each turn), a 120 s wallclock cap, and a minimal
-  cwd outside the repo tree so Claude Code doesn't auto-load the ~50k-token
-  `CLAUDE.md` doc bundle on every turn. Model defaults to `sonnet`.
+- **`api/app/assistant.py`** — `POST /api/assistant/chat`. Two selectable
+  backends behind one SSE contract (per-mode via `ASSISTANT_BACKEND` /
+  `ASSISTANT_CONTROL_BACKEND`); the bubble cannot tell them apart:
+  - **`claude-cli`** (the original): shells out to the locally-installed
+    **`claude` CLI** in `--print --output-format stream-json` mode,
+    translates each stream-json event into an SSE frame, and streams it to
+    the browser. Auth/billing piggyback on the dashboard user's Claude Code
+    OAuth login. The subprocess is locked down: `--allowedTools
+    mcp__lab-history__*` (no Bash/file/web), `--mcp-config …
+    --strict-mcp-config` (injects only the lab MCP server, ignores the
+    user's other MCP config), `--no-session-persistence` (history is re-sent
+    in the prompt each turn), a 120 s wallclock cap, and a minimal cwd
+    outside the repo tree so Claude Code doesn't auto-load the ~50k-token
+    `CLAUDE.md` doc bundle on every turn. Per-mode models via
+    `ASSISTANT_CLAUDE_MODEL` / `ASSISTANT_CLAUDE_CONTROL_MODEL`.
+  - **`openai`** (`assistant_openai.py`, added 2026-08-13): speaks the
+    OpenAI chat-completions protocol to any compatible endpoint (default
+    OpenRouter) and runs its own tool loop over the **same** stdio MCP
+    servers with the same actor binding and the same 120 s cap. Requires
+    `ASSISTANT_OPENAI_API_KEY` in the dashboard env — see the decision #10
+    note on that trade. Deployed split: Ask mode on
+    `qwen/qwen3.8-2.4t-a95b`, Control mode staying on `claude-cli`/sonnet.
+  Every turn writes two journald lines (`assistant chat:` — who asked;
+  `assistant turn done:` — elapsed, rounds, tokens, backend, model) so
+  latency and account burn are observable per backend.
 - **`api/app/mcp_server.py`** — the `lab-history` MCP server (stdio,
   `lab-history-mcp` entry point). Exposes **eight read-only tools plus one
   append-only journal write** (`record_observation` — an actor-stamped
@@ -276,11 +290,12 @@ Three pieces:
   directly with a developer's own Claude Code via `claude mcp add` — the
   chat bubble is just one of its two consumers.
 
-Configuration is via env vars (`ASSISTANT_CLAUDE_MODEL`,
-`ASSISTANT_CLAUDE_BIN`, `ASSISTANT_CLAUDE_TIMEOUT_S`, `ASSISTANT_RUNTIME_DIR`).
-Dependency-wise this adds `mcp>=1.0` to `api/` and the presence of the
-`claude` CLI on the dashboard host; no new npm deps (the bubble is plain
-React + an SSE `fetch`).
+Configuration is via env vars (`ASSISTANT_BACKEND`, `ASSISTANT_CLAUDE_MODEL`,
+`ASSISTANT_CLAUDE_BIN`, `ASSISTANT_CLAUDE_TIMEOUT_S`, `ASSISTANT_RUNTIME_DIR`,
+and the `ASSISTANT_OPENAI_*` family — the module docstrings are the full
+reference). Dependency-wise this adds `mcp>=1.0` to `api/` and the presence
+of the `claude` CLI on the dashboard host (for the `claude-cli` backend); no
+new npm deps (the bubble is plain React + an SSE `fetch`).
 
 ### `equipment.yaml` (root)
 
@@ -401,6 +416,8 @@ As of 2026-08-11 it also has a **Control** mode (UI_DESIGN §5 Step 1) that adds
 Three choices are worth recording:
 
 - **Subprocess, not SDK.** `assistant.py` shells out to the `claude` CLI instead of calling the Anthropic API. This keeps `ANTHROPIC_API_KEY` out of the dashboard environment — billing and rate limits ride the operator's existing Claude Code OAuth login — and lets the same MCP server serve both the bubble and a developer's own `claude mcp add`. The cost is an operational dependency: the `claude` binary must be installed on the dashboard host, and the bubble silently hides itself (`/api/assistant/health` → `configured: false`) when it isn't.
+
+  **Partially walked back 2026-08-13.** A second backend (`assistant_openai.py`, selected per mode via `ASSISTANT_BACKEND` / `ASSISTANT_CONTROL_BACKEND`) speaks the OpenAI chat-completions protocol to OpenRouter, which puts an `ASSISTANT_OPENAI_API_KEY` in the dashboard env after all — a deliberate trade for latency and model choice on Ask-mode turns (measured ~4 s for a tool-using answer on `qwen/qwen3.8-2.4t-a95b` vs ~10–17 s via the CLI path). What the original decision was actually protecting survives intact: the *toolset* is still the boundary (the same two MCP servers, spawned with the actor bound in their environment), proposals still only render confirm cards, and no model-driven path can POST to a device. The claude-cli backend remains the Control-mode engine and the fallback, so the CLI dependency and OAuth path are unchanged.
 - **A separate MCP server from decision #7.** The read path is the *history/observability* MCP server (read-only, lives in `api/`), not the SDK's *skill-catalog* MCP server (`execute_plan`, control, lives in `skills/`). The new `lab-control` server is a *third* kind: it lives in `api/` but proposes only — it reads live `/status` + the skill catalog to validate an action and never issues a control call itself. All three are intentionally different servers with different trust levels; keep them apart.
 - **Identity binds to the tool, not the prompt.** Control mode is honoured only for a verified `X-Auth-User` (never under the `DASHBOARD_CONTROL_OPEN` dev bypass), and the actor is passed to `lab-control` in its environment (`LAB_ACTOR`), never as a tool argument the model could choose. `propose_action` re-checks that actor holds `operator`+ on the target equipment against the same ac_auth sidecar the passthrough uses, failing closed. The audit trail stamps `X-Control-Origin: assistant` on the resulting `control_action` row and records the proposal as an `assistant_proposal` event.
 

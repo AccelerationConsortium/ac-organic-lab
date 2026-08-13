@@ -49,6 +49,17 @@ from .presentation import (
     load_dashboard_overrides,
 )
 
+# Uvicorn configures only its own loggers; app-level INFO (this module's,
+# assistant.py's attribution + per-turn cost lines) otherwise falls through to
+# Python's WARNING-level lastResort handler and never reaches journald. Attach
+# a root handler once — uvicorn's loggers keep their own handlers and don't
+# propagate, so access logs are not duplicated. httpx/httpcore log one INFO
+# line per request, which at our poll cadence is pure noise; keep them at
+# WARNING.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 logger = logging.getLogger("ac_dashboard.api")
 
 

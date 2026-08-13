@@ -15,6 +15,13 @@ Configuration
   ``claude`` on PATH).
 * ``ASSISTANT_CLAUDE_MODEL`` -- model alias passed to ``claude --model``;
   default ``sonnet`` to keep cost off the Opus tier.
+* ``ASSISTANT_CLAUDE_CONTROL_MODEL`` -- model for Control-mode turns only
+  (default: same as ``ASSISTANT_CLAUDE_MODEL``). Lets a deployment run Ask
+  mode on a faster model (e.g. ``haiku``) without dropping proposal turns.
+* ``ASSISTANT_BACKEND`` / ``ASSISTANT_CONTROL_BACKEND`` -- which engine
+  answers each mode: ``claude-cli`` (default; this module's subprocess) or
+  ``openai`` (``assistant_openai.py``: any OpenAI-compatible endpoint, e.g.
+  OpenRouter — see that module for its ``ASSISTANT_OPENAI_*`` config).
 * ``ASSISTANT_CLAUDE_CWD`` -- working directory for the subprocess. Defaults
   to a minimal runtime dir *outside* the repo tree (``_runtime_dir()``) so
   Claude Code does not auto-load the repo's large ``CLAUDE.md`` and its
@@ -53,6 +60,7 @@ import logging
 import os
 import shutil
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Literal
@@ -69,7 +77,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 DEFAULT_MODEL = os.environ.get("ASSISTANT_CLAUDE_MODEL", "sonnet")
+# Control mode may pin a different (typically stronger) model than Ask mode:
+# proposals involve sequence discipline and motion-graph routing, while Ask
+# answers are terse status lookups a faster model handles fine. Defaults to
+# the same model, so deployments opt into the split explicitly.
+CONTROL_MODEL = os.environ.get("ASSISTANT_CLAUDE_CONTROL_MODEL", DEFAULT_MODEL)
 DEFAULT_TIMEOUT_S = float(os.environ.get("ASSISTANT_CLAUDE_TIMEOUT_S", "120"))
+# Backend per mode: "claude-cli" (this module's subprocess, OAuth-billed) or
+# "openai" (assistant_openai.py — an OpenAI-compatible endpoint such as
+# OpenRouter, API-key-billed). Both drive the same MCP servers and emit the
+# same SSE frames; the bubble cannot tell them apart.
+DEFAULT_BACKEND = os.environ.get("ASSISTANT_BACKEND", "claude-cli")
+CONTROL_BACKEND = os.environ.get("ASSISTANT_CONTROL_BACKEND", DEFAULT_BACKEND)
 ALLOWED_TOOL_GLOB = "mcp__lab-history__*"
 # Control mode (UI_DESIGN §5) adds the propose-only lab-control server. Neither
 # of its tools actuates; the model's most privileged act is returning a
@@ -587,6 +606,7 @@ async def _run_claude(
         return
 
     include_control = control and bool(actor)
+    model = CONTROL_MODEL if include_control else DEFAULT_MODEL
     prompt = _format_prompt(messages)
     mcp_config_path = _write_mcp_config(include_control=include_control, actor=actor)
     system_prompt = SYSTEM_PROMPT + (CONTROL_PROMPT_ADDENDUM if include_control else "")
@@ -609,7 +629,7 @@ async def _run_claude(
         "--allowedTools",
         allowed_tools,
         "--model",
-        DEFAULT_MODEL,
+        model,
         "--permission-mode",
         "default",
         prompt,
@@ -651,6 +671,8 @@ async def _run_claude(
 
     last_rate_limit: dict[str, Any] | None = None
     saw_terminal = False  # did we already yield a done/error frame?
+    result_info: dict[str, Any] | None = None  # the CLI's final "result" event
+    started = time.monotonic()
 
     try:
         while True:
@@ -673,6 +695,8 @@ async def _run_claude(
                 info = event.get("rate_limit_info")
                 if isinstance(info, dict):
                     last_rate_limit = info
+            elif event.get("type") == "result":
+                result_info = event
             for frame in _translate_event(event):
                 if frame.get("type") in ("done", "error"):
                     saw_terminal = True
@@ -699,6 +723,27 @@ async def _run_claude(
                 stderr_bytes = await proc.stderr.read()
             except Exception:  # noqa: BLE001
                 pass
+        # One completion line per turn so latency and account burn are
+        # observable in the journal (the start line logs who asked; this one
+        # logs what it cost). Runs on every exit path, including client
+        # disconnect and timeout.
+        usage = (result_info or {}).get("usage") or {}
+        logger.info(
+            "assistant turn done: user=%s mode=%s elapsed=%.1fs num_turns=%s "
+            "api_ms=%s tokens_out=%s cache_read=%s rc=%s timed_out=%s "
+            "rate_limit=%s backend=claude-cli model=%s",
+            actor or "unauthenticated(dev-open)",
+            "control" if include_control else "ask",
+            time.monotonic() - started,
+            (result_info or {}).get("num_turns"),
+            (result_info or {}).get("duration_api_ms"),
+            usage.get("output_tokens"),
+            usage.get("cache_read_input_tokens"),
+            proc.returncode,
+            timed_out,
+            (last_rate_limit or {}).get("status"),
+            model,
+        )
 
     if timed_out:
         yield _sse(
@@ -741,23 +786,31 @@ def build_assistant_router() -> APIRouter:
 
     @router.get("/health")
     async def health() -> dict[str, Any]:
+        from . import assistant_openai
+
         binary = _claude_binary()
+        ask_openai = DEFAULT_BACKEND == "openai"
+        ctl_openai = CONTROL_BACKEND == "openai"
+        # "configured" gates whether the bubble renders at all, so it reports
+        # the Ask-mode backend's readiness (Ask is the default surface).
+        configured = (
+            assistant_openai.api_key() is not None if ask_openai else binary is not None
+        )
         return {
-            "configured": binary is not None,
-            "backend": "claude-code-cli",
+            "configured": configured,
+            "backend": DEFAULT_BACKEND,
+            "control_backend": CONTROL_BACKEND,
             "binary": binary,
-            "model": DEFAULT_MODEL,
+            "model": assistant_openai.OPENAI_MODEL if ask_openai else DEFAULT_MODEL,
+            "control_model": (
+                assistant_openai.OPENAI_CONTROL_MODEL if ctl_openai else CONTROL_MODEL
+            ),
             "allowed_tools": ALLOWED_TOOL_GLOB,
             "cwd": _claude_cwd(),
         }
 
     @router.post("/chat")
     async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
-        if _claude_binary() is None:
-            raise HTTPException(
-                status_code=503,
-                detail="claude CLI is not installed on the dashboard host",
-            )
         # Attribution (Phase 2): X-Auth-User is set by the Next.js middleware
         # after verifying the session — never client-supplied. The backend
         # Claude account is shared, so who-asked lives in this log line.
@@ -771,11 +824,30 @@ def build_assistant_router() -> APIRouter:
         control_open = os.environ.get("DASHBOARD_CONTROL_OPEN") == "true"
         control = body.mode == "control" and bool(actor) and not control_open
 
+        backend = CONTROL_BACKEND if control else DEFAULT_BACKEND
+        if backend == "openai":
+            from . import assistant_openai
+
+            if assistant_openai.api_key() is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="ASSISTANT_OPENAI_API_KEY is not set on the dashboard host",
+                )
+            runner = assistant_openai.run_openai_turn
+        else:
+            if _claude_binary() is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="claude CLI is not installed on the dashboard host",
+                )
+            runner = _run_claude
+
         logger.info(
-            "assistant chat: user=%s mode=%s->%s messages=%d",
+            "assistant chat: user=%s mode=%s->%s backend=%s messages=%d",
             actor or "unauthenticated(dev-open)",
             body.mode,
             "control" if control else "ask",
+            backend,
             len(body.messages),
         )
 
@@ -816,7 +888,7 @@ def build_assistant_router() -> APIRouter:
 
         async def gen() -> AsyncIterator[bytes]:
             try:
-                async for frame in _run_claude(
+                async for frame in runner(
                     body.messages,
                     control=control,
                     actor=actor,
