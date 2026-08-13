@@ -555,28 +555,31 @@ via Next's built-in proxy (`/api/...` → `http://127.0.0.1:8001/api/...`).
 
 ## 10. The lab assistant as a read consumer (MCP)
 
-The dashboard ships a read-only Claude assistant (the chat bubble) whose
-entire job is to *consume* the observability data described above and turn it
-into operator answers ("has the plateloc errored today?", "when did the
-gateway last go down?"). It is read-only by construction and is the main
+The dashboard ships a lab assistant (the chat bubble) whose main job is to
+*consume* the observability data described above and turn it into operator
+answers ("has the plateloc errored today?", "when did the gateway last go
+down?"). It cannot actuate hardware by construction and is the main
 non-human reader of `lab.db` and the dashboard's journald units. See
-[`ARCHITECTURE.md`](ARCHITECTURE.md) decision #10 for the design rationale;
-this section documents what it reads and the limits it reads under.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) decision #10 for the design rationale
+(including the two selectable chat engines); this section documents what it
+reads and the limits it reads under.
 
 The tools live in `api/app/mcp_server.py` (the `lab-history` MCP server, stdio
 transport, `lab-history-mcp` entry point) and are surfaced to the assistant —
-and to any developer who runs `claude mcp add lab-history` — as seven
-read-only tools:
+and to any developer who runs `claude mcp add lab-history` — as eight
+read-only tools plus one append-only journal write:
 
 | MCP tool | Reads from | Maps to |
 |---|---|---|
 | `list_equipment_now` | live aggregator (`GET /api/equipment`) | current device state, `fetch_error`, `latency_ms` |
+| `get_equipment_status` | live aggregator (one device) | the full envelope: components, details, metrics, `allowed_actions`, activity |
 | `query_equipment_events` | `equipment_events` table | §4 state transitions / errors / startup / shutdown |
 | `query_service_uptime` | `service_uptime` table | §6 uptime % + reachability transitions |
 | `query_sensor_readings` | `sensor_readings` table | §7 downsampled env history |
 | `query_runs` | `runs` table | dosing-run records |
 | `query_well_results` | `well_results` table | per-well dispense results |
 | `tail_journald` | `journalctl -u <unit>` | §2 host journald (whitelisted units only) |
+| `record_observation` (write) | → `POST /api/ingest/events` | one actor-stamped `agent_observation` row — the shared, audited agent journal; fails closed without a verified operator |
 
 Guardrails (all enforced in `mcp_server.py`, mirroring the API bubble):
 
@@ -591,10 +594,19 @@ Guardrails (all enforced in `mcp_server.py`, mirroring the API bubble):
 - **Query caps.** `MAX_LIMIT = 200` rows, `MAX_SINCE_HOURS = 24 × 7` lookback,
   clamped server-side regardless of what the model requests.
 
-Nothing the assistant does is itself logged to `lab.db` — unlike operator
-*control* writes (§8, `event_type: control_action`), a read-only chat turn
-produces no audit row. The subprocess's own stdout/stderr land in the
-`ac-organic-lab-api` journald unit (it runs inside that FastAPI process).
+What the assistant *does* leave behind, and where: an Ask-mode chat turn
+produces no `lab.db` row, but every turn (both modes) writes two journald
+lines in the `ac-organic-lab-api` unit — `assistant chat:` (the verified
+actor, mode, backend) and `assistant turn done:` (elapsed, tool rounds,
+tokens, rate-limit status, backend, model) — so latency and account burn are
+greppable per turn. Three assistant paths do write `lab.db`, all through the
+normal audited routes: a Control-mode proposal is recorded as an
+`assistant_proposal` event the moment the model emits it; the operator's
+*Authorize* click lands as the usual `control_action` row stamped
+`origin: assistant`; and a `record_observation` call appends an
+`agent_observation` journal row. The single-writer invariant (§4, decision
+#9) holds for all three — they arrive via the API's own ingest/audit paths,
+never a second DB connection.
 
 ---
 

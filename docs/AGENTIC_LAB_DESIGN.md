@@ -161,7 +161,7 @@ each with its own trust story and owning doc:
 
 | Surface | Runs as / backed by | Trust ceiling | Owned by |
 |---|---|---|---|
-| Dashboard assistant (Ask/Control bubble) | `claude` CLI, dashboard host | read telemetry; **propose** one action a human authorizes (never actuates) | `UI_DESIGN.md` §5, ARCHITECTURE #10 |
+| Dashboard assistant (Ask/Control bubble) | dashboard host; per-mode engine — `claude` CLI (Control) or the OpenAI-compatible backend over OpenRouter (Ask, since 2026-08-13) | read telemetry + journal one observation; **propose** one action a human authorizes (never actuates) | `UI_DESIGN.md` §5, ARCHITECTURE #10 |
 | Hermes `lab-ops` | `sdl2`, human-driven | ops console incl. shell; attended only | this file |
 | Hermes `lab-runner` | boxed `hermes` user, unattended; **live on Slack since 2026-08-13** as *SDL2 Lab Runner* (`hermes-slack.service`, Socket Mode; per-user pairing + `allow_from`; native `/model` command withheld — model choice stays host-side, Phase 4.4) | trigger/watch/abort human-authorized runs; read + preflight; truthful model disclosure | this file + HERMES_ACCESS_DESIGN + `deploy/hermes-lab-runner/` |
 | PyPoe lab integration | `pypoe-slack` / `pypoe-web` services | read-only lab surface: alert fan-out to Slack, Kuma tile, `/lab-*` queries, headless `claude -p` investigations | `pypoe/CLAUDE.local.md` Appendix A, LAB_MONITORING §6b |

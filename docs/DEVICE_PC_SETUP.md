@@ -346,7 +346,7 @@ The lab user account, uv binary, and NSSM stay; uninstalling one device does not
 
 ## See also
 
-- [`docs/STATUS_SPEC.md`](STATUS_SPEC.md) — combined v1.0 + v1.1 contract every device REST API implements (claim protocol, `allowed_actions`, SiLA comparison appendix).
+- [`docs/STATUS_SPEC.md`](STATUS_SPEC.md) — combined v1.0 + v1.1 + v1.2 contract every device REST API implements (claim protocol, `allowed_actions`, `activity`, SiLA comparison appendix).
 - [`docs/ROADMAP.md`](ROADMAP.md) — per-device migration status.
 - [`docs/EQUIP_GUIDE.md`](EQUIP_GUIDE.md) — registry / maintenance runbook on the dashboard side.
 - `equipment.yaml` — the monorepo's source of truth for "which devices exist and where to reach them".

@@ -1,6 +1,6 @@
 # AC Organic Lab
 
-Monorepo for the Acceleration Consortium (AC) Organic Self-driving Lab platform stack: the equipment-status contract, the inventory, the Python SDK that workflows and the dashboard share, the dashboard's web server and Next.js UI, the lab's login service, and the read-only lab assistant.
+Monorepo for the Acceleration Consortium (AC) Organic Self-driving Lab platform stack: the equipment-status contract, the inventory, the Python SDK that workflows and the dashboard share, the dashboard's web server and Next.js UI, the lab's login service, and the lab assistant (read-only Ask mode plus a propose-only Control mode — it never actuates hardware).
 
 The dashboard runs on a single Tailscale-attached server and aggregates status from each lab equipment's REST API into one normalized contract. The browser only ever talks to the dashboard server; the dashboard server is the only client that calls the equipment APIs over the lab Tailnet. Workflow code uses the same SDK directly without going through the dashboard.
 
@@ -26,7 +26,7 @@ Browser  ->  Next.js (web/, port 8000)  ->  FastAPI (api/, port 8001)  ->  lab-s
 - **`equipment.yaml`** — equipment inventory (committed). Hardware identity, adapter, URLs, tile sizing, and pill config. Edit when hardware physically changes.
 - **`platforms.yaml`** — Overview layout config (committed). Defines sections, display order, and which equipment ids belong to each section. Edit when the dashboard layout changes.
 - **`auth/`** — `ac_auth`, the lab's email-code login service + `roster.yaml` allow-list (see [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md)).
-- **`deploy/`** — systemd units for the three services + the Caddy edge config.
+- **`deploy/`** — systemd units for the dashboard services + the Caddy edge configs, plus the `hermes-lab-runner/` Slack wiring runbook for the boxed agent.
 - **`docs/`** — architectural docs, device contract, runbooks, roadmap. See [Documentation](#documentation) below.
 
 ## Services
@@ -36,7 +36,7 @@ Everything below runs on the one Tailscale-attached dashboard host:
 | Service | Unit / source | Port | What it provides |
 |---|---|---|---|
 | Dashboard UI | `ac-organic-lab-web.service` (`web/`) | 8000 | Next.js frontend — the only thing browsers talk to. |
-| Dashboard API | `ac-organic-lab-api.service` (`api/`) | 8001 | FastAPI aggregator over `lab-skills`: normalized equipment status, the audited control passthrough (claim-gated on v1.1 devices), the history endpoints (`/api/history/*`, backed by `lab.db`), and the read-only **lab assistant** (`claude` CLI subprocess + the `lab-history` MCP tools). |
+| Dashboard API | `ac-organic-lab-api.service` (`api/`) | 8001 | FastAPI aggregator over `lab-skills`: normalized equipment status, the audited control passthrough (claim-gated on v1.1 devices), the history endpoints (`/api/history/*`, backed by `lab.db`), the authorized-run executor (`workflow.py` — bitácora-authorized plans through `execute_plan`, filed to AnaliticaDB), and the **lab assistant** (Ask + propose-only Control; two selectable engines — the `claude` CLI subprocess and an OpenAI-compatible backend via OpenRouter — over the `lab-history` / `lab-control` MCP servers). |
 | Auth service | `ac-organic-lab-auth.service` (`auth/`) | `<tailscale-ip>:8009` | `ac_auth` email-code login and roster/grant checks. Control-route enforcement lives in the Next.js middleware calling `GET /auth/verify`; Caddy `forward_auth` ([`deploy/Caddyfile.auth-snippet`](deploy/Caddyfile.auth-snippet)) is the edge alternative. See [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md). |
 | Edge (Caddy) | [`deploy/Caddyfile`](deploy/Caddyfile) | 443/80 | TLS over Tailscale (`tailscale cert`), fronting the UI and the camera streams; the auth snippet wires `forward_auth`. |
 
@@ -44,6 +44,10 @@ Companion services on the same host from sibling repos:
 [`kasa-tapo-services`](https://github.com/cyrilcaoyang/kasa_tapo_services)
 (camera + smart-plug gateway, deliberately loopback-only on
 `127.0.0.1:8002`) and its `ac-go2rtc` streaming service (MSE/WebRTC).
+The boxed Hermes `lab-runner` agent's Slack connector
+(`hermes-slack.service`, wired per
+[`deploy/hermes-lab-runner/README.md`](deploy/hermes-lab-runner/README.md))
+also runs here, under the separate `hermes` OS user.
 The AnaliticaDB record service is separate infrastructure on the data
 server (`100.64.254.6:8010`, own repo).
 
@@ -72,16 +76,16 @@ All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](doc
 
 | Document | What it covers |
 |---|---|
-| [`docs/STATUS_SPEC.md`](docs/STATUS_SPEC.md) | **Authoritative device contract.** Combined v1.0 baseline + v1.1 additions (cooperative claims, `allowed_actions`, `details.claimed_by`). Includes the conformance checklists every device repo follows and an appendix comparing this contract to the **SiLA 2** standard. |
+| [`docs/STATUS_SPEC.md`](docs/STATUS_SPEC.md) | **Authoritative device contract.** v1.0 baseline + v1.1 (cooperative claims, `allowed_actions`, `details.claimed_by`) + v1.2 (`activity` / `activity_since` — health and activity as independent axes). Includes the conformance checklists every device repo follows, the SiLA 2 comparison appendix, and the v2 design target (Appendix B). |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Long-form description of the monorepo's layering, the responsibilities of `skills/`, `api/`, `web/`, `equipment.yaml`, and `platforms.yaml`, and the key design decisions. |
 | [`docs/EQUIP_GUIDE.md`](docs/EQUIP_GUIDE.md) | **Guideline** (durable how-to): registering a new device, editing `equipment.yaml` and `platforms.yaml`, tile sizing, sensor map positions, maintenance windows, camera + smart-plug onboarding, control-lock policy (§1–§6b). |
 | [`docs/EQUIP_STATUS.md`](docs/EQUIP_STATUS.md) | **Current implementation** (as-built): how each device's dashboard tile renders today — status derivation, control passthrough, per-device troubleshooting for the fume hood, press, plate sealer, robot arm, and OT-2 (§7–§11). |
-| [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md) | **Dashboard UI design & decisions.** The living home for every shipped interface and cross-cutting UI decision, one numbered section each (§1: the OT-2 full-page interface; §2: embedded-assistant scoping, tiering, and runtime placement; §3: the proposed workflow execute/monitor surface — runner endpoint, SSE contract, run view; §5: assistant control mode — propose → authorize → execute, the per-kind proposable-action scoping, and the absorbed verification record in §5.8). New UI designs land here, not in per-feature docs. |
+| [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md) | **Dashboard UI design & decisions.** The living home for every shipped interface and cross-cutting UI decision, one numbered section each (§1: the OT-2 full-page interface; §2: embedded-assistant scoping, tiering, and runtime placement; §3: the proposed workflow execute/monitor surface; §4: the health · activity split; §5: assistant control mode, **implemented** — propose → authorize → execute, per-kind proposable-action scoping, and the verification record in §5.8). New UI designs land here, not in per-feature docs. |
 | [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) | How the SDK describes "what the lab can do right now": `SkillDef` (static) vs `Skill` (runtime), how `allowed_actions` is computed, evolution from hard-coded → device-declared. |
 | [`docs/INTERLOCKS.md`](docs/INTERLOCKS.md) | Four-layer safety model (hardware limits → device state machine → skill preconditions → project plan interlocks); `validate_plan` / `execute_plan` API. |
 | [`docs/DEVICE_PC_SETUP.md`](docs/DEVICE_PC_SETUP.md) | Canonical install recipe for a Windows device PC (uv + NSSM + Tailscale). Linked from every device repo's README rather than duplicated per-repo. |
 | [`docs/LAB_MONITORING.md`](docs/LAB_MONITORING.md) | Logging tiers (journald → events.jsonl → central SQLite), the history DB schema, dashboard history endpoints, retention guidance, and end-to-end alerting — Uptime Kuma (services) + the aggregator notifier (devices) → PyPoe → Slack + Claude investigation (overview, runbook, troubleshooting). |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Per-device migration status (`legacy_http` → v1.0 → v1.1), SDK milestones (v0.1 → v0.5), and live operational regressions. |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Per-device migration status (`legacy_http` → v1.0 → v1.1 → v1.2), SDK milestones (v0.1 → v0.5), the control-surface exposure record, and live operational regressions. |
 | [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md) | **Canonical auth doc.** Email-code login (`ac_auth`), roster allow-list, per-scope grants, claim-before-control, data isolation, the phased rollout (Phases 0–2 shipped), and the single-edge SSO build-out (absorbed from the retired `SINGLE_EDGE_SSO_PLAN.md`). |
 | [`docs/HERMES_ACCESS_DESIGN.md`](docs/HERMES_ACCESS_DESIGN.md) | **Agent access boundary.** Hermes as a platform agent, not a science agent: what it may reach (lab telemetry, device PCs over SSH, raw measurements) and what it may not (project details, background, design, analysis). The edge-path policy that enforces it, why a separate OS user is the precondition, and the dev-vs-unattended split. |
 | [`docs/AGENTIC_LAB_DESIGN.md`](docs/AGENTIC_LAB_DESIGN.md) | **Agentic lab design.** Part I (binding): the lab-wide rules for agents operating on lab infrastructure (safety, records, change control, escalation) — project repos link here from their own `AGENT_RULES.md`. Part II (descriptive): the agent operations layer — the central Hermes `lab-ops` profile, its MCP surfaces and trust tiers (lab-history / lab-skills-preflight / host-ops / lab-runs), the per-machine `sdl-lab-hostops` fleet (whitelists, tokens, `hostops_action` audit), and the no-hardware-execution stance. Client allowlists mirror `mcp/servers.yaml`. |
@@ -89,7 +93,8 @@ All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](doc
 | [`docs/AGENTIC_ELN_DESIGN.md`](docs/AGENTIC_ELN_DESIGN.md) | **Agentic ELN design.** The why + the architecture: the four-repo assembly, authorities and trust boundaries, the planning page (repo lifecycle, AG-UI, canonical protocol model, scientific diffs), merge vs. release-for-execution, compilation, and execution boundaries. |
 | [`docs/AGENTIC_ELN_PLAN.md`](docs/AGENTIC_ELN_PLAN.md) | **Agentic ELN implementation plan.** Two build tracks (ELN loop wiring; planning page + release pipeline) and the consolidated list of pending decisions (D-1…D-15). |
 | [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) | The record layer: AnaliticaDB's ELN+LIMS generalization — Plan/Note/Analysis, the materials ledger, containers, the project-repo blueprint, release linkage (mirror — the canonical copy lives in the AnaliticaDB repo). |
-| [`deploy/README.md`](deploy/README.md) | Linux server deployment, systemd units, Caddy + Tailscale TLS, day-to-day operations. |
+| [`deploy/README.md`](deploy/README.md) | Linux server deployment, systemd units, Caddy + Tailscale TLS, secrets in service environments, day-to-day operations. |
+| [`deploy/hermes-lab-runner/README.md`](deploy/hermes-lab-runner/README.md) | **Slack wiring runbook** for the boxed Hermes `lab-runner` profile (`hermes-slack.service`): manifest, tokens, per-user pairing/allowlist, verification — templates only, live config stays machine-local. |
 
 ## Local development
 
@@ -217,8 +222,13 @@ control (PTZ, presets, snapshot, recording) and Kasa plugs through
 `kasa-tapo-services`, and persistent history (`lab.db` + the
 `/api/history/*` endpoints). Overview page (`/`) is driven by
 `platforms.yaml`; per-platform detail pages (e.g. `/platforms/hte`) are
-also section-order-driven. Polling every 2-3 seconds.
+also section-order-driven. Polling every 2-3 seconds. On top of the
+monitoring core: the SDK's `execute_plan` + MCP surface (v0.4), the
+authorized-run executor (bitácora-authorized plans, filed to AnaliticaDB),
+the lab assistant (Ask + propose-only Control), and the agent operations
+layer ([`docs/AGENTIC_LAB_DESIGN.md`](docs/AGENTIC_LAB_DESIGN.md) Part II —
+`lab-runs` trigger, host-ops fleet, the boxed Slack agent).
 
-**Future:** WebSocket-based real-time pages, the MCP agent surface
-(SDK v0.4, see [`docs/ROADMAP.md`](docs/ROADMAP.md)), and the remaining
-auth rollout phases ([`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md)).
+**Future:** WebSocket-based real-time pages, the standalone aggregator
+service (SDK v0.5, see [`docs/ROADMAP.md`](docs/ROADMAP.md)), and the
+remaining auth rollout phases ([`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md)).

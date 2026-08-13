@@ -19,7 +19,7 @@ This guide is the durable operational **guideline** for:
 This document complements:
 
 - [`docs/EQUIP_STATUS.md`](EQUIP_STATUS.md) (current per-device tile implementations, §7–§11)
-- [`docs/STATUS_SPEC.md`](STATUS_SPEC.md) (device contract — combined v1.0 + v1.1)
+- [`docs/STATUS_SPEC.md`](STATUS_SPEC.md) (device contract — combined v1.0 + v1.1 + v1.2)
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) (equipment.yaml and platforms.yaml schema)
 - `deploy/README.md` (service operations)
 - `equipment.yaml` — hardware inventory

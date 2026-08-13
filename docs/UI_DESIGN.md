@@ -4,7 +4,8 @@
 `OT2_INTERFACE.md` (§1, unchanged in substance); §2 (embedded-assistant
 tiering) recorded the same day; the former `WORKFLOW_UI_DESIGN.md` design
 note folded in as §3 (still [PROPOSED], nothing built); §5 (assistant control
-mode) drafted 2026-08-07, also [PROPOSED].
+mode) drafted 2026-08-07 as [PROPOSED] and **implemented** 2026-08-11/13
+(Steps 1, 1b–1e — see the §5 heading for the shipped scope).
 **Audience:** dashboard operators and developers touching the `web/` UI.
 
 This is the home for dashboard UI design and decisions. Each shipped
@@ -237,7 +238,7 @@ audit opacity without benefit at single-lab scale.
 | Tier | Surface | Tools | Model class | Agent loop runs on | Inference |
 |---|---|---|---|---|---|
 | **1. Panel micro-assistant** | xArm control page (pattern for future per-device panels) | One structured-intent tool, device-local; no loop (single translate call) | Cheap/fast (GLM-class via OpenRouter) | *Inside the device gateway process* (`assistant_llm.py` in `xarm_api_server.py`, the device's Windows PC) | OpenRouter cloud API |
-| **2. Dashboard assistant** | Chat bubble, all dashboard pages | Read-only: seven `lab-history` MCP tools (history DB, live `/api/equipment`, whitelisted journald). §5 [PROPOSED] adds a propose-only `lab-control` server in control mode — still no actuating tool, so this row's trust level is unchanged | Mid (sonnet-class) | Central dashboard host — `api/app/assistant.py` spawns a `claude` CLI subprocess per turn; the MCP server is a local stdio child | Anthropic cloud via the host's Claude Code OAuth |
+| **2. Dashboard assistant** | Chat bubble, all dashboard pages | Ask mode: eight read-only `lab-history` MCP tools (history DB, live `/api/equipment`, whitelisted journald) + the append-only `record_observation` journal. Control mode (§5, shipped) adds the propose-only `lab-control` server — still no actuating tool, so this row's trust level is unchanged | Per mode/backend (Ask: Qwen-flagship-class; Control: sonnet-class) | Central dashboard host — `api/app/assistant.py` dispatches per mode to a `claude` CLI subprocess or the `assistant_openai.py` tool loop; the MCP servers are local stdio children either way | Anthropic cloud via the host's Claude Code OAuth (claude-cli backend) or OpenRouter via `ASSISTANT_OPENAI_API_KEY` (openai backend) — ARCHITECTURE #10 records the trade |
 | **3. Lab / ELN agent** | ELN chat + planning page (LaAgenteAnalitica) | Lab-skills MCP (read-only first; `execute_plan` behind `--allow-control` + human approval), AnaliticaDB HTTP tools | Best available | The LaAgenteAnalitica backend service — its own host/service (deployment target open, D-8); tools reached **over the tailnet** | Provider cloud API |
 
 Trust level rises down the table; so does the gating (tier 3 actuation

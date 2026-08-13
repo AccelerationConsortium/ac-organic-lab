@@ -23,8 +23,8 @@ and flag the conflict.
   weaken a rule in it. (Part II of the same file records the deployed
   agent-ops layer; it is descriptive, not binding.)
 - **`docs/STATUS_SPEC.md`** — the authoritative device contract (v1.0 status
-  envelope + v1.1 cooperative claims / `allowed_actions`). Every device I/O path
-  conforms to it.
+  envelope + v1.1 cooperative claims / `allowed_actions` + v1.2 `activity`).
+  Every device I/O path conforms to it.
 
 Load-bearing rules worth internalizing (the contract is authoritative, this is
 just the short list agents most often need):
@@ -91,15 +91,18 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
 
 ## 4. Recurring pitfalls (project-specific)
 
-- **Single-PC concentration:** xArm (8000), PlateLoc (8010), OT-2 (8020),
-  Cytation 5 (9333) all live on `sdl2-pc-03-cytation`. One reboot takes out four
-  workflow-critical services.
+- **Single-PC concentration:** xArm (8000), PlateLoc (8010), both OT-2
+  gateways (8020/8021), shaker (8030), Cytation 5 (8040), BioStack (8050),
+  and hostops (8060) all live on `sdl2-pc-03-cytation`. One reboot takes out
+  most workflow-critical services (see DEVICE_PC_SETUP §7 for the full table).
 - **Port 8010 is used by two different hosts** (UPLC-MS on `sdl2-pc-06-uplc`,
   PlateLoc on `sdl2-pc-03-cytation`). No collision, but easy to confuse.
-- **`legacy_http` devices** (fume hood, filter-every-well) are translated
-  per-device in the aggregator; treat their shapes as non-standard.
-- **No app-level auth between aggregator and equipment** — Tailscale ACLs are
-  the only gate. Don't design as if there were device auth.
+- **Mostly no app-level auth between aggregator and equipment** — Tailscale
+  ACLs are the main gate; don't design as if every device authenticated its
+  callers. The exceptions are per-device: hard claim enforcement
+  (`X-Claim-Token` → 423) on most control surfaces, and the xArm's
+  login-gated `/control/claim` + per-device edge secret (see ROADMAP →
+  *Control-surface exposure*).
 
 ## 5. Memory & instruction policy (how agents keep notes)
 

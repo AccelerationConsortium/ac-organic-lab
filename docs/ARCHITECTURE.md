@@ -481,7 +481,7 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 
 - `AGENTS.md` — shared agent working instructions + memory policy (canonical base for all lab repos; see design decision #11)
 - `docs/AGENTIC_LAB_DESIGN.md` — Part I: the binding lab operating rules agents must not weaken; Part II: the deployed agent operations layer
-- `docs/STATUS_SPEC.md` — combined device contract (v1.0 baseline + v1.1 additions + SiLA comparison appendix)
+- `docs/STATUS_SPEC.md` — combined device contract (v1.0 baseline + v1.1 claims + v1.2 activity + SiLA comparison appendix)
 - `docs/SKILLS_CATALOG.md` — skill catalog design (`SkillDef` / `Skill`, runtime availability, evolution from hard-coded → device-declared)
 - `docs/INTERLOCKS.md` — four-layer safety model and the project interlock API (`add_interlock`, `validate_plan`, `PlanReport`)
 - `docs/LAB_MONITORING.md` — logging, events, the central history DB, and alerting (Kuma + the aggregator notifier + PyPoe; overview + runbook)
@@ -494,6 +494,6 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 - `docs/ROADMAP.md` — per-device migration status
 - `equipment.yaml` — the lab's equipment inventory (schema v2)
 - `platforms.yaml` — the Overview page layout and Nav tab config
-- `skills/README.md` — SDK usage (created when v0.1 ships)
-- `api/README.md` — dashboard server (created when api/ is reorganized in v0.1)
+- [`skills/README.md`](../skills/README.md) — SDK usage and module map
+- [`api/README.md`](../api/README.md) — dashboard server package map
 - `.cursor/plans/build_lab-skills_*.plan.md` — current working milestone plan

@@ -192,7 +192,10 @@ because systemd parsed them at load time. Contrast
 
 **Why it matters here.** Those values are the per-device edge secrets
 (`XARM_EDGE_SHARED_SECRET`, `OT2_EDGE_SECRET`, `GRAPHCHAT_EDGE_SECRET`) that
-let a device trust an injected `X-Auth-User` (see
+let a device trust an injected `X-Auth-User`, and — in the api unit's
+`EnvironmentFile` — the assistant's `ASSISTANT_OPENAI_API_KEY` (OpenRouter
+billing; a leak spends money rather than impersonating anyone, but the same
+rule applies). On the edge secrets specifically (see
 [`AUTH_DESIGN.md`](../docs/AUTH_DESIGN.md) → *How a device learns who the
 operator is*). Anyone with a shell on this host can read one, then POST
 straight to a device on the Tailnet with `X-Auth-User: <anyone>` and act as
@@ -293,6 +296,11 @@ rather than carrying values, since it is committed.
 - **Web** requires the API (`Requires=ac-organic-lab-api.service`). If the
   API stops, the web service stops too. Both are set to
   `Restart=on-failure` with a 3s backoff.
+
+A fourth unit on this host, `hermes-slack.service`, is the boxed Hermes
+`lab-runner` Slack connector — it runs as the separate `hermes` OS user and
+is wired per [`hermes-lab-runner/README.md`](hermes-lab-runner/README.md),
+not by the recipe above.
 
 ## Optional: cameras + smart plugs (`kasa-tapo-services`)
 
