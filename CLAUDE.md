@@ -9,7 +9,7 @@ Claude Code.
 
 ## Binding contract
 
-`docs/AGENT_RULES.md` (lab operating rules) and `docs/STATUS_SPEC.md` (device
+`docs/AGENTIC_LAB_DESIGN.md` Part I (lab operating rules) and `docs/STATUS_SPEC.md` (device
 contract) are binding and take precedence. Do not weaken, bypass, or rewrite
 them unless the human explicitly asks. See `AGENTS.md` §1.
 

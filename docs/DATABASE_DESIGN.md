@@ -450,7 +450,7 @@ transition — giving INTERLOCKS layer 4 (`validate_plan`) a concrete identity
 for *which procedure version* was validated.
 
 **`AGENT_RULES.md` placement:** lab-wide rules live once, in
-`ac-organic-lab/docs/AGENT_RULES.md`; each project repo's root file holds
+`ac-organic-lab/docs/AGENTIC_LAB_DESIGN.md` (Part I); each project repo's root file holds
 only project-specific rules and links to the canonical one (single source —
 copies drift). Rules files are guidance an agent reads, **not enforcement**:
 anything safety-critical must also exist as a check (interlock, CI

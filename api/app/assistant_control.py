@@ -25,12 +25,25 @@ before a proposal is returned; the check fails closed.
 
 Scope
 -----
-Step 1 proposes exactly one action on one device. The action-name resolver
-covers ``robot_arm`` move targets only (``move.<node_id>`` -> the
-``graph.move_to`` skill -> ``POST /control/graph/move_to``). Safety-floor
-actions (``stop`` / ``connect`` / ``clear_errors``) are deliberately **not**
-proposable — they are operator buttons and must stay reachable without the
-assistant. Anything the resolver cannot map is refused.
+A proposal is exactly one action on one device. In scope:
+
+* ``robot_arm`` move targets (``move.<node_id>`` -> the ``graph.move_to``
+  skill -> ``POST /control/graph/move_to``) — the Step 1 surface. Moves are
+  proposed one graph hop at a time; for route *reasoning*,
+  ``list_available_actions`` forwards the device's read-only
+  ``details.motion_graph`` snapshot (see :func:`_list_available_actions`).
+* the per-kind allowlist in :data:`_PROPOSABLE` — the ``liquid_handler``
+  (OT-2) control surface plus, since Step 1d, ``fume_hood`` / ``shaker`` /
+  ``press``. The table carries the scope history and per-kind rationale;
+  :data:`_FORBIDDEN_ARG_FIELDS` holds the argument fields that are never
+  model-settable (interlock overrides, device credentials). The ``hplc``
+  kind is deliberately absent — see the table's Step 1d note.
+
+Safety-floor actions are deliberately **not** proposable — they are operator
+buttons and must stay reachable without the assistant. That is the xArm's
+``stop`` / ``connect`` / ``clear_errors``, and every kind's stop verb
+(``sash.stop``, ``shake.stop``, the press's ``stop``). Anything the resolver
+cannot map is refused.
 
 Transport
 ---------
@@ -147,12 +160,156 @@ def _passthrough_action(sd: SkillDef) -> str:
     return ep.lstrip("/")
 
 
+# Per-kind allowlist of actions the assistant may propose. Fail-closed: a kind
+# absent from this table, or an action absent from its set, is refused — a new
+# gateway verb stays operator-only until somebody scopes it here deliberately
+# (which is why the table survives even now that it lists the OT-2's whole
+# advertised surface).
+#
+# Nothing here actuates and the confirm card is the gate, so the bar is not
+# "is this action dangerous". Two things keep that card a real gate rather
+# than a rubber stamp, and both are enforced in code, not by this comment:
+#
+# * **Operator-only argument fields** (:data:`_FORBIDDEN_ARG_FIELDS`). A field
+#   that weakens an interlock or carries a credential is never model-settable:
+#   ``pick_up_tip.force`` overrides the gateway's cross-contamination guard
+#   (AGENTIC_LAB_DESIGN.md §1.2: never weaken an interlock at any layer),
+#   ``move_to.force_direct`` opts out of the arced collision-safe path, and
+#   ``startup.password`` / ``host_alias`` are the gateway's to supply from its
+#   own service env — a model-supplied secret would render on the confirm card
+#   and land in the ``assistant_proposal`` audit row. Supplying any of them
+#   refuses the whole proposal (code ``forbidden_field``), and
+#   list_available_actions strips them from the advertised schema so the model
+#   never sees them as settable.
+# * **Card evaluability.** Nested argument sets (``setup`` labware lists,
+#   ``plate.load`` wells) render on the confirm card as full pretty-printed
+#   JSON, never a truncated one-liner — a card nobody can check is a rubber
+#   stamp (AssistantBubble's ProposalCard).
+#
+# Scope history. Step 1b (2026-08-12) admitted tier A (lights.set / home /
+# pause) and tier B record edits only, holding the liquid/motion verbs back as
+# sequence-bound — one confirm click cannot bind pick-up-tip -> aspirate ->
+# dispense -> drop-tip, and the passthrough runs no interlocks to catch a
+# half-executed remainder. Step 1c (same day, operator decision) admitted the
+# full surface: the operator IS the sequencer, authorizing consecutive cards
+# one step at a time, with the field guard shipped first as the price of
+# admission. The control-mode prompt instructs the model to propose sequence
+# steps strictly in order, one at a time, and to recommend a workflow plan
+# once a sequence grows beyond a handful of steps — execute_plan (UI_DESIGN
+# §5.5) remains the right surface for real multi-step work.
+_PROPOSABLE: dict[str, frozenset[str]] = {
+    "liquid_handler": frozenset(
+        {
+            # Session lifecycle. ``startup`` is only proposable because the
+            # guard forbids ``password``/``host_alias`` (the gateway uses its
+            # own env); a human authorizing it is the "explicit invocation"
+            # the catalog blesses despite ``do_not_call_connect: true``.
+            "startup",
+            "shutdown",
+            # Deck state / convenience.
+            "lights.set",
+            "home",
+            "pause",
+            "resume",
+            "setup",
+            # Liquid handling — sequence-bound; the operator sequences via
+            # consecutive confirm cards (Step 1c above).
+            "move_to",
+            "pick_up_tip",
+            "aspirate",
+            "dispense",
+            "drop_tip",
+            "move_labware",
+            # Record edits — no motion, but they mutate the lab's *belief*
+            # about the deck; a wrong one silently desyncs belief from
+            # reality, which is why they still confirm. ``tips.reset``
+            # additionally re-arms/disarms the contamination guard's input
+            # (a physical rack swap), so its card deserves a careful read.
+            "plate.load",
+            "plate.unload",
+            "well.update",
+            "tips.reset",
+            "deck.declare",
+        }
+    ),
+    # Step 1d (2026-08-12): three more bench kinds, same criterion, no new
+    # mechanism. Every admitted action is one card-evaluable act with zero or
+    # a few scalar, range-clamped args, and no schema in these kinds carries
+    # an interlock-override or credential field, so _FORBIDDEN_ARG_FIELDS
+    # gains no entries (the risky-field pinning test covers every kind here
+    # automatically). The xArm's safety-floor deviation generalizes into a
+    # rule: STOP VERBS ARE NEVER PROPOSABLE ON ANY KIND — ``sash.stop``,
+    # ``shake.stop``, and the press's emergency ``stop`` (which forces
+    # re-init) stay operator buttons, reachable without the assistant.
+    #
+    # The HPLC (kind ``hplc``) is deliberately NOT scoped — operator decision,
+    # 2026-08-12. Its verbs also fit the criterion poorly: ``run.submit``
+    # enqueues an acquisition whose correctness lives in the method/sequence,
+    # not on a card; ``workflow.start``/``end`` manage the equipment-blocking
+    # campaign lock with role semantics (automation-role claims the
+    # assistant's human actor would not hold); ``instrument.standby`` parks
+    # the instrument against a FIFO queue the card cannot show.
+    "fume_hood": frozenset({"sash.move"}),
+    "shaker": frozenset(
+        {
+            # startup opens a serial port (no credentials — unlike the OT-2's
+            # startup, nothing here needs the field guard) and is the routine
+            # recovery for the USB-enumeration drops this device has hit.
+            "startup",
+            "shutdown",
+            # One complete cycle: the device owns the duration timer and its
+            # watchdog stops the motor, so a lone shake.start is a whole act.
+            "shake.start",
+            "shake.set_temperature",
+            "shake.set_speed",
+        }
+    ),
+    "press": frozenset(
+        {
+            # init (endpoint /control/startup) restores the known-safe pose:
+            # press up, plate out, system ACTIVE.
+            "init",
+            # The press cycle (plate.in -> press.down -> press.up ->
+            # plate.out) is sequence-shaped; Step 1c's discipline applies —
+            # the operator is the sequencer, one card per step.
+            "press.up",
+            "press.down",
+            "plate.in",
+            "plate.out",
+        }
+    ),
+}
+
+# Argument fields the model may never set, per kind — see the rationale above.
+# Enforced in :func:`_resolve` (refusal code ``forbidden_field``) and stripped
+# from the schemas :func:`_list_available_actions` advertises. Flat per kind on
+# purpose: none of these names has a legitimate model-settable use on any
+# action of the kind, and a flat set cannot drift when a schema is reused
+# across actions (TipArgs serves both tip verbs).
+_FORBIDDEN_ARG_FIELDS: dict[str, frozenset[str]] = {
+    "liquid_handler": frozenset({"force", "force_direct", "password", "host_alias"}),
+}
+
+
 def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[SkillDef, str, dict[str, Any]]:
     """Map a device ``allowed_actions`` string to a proposable action.
 
     Returns ``(skill_def, passthrough_action, resolved_args)`` or raises
-    :class:`ProposalRefused`. Step 1 scope: ``robot_arm`` move targets only.
+    :class:`ProposalRefused`. Scope: ``robot_arm`` move targets and gripper
+    states, plus the per-kind allowlist in :data:`_PROPOSABLE`. Anything else
+    is refused, as is any proposal supplying an operator-only argument field.
     """
+
+    supplied_forbidden = sorted(
+        _FORBIDDEN_ARG_FIELDS.get(entry.kind or "", frozenset()) & set(args or {})
+    )
+    if supplied_forbidden:
+        raise ProposalRefused(
+            "forbidden_field",
+            f"{', '.join(supplied_forbidden)} is operator-only and never "
+            "model-settable (interlock override or device credential); omit it "
+            "and re-propose",
+        )
 
     if entry.kind == "robot_arm" and action.startswith("move."):
         node_id = action[len("move."):]
@@ -169,10 +326,49 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
         resolved = {**(args or {}), "node_id": node_id}
         return sd, _passthrough_action(sd), resolved
 
+    # Same bridging shape as ``move.<node_id>``, for the same reason: the
+    # device enumerates one action per *legal* gripper state (whitelisted for
+    # its current node and current stroke), so the state travels in the action
+    # name and the model cannot name a transition the device would refuse.
+    #
+    # Step 1e (2026-08-13, operator request): admitted because a gripper change
+    # is one card-evaluable act — it is not the pick/place *sequence* that
+    # DASHBOARD_ASSISTANT_GRAPH_PLAN.md holds back. A pick is still
+    # move -> gripper -> move, three cards the operator sequences, exactly as
+    # Step 1c settled for the OT-2's liquid verbs. No new mechanism, no
+    # interlock-override or credential field in the schema (so
+    # _FORBIDDEN_ARG_FIELDS gains nothing), and the device's own STRICT-mode
+    # whitelist remains the authority on what is reachable.
+    if entry.kind == "robot_arm" and action.startswith("gripper."):
+        state = action[len("gripper."):]
+        if not state:
+            raise ProposalRefused("unmappable_action", f"malformed gripper action {action!r}")
+        sd = _find_skill_def("robot_arm", "graph.gripper")
+        if sd is None:  # pragma: no cover - catalog always registers this
+            raise ProposalRefused(
+                "unmappable_action", "graph.gripper is not registered in the skill catalog"
+            )
+        resolved = {**(args or {}), "state": state}
+        return sd, _passthrough_action(sd), resolved
+
+    if action in _PROPOSABLE.get(entry.kind or "", frozenset()):
+        # Direct name lookup: these catalog names are byte-for-byte the strings
+        # the device advertises, so no bridging is needed (unlike the xArm's
+        # ``move.<node_id>``). ``_passthrough_action`` maps the dotted name's
+        # endpoint to its URL segment (``plate.load`` -> ``plate/load``).
+        sd = _find_skill_def(entry.kind, action)
+        if sd is None:  # pragma: no cover - guarded by the catalog parity test
+            raise ProposalRefused(
+                "unmappable_action",
+                f"{action!r} is allowlisted for kind {entry.kind!r} but is not "
+                "registered in the skill catalog",
+            )
+        return sd, _passthrough_action(sd), dict(args or {})
+
     raise ProposalRefused(
         "unmappable_action",
         f"action {action!r} on kind {entry.kind!r} is not proposable by the assistant "
-        "(Step 1 supports robot_arm move targets only; safety-floor actions stay "
+        "(safety-floor actions and verbs not yet scoped into the allowlist stay "
         "operator-only)",
     )
 
@@ -228,7 +424,16 @@ async def _read_status(registry: Registry, equipment_id: str):
 
 async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
     """Live ``allowed_actions`` for a device, each annotated with whether the
-    assistant can propose it and (when it can) the JSON-Schema for its args."""
+    assistant can propose it and (when it can) the JSON-Schema for its args.
+
+    When the device publishes a ``details.motion_graph`` snapshot (today: the
+    xArm), it is forwarded verbatim under ``motion_graph`` — read-only path
+    context (``current_node``, single-hop ``reachable_nodes``, multi-hop
+    ``travel_targets``) so the model can reason about routes instead of seeing
+    only the current node's outgoing hops. This widens what the model can
+    *see*, never what it can *propose*: multi-hop travel is not proposable,
+    and every hop of a route is its own ``move.<node_id>`` proposal with its
+    own confirm card."""
 
     entry = registry.by_id(equipment_id)
     if entry is None:
@@ -248,25 +453,40 @@ async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
         except ProposalRefused:
             actions.append(info)
             continue
+        # Operator-only fields are stripped from the schema the model sees —
+        # advertising them as settable would invite a proposal the guard must
+        # then refuse. They are reported by name so the model can explain the
+        # omission if asked.
+        schema = sd.args_schema.model_json_schema()
+        forbidden = _FORBIDDEN_ARG_FIELDS.get(entry.kind or "", frozenset())
+        stripped = sorted(f for f in forbidden if f in schema.get("properties", {}))
+        for field in stripped:
+            schema["properties"].pop(field)
+            if field in schema.get("required", []):
+                schema["required"].remove(field)
         info.update(
             proposable=True,
             passthrough_action=passthrough,
             description=sd.description,
-            args_schema=sd.args_schema.model_json_schema(),
+            args_schema=schema,
         )
+        if stripped:
+            info["operator_only_fields"] = stripped
         actions.append(info)
 
-    return _dumps(
-        {
-            "equipment_id": entry.id,
-            "equipment_name": entry.name,
-            "kind": entry.kind,
-            "equipment_status": status.equipment_status,
-            "activity": status.activity,
-            "message": status.message,
-            "actions": actions,
-        }
-    )
+    payload: dict[str, Any] = {
+        "equipment_id": entry.id,
+        "equipment_name": entry.name,
+        "kind": entry.kind,
+        "equipment_status": status.equipment_status,
+        "activity": status.activity,
+        "message": status.message,
+        "actions": actions,
+    }
+    motion_graph = (status.details or {}).get("motion_graph")
+    if isinstance(motion_graph, dict):
+        payload["motion_graph"] = motion_graph
+    return _dumps(payload)
 
 
 async def _propose_action(
@@ -359,7 +579,13 @@ def _build_server(registry: Registry):
         """The device's live ``allowed_actions`` plus, for each action the
         assistant can propose, its argument JSON-Schema. Call this before
         propose_action to learn what is legal instead of guessing endpoints.
-        Only ``robot_arm`` move targets are proposable in this mode."""
+        Safety-floor actions stay operator-only (``proposable: false``), and
+        each proposable action's schema omits its operator-only argument
+        fields (listed under ``operator_only_fields``) — never supply those.
+        Graph-constrained arms also return a read-only ``motion_graph``
+        snapshot (current_node, single-hop reachable_nodes, multi-hop
+        travel_targets) for planning and explaining routes; a route is still
+        proposed one ``move.<node_id>`` hop at a time."""
 
         return await _list_available_actions(registry, equipment_id)
 

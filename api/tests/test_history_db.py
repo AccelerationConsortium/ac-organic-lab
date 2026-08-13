@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import sqlite3
+
 import pytest
 from pydantic import ValidationError
 
@@ -508,3 +511,28 @@ def test_ingest_record_canonicalises_device_timestamps():
     # Unparseable timestamps are rejected here rather than stored unreadable.
     with pytest.raises(ValidationError):
         IngestEventRecord(timestamp="2026/07/03 20:43", event="startup")
+
+
+def test_open_falls_back_to_read_only_when_file_not_writable(tmp_path):
+    """The boxed-consumer path (HERMES_ACCESS_DESIGN Phase 0): a LabDatabase
+    whose file exists but is not writable opens read-only — reads work,
+    writes raise, and the schema script is never attempted."""
+
+    path = tmp_path / "lab.db"
+    rw = LabDatabase(path)
+    rw.open()
+    rw.record_equipment_event("plateloc", "state_transition", message="ready")
+    rw.close()
+
+    os.chmod(path, 0o444)
+    try:
+        ro = LabDatabase(path)
+        ro.open()  # must not raise trying to apply _SCHEMA
+        rows = ro.get_equipment_events("plateloc", limit=5)
+        assert len(rows) == 1
+        assert rows[0]["message"] == "ready"
+        with pytest.raises(sqlite3.OperationalError):
+            ro.record_equipment_event("plateloc", "state_transition", message="x")
+        ro.close()
+    finally:
+        os.chmod(path, 0o644)  # let pytest clean tmp_path up

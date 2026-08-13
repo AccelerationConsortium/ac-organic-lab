@@ -37,6 +37,7 @@ import logging
 import os
 import time
 import uuid
+from datetime import datetime, timezone
 from dataclasses import field as dataclass_field
 from dataclasses import dataclass
 from typing import Any
@@ -45,6 +46,8 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+
+from .record import write_run_record
 
 logger = logging.getLogger("workflow")
 
@@ -363,7 +366,8 @@ class RunState:
     launched_by: str
     dry_run: bool
     status: str = "running"  # running | finished | refused
-    started_at: float = 0.0
+    started_at: float = 0.0  # monotonic, for durations
+    started_at_utc: str = ""  # wall-clock ISO-8601 — the record layer's Experiment start
     events: list[dict] = dataclass_field(default_factory=list)
     changed: "asyncio.Event" = dataclass_field(default_factory=lambda: asyncio.Event())
     abort_requested: str | None = None  # who asked
@@ -441,6 +445,8 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
 
     duration = time.monotonic() - state.started_at
     state.status = "finished"
+    plan_row = plan_row_from(auth, report, launched_by=identity)
+    notes = notes_from(report, authorization_id=auth.authorization_id)
     state.result = {
         "authorization_id": auth.authorization_id,
         "ok": report.ok,
@@ -452,10 +458,19 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
              "skill": st.skill, "equipment_id": st.equipment_id, "error": st.error}
             for st in report.steps
         ],
-        # The record layer's shape, produced but not written (D-23).
-        "record": {"plan": plan_row_from(auth, report, launched_by=identity),
-                   "notes": notes_from(report, authorization_id=auth.authorization_id)},
+        # The record layer's shape — produced here and filed just below (D-23).
+        "record": {"plan": plan_row, "notes": notes},
     }
+    # File the run in AnaliticaDB. Deliberately before `done` is emitted, so a
+    # consumer that sees the run finish also sees whether it was recorded — and
+    # deliberately incapable of raising, because the run already happened and a
+    # failed write must never be reported as a failed run (record.py, property 1).
+    state.result["record"]["write"] = await write_run_record(
+        plan=plan_row, notes=notes,
+        design_ref=(auth.package or {}).get("design_ref"),
+        operator=identity,
+        started_at=state.started_at_utc,
+    )
     state.emit("done", state.result)
     await _record_run_event(
         request, auth.authorization_id,
@@ -505,6 +520,7 @@ def build_workflow_router() -> APIRouter:
             launched_by=identity,
             dry_run=body.dry_run,
             started_at=time.monotonic(),
+            started_at_utc=datetime.now(timezone.utc).isoformat(),
         )
         _remember(state)
         state.emit("started", {

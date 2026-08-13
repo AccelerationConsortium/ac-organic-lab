@@ -255,8 +255,10 @@ Three pieces:
   cwd outside the repo tree so Claude Code doesn't auto-load the ~50k-token
   `CLAUDE.md` doc bundle on every turn. Model defaults to `sonnet`.
 - **`api/app/mcp_server.py`** — the `lab-history` MCP server (stdio,
-  `lab-history-mcp` entry point). Exposes **seven read-only tools**:
+  `lab-history-mcp` entry point). Exposes **eight read-only tools**:
   `list_equipment_now` (live, via the aggregator's `/api/equipment`),
+  `get_equipment_status` (one device's full envelope — components, details,
+  metrics — where `list_equipment_now` returns only a summary row),
   `query_equipment_events`, `query_service_uptime`, `query_sensor_readings`,
   `query_runs`, `query_well_results` (all over `data/lab.db`), and
   `tail_journald` (last N lines of a **whitelisted** dashboard systemd unit).
@@ -398,7 +400,7 @@ Coding agents (Hermes, Codex, Claude Code, and any future agent) keep their dura
 
 The policy itself (what goes where, and what never gets stored) is normatively specified in `AGENTS.md` §5; the load-bearing consequences for the architecture are:
 
-- **This repo is the canonical base.** Every other repo in the workspace inherits the `AGENTS.md` + `CLAUDE.md` structure from here and layers only its own specifics on top — the same inheritance pattern the binding contract (`docs/AGENT_RULES.md`, `docs/STATUS_SPEC.md`) already follows. Fixing a shared convention means fixing it here once.
+- **This repo is the canonical base.** Every other repo in the workspace inherits the `AGENTS.md` + `CLAUDE.md` structure from here and layers only its own specifics on top — the same inheritance pattern the binding contract (`docs/AGENTIC_LAB_DESIGN.md` Part I, `docs/STATUS_SPEC.md`) already follows. Fixing a shared convention means fixing it here once.
 - **Memory changes are diffs.** Because agent memory is ordinary committed markdown, it goes through the same review, history, and rollback as code. There is no hidden state that silently steers agent behavior.
 - **Scope boundaries are explicit.** Repo-specific knowledge → that repo's `AGENTS.md`; cross-repo / machine-wide facts → the agent's global memory, *proposed for human approval*, never silently written into a repo; the binding contract files change only on explicit human request; temporary debugging notes and one-off observations go nowhere.
 
@@ -451,7 +453,7 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 ## See also
 
 - `AGENTS.md` — shared agent working instructions + memory policy (canonical base for all lab repos; see design decision #11)
-- `docs/AGENT_RULES.md` — the binding lab operating rules agents must not weaken
+- `docs/AGENTIC_LAB_DESIGN.md` — Part I: the binding lab operating rules agents must not weaken; Part II: the deployed agent operations layer
 - `docs/STATUS_SPEC.md` — combined device contract (v1.0 baseline + v1.1 additions + SiLA comparison appendix)
 - `docs/SKILLS_CATALOG.md` — skill catalog design (`SkillDef` / `Skill`, runtime availability, evolution from hard-coded → device-declared)
 - `docs/INTERLOCKS.md` — four-layer safety model and the project interlock API (`add_interlock`, `validate_plan`, `PlanReport`)

@@ -31,6 +31,7 @@ servers:
       # here, not a silent capability grant.
       include:
         - list_equipment_now
+        - get_equipment_status
         - query_equipment_events
         - query_service_uptime
         - query_sensor_readings
@@ -58,6 +59,11 @@ servers:
           answers from this server are telemetry, not experimental records.
       known_clients:
         - dashboard assistant bubble (api/app/assistant.py, via claude CLI)
+        - Hermes `lab-ops` profile on the central server (full allowlist)
+        - Hermes `lab-runner` profile under the boxed `hermes` OS user —
+          tail_journald EXCLUDED (journal access needs group membership the
+          boxed principal deliberately lacks, and unit logs can quote
+          secrets); lab.db reached via LabDatabase's read-only fallback
         - Hermes `lab-ops` profile on the central server (allowlist mirrors
           tools.include above)
 
@@ -105,7 +111,7 @@ servers:
           execute_plan is never registered (the exclude above is belt and
           braces, not the gate). Enabling --allow-control for an agent is a
           human decision that requires an approval-gated execution design
-          (AGENT_RULES.md §1.3: only validated, human-approved plans execute)
+          (AGENTIC_LAB_DESIGN.md §1.3: only validated, human-approved plans execute)
           — e.g. the authorized-run executor in api/app/workflow.py.
         - >-
           preflight_plan reads live device state but issues no control
@@ -113,6 +119,70 @@ servers:
       known_clients:
         - Hermes `lab-ops` profile on the central server (read + preflight
           allowlist, no --allow-control)
+        - Hermes `lab-runner` profile under the boxed `hermes` OS user (same
+          read + preflight allowlist, no --allow-control; owner string
+          hermes:lab-runner)
+
+  lab-runs:
+    description: >-
+      First-party authorized-run trigger (api/app/run_trigger.py in this
+      repo): start, watch (bounded SSE window with a seq cursor), and
+      cooperatively abort runs of plans a HUMAN already authorized in
+      bitácora, over the dashboard's workflow-executor routes
+      (api/app/workflow.py). A thin HTTP client — the executor is the
+      authority and re-verifies executability, package digest, and
+      revocation (including between steps); refusals are relayed verbatim.
+    transport: stdio
+    # Console script `lab-runs-mcp` from the api/ package; resolve through
+    # the deployment's venv (see the lab-history note). Requires LAB_ACTOR in
+    # the environment (never a tool argument) and reaches the dashboard API
+    # at DASHBOARD_API_BASE (default loopback :8001).
+    command: lab-runs-mcp
+    optional: true
+
+    provenance:
+      repository: https://github.com/AccelerationConsortium/ac-organic-lab
+      license: MIT
+      reviewed_version: api 0.1.0
+      reviewed_commit: 29283c2eef6dd7c5834c8faa97b558ad03c81ad0
+      reviewed_at: 2026-08-12
+
+    tools:
+      include:
+        - start_run
+        - get_run
+        - watch_run
+        - abort_run
+
+    sampling:
+      enabled: false
+
+    data_policy:
+      confidential_data: prohibited
+      authoritative_inventory_source: false
+      authoritative_safety_source: false
+      notes:
+        - >-
+          The agent pulls a trigger a human already loaded, nothing more:
+          this server MUST NOT grow a tool that composes, edits, lists, or
+          approves plans/authorizations (AGENTIC_LAB_DESIGN.md trust tiers). The
+          authorization_id reaches the agent from a human (e.g. a Slack
+          message), not from a discovery tool here — that absence is part of
+          the design, not a gap.
+        - >-
+          Attribution rides LAB_ACTOR -> X-Auth-User, trusted by network
+          position at the dashboard API. Deployment target is therefore the
+          boxed `hermes` OS principal (HERMES_ACCESS_DESIGN Phase 0) with
+          LAB_ACTOR pinned to its roster identity (Phase 1); do not wire
+          this server into a profile running as sdl2.
+        - >-
+          start_run(dry_run=true) is the live preflight (no claims, no
+          actuation); abort is cooperative at step boundaries. Every start,
+          refusal, and abort lands in the plan_run audit trail under the
+          bound actor.
+      known_clients:
+        - Hermes `lab-runner` profile under the boxed `hermes` OS user
+          (LAB_ACTOR=hermes@lab.local; full 4-tool allowlist)
 
   lab-hostops:
     description: >-

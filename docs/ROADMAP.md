@@ -148,7 +148,7 @@ each):
 | `plate_sealer` | 8 | Includes 412-precondition skills with `requires_components` (heater + stage) |
 | `plate_stacker` | 6 | Agilent BioStack `/control/*` surface |
 | `press` | 6 | `init`, `stop`, `press.{up,down}`, `plate.{in,out}` |
-| `robot_arm` | 4 | `graph.{move_to,recover_to,record,mode}` — xArm motion-graph control surface (v1.1, claim-gated); added 2026-05-31 |
+| `robot_arm` | 5 | `graph.{move_to,gripper,recover_to,record,mode}` — xArm motion-graph control surface (v1.1, claim-gated); added 2026-05-31, `graph.gripper` 2026-08-13 |
 | `shaker` | 6 | `startup`, `shutdown`, `shake.{start,stop,set_temperature,set_speed}` with motor/heater AND-gates so a heater-side `degraded` doesn't block shaking |
 | `solid_doser` | 13 | `dose.{well,multiple,row,column}` etc.; all endpoints moved under `/control/*` for dose v1.1 (2026-05-31) |
 
@@ -437,8 +437,16 @@ Open:
 - [ ] **Skill-name reconciliation**: the device advertises
   `allowed_actions` as `connect`/`stop`/`clear_errors`/`move.<node_id>`
   (graph-derived, STRICT mode only) while the catalog registers
-  `graph.{move_to,recover_to,record,mode}` — so `lab.skills()` reports
-  every `graph.*` skill unavailable. Rename one side or map in the SDK.
+  `graph.{move_to,gripper,recover_to,record,mode}` — so `lab.skills()`
+  reports every `graph.*` skill unavailable. Rename one side or map in the
+  SDK. **Widened 2026-08-13**: the device now also advertises
+  `gripper.<state>` (one per whitelisted catalog gripper state — it
+  previously advertised no gripper action at all, understating what
+  `/control/graph/gripper` has always honored), and the catalog gained the
+  matching `graph.gripper`. So the mismatch now spans two families, and the
+  assistant's resolver bridges both (UI_DESIGN §5.3 Step 1e) while
+  `lab.skills()` still sees neither. Fixing this one place would close it
+  for both.
 - [ ] **Dashboard graph controls**: `RobotArmTile` still shows only the
   read-only three-row summary + deep-link; surface the `graph.*` actions
   through the audited passthrough.
@@ -448,6 +456,14 @@ Open:
 - [ ] Run the device repo's Phase 6 hardware verification checklist
   (`src/docs/PHASE6_HARDWARE_VERIFICATION.md`) — needs a human at the
   machine.
+- [ ] **`stop` has no route**: `/status.allowed_actions` advertises `"stop"`
+  and the dashboard composes `POST /control/stop`, but the device implements
+  only `POST /move/stop` → 404 — the dashboard's stop button for this arm
+  cannot work (found during the assistant-control verification, 2026-08-11).
+  Fix device-side (a `/control/stop` alias) or map in `web/src/lib/api.ts`.
+- [ ] Device-repo doc rot (same verification): `README.md` points at
+  `src/docker/docker_setup.sh` (does not exist); `src/docs/PYXARM_TESTING.md`
+  still documents the removed in-process `simulation_mode=True` path.
 
 #### `agilent_uplc_ms` (sidecar: `agilent-hplcms-server`)
 
@@ -697,7 +713,7 @@ is withdrawn from DEVICE_PC_SETUP §6, with the failure mode documented and
 a §8 troubleshooting row (clean-stop + MsiInstaller correlation) so the
 next instance is a minutes-long diagnosis. This incident class — a service
 left dead by an external event, discovered hours later — is what the
-`sdl-lab-hostops` fleet (AGENT_OPS.md) now exists to catch and, where
+`sdl-lab-hostops` fleet (AGENTIC_LAB_DESIGN.md) now exists to catch and, where
 whitelisted, remediate remotely. Residual watch item below.
 
 Active watch items (not regressions; behavioural notes):
@@ -860,7 +876,7 @@ The MCP milestone resumes when **all** of the following are true:
 3. **`lab.skills()` returns a non-empty catalog with `available=True`
    entries against at least one v1.1 device.** ✅ **met** — every
    v1.1 device reports non-empty `allowed_actions` live, and the
-   SkillDef registry spans 10 kinds, all non-empty (80 SkillDefs total).
+   SkillDef registry spans 10 kinds, all non-empty (81 SkillDefs total).
 4. **A workflow can run a five-step `Plan` against `agilent-plateloc-server`
    (dry-run is fine) using `validate_plan` + an executor.**
    ✅ **met (code)** — `execute_plan` shipped in PR-1 with offline + `dry_run`

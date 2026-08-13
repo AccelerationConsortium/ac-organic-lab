@@ -1,0 +1,112 @@
+# lab-runner profile — the BOXED unattended lab principal.
+#
+# Runs as OS user `hermes`, never sdl2 (HERMES_ACCESS_DESIGN Phase 0, boxed
+# 2026-08-12; roster principal hermes@lab.local, Phase 1 same day). Trigger-
+# only: it may start, watch, and cooperatively abort runs a HUMAN already
+# authorized in bitácora, and read lab telemetry. It composes and approves
+# nothing.
+#
+# The toolset IS the safety argument (AGENT_OPS.md trust tiers): no terminal,
+# no file tools, no web, no cron. Do not add any of those here — an unattended
+# agent ingests attacker-influenceable text (device messages, event rows,
+# later Slack), and this profile is exactly the place where that must be
+# harmless. Widening an MCP allowlist below is a reviewed change against
+# mcp/servers.yaml, never a local convenience edit.
+
+model:
+  default: z-ai/glm-5.2
+  provider: openrouter
+
+agent:
+  max_turns: 40
+  reasoning_effort: medium
+
+# Deliberately minimal built-ins. NOTE: `custom_toolsets` from upstream docs
+# is NOT implemented in this build (v0.19.0 fork) — list built-in toolset
+# names directly (same trap as the lab-ops profile).
+platform_toolsets:
+  cli:
+    - memory
+    - todo
+    - clarify
+  # Slack gets the same minimal built-ins as the CLI — the MCP servers below
+  # attach regardless of platform. No terminal/file/web/cron here either.
+  slack:
+    - memory
+    - todo
+    - clarify
+
+# Slack connector (gateway). Tokens live in this profile's .env
+# (SLACK_BOT_TOKEN — env-only setup enables the platform). Everything here is
+# the guardrail layer, per AGENTIC_LAB_DESIGN + the five wiring conditions.
+gateway:
+  platforms:
+    slack:
+      enabled: true
+      # Per-user allowlist: Slack member IDs (U…), comma-separated. Empty =
+      # everyone in the workspace who can see the bot — set this BEFORE the
+      # first start. Channel membership = trigger access + confidentiality
+      # domain (Phase 4.2/4.3).
+      allow_from: "REPLACE_WITH_SLACK_MEMBER_IDS"
+      # The gateway ships native slash commands including /model, which can
+      # CHANGE the model. Model choice is a host-side admin decision (Phase
+      # 4.4), never a channel command — allow only the harmless ones.
+      user_allowed_commands: ["help", "status", "stop"]
+
+tools:
+  tool_search:
+    enabled: "on"
+    threshold_pct: 10
+
+mcp_servers:
+  # Skill catalog: read + plan preflight ONLY (rung 2 — eyes, no hands).
+  # `--allow-control` is deliberately absent, so the actuating execute_plan
+  # tool is never registered; adding it here is a spec violation of the
+  # mcp/servers.yaml lab-skills entry, not a config choice. Actuation for
+  # this agent goes through lab-runs (human-authorized plans) and nothing
+  # else.
+  lab-skills:
+    command: /home/sdl2/caoyang/ac-organic-lab/.venv/bin/lab-skills
+    args: [mcp, serve, --owner, "hermes:lab-runner"]
+    env:
+      LAB_REGISTRY_PATH: /home/sdl2/caoyang/ac-organic-lab/equipment.yaml
+    tools:
+      include:
+        - list_equipment
+        - list_skills
+        - get_status
+        - validate_plan
+        - preflight_plan
+
+  # Authorized-run trigger (ac-organic-lab api/app/run_trigger.py; see the
+  # lab-runs entry in mcp/servers.yaml). LAB_ACTOR is the Phase-1 roster
+  # identity, bound in ENVIRONMENT (never a tool argument) — it becomes
+  # launched_by / abort_requested / plan_run audit rows.
+  lab-runs:
+    command: /home/sdl2/caoyang/ac-organic-lab/.venv/bin/lab-runs-mcp
+    env:
+      LAB_ACTOR: hermes@lab.local
+      DASHBOARD_API_BASE: http://127.0.0.1:8001
+    tools:
+      include:
+        - start_run
+        - get_run
+        - watch_run
+        - abort_run
+
+  # Read-only telemetry (api/app/mcp_server.py; lab-history in
+  # mcp/servers.yaml). Reads lab.db via the read-only fallback (the hermes
+  # user cannot write the file — that is by design, not a bug to fix).
+  # tail_journald is EXCLUDED: reading system journals needs group membership
+  # Phase 0 deliberately withholds, and unit logs can quote secrets.
+  lab-history:
+    command: /home/sdl2/caoyang/ac-organic-lab/.venv/bin/lab-history-mcp
+    tools:
+      include:
+        - list_equipment_now
+        - get_equipment_status
+        - query_equipment_events
+        - query_service_uptime
+        - query_sensor_readings
+        - query_runs
+        - query_well_results

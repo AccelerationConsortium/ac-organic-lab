@@ -1,7 +1,12 @@
 # Hermes access design — a platform agent, not a science agent
 
 **Status:** design note, 2026-08-09. Phase 2 (the edge-path policy) is
-**implemented** in `auth/`; Phases 0/1/3/4 are proposed and not yet done.
+**implemented** in `auth/`; **Phases 0 and 1 are implemented 2026-08-12** —
+the `hermes` OS user (record at the end of its section) and the
+`hermes@lab.local` roster principal (hot-reloaded and probe-verified:
+`analytica_db` allowed under the §2 path policy, `bitacora_eln` and all
+hardware refused). Phase 3 is proposed and not yet done; **Phase 4 (the
+learning policy) is drafted 2026-08-12** — rules 4.1–4.6 in its section.
 
 **The requirement, in the operator's words:** Hermes should *learn from platform
 operation* and *help work on other devices over SSH so only the server needs
@@ -125,6 +130,42 @@ principal only. A human driving Hermes interactively reaches project design and
 analysis with their own credentials — correct, because that is a person with
 access, not an agent acting alone. This design bounds *unsupervised* access.
 
+#### Phase 0 — implemented 2026-08-12 (record)
+
+Executed as specified, verified by the failing probes (secret reads denied,
+repos readable, `hermes --version` runs, `id hermes` shows no extra groups).
+Four things the design did not anticipate, recorded so the next reader trusts
+the boundary for the right reasons:
+
+- **File permissions were not the only leak.** `systemctl show <unit> -p
+  Environment` exposes unit environments to *any* local user over D-Bus,
+  regardless of the drop-in file's `600` — `caddy.service` was leaking
+  `XARM_EDGE_SHARED_SECRET` / `OT2_EDGE_SECRET` / `GRAPHCHAT_EDGE_SECRET` and
+  `ac-organic-lab-web.service` leaked `CONTROL_PASSWORD` this way. Closed by
+  moving the values into root-`600` `EnvironmentFile`s
+  (`/etc/caddy/edge-secrets.env`, `/etc/ac-organic-lab/web-secrets.env`) —
+  `show` prints `EnvironmentFile` *paths*, never contents. This closes the
+  leak AUTH_DESIGN recorded. **Follow-up, deliberately not done in-phase:**
+  those four values were world-readable-at-rest until this date and should be
+  rotated at a calm moment (the xArm one touches the device host, the Caddy
+  env file, and the dashboard `.env` — mis-rotation reproduces the 2026-08-11
+  401 incident).
+- **The `.env` sweep was too narrow.** `~/.claude`, `~/.codex`, and
+  `~/.config/gh` were `755`/`751`; agent session transcripts can quote
+  secrets, so they were tightened to `700` before the ACL — same
+  chmod-before-setfacl reasoning, wider net. Git remotes were scanned for
+  embedded `https://user:token@` credentials (none found).
+- **The `acl` package was not installed** on the host; `setfacl` needed
+  `apt-get install acl` first. The ACL itself was then applied by `sdl2` (the
+  file owner) with no root.
+- **The venv cannot be copied** (editable install, absolute shebangs). The
+  install is a local `git clone` of `~sdl2/.hermes/hermes-agent` (same commit,
+  `e57918ac8`) plus a fresh `python3 -m venv` + `pip install -e .` as
+  `hermes`, with the wrapper at `/usr/local/bin/hermes` (the PATH split as
+  designed). `/home/hermes` is `700`. Sessions, memories, profiles, and
+  `auth.json` were **not** copied — the boxed principal starts fresh, and its
+  model key should be its own.
+
 ### Phase 1 — a machine principal (configuration only)
 
 ac_auth already has machine principals (`X-Api-Key`) and per-equipment grants,
@@ -133,6 +174,14 @@ so no new mechanism is needed:
 - Add `hermes@lab.local` under `automation:` in `roster.yaml`, `approved: true`.
 - Grant `analytica_db`. **Do not grant `bitacora_eln`** — that single omission
   denies the whole design ELN, with no code.
+
+**Implemented 2026-08-12**, with the Phase-2 `paths:` block attached in the
+same entry (mirroring `test_path_policy.py::HERMES` verbatim). One divergence
+from §2, accepted knowingly: `/uploads/experiments` sits on the allow side of
+the §2 table but is **not** in the pinned allow list, so default-deny closes
+it — widen deliberately if raw-upload reads are ever needed. The pattern is
+documented in `roster.yaml.example` (the live roster is gitignored). Key
+issuance (`ac-auth issue-key`) deferred to run-trigger profile wiring.
 
 ### Phase 2 — edge-path policy — **implemented**
 
@@ -174,7 +223,7 @@ pins each of those evasions.
   `authorized_keys` scattered across Windows boxes. Document in
   [`DEVICE_PC_SETUP.md`](DEVICE_PC_SETUP.md), which mentions no SSH today.
 
-### Phase 4 — learning policy
+### Phase 4 — learning policy [DRAFTED 2026-08-12]
 
 Per decision #11 and `AGENTS.md` §5, which already name Hermes:
 
@@ -186,6 +235,59 @@ Per decision #11 and `AGENTS.md` §5, which already name Hermes:
   graph. Knowledge accumulating only there defeats decision #11's *no hidden
   state that silently steers agent behavior*; durable platform knowledge belongs
   in the committed files.
+
+The rules below were settled 2026-08-12, when the boxed `lab-runner` profile
+went live and plan-drafting-through-conversation became the agreed rung-3
+shape. They exist because a **learning agent's memory is an access-control
+bypass waiting to happen**: people will *tell* the agent project details in
+conversation, its memory has no `can_read(project, caller)`, and anything it
+remembers can potentially be extracted by anyone allowed to talk to it.
+
+**4.1 Memory holds the platform, never the science.** The agent's durable
+memory (files, MEMORY.md, state) may hold operational knowledge only — device
+quirks, timing, failure patterns, workflow lessons: the facility manager's
+knowledge. Project details heard in conversation (goals, compounds, designs,
+results) are used for the task at hand and are **never promoted to durable
+memory**. This is §1's principle ("the instrument and platform layer, not the
+scientific record") extended from *access* into *retention*.
+
+**4.2 The audience defines the confidentiality domain.** Whoever can message
+an agent instance must be trusted with everything that instance has ever been
+told. One shared lab agent = one shared confidentiality domain. When that
+stops being true (mutually confidential projects), the answer is per-project
+agent instances with separate memories — mirroring `can_read` — never one
+omniscient agent with a promise to be discreet.
+
+**4.3 Memory stays reviewable.** Agent memory lives in human-readable files
+that can be read, diffed, edited, and deleted (decision #11). Periodic review
+is a real control; the `state.db` watch item above is the standing threat to
+it.
+
+**4.4 Conversations transit third parties — know which.** Every turn with a
+lab agent leaves the building: the dashboard assistant goes to Anthropic (the
+operator's Claude Code account); Hermes profiles go to the configured model
+provider (today OpenRouter → Z.AI for GLM). Local persistence differs — the
+dashboard bubble keeps no server-side transcript (browser sessionStorage
+only), while Hermes profiles keep session logs under their own profile dir,
+boxed with the OS user. **Choice of model provider is therefore a
+confidentiality decision**, made per agent, with the provider's retention
+settings checked — not a convenience default.
+
+**4.5 Audit rows are lab-public; keep them operational.** Fragments of
+conversation become permanent, lab-wide-readable records by design: a
+Control-mode proposal's `reason` line and every `plan_run` / `control_action`
+row land in `lab.db`, which every lab-history client (dashboard assistant,
+`lab-ops`, `lab-runner`) can read. That is the audit trail working. The rule
+it implies: the *stated reason* for an action is operational text, never
+project-confidential text.
+
+**4.6 The record stores stay behind people.** Standing decision, same date:
+**no API key is issued for `hermes@lab.local`** — the AnaliticaDB grant and
+path policy (Phases 1/2) remain in the roster as defense-in-depth should a
+key ever be issued deliberately, but today the agent cannot reach the record
+store at all, and plan drafts enter bitácora through the human who approves
+them, never by agent write. Issuing a key is a human decision that reopens
+this section.
 
 ## 5. Decided against — do not relitigate
 

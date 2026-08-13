@@ -11,7 +11,7 @@ the record-layer (database) design lives in
 [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md).
 
 **Binding contracts** (referenced, never weakened here):
-[`AGENT_RULES.md`](AGENT_RULES.md) (lab operating rules) and
+[`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md) (lab operating rules) and
 [`STATUS_SPEC.md`](STATUS_SPEC.md) (device contract). Where this document says
 "binding", the authoritative text lives there.
 
@@ -117,7 +117,7 @@ one agent across design→execute→record — **gap (the assembly)**.
 ## 3. Architectural principles
 
 1. **[BINDING] The agent proposes; a human approves; hardware obeys only
-   validated, `main`-merged, authorized plans.** ([`AGENT_RULES.md`](AGENT_RULES.md) §1.3, §3.1)
+   validated, `main`-merged, authorized plans.** ([`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md) §1.3, §3.1)
 2. **[BINDING] All hardware access goes through the `lab-skills` SDK** —
    never raw device `/control/*`, never bypassing interlocks, claims, or
    readiness checks. The SDK refusing a call is the safety system working.
@@ -138,7 +138,7 @@ one agent across design→execute→record — **gap (the assembly)**.
    never the moving head of `main`.
 7. **Fail fast, record truthfully.** Validation failures, deviations, and
    partial results surface as-is, to the human and to the record layer
-   ([`AGENT_RULES.md`](AGENT_RULES.md) §2.3).
+   ([`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md) §2.3).
 8. **Chat is optional; the record is mandatory.** The DMTA chain
    (`Plan → Notes → Measurements → Analyses → Report → next Plan`) is the
    spine of the record, but conversation is only one way to produce it. A
@@ -157,7 +157,7 @@ one agent across design→execute→record — **gap (the assembly)**.
 | **Git (project repo)** | versioned intent: protocols, decision records, analysis code, review history | hold run data, secrets, machine-local paths |
 | **Run authorizer** [PROPOSED] | that one exact commit + protocol + compiled package is authorized to execute | re-interpret the protocol; execute anything itself |
 | **Compiler** [PROPOSED] | resolution of scientific intent into concrete operations (lots, wells, volumes, device parameter sets) | change scientific intent; talk to devices |
-| **Orchestrator** | sequencing, claims, retries, operator handoffs during execution | bypass the SDK, interlocks, claims, or device readiness ([`AGENT_RULES.md`](AGENT_RULES.md) §1) |
+| **Orchestrator** | sequencing, claims, retries, operator handoffs during execution | bypass the SDK, interlocks, claims, or device readiness ([`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md) §1) |
 | **Device servers** | their own state and refusals (412/423/409), per [`STATUS_SPEC.md`](STATUS_SPEC.md) | be driven by anything other than the SDK path |
 | **AnaliticaDB** | the durable record of what actually happened and how results were produced | be edited retroactively — corrections are new records (`corrects`/`supersedes`) |
 | **Dashboard** | coherent projections and controls | become a competing source of truth; hold control logic in the browser ([`UI_DESIGN.md`](UI_DESIGN.md) §3.1) |
@@ -177,7 +177,7 @@ Trust boundaries the architecture review added:
 - **The agent's git identity is its own** (bot account / GitHub App
   installation), distinct from every human. It MUST NOT be a CODEOWNER, MUST
   NOT have ruleset-bypass rights, and its PRs MUST NOT be approvable by
-  itself. ([`AGENT_RULES.md`](AGENT_RULES.md) §2.4: identity is not negotiable.)
+  itself. ([`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md) §2.4: identity is not negotiable.)
 - **The run authorizer MUST verify** the pinned SHA is an ancestor of `main`
   with required CI checks green — otherwise a branch commit could be authorized.
 - **The compiler MUST be deterministic and pinned** (its version recorded in
@@ -759,7 +759,7 @@ Honest gaps carried from the assessment (tracked in the plan):
 
 ## 17. References
 
-Binding: [`AGENT_RULES.md`](AGENT_RULES.md) · [`STATUS_SPEC.md`](STATUS_SPEC.md)
+Binding: [`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md) · [`STATUS_SPEC.md`](STATUS_SPEC.md)
 
 Companions: [`AGENTIC_ELN_PLAN.md`](AGENTIC_ELN_PLAN.md) (sequencing, open
 decisions) · [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md) (record layer) ·

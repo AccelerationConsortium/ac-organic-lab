@@ -1,0 +1,31 @@
+# Slack connector for the BOXED lab-runner Hermes profile.
+#
+# Runs `hermes gateway run` (foreground) as the hermes OS user — the
+# unattended principal from HERMES_ACCESS_DESIGN Phase 0. The profile is the
+# hermes user's sticky default (lab-runner is its only profile); tokens live
+# in the profile's .env, mode 600, owned by hermes. This unit must NEVER be
+# reconfigured to run as sdl2 (AGENTIC_LAB_DESIGN: attendance split).
+#
+# Install (root):
+#   cp deploy/hermes-lab-runner/hermes-slack.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now hermes-slack.service
+[Unit]
+Description=Hermes lab-runner Slack connector (boxed agent)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+WorkingDirectory=/home/hermes
+ExecStart=/usr/local/bin/hermes gateway run
+Restart=on-failure
+RestartSec=10
+# The box, restated as sandboxing: no home writes outside the hermes user's
+# own, no privilege escalation, private tmp.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

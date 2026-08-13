@@ -657,7 +657,7 @@ single-glyph surfaces; rendering pre-tracking time as zero usage.
 
 ---
 
-## 5. Assistant control mode [IMPLEMENTED — Step 1]
+## 5. Assistant control mode [IMPLEMENTED — Steps 1, 1b, 1c, 1d, 1e]
 
 **Drafted 2026-08-07** on branch `actionable-assistant`; **Step 1 implemented
 2026-08-11**. Extends the tier-2 dashboard assistant (§2) from a purely
@@ -670,7 +670,10 @@ passthrough (§5 "action naming"); (b) safety-floor actions (`stop`/`connect`/
 the propose-only `lab-control` MCP server (`api/app/assistant_control.py`), a
 `mode` field + per-mode wiring in `assistant.py`, the Ask/Control UI in
 `AssistantBubble.tsx`, and the `X-Control-Origin`/`assistant_proposal` audit
-trail. Step 2 (autonomy) is sketched at the end and is **not** approved.
+trail. **Step 1b (2026-08-12)** extends the resolver to the OT-2, and
+**Step 1c (same day)** to that device's full advertised surface behind a
+field-level guard — see §5.3b. Step 2 (autonomy) is sketched at the end and is
+**not** approved.
 
 ### 5.1 The commitment: the assistant proposes, the browser executes
 
@@ -730,6 +733,16 @@ actuating:
   `allowed_actions`, its `equipment_status` / `activity`, and the matching
   `SkillDef` argument schema (`api/` already imports `SKILL_REGISTRY`). This
   is how the model learns what is legal instead of guessing at endpoints.
+  For a graph-constrained arm it also forwards the device's read-only
+  `details.motion_graph` snapshot verbatim (added 2026-08-12) —
+  `current_node`, single-hop `reachable_nodes`, multi-hop `travel_targets` —
+  because the xArm advertises only the current node's outgoing hops as
+  `move.<node_id>` actions, so without it the assistant could not reason
+  about or explain a route. This widens what the model *sees*, never what it
+  may *propose*: the device's multi-hop `travel_to` stays outside the skill
+  catalog and `allowed_actions`, so a route is proposed one `move.<node_id>`
+  hop per confirm card, re-checking device state between hops (the prompt
+  addendum says so explicitly).
 - **`propose_action(equipment_id, action, args, reason)`** — validates and
   returns a normalized proposal. It refuses unless *all* hold: the equipment
   exists and is enabled; `action ∈ status.allowed_actions` (the device is the
@@ -759,6 +772,158 @@ tile clicks on the admin page. The proposal itself is written as an
 `assistant_proposal` event — otherwise the trail records the click but not
 what talked the operator into it.
 
+### 5.3b Steps 1b/1c — which OT-2 actions are proposable
+
+**Implemented 2026-08-12.** The Step 1 resolver hard-coded `robot_arm` move
+targets; the per-kind allowlist now lives in `_PROPOSABLE`
+(`api/app/assistant_control.py`), which carries the full rationale. Fail-closed
+is unchanged: a kind or action absent from the table is refused.
+
+The scoping line is deliberately **not** "is this action dangerous" — nothing
+in either mode actuates, and the confirm card is the gate. It is:
+
+> proposable **iff** the card is humanly evaluable at a glance **and** the
+> action is correct as a standalone act.
+
+Both halves do work. A card nobody can check is a rubber stamp rather than a
+gate — which disqualifies `setup`, whose nested labware/instrument lists carry
+free-form `config` JSON. And an action that is only meaningful mid-sequence
+cannot be bound to one confirm click, since a proposal is one action on one
+device — which disqualifies the liquid verbs. That second half is §5.4's
+"belongs in a plan, not a chat turn" applied *within* a single device: a lone
+`aspirate` is not wrong, it is incomplete, and the passthrough runs no
+interlocks to catch the half-executed remainder.
+
+| Tier | Actions | Why |
+|---|---|---|
+| **A — propose** | `lights.set`, `home`, `pause` | Zero or one scalar arg; each moves the robot toward a safer or more legible state. `home` is the tier's one real motion — the canonical make-it-safe pose, no args, idempotent, and the documented prerequisite for a hand entering the deck. |
+| **B — propose (record edits)** | `plate.load`, `plate.unload`, `well.update`, `deck.declare` | No motion, evaluable cards. They mutate the lab's *belief* about the deck, so a wrong one silently desyncs belief from reality — the reason they still confirm, not a reason to withhold them. |
+| **C — operator-only** | `startup`, `shutdown`, `setup`, `resume`, `tips.reset`, `move_to`, `pick_up_tip`, `aspirate`, `dispense`, `drop_tip`, `move_labware` | Sequence-bound (the six motion/liquid verbs), unevaluable (`setup`), secret-bearing (`startup` carries `password`, which would land on the card and in the `assistant_proposal` row), safety-floor inverse (`resume` — somebody paused, possibly with hands in the deck), or interlock-adjacent (`tips.reset` declares used tips fresh, disarming the contamination guard). |
+
+#### Step 1c — the full surface, behind a field guard (2026-08-12)
+
+Tier C was admitted the same day, by operator decision, after the tier table
+above was reviewed: **the operator is the sequencer**. A liquid-handling
+sequence runs as consecutive confirm cards — one click binds one step — and
+the control-mode prompt instructs the model to propose steps strictly in
+order, one at a time, re-checking device state between them, and to recommend
+a validated workflow plan once the work grows beyond a handful of steps.
+`execute_plan` (§5.5) remains the right surface for real multi-step work; what
+changed hands is only who may *suggest* the next single step.
+
+The admission price named by Step 1b was paid first, not skipped:
+
+- **The field-level guard** (`_FORBIDDEN_ARG_FIELDS`): `force` (contamination-
+  guard override), `force_direct` (collision-safe-path override), `password`
+  and `host_alias` (device credentials the gateway supplies from its own env)
+  are never model-settable. Supplying one refuses the whole proposal (code
+  `forbidden_field`) — by field, not by value, so the invariant never depends
+  on reading a boolean — and `list_available_actions` strips them from the
+  advertised schemas (reporting them as `operator_only_fields`) so the model
+  never sees them as settable. A test pins that every risky field reachable
+  through a proposable schema is guarded.
+- **Card evaluability for `setup`-sized bodies**: past a compact threshold the
+  confirm card renders the full argument set as pretty-printed, scrollable
+  JSON instead of a truncated line. The args are exactly the payload Authorize
+  POSTs, so nothing may be truncated.
+
+What Step 1c resolves from the tier-C list: the six liquid/motion verbs
+(operator-sequenced), `setup` (evaluable via the block render), `startup`
+(credential fields guarded; a human authorizing it is the "explicit
+invocation" the catalog blesses despite `do_not_call_connect`), `resume` and
+`tips.reset` (the confirm card is the gate — the operator reads what they are
+un-pausing or re-arming). The xArm's safety-floor actions (`stop` / `connect`
+/ `clear_errors`) remain non-proposable; that Step 1 deviation is unchanged.
+
+Two consequences worth keeping:
+
+- **Tier A+B needed no new mechanism** — no schema in those tiers carries an
+  interlock-weakening or secret field, so an action table sufficed. Step 1c is
+  where the field-level guard became load-bearing (above), and the pinning
+  test flipped from "no proposable schema exposes such a field" to "every
+  exposed risky field is guarded".
+- **The confirm card had to learn to render objects.** `String(v)` flattened
+  every nested argument to `[object Object]`, which tier B's shapes
+  (`plate.load` wells, `deck.declare` slots) hit immediately — an unreadable
+  card fails the first half of the criterion. Arguments now render as JSON, and
+  `deck.declare` with an empty `slots` map (which wipes the whole declaration
+  while reading as a no-op) is called out in words on the card.
+
+#### Step 1d — fume hood, shaker, press (2026-08-12); HPLC stays out
+
+Three more bench kinds admitted, same criterion, **no new mechanism** — every
+admitted action is one card-evaluable act with zero-or-few scalar,
+range-clamped args, and no schema in these kinds carries an
+interlock-override or credential field, so `_FORBIDDEN_ARG_FIELDS` gains no
+entries (the risky-field pinning test covers every kind in `_PROPOSABLE`
+automatically). Catalog names were verified byte-for-byte against the live
+`allowed_actions` of all three devices before scoping.
+
+| Kind | Proposable | Operator-only |
+|---|---|---|
+| `fume_hood` | `sash.move` | `sash.stop` |
+| `shaker` | `startup`, `shutdown`, `shake.start`, `shake.set_temperature`, `shake.set_speed` | `shake.stop` |
+| `press` | `init`, `press.up`, `press.down`, `plate.in`, `plate.out` | `stop` |
+
+Two decisions worth recording:
+
+- **The xArm's safety-floor deviation generalized into a rule: stop verbs are
+  never proposable on any kind.** `sash.stop`, `shake.stop`, and the press's
+  emergency `stop` (which additionally forces re-init) stay operator buttons,
+  reachable without the assistant; the prompt addendum forbids proposing an
+  alternative action to "work around" a stop. The press cycle (`plate.in` →
+  `press.down` → `press.up` → `plate.out`) is sequence-shaped and runs under
+  Step 1c's discipline — the operator is the sequencer, one card per step.
+- **The HPLC (`agilent_uplc_ms`, kind `hplc`) is deliberately not scoped** —
+  operator decision, 2026-08-12. Beyond the decision itself, its verbs fit
+  the criterion poorly: `run.submit` enqueues an acquisition whose
+  correctness lives in the method/sequence, not on a card; `workflow.start` /
+  `workflow.end` manage the equipment-blocking campaign lock with role
+  semantics (`automation`-role claims the assistant's human actor would not
+  hold); `instrument.standby` parks the instrument against a FIFO queue the
+  card cannot show. It stays operator/workflow-only, and the prompt addendum
+  tells the model to route HPLC control requests to those surfaces.
+
+Operator-only is a property of the **action**, not of the asker. The
+control-mode prompt addendum says so explicitly, because the first version
+reported excluded actions as "needing an operator" — true of every proposal,
+and misread as a permissions problem.
+
+#### Step 1e — the xArm's gripper (2026-08-13)
+
+Reported from the bench: the assistant could move the arm but reported "I can't
+propose gripper control here" — it could *see*
+`details.motion_graph.allowed_gripper_targets: ["grip_120"]` (forwarded since
+Step 1b) yet had no action to invoke. Three independent gaps, all closed:
+
+1. **The device never advertised it.** `_build_allowed_actions` emitted only
+   `stop` / `connect` / `clear_errors` / `move.<node_id>`, while
+   `POST /control/graph/gripper` had always honored the whitelisted
+   transitions — `allowed_actions` *understating* capability, the direction
+   §6.2 forbids. The device now lists one `gripper.<state>` per reachable
+   catalog state (xarm-translocation, `status_builder.py`).
+2. **The skill catalog had no entry.** `robot_arm` registered four
+   `graph.*` skills, none for the gripper endpoint; `graph.gripper` is now the
+   fifth.
+3. **The resolver had no bridge.** `_resolve` handled `move.<node_id>` only.
+   `gripper.<state>` now bridges the same way, for the same reason — the state
+   rides in the action name, so the model cannot name a transition the device
+   would refuse.
+
+Enumerating one action per legal state (not a single `gripper.set` with a state
+arg) is what keeps the §6.2 mirror possible at all: the whitelist is per
+(node, current stroke), which one action name cannot express, so a state-arg
+form would let the model propose an illegal transition and collect a 409 after
+the operator had already clicked Authorize.
+
+**This is not pick/place.** `DASHBOARD_ASSISTANT_GRAPH_PLAN.md` holds the
+composite pick/place verbs back, and still does — a pick remains
+move → gripper → move, three cards the operator sequences under Step 1c's
+discipline. A single gripper transition is one card-evaluable act: one required
+string arg drawn from a list the device publishes, no interlock-override or
+credential field (so `_FORBIDDEN_ARG_FIELDS` gains nothing), and the device
+refuses it outright unless the arm is parked at a pinned node in STRICT mode.
+
 ### 5.4 What control mode does *not* change
 
 - **The tier-2 trust level (§2.2).** No tool in either mode actuates, so the
@@ -770,8 +935,8 @@ what talked the operator into it.
   is acceptable — which is *why* Step 1 is capped at one device per proposal.
   Cross-device sequencing is what layer-4 interlocks exist for, and it belongs
   in a plan, not a chat turn.
-- **AGENT_RULES.** A human still authorizes every hardware action, and the
-  audit names them.
+- **Binding rules (AGENTIC_LAB_DESIGN.md Part I).** A human still authorizes
+  every hardware action, and the audit names them.
 
 ### 5.5 Step 2 — autonomy (not approved)
 
@@ -795,8 +960,8 @@ Gates, all required before implementation:
 2. Per-user identity delegates through the SDK path — the claim owner must
    remain the human, not `ac-organic-lab-dashboard`.
 3. A plan-approval gate exists: approve the *plan* once, then it runs.
-   "Autonomy" here means fewer clicks, not no human (AGENT_RULES still
-   requires human-approved plans).
+   "Autonomy" here means fewer clicks, not no human (AGENTIC_LAB_DESIGN.md
+   Part I still requires human-approved plans).
 4. The target project has registered layer-4 interlocks.
 
 ### 5.6 Build order
@@ -816,6 +981,64 @@ Gates, all required before implementation:
 3. **Read scope in control mode** — keep `lab-history` connected too (assumed,
    so the model can check history before proposing), or restrict control-mode
    turns to live status only?
+
+### 5.8 Verification record (absorbed from the retired ASSISTANT_CONTROL_VERIFICATION.md)
+
+The full evidence document (566 lines: refusal matrix, mode-gating table,
+capture transcripts, the local stub rig) was retired 2026-08-12; it survives
+in git history. What follows is everything from it that stays load-bearing.
+
+**Verified.** The software path end to end, 2026-08-11 (device PC + server):
+tool surface (two tools, neither actuating), all seven refusal gates with
+correct codes, actor binding, server-side mode decision including the
+`DASHBOARD_CONTROL_OPEN` refusal, `proposal` frame → confirm card → Authorize
+→ passthrough claim dance → both audit rows, and the full production path
+through the Next middleware (session cookie → injected identity). On real
+hardware, 2026-08-12: with the arm connected by a human and the node pinned,
+a Control-mode turn produced a valid `move.robot_home` proposal. **Nothing
+was authorized, so nothing moved** — the authorize-on-hardware click and the
+subsequent check of both audit rows remain open, deliberately: that is a
+human decision, not a verification chore.
+
+**The one real bug, and its lesson.** The CLI (2.1.227) delivers MCP tool
+output double-wrapped — `{"result": "<json string>"}` — and the SSE bridge
+expected the bare tool JSON, so valid proposals silently produced no card
+*and* no `assistant_proposal` row. Fixed in `assistant.py` (tolerates both
+envelopes) with a regression test pinning the envelope **captured from a real
+stream**. Two rules worth keeping: envelope-shaped tests must encode observed
+shapes, not assumed ones; and **trust the frame, not the narration** — the
+model announcing "the card is up" is not evidence, it cannot see the browser.
+
+**Deploy check (load-bearing, not diagnostic).** After any deploy that
+touches `api/`, confirm the console scripts exist: `ls .venv/bin/lab-*-mcp`.
+The MCP spawn prefers the console script beside the running interpreter
+(`b542960`); if it is missing, the resolver falls back to `uv run`, whose
+self-sync **fails under the API unit's `ProtectHome=read-only`** (uv cannot
+write its cache) and on any host that cannot build the dependency tree. The
+symptom is maddeningly indirect: the model says its tools are unreachable,
+Ask mode is equally toolless, the CLI exits 0, and the failed init event is
+not forwarded by the SSE bridge.
+
+**Observables when debugging mode behaviour.** The reliable signal for
+whether Control mode was granted is which file `assistant.py` wrote in
+`$ASSISTANT_RUNTIME_DIR`: `mcp.control.json` (granted) vs `mcp.json`
+(downgraded to ask). The `assistant chat: mode=…` log line is invisible under
+a bare `uvicorn` (unconfigured logger); do not rely on it.
+
+**Authorization semantics, as measured.** §5.2's "`operator`+ on that
+equipment" is in practice "**holds any grant** on that equipment":
+`/authz/check` reports `allowed` for any device grant (a `role: none` user
+with a single equipment grant qualifies). Identical to the tile path — just
+don't expect a role-name comparison.
+
+**xArm hardware prerequisites** (for whoever performs the remaining
+authorize): a human connects the arm (`do_not_call_connect` — connecting
+energizes servos and enables the track without a homing sweep); then the
+current node must be pinned or `allowed_actions` collapses to `["stop"]` and
+nothing is proposable — read `GET /graph/nearest`, pin with
+`POST /control/graph/recover_to` **without `force`** (bookkeeping, not
+motion), and release the claim afterwards or the leftover claim 423s the
+passthrough.
 
 ### See also (assistant control mode)
 

@@ -6,7 +6,7 @@ the Anthropic API directly (which would need ``ANTHROPIC_API_KEY``), this
 endpoint shells out to the locally-installed ``claude`` CLI in
 non-interactive mode. That subprocess uses the dashboard user's Claude
 Code OAuth login and automatically inherits the ``lab-history`` MCP server
-that was registered with ``claude mcp add``, so the same seven read-only
+that was registered with ``claude mcp add``, so the same eight read-only
 tools are available without any API plumbing.
 
 Configuration
@@ -240,6 +240,11 @@ You have one MCP server connected: lab-history. Its tools are all read-only:
 * list_equipment_now -- live snapshot of every device (id, kind, equipment_status,
   message, fetch_error, latency_ms). Use this first when you need the canonical
   equipment_id for other tools, or to answer "what's running right now".
+* get_equipment_status -- the full live envelope for ONE device: components
+  (e.g. the OT-2's pipette mounts), details (deck snapshot, tip racks, loaded
+  plate), metrics, allowed_actions, activity. Use it whenever the question is
+  about a device's hardware, subsystems, or what it is equipped with —
+  list_equipment_now alone cannot answer those.
 * query_equipment_events -- past state transitions, errors, startup/shutdown
   for one device.
 * query_service_uptime -- reachability transitions + overall uptime % over a
@@ -283,8 +288,57 @@ When the user asks you to make a device do something:
    action on ONE device. `action` must be a string from the device's live
    allowed_actions; `reason` is a short human-facing justification.
 
-Only robot_arm move targets are proposable in this mode. Safety-floor actions
-(stop / connect / clear_errors) are operator-only and not proposable. If a
+list_available_actions marks which advertised actions are proposable.
+Safety-floor actions must stay reachable without you and are never
+proposable: the xArm's stop / connect / clear_errors, and every device's
+stop verb (sash.stop, shake.stop, the press's stop). If the user wants
+something stopped, point them at the device tile's stop button — do not
+propose an alternative action to "work around" a stop.
+
+Proposable kinds beyond the xArm: the OT-2 (liquid_handler), the fume hood
+(sash.move), the shaker (startup, shutdown, shake.start,
+shake.set_temperature, shake.set_speed), and the press (init, press.up,
+press.down, plate.in, plate.out — a press cycle runs like a liquid sequence,
+one card per step in order). The HPLC is NOT proposable at all: its queue,
+campaign-lock, and standby verbs stay operator/workflow-only, so answer HPLC
+control requests by pointing at the operator surfaces instead.
+
+On the OT-2 the full control surface is proposable, under two disciplines:
+
+- Some argument fields are operator-only and never yours to set: startup's
+  password / host_alias (the gateway supplies its own from service env),
+  pick_up_tip's force (cross-contamination-guard override), move_to's
+  force_direct (collision-safe-path override). They are omitted from the
+  schemas you are shown; supplying one refuses the whole proposal. Never ask
+  the user to paste a device credential into chat.
+- Liquid handling is sequence-bound (pick_up_tip -> aspirate -> dispense ->
+  drop_tip). Propose steps ONE at a time, in the correct order, and wait for
+  the operator to authorize (or dismiss) each card before proposing the next.
+  Re-check device state between steps rather than assuming the last step
+  landed. If the work is more than a handful of steps, say so and recommend a
+  validated workflow plan instead of a long chain of cards.
+
+On the robot arm (xArm), moves are constrained to a motion graph and only
+single hops from the current node are advertised (move.<node_id>).
+list_available_actions also returns the device's read-only motion_graph
+snapshot: current_node, reachable_nodes (the single-hop targets), and
+travel_targets (nodes reachable in 2+ hops). Use it to plan and explain a
+route, then propose it one hop per confirm card, re-checking state between
+hops. If a target is in travel_targets but not reachable_nodes, name the
+intermediate hop to propose first rather than calling the move impossible.
+
+The arm's gripper works the same way: transitions are whitelisted per node and
+per current stroke, and each legal one is advertised as gripper.<state> (e.g.
+gripper.grip_120) — the same names as motion_graph.allowed_gripper_targets. The
+arm must be parked, so a gripper action is never advertised mid-move. Picking a
+plate up is therefore a sequence — move to the pick position, then the grip,
+then move away — so propose it one card at a time like the liquid verbs, and
+never describe the gripper as uncontrollable when a gripper.<state> action is
+listed.
+
+Operator-only is a property of the action or field, never of who is asking:
+do not imply the user lacks permission, and do not describe a proposable
+action as needing an operator — every proposal does, that is the point. If a
 proposal is refused, relay the reason plainly — never try to route around it."""
 
 
@@ -548,6 +602,11 @@ async def _run_claude(
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # stream-json is one JSON object per line, and a single tool_result
+            # event carries the whole tool payload — an OT-2 deck/tip snapshot
+            # alone clears asyncio's 64 KiB default, which readline() answers
+            # with "Separator is found, but chunk is longer than limit".
+            limit=10 * 1024 * 1024,
         )
     except FileNotFoundError:
         yield _sse({"type": "error", "message": f"could not spawn {binary}"})

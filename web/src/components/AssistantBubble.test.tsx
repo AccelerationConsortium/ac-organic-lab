@@ -37,9 +37,9 @@ const PROPOSAL = {
     equipment_id: "xarm",
     equipment_name: "UFactory xArm5",
     kind: "robot_arm",
-    action: "move.plateloc_out",
+    action: "move.uplc_draw_home",
     passthrough_action: "graph/move_to",
-    args: { node_id: "plateloc_out" },
+    args: { node_id: "uplc_draw_home" },
     reason: "stage the plate",
     actor: "alice@example.edu",
     expires_in_s: 120,
@@ -70,7 +70,10 @@ function installFetch(chatFrames: string[]) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/assistant/health")) {
-      return Promise.resolve({ ok: true, json: async () => ({ configured: true }) });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ configured: true, model: "sonnet", backend: "claude-code-cli" }),
+      });
     }
     if (url.includes("/api/auth/mine")) {
       return Promise.resolve({ ok: true, json: async () => ({ equipment: mineEquipment }) });
@@ -145,8 +148,8 @@ describe("AssistantBubble control mode", () => {
     // Confirm card shows the authoritative fields.
     await screen.findByText("Authorize action");
     expect(screen.getByText(/UFactory xArm5 \(xarm\)/)).toBeTruthy();
-    expect(screen.getByText("move.plateloc_out")).toBeTruthy();
-    expect(screen.getByText(/node_id=plateloc_out/)).toBeTruthy();
+    expect(screen.getByText("move.uplc_draw_home")).toBeTruthy();
+    expect(screen.getByText(/node_id=uplc_draw_home/)).toBeTruthy();
 
     // Authorize routes through the control passthrough with the passthrough
     // action + validated args.
@@ -155,10 +158,10 @@ describe("AssistantBubble control mode", () => {
       expect(authorizeAssistantAction).toHaveBeenCalledWith(
         "xarm",
         "graph/move_to",
-        { node_id: "plateloc_out" }
+        { node_id: "uplc_draw_home" }
       )
     );
-    await screen.findByText(/Authorized move\.plateloc_out/);
+    await screen.findByText(/Authorized move\.uplc_draw_home/);
   });
 
   it("marks a proposal expired after its TTL and blocks authorize", async () => {
@@ -191,4 +194,158 @@ describe("AssistantBubble control mode", () => {
       (screen.getByRole("button", { name: "Authorize" }) as HTMLButtonElement).disabled
     ).toBe(true);
   });
+
+  it("renders record-edit args as JSON rather than [object Object]", async () => {
+    installFetch([
+      `data: ${JSON.stringify({
+        type: "proposal",
+        proposal: {
+          ...PROPOSAL.proposal,
+          equipment_id: "ot2_hte",
+          equipment_name: "Opentrons OT-2 HTE",
+          kind: "liquid_handler",
+          action: "plate.load",
+          passthrough_action: "plate/load",
+          args: {
+            plate_id: "p-7",
+            model: "corning_96_wellplate_360ul_flat",
+            wells: [{ well: "A1", volume_ul: 50 }],
+          },
+        },
+      })}\n\n`,
+      'data: {"type":"done"}\n\n',
+    ]);
+    await openPanel();
+    const control = await screen.findByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const box = screen.getByPlaceholderText(/operate a device/i);
+    fireEvent.change(box, { target: { value: "record the plate" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("Authorize action");
+    // The nested wells list must stay checkable; String(v) would flatten it.
+    expect(screen.getByText(/wells=\[\{"well":"A1","volume_ul":50\}\]/)).toBeTruthy();
+    expect(screen.queryByText(/\[object Object\]/)).toBeNull();
+  });
+
+  it("warns that a deck.declare with no slots clears the whole declaration", async () => {
+    installFetch([
+      `data: ${JSON.stringify({
+        type: "proposal",
+        proposal: {
+          ...PROPOSAL.proposal,
+          equipment_id: "ot2_hte",
+          equipment_name: "Opentrons OT-2 HTE",
+          kind: "liquid_handler",
+          action: "deck.declare",
+          passthrough_action: "deck/declare",
+          args: { slots: {} },
+          reason: "reset the layout",
+        },
+      })}\n\n`,
+      'data: {"type":"done"}\n\n',
+    ]);
+    await openPanel();
+    const control = await screen.findByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const box = screen.getByPlaceholderText(/operate a device/i);
+    fireEvent.change(box, { target: { value: "clear the deck" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // slots={} reads as a no-op in the arg table, so the card says it in words.
+    await screen.findByText("Authorize action");
+    expect(screen.getByText(/Clears the entire deck declaration/)).toBeTruthy();
+  });
+
+
+  it("renders a large setup body as a full pretty-printed block, untruncated", async () => {
+    const setupArgs = {
+      labware: [
+        { nickname: "tips", location: "1", ot_default: true, loadname: "opentrons_96_tiprack_300ul" },
+        { nickname: "plate", location: "2", ot_default: true, loadname: "corning_96_wellplate_360ul_flat" },
+        { nickname: "reservoir", location: "3", ot_default: true, loadname: "nest_12_reservoir_15ml" },
+      ],
+      instruments: [
+        { nickname: "p300", mount: "right", ot_default: true, instrument_name: "p300_multi_gen2" },
+      ],
+    };
+    installFetch([
+      `data: ${JSON.stringify({
+        type: "proposal",
+        proposal: {
+          ...PROPOSAL.proposal,
+          equipment_id: "ot2_hte",
+          equipment_name: "Opentrons OT-2 HTE",
+          kind: "liquid_handler",
+          action: "setup",
+          passthrough_action: "setup",
+          args: setupArgs,
+        },
+      })}\n\n`,
+      'data: {"type":"done"}\n\n',
+    ]);
+    await openPanel();
+    const control = await screen.findByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const box = screen.getByPlaceholderText(/operate a device/i);
+    fireEvent.change(box, { target: { value: "set up the deck" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("Authorize action");
+    // Past the compact threshold the card switches to a scrollable block —
+    // the args ARE the Authorize payload, so nothing may be truncated.
+    const pre = document.querySelector("pre");
+    expect(pre).toBeTruthy();
+    expect(pre?.textContent).toContain("opentrons_96_tiprack_300ul");
+    expect(pre?.textContent).toContain("nest_12_reservoir_15ml");
+    expect(pre?.textContent).toContain("p300_multi_gen2");
+    expect(pre?.textContent).not.toContain("…");
+    expect(screen.queryByText(/\[object Object\]/)).toBeNull();
+  });
+
+
+  it("shows the backing model under the chat box and a disabled Clear chip when empty", async () => {
+    // jsdom sessionStorage survives across tests; drop turns persisted by
+    // earlier ones so this panel opens genuinely empty.
+    sessionStorage.clear();
+    installFetch([]);
+    await openPanel();
+    // Model attribution comes from /api/assistant/health.
+    expect((await screen.findByText(/model: sonnet/)).textContent).toContain(
+      "claude-code-cli"
+    );
+    // Clear is always rendered for discoverability; disabled until there are turns.
+    const clear = screen.getByRole("button", { name: "Clear" });
+    expect((clear as HTMLButtonElement).disabled).toBe(true);
+  });
+
+
+  it("keeps each turn's accent from the mode it was sent under", async () => {
+    sessionStorage.clear();
+    installFetch(['data: {"type":"text","delta":"ok"}\n\n', 'data: {"type":"done"}\n\n']);
+    await openPanel();
+
+    // Send one message in Ask mode -> emerald bubble.
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what ran today?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const askBubble = await screen.findByText("what ran today?");
+    expect(askBubble.className).toContain("bg-emerald-600");
+
+    // Flip to Control and send another -> purple bubble, history untouched.
+    const control = screen.getByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const box2 = screen.getByPlaceholderText(/operate a device/i);
+    fireEvent.change(box2, { target: { value: "home the ot2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const controlBubble = await screen.findByText("home the ot2");
+    expect(controlBubble.className).toContain("bg-purple-600");
+    // The earlier Ask turn did NOT get repainted by the toggle.
+    expect(screen.getByText("what ran today?").className).toContain("bg-emerald-600");
+  });
+
 });

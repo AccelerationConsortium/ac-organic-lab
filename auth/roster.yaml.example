@@ -79,6 +79,24 @@ automation:
     platform: hte                        # Phase 1 scope
     # expires: 2026-12-31                 # time-box campaign principals
 
+  # A path-scoped machine principal (HERMES_ACCESS_DESIGN Phases 1+2): the
+  # grant opens the service, the paths: block narrows it to specific routes.
+  # Deny wins, then allow, and an UNLISTED path refuses — a route the service
+  # grows later starts closed for this principal. Omit paths: entirely for an
+  # unrestricted principal (every entry without one behaves as before).
+  - email: hermes@lab.local
+    name: Hermes (boxed lab-ops principal)
+    approved: true
+    grants:
+      - { scope: equipment, id: analytica_db, role: operator }
+    paths:
+      allow:
+        - /analytica/measurements        # raw data: yes
+        - /analytica/health
+      deny:
+        - /analytica/plans               # scientific record: no
+        - /analytica/analyses
+
 
 # --- projects (Phase 2 — data ownership, NOT hardware) --------------------
 # A project is the unit of data ownership. `pis` (one or more) OWN the project's
