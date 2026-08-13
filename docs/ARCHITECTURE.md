@@ -201,7 +201,13 @@ Owns:
   abort; the authorization is re-fetched between steps so revocation works
   mid-run. Lives here rather than in bitácora (AGENTIC_ELN_PLAN D-20) because
   this process already owns the claim dance and the audit row; every attempt —
-  including refused ones — writes a `plan_run` event.
+  including refused ones — writes a `plan_run` event. Since 2026-08-13 a
+  finished run is also **filed in AnaliticaDB** (D-23, `record.py`): the
+  campaign's `Experiment` is ensured, the run lands as a `Plan` row with a
+  `step_id`-anchored `Note` per non-success step, and the write's outcome is
+  surfaced in the run's `done` frame — it never fails the run, and it is a
+  no-op until `ANALITICADB_URL` + `ANALITICADB_EDGE_SECRET_PATH` are set
+  (configured in production the same day).
 - **Operator control passthrough** (`control.py`): mirrors each device's
   `/control/*` surface for operator-initiated writes, runs the per-request
   claim → action → release dance for v1.1 devices, and writes one

@@ -356,8 +356,8 @@ def lab_session(request: Request, auth: Authorization):
 # process owns the lab's runs, and a run does not survive an API restart —
 # execute_plan's per-step claims die with the process anyway, so pretending a
 # persisted row is a live run would be the record overstating reality. The
-# durable trail is the plan_run audit rows plus (D-23, later) the AnaliticaDB
-# Plan; this registry is the *live* view the SSE stream reads from.
+# durable trail is the plan_run audit rows plus the D-23 AnaliticaDB record
+# (record.py); this registry is the *live* view the SSE stream reads from.
 
 @dataclass
 class RunState:

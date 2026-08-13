@@ -223,7 +223,16 @@ pins each of those evasions.
   `authorized_keys` scattered across Windows boxes. Document in
   [`DEVICE_PC_SETUP.md`](DEVICE_PC_SETUP.md), which mentions no SSH today.
 
-### Phase 4 — learning policy [DRAFTED 2026-08-12]
+### Phase 4 — learning policy [DRAFTED 2026-08-12; first enforced slice 2026-08-13]
+
+The first mechanism built *to* this policy is the dashboard assistant's
+`record_observation` tool (`api/app/mcp_server.py`): the permitted learning
+loop as one audited journal write — device-anchored `agent_observation` rows
+via `/api/ingest/events`, stamped with the verified operator (fails closed
+without one), size-capped, lab-public, and read back by any lab-history
+client next session. Deliberately a shared journal and not a per-agent
+memory: 4.1 (platform, never science) is prompt-enforced; 4.2/4.3/4.5 are
+enforced by construction.
 
 Per decision #11 and `AGENTS.md` §5, which already name Hermes:
 

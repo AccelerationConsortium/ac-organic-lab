@@ -412,11 +412,16 @@ Four things worth keeping when this grows a background runner and an SSE stream:
   carrying a valid `ac_auth` API key, because the OT-2 gateway deliberately
   contacts no external auth service. Which service checks a credential is a
   per-device fact; there is no lab-wide answer to assume.
-- **The run returns record-layer shapes it does not write** (D-23): a `Plan` row
-  under the campaign's `Experiment`, plus `step_id`-anchored `Note`s for the
-  steps that failed, blocked or were skipped. Successful steps produce no note —
-  the `Plan` row already describes them, and a note each would bury the two that
-  matter.
+- **The run returns record-layer shapes — and, since 2026-08-13, writes them**
+  (D-23, `api/app/record.py`): a `Plan` row under the campaign's `Experiment`,
+  plus `step_id`-anchored `Note`s for the steps that failed, blocked or were
+  skipped. Successful steps produce no note — the `Plan` row already describes
+  them, and a note each would bury the two that matter. The write can never
+  fail the run (the run is physical and already happened), is a no-op until
+  `ANALITICADB_URL` + `ANALITICADB_EDGE_SECRET_PATH` are configured, and
+  reports its outcome in the `done` frame under `record.write`. The Experiment
+  start is the run's own launch instant (`RunState.started_at_utc`), not the
+  filing time.
 
 **Slice 2 (2026-08-09) made it a background run.** `POST /runs` now answers 202
 with a `run_id` as soon as the gates pass — the gates still run inline, so a
@@ -442,7 +447,8 @@ Run state is in-process by design: a run does not survive an API restart, and
 execute_plan's per-step claims die with the process anyway — a persisted row
 pretending to be a live run would be the record overstating reality. The
 durable trail is the `plan_run` audit rows (now also `aborted` / `crashed` /
-`abort_requested` outcomes) plus, later, the D-23 record write.
+`abort_requested` outcomes) plus the D-23 record write (shipped 2026-08-13 —
+see the bullet above).
 
 ### 3.3 Endpoint contract
 
@@ -1039,6 +1045,30 @@ nothing is proposable — read `GET /graph/nearest`, pin with
 `POST /control/graph/recover_to` **without `force`** (bookkeeping, not
 motion), and release the claim afterwards or the leftover claim 423s the
 passthrough.
+
+### 5.9 Seeing and remembering (2026-08-13)
+
+Three same-day changes to what the assistant can perceive and retain, none of
+which move its trust tier:
+
+- **`get_equipment_status(equipment_id)`** (lab-history, both modes): the one
+  device's full envelope — components, `details`, metrics. Until it existed,
+  `list_equipment_now` flattened every device to a summary row and
+  `list_available_actions` forwarded only actions, so sub-status hardware
+  (the OT-2's pipette mounts, tip racks, loaded plate) was invisible in both
+  modes.
+- **`record_observation(equipment_id, observation)`** (lab-history, both
+  modes): the HERMES_ACCESS_DESIGN Phase 4 learning loop as one append-only,
+  actor-stamped `agent_observation` row through `/api/ingest/events` — the
+  same journal PyPoe's investigator writes and the assistant already reads
+  back. `LAB_ACTOR` now rides the lab-history env in Ask mode too (same
+  bind-identity-to-the-tool rationale as §5.3); without it the write fails
+  closed. Chats themselves stay siloed by design — learning goes through the
+  audited journal, never a conversation-fed memory.
+- **Subprocess stream limit raised to 10 MiB** (`assistant.py`): stream-json
+  puts an entire tool payload on one line, and an OT-2 deck/tip snapshot
+  cleared asyncio's 64 KiB default — `readline()` answered with "Separator
+  is found, but chunk is longer than limit" and killed the turn.
 
 ### See also (assistant control mode)
 
