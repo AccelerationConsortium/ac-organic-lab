@@ -11,7 +11,13 @@ import json
 import respx
 from httpx import Response
 
-from app.mcp_server import DASHBOARD_API_URL, _get_equipment_status, _list_equipment_now
+from app.mcp_server import (
+    DASHBOARD_API_URL,
+    MAX_OBSERVATION_CHARS,
+    _get_equipment_status,
+    _list_equipment_now,
+    _record_observation,
+)
 
 _EQUIPMENT = {
     "equipment": [
@@ -76,3 +82,59 @@ async def test_list_equipment_now_still_flattens():
     rows = json.loads(await _list_equipment_now())["equipment"]
     assert [r["id"] for r in rows] == ["ot2_hte", "plateloc"]
     assert "components" not in json.dumps(rows)
+
+
+# ---------------------------------------------------------------------------
+# record_observation
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_record_observation_writes_actor_stamped_row(monkeypatch):
+    monkeypatch.setenv("LAB_ACTOR", "alice@example.edu")
+    respx.get(f"{DASHBOARD_API_URL}/api/equipment").mock(
+        return_value=Response(200, json=_EQUIPMENT)
+    )
+    ingest = respx.post(f"{DASHBOARD_API_URL}/api/ingest/events").mock(
+        return_value=Response(204)
+    )
+    out = json.loads(
+        await _record_observation("ot2_hte", "  left mount readback lags ~2s after home  ")
+    )
+    assert out == {
+        "recorded": True,
+        "device_id": "ot2_hte",
+        "actor": "alice@example.edu",
+    }
+    sent = json.loads(ingest.calls.last.request.content)
+    assert sent["device_id"] == "ot2_hte"
+    (rec,) = sent["records"]
+    assert rec["event"] == "agent_observation"
+    assert rec["message"] == "left mount readback lags ~2s after home"
+    assert rec["extra"] == {"actor": "alice@example.edu", "origin": "dashboard-assistant"}
+
+
+async def test_record_observation_fails_closed_without_actor(monkeypatch):
+    monkeypatch.delenv("LAB_ACTOR", raising=False)
+    out = json.loads(await _record_observation("ot2_hte", "a note"))
+    assert "verified operator" in out["error"]
+
+
+@respx.mock
+async def test_record_observation_unknown_id_never_reaches_ingest(monkeypatch):
+    monkeypatch.setenv("LAB_ACTOR", "alice@example.edu")
+    respx.get(f"{DASHBOARD_API_URL}/api/equipment").mock(
+        return_value=Response(200, json=_EQUIPMENT)
+    )
+    ingest = respx.post(f"{DASHBOARD_API_URL}/api/ingest/events").mock(
+        return_value=Response(204)
+    )
+    out = json.loads(await _record_observation("ot2_htee", "a note"))
+    assert out["known_ids"] == ["ot2_hte", "plateloc"]
+    assert not ingest.called
+
+
+async def test_record_observation_refuses_oversized_note(monkeypatch):
+    monkeypatch.setenv("LAB_ACTOR", "alice@example.edu")
+    out = json.loads(await _record_observation("ot2_hte", "x" * (MAX_OBSERVATION_CHARS + 1)))
+    assert "compress" in out["error"]

@@ -255,7 +255,11 @@ Three pieces:
   cwd outside the repo tree so Claude Code doesn't auto-load the ~50k-token
   `CLAUDE.md` doc bundle on every turn. Model defaults to `sonnet`.
 - **`api/app/mcp_server.py`** — the `lab-history` MCP server (stdio,
-  `lab-history-mcp` entry point). Exposes **eight read-only tools**:
+  `lab-history-mcp` entry point). Exposes **eight read-only tools plus one
+  append-only journal write** (`record_observation` — an actor-stamped
+  `agent_observation` row through `/api/ingest/events`, failing closed
+  without a verified operator; the HERMES_ACCESS_DESIGN Phase 4 learning
+  loop, deliberately a shared audited journal and not a private memory):
   `list_equipment_now` (live, via the aggregator's `/api/equipment`),
   `get_equipment_status` (one device's full envelope — components, details,
   metrics — where `list_equipment_now` returns only a summary row),
@@ -384,7 +388,7 @@ Every contract change is a doc PR first (`docs/STATUS_SPEC_v*.md`), then a refer
 
 ### 10. The lab assistant is a proposer, not an actuator, and reuses the CLI rather than the API
 
-The dashboard's chat bubble (the *Lab assistant* component above) is deliberately **not a hardware actuator**. In its default **Ask** mode it is a read-only surface — distinct from the three writers/readers in decision #1 — reading only the history DB, the live `/api/equipment` snapshot, and whitelisted journald units, through the `lab-history` MCP server.
+The dashboard's chat bubble (the *Lab assistant* component above) is deliberately **not a hardware actuator**. In its default **Ask** mode it is a read-only surface — distinct from the three writers/readers in decision #1 — reading only the history DB, the live `/api/equipment` snapshot, and whitelisted journald units, through the `lab-history` MCP server. (Since 2026-08-13 that server also carries one append-only write, the `record_observation` journal row described above — a note in `lab.db`, still nothing that can reach a device.)
 
 As of 2026-08-11 it also has a **Control** mode (UI_DESIGN §5 Step 1) that adds a second, **propose-only** MCP server (`lab-control`, `api/app/assistant_control.py`). This preserves the original invariant *at the level that matters*: **no model-driven code path POSTs to a device.** The model's most privileged act is returning a *validated proposal object*; actuation happens only when the operator clicks *Authorize*, over the existing `/api/equipment/{id}/control/{action}` passthrough (which owns identity, per-equipment authorization, the claim dance, and the audit row). The safety property is the toolset — with no actuating tool registered, a prompt injection can at worst raise a confirm card a human must read and click. So the assistant gains a *rendering* capability, not a *hardware* one; it still never holds a claim and never imports `lab-skills`.
 

@@ -200,12 +200,22 @@ def _write_mcp_config(*, include_control: bool = False, actor: str | None = None
     """
 
     history_cmd, history_args = _mcp_server_command("lab-history-mcp")
+    # The verified actor rides the environment for the same reason as
+    # lab-control's LAB_ACTOR (UI_DESIGN §5.3): record_observation stamps its
+    # journal rows with it and fails closed when it is absent. Everything else
+    # on lab-history ignores it.
+    history_env: dict[str, str] = {}
+    if actor:
+        history_env["LAB_ACTOR"] = actor
+    dashboard_url = os.environ.get("LAB_DASHBOARD_API_URL")
+    if dashboard_url:
+        history_env["LAB_DASHBOARD_API_URL"] = dashboard_url
     servers: dict[str, Any] = {
         "lab-history": {
             "type": "stdio",
             "command": history_cmd,
             "args": history_args,
-            "env": {},
+            "env": history_env,
         }
     }
     if include_control and actor:
@@ -235,7 +245,8 @@ SYSTEM_PROMPT = """You are the AC Organic Self-driving Lab assistant. You help
 lab operators understand what is happening to equipment in real time and
 across history.
 
-You have one MCP server connected: lab-history. Its tools are all read-only:
+You have one MCP server connected: lab-history. Its tools read the lab; none
+of them can actuate hardware:
 
 * list_equipment_now -- live snapshot of every device (id, kind, equipment_status,
   message, fetch_error, latency_ms). Use this first when you need the canonical
@@ -253,6 +264,15 @@ You have one MCP server connected: lab-history. Its tools are all read-only:
 * query_runs -- recent dosing-run records.
 * query_well_results -- per-well dispense results for one run.
 * tail_journald -- last N lines of one of the dashboard's systemd units.
+* record_observation -- append ONE operational note about a device to the
+  shared journal (it comes back to future sessions via
+  query_equipment_events(event_type="agent_observation")). Journal only
+  platform knowledge -- device behavior, recurring faults, quirks, recovery
+  steps that worked -- and only when the user asks you to note something or
+  you verified a finding worth keeping. NEVER journal scientific/project
+  content (compounds, designs, results) or routine conversation; notes are
+  permanent and visible to the whole lab. Before an investigation, check the
+  journal for prior notes on that device.
 
 You cannot actuate hardware. If the user asks you to, say so and offer to
 investigate the relevant logs/history instead.
