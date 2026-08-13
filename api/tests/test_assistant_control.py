@@ -95,6 +95,32 @@ def test_resolve_move_target() -> None:
     assert args == {"node_id": "uplc_draw_home"}
 
 
+def test_resolve_gripper_state() -> None:
+    """``gripper.<state>`` bridges to graph.gripper with the state in the body,
+    mirroring the ``move.<node_id>`` bridge."""
+    entry = _registry().equipment[0]
+    sd, passthrough, args = ac._resolve(entry, "gripper.grip_120", {})
+    assert sd.name == "graph.gripper"
+    assert passthrough == "graph/gripper"
+    assert args == {"state": "grip_120"}
+
+
+def test_resolve_refuses_malformed_gripper_action() -> None:
+    entry = _registry().equipment[0]
+    with pytest.raises(ac.ProposalRefused) as exc:
+        ac._resolve(entry, "gripper.", {})
+    assert exc.value.code == "unmappable_action"
+
+
+def test_resolve_refuses_gripper_on_other_kinds() -> None:
+    """The bridge is scoped to robot_arm; a like-named action on another kind
+    must not slip through it."""
+    entry = _registry(kind="plate_sealer").equipment[0]
+    with pytest.raises(ac.ProposalRefused) as exc:
+        ac._resolve(entry, "gripper.grip_120", {})
+    assert exc.value.code == "unmappable_action"
+
+
 def test_resolve_refuses_non_move() -> None:
     entry = _registry().equipment[0]
     with pytest.raises(ac.ProposalRefused) as exc:
@@ -125,6 +151,37 @@ async def test_propose_success() -> None:
     assert prop["reason"] == "stage the plate"
     assert prop["device_state"]["equipment_status"] == "ready"
     assert prop["expires_in_s"] == ac.PROPOSAL_TTL_S
+
+
+@respx.mock
+async def test_propose_gripper_success() -> None:
+    _mock_status(["stop", "gripper.grip_120"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _registry(), "xarm", "gripper.grip_120", None, "grip the plate"
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "gripper.grip_120"
+    assert prop["passthrough_action"] == "graph/gripper"
+    assert prop["args"] == {"state": "grip_120"}
+
+
+@respx.mock
+async def test_propose_gripper_state_the_device_withholds() -> None:
+    """The device enumerates only transitions whitelisted for its current
+    (node, gripper state). A state it withholds is refused here rather than
+    sent on to earn a 409 — this is the §6.2 mirror doing its job, and it is
+    the whole reason the state rides in the action name."""
+    _mock_status(["stop", "gripper.empty"])
+    out = json.loads(
+        await ac._propose_action(
+            _registry(), "xarm", "gripper.grip_120", None, "grip the plate"
+        )
+    )
+    assert out["code"] == "not_allowed"
+    assert out["allowed_actions"] == ["stop", "gripper.empty"]
 
 
 # ---------------------------------------------------------------------------

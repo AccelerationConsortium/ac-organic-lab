@@ -9,6 +9,7 @@ cartesian/joint targets; the device enforces ``X-Claim-Token`` on every
 Live control surface (``/control/graph/*``):
 
 * ``POST /control/graph/move_to``     - move to a named graph node
+* ``POST /control/graph/gripper``     - change to a named catalog gripper state
 * ``POST /control/graph/recover_to``  - declare the current node (recovery)
 * ``POST /control/graph/record``      - record the last transition as an edge
 * ``POST /control/graph/mode``        - set the graph interlock mode
@@ -35,6 +36,19 @@ class GraphMoveToArgs(BaseModel):
     speed: float | None = Field(
         default=None,
         description="Movement speed; may be capped by the edge speed in STRICT mode.",
+    )
+
+
+class GraphGripperArgs(BaseModel):
+    state: str = Field(
+        description=(
+            "Target catalog gripper state, e.g. 'empty' or 'grip_120'. The "
+            "transition must be whitelisted for the arm's current node and "
+            "current gripper state; the device advertises the legal ones as "
+            "'gripper.<state>' in allowed_actions (and as "
+            "details.motion_graph.allowed_gripper_targets), and refuses "
+            "anything else with HTTP 409."
+        ),
     )
 
 
@@ -82,6 +96,21 @@ register(
             estimated_duration_s=10.0,
         ),
         SkillDef(
+            name="graph.gripper",
+            kind="robot_arm",
+            description=(
+                "Change the gripper to a named catalog state (grip / release / "
+                "narrow) while parked at the current graph node. The only "
+                "graph-sanctioned way to grip or release: the stroke is "
+                "invariant during arm motion, so the device requires a "
+                "stationary arm and a pinned current node."
+            ),
+            endpoint="/control/graph/gripper",
+            args_schema=GraphGripperArgs,
+            requires_states=["ready"],
+            estimated_duration_s=3.0,
+        ),
+        SkillDef(
             name="graph.recover_to",
             kind="robot_arm",
             description=(
@@ -116,6 +145,7 @@ register(
 
 
 __all__ = [
+    "GraphGripperArgs",
     "GraphModeArgs",
     "GraphMoveToArgs",
     "GraphRecordArgs",

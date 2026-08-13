@@ -322,6 +322,15 @@ route, then propose it one hop per confirm card, re-checking state between
 hops. If a target is in travel_targets but not reachable_nodes, name the
 intermediate hop to propose first rather than calling the move impossible.
 
+The arm's gripper works the same way: transitions are whitelisted per node and
+per current stroke, and each legal one is advertised as gripper.<state> (e.g.
+gripper.grip_120) — the same names as motion_graph.allowed_gripper_targets. The
+arm must be parked, so a gripper action is never advertised mid-move. Picking a
+plate up is therefore a sequence — move to the pick position, then the grip,
+then move away — so propose it one card at a time like the liquid verbs, and
+never describe the gripper as uncontrollable when a gripper.<state> action is
+listed.
+
 Operator-only is a property of the action or field, never of who is asking:
 do not imply the user lacks permission, and do not describe a proposable
 action as needing an operator — every proposal does, that is the point. If a

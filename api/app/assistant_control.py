@@ -295,9 +295,9 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
     """Map a device ``allowed_actions`` string to a proposable action.
 
     Returns ``(skill_def, passthrough_action, resolved_args)`` or raises
-    :class:`ProposalRefused`. Scope: ``robot_arm`` move targets plus the
-    per-kind allowlist in :data:`_PROPOSABLE`. Anything else is refused, as is
-    any proposal supplying an operator-only argument field.
+    :class:`ProposalRefused`. Scope: ``robot_arm`` move targets and gripper
+    states, plus the per-kind allowlist in :data:`_PROPOSABLE`. Anything else
+    is refused, as is any proposal supplying an operator-only argument field.
     """
 
     supplied_forbidden = sorted(
@@ -324,6 +324,31 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
         # graph.move_to endpoint expects. Model-supplied args (e.g. speed) are
         # kept but node_id from the action name wins.
         resolved = {**(args or {}), "node_id": node_id}
+        return sd, _passthrough_action(sd), resolved
+
+    # Same bridging shape as ``move.<node_id>``, for the same reason: the
+    # device enumerates one action per *legal* gripper state (whitelisted for
+    # its current node and current stroke), so the state travels in the action
+    # name and the model cannot name a transition the device would refuse.
+    #
+    # Step 1e (2026-08-13, operator request): admitted because a gripper change
+    # is one card-evaluable act — it is not the pick/place *sequence* that
+    # DASHBOARD_ASSISTANT_GRAPH_PLAN.md holds back. A pick is still
+    # move -> gripper -> move, three cards the operator sequences, exactly as
+    # Step 1c settled for the OT-2's liquid verbs. No new mechanism, no
+    # interlock-override or credential field in the schema (so
+    # _FORBIDDEN_ARG_FIELDS gains nothing), and the device's own STRICT-mode
+    # whitelist remains the authority on what is reachable.
+    if entry.kind == "robot_arm" and action.startswith("gripper."):
+        state = action[len("gripper."):]
+        if not state:
+            raise ProposalRefused("unmappable_action", f"malformed gripper action {action!r}")
+        sd = _find_skill_def("robot_arm", "graph.gripper")
+        if sd is None:  # pragma: no cover - catalog always registers this
+            raise ProposalRefused(
+                "unmappable_action", "graph.gripper is not registered in the skill catalog"
+            )
+        resolved = {**(args or {}), "state": state}
         return sd, _passthrough_action(sd), resolved
 
     if action in _PROPOSABLE.get(entry.kind or "", frozenset()):

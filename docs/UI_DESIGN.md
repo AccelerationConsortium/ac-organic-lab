@@ -657,7 +657,7 @@ single-glyph surfaces; rendering pre-tracking time as zero usage.
 
 ---
 
-## 5. Assistant control mode [IMPLEMENTED — Steps 1, 1b, 1c]
+## 5. Assistant control mode [IMPLEMENTED — Steps 1, 1b, 1c, 1d, 1e]
 
 **Drafted 2026-08-07** on branch `actionable-assistant`; **Step 1 implemented
 2026-08-11**. Extends the tier-2 dashboard assistant (§2) from a purely
@@ -888,6 +888,41 @@ Operator-only is a property of the **action**, not of the asker. The
 control-mode prompt addendum says so explicitly, because the first version
 reported excluded actions as "needing an operator" — true of every proposal,
 and misread as a permissions problem.
+
+#### Step 1e — the xArm's gripper (2026-08-13)
+
+Reported from the bench: the assistant could move the arm but reported "I can't
+propose gripper control here" — it could *see*
+`details.motion_graph.allowed_gripper_targets: ["grip_120"]` (forwarded since
+Step 1b) yet had no action to invoke. Three independent gaps, all closed:
+
+1. **The device never advertised it.** `_build_allowed_actions` emitted only
+   `stop` / `connect` / `clear_errors` / `move.<node_id>`, while
+   `POST /control/graph/gripper` had always honored the whitelisted
+   transitions — `allowed_actions` *understating* capability, the direction
+   §6.2 forbids. The device now lists one `gripper.<state>` per reachable
+   catalog state (xarm-translocation, `status_builder.py`).
+2. **The skill catalog had no entry.** `robot_arm` registered four
+   `graph.*` skills, none for the gripper endpoint; `graph.gripper` is now the
+   fifth.
+3. **The resolver had no bridge.** `_resolve` handled `move.<node_id>` only.
+   `gripper.<state>` now bridges the same way, for the same reason — the state
+   rides in the action name, so the model cannot name a transition the device
+   would refuse.
+
+Enumerating one action per legal state (not a single `gripper.set` with a state
+arg) is what keeps the §6.2 mirror possible at all: the whitelist is per
+(node, current stroke), which one action name cannot express, so a state-arg
+form would let the model propose an illegal transition and collect a 409 after
+the operator had already clicked Authorize.
+
+**This is not pick/place.** `DASHBOARD_ASSISTANT_GRAPH_PLAN.md` holds the
+composite pick/place verbs back, and still does — a pick remains
+move → gripper → move, three cards the operator sequences under Step 1c's
+discipline. A single gripper transition is one card-evaluable act: one required
+string arg drawn from a list the device publishes, no interlock-override or
+credential field (so `_FORBIDDEN_ARG_FIELDS` gains nothing), and the device
+refuses it outright unless the arm is parked at a pinned node in STRICT mode.
 
 ### 5.4 What control mode does *not* change
 

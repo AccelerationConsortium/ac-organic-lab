@@ -141,7 +141,13 @@ def test_robot_arm_graph_control_surface() -> None:
     """
 
     defs = {d.name: d for d in SKILL_REGISTRY["robot_arm"]}
-    assert set(defs) == {"graph.move_to", "graph.recover_to", "graph.record", "graph.mode"}
+    assert set(defs) == {
+        "graph.move_to",
+        "graph.gripper",
+        "graph.recover_to",
+        "graph.record",
+        "graph.mode",
+    }
     for d in defs.values():
         assert d.kind == "robot_arm"
         assert d.endpoint == f"/control/{d.name.replace('.', '/')}"
@@ -149,6 +155,11 @@ def test_robot_arm_graph_control_surface() -> None:
     # move_to targets a named node; mode is constrained to the 3 interlock modes.
     assert "node_id" in defs["graph.move_to"].args_schema.model_fields
     assert defs["graph.mode"].args_schema.model_fields["mode"].is_required()
+    # gripper takes a required catalog state name. It is deliberately a bare
+    # str, not a Literal: the state catalog lives in the device's
+    # motion_graph.yaml and is edited there, so an enum here would go stale.
+    # The device's per-node whitelist is the authority (409 on a violation).
+    assert defs["graph.gripper"].args_schema.model_fields["state"].is_required()
 
 
 def test_hplc_catalog_registered() -> None:
