@@ -29,7 +29,7 @@ Generate the manifest, then create the app at https://api.slack.com/apps →
 sudo -iu hermes /usr/local/bin/hermes slack manifest
 ```
 
-Suggested app name: `Lab Runner`. After creating: install to workspace,
+App name: `SDL2 Lab Runner` (the live app, renamed at go-live). After creating: install to workspace,
 collect the **bot token** (`xoxb-…`) from OAuth & Permissions (plus the app
 token `xapp-…` if the manifest enables Socket Mode).
 
@@ -69,6 +69,21 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now hermes-slack.service
 systemctl status hermes-slack.service
 ```
+
+### 5b. Pair each user (discovered at go-live 2026-08-13)
+
+The gateway has its own per-user pairing gate on top of `allow_from`: an
+unrecognized Slack user who DMs the bot gets a pairing code, and only a
+host-side approval admits them — Phase 4.2 (audience = confidentiality
+domain) enforced by mechanism. For each new user:
+
+```
+sudo -iu hermes /usr/local/bin/hermes pairing approve slack <CODE>
+```
+
+Codes expire; have the user re-DM the bot for a fresh one if needed.
+Approving someone means they can trigger/abort human-authorized runs and
+are inside the agent's memory audience — same judgement as `allow_from`.
 
 ### 6. Verify (in Slack, from an allowlisted account)
 
