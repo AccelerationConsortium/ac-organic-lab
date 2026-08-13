@@ -31,6 +31,7 @@ servers:
       # here, not a silent capability grant.
       include:
         - list_equipment_now
+        - get_equipment_status
         - query_equipment_events
         - query_service_uptime
         - query_sensor_readings
