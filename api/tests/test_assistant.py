@@ -133,7 +133,8 @@ def test_proposal_from_tool_result_non_json_is_none() -> None:
 # CLI 2.1.227 on 2026-08-11) actually wraps MCP tool output one level deeper, as
 # {"result": "<json string>"} — so the tests above all passed while the real
 # stream produced no proposal frame at all, and the confirm card never rendered.
-# These two pin the observed envelope. See docs/ASSISTANT_CONTROL_VERIFICATION.md §2.
+# These two pin the observed envelope. See docs/UI_DESIGN.md §5.8 (the CLI
+# double-wraps MCP tool output; the fixture was captured from a real stream).
 #
 # Captured verbatim from a real `--output-format stream-json` tool_result block.
 _WRAPPED_PROPOSAL_CONTENT = (

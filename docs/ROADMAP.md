@@ -448,6 +448,14 @@ Open:
 - [ ] Run the device repo's Phase 6 hardware verification checklist
   (`src/docs/PHASE6_HARDWARE_VERIFICATION.md`) — needs a human at the
   machine.
+- [ ] **`stop` has no route**: `/status.allowed_actions` advertises `"stop"`
+  and the dashboard composes `POST /control/stop`, but the device implements
+  only `POST /move/stop` → 404 — the dashboard's stop button for this arm
+  cannot work (found during the assistant-control verification, 2026-08-11).
+  Fix device-side (a `/control/stop` alias) or map in `web/src/lib/api.ts`.
+- [ ] Device-repo doc rot (same verification): `README.md` points at
+  `src/docker/docker_setup.sh` (does not exist); `src/docs/PYXARM_TESTING.md`
+  still documents the removed in-process `simulation_mode=True` path.
 
 #### `agilent_uplc_ms` (sidecar: `agilent-hplcms-server`)
 
@@ -697,7 +705,7 @@ is withdrawn from DEVICE_PC_SETUP §6, with the failure mode documented and
 a §8 troubleshooting row (clean-stop + MsiInstaller correlation) so the
 next instance is a minutes-long diagnosis. This incident class — a service
 left dead by an external event, discovered hours later — is what the
-`sdl-lab-hostops` fleet (AGENT_OPS.md) now exists to catch and, where
+`sdl-lab-hostops` fleet (AGENTIC_LAB_DESIGN.md) now exists to catch and, where
 whitelisted, remediate remotely. Residual watch item below.
 
 Active watch items (not regressions; behavioural notes):

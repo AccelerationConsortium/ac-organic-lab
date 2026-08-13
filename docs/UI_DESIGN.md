@@ -900,8 +900,8 @@ and misread as a permissions problem.
   is acceptable — which is *why* Step 1 is capped at one device per proposal.
   Cross-device sequencing is what layer-4 interlocks exist for, and it belongs
   in a plan, not a chat turn.
-- **AGENT_RULES.** A human still authorizes every hardware action, and the
-  audit names them.
+- **Binding rules (AGENTIC_LAB_DESIGN.md Part I).** A human still authorizes
+  every hardware action, and the audit names them.
 
 ### 5.5 Step 2 — autonomy (not approved)
 
@@ -925,8 +925,8 @@ Gates, all required before implementation:
 2. Per-user identity delegates through the SDK path — the claim owner must
    remain the human, not `ac-organic-lab-dashboard`.
 3. A plan-approval gate exists: approve the *plan* once, then it runs.
-   "Autonomy" here means fewer clicks, not no human (AGENT_RULES still
-   requires human-approved plans).
+   "Autonomy" here means fewer clicks, not no human (AGENTIC_LAB_DESIGN.md
+   Part I still requires human-approved plans).
 4. The target project has registered layer-4 interlocks.
 
 ### 5.6 Build order
@@ -946,6 +946,64 @@ Gates, all required before implementation:
 3. **Read scope in control mode** — keep `lab-history` connected too (assumed,
    so the model can check history before proposing), or restrict control-mode
    turns to live status only?
+
+### 5.8 Verification record (absorbed from the retired ASSISTANT_CONTROL_VERIFICATION.md)
+
+The full evidence document (566 lines: refusal matrix, mode-gating table,
+capture transcripts, the local stub rig) was retired 2026-08-12; it survives
+in git history. What follows is everything from it that stays load-bearing.
+
+**Verified.** The software path end to end, 2026-08-11 (device PC + server):
+tool surface (two tools, neither actuating), all seven refusal gates with
+correct codes, actor binding, server-side mode decision including the
+`DASHBOARD_CONTROL_OPEN` refusal, `proposal` frame → confirm card → Authorize
+→ passthrough claim dance → both audit rows, and the full production path
+through the Next middleware (session cookie → injected identity). On real
+hardware, 2026-08-12: with the arm connected by a human and the node pinned,
+a Control-mode turn produced a valid `move.robot_home` proposal. **Nothing
+was authorized, so nothing moved** — the authorize-on-hardware click and the
+subsequent check of both audit rows remain open, deliberately: that is a
+human decision, not a verification chore.
+
+**The one real bug, and its lesson.** The CLI (2.1.227) delivers MCP tool
+output double-wrapped — `{"result": "<json string>"}` — and the SSE bridge
+expected the bare tool JSON, so valid proposals silently produced no card
+*and* no `assistant_proposal` row. Fixed in `assistant.py` (tolerates both
+envelopes) with a regression test pinning the envelope **captured from a real
+stream**. Two rules worth keeping: envelope-shaped tests must encode observed
+shapes, not assumed ones; and **trust the frame, not the narration** — the
+model announcing "the card is up" is not evidence, it cannot see the browser.
+
+**Deploy check (load-bearing, not diagnostic).** After any deploy that
+touches `api/`, confirm the console scripts exist: `ls .venv/bin/lab-*-mcp`.
+The MCP spawn prefers the console script beside the running interpreter
+(`b542960`); if it is missing, the resolver falls back to `uv run`, whose
+self-sync **fails under the API unit's `ProtectHome=read-only`** (uv cannot
+write its cache) and on any host that cannot build the dependency tree. The
+symptom is maddeningly indirect: the model says its tools are unreachable,
+Ask mode is equally toolless, the CLI exits 0, and the failed init event is
+not forwarded by the SSE bridge.
+
+**Observables when debugging mode behaviour.** The reliable signal for
+whether Control mode was granted is which file `assistant.py` wrote in
+`$ASSISTANT_RUNTIME_DIR`: `mcp.control.json` (granted) vs `mcp.json`
+(downgraded to ask). The `assistant chat: mode=…` log line is invisible under
+a bare `uvicorn` (unconfigured logger); do not rely on it.
+
+**Authorization semantics, as measured.** §5.2's "`operator`+ on that
+equipment" is in practice "**holds any grant** on that equipment":
+`/authz/check` reports `allowed` for any device grant (a `role: none` user
+with a single equipment grant qualifies). Identical to the tile path — just
+don't expect a role-name comparison.
+
+**xArm hardware prerequisites** (for whoever performs the remaining
+authorize): a human connects the arm (`do_not_call_connect` — connecting
+energizes servos and enables the track without a homing sweep); then the
+current node must be pinned or `allowed_actions` collapses to `["stop"]` and
+nothing is proposable — read `GET /graph/nearest`, pin with
+`POST /control/graph/recover_to` **without `force`** (bookkeeping, not
+motion), and release the claim afterwards or the leftover claim 423s the
+passthrough.
 
 ### See also (assistant control mode)
 

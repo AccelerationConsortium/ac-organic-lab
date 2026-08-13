@@ -89,10 +89,10 @@ def test_passthrough_strips_control_prefix() -> None:
 
 def test_resolve_move_target() -> None:
     entry = _registry().equipment[0]
-    sd, passthrough, args = ac._resolve(entry, "move.plateloc_out", {})
+    sd, passthrough, args = ac._resolve(entry, "move.uplc_draw_home", {})
     assert sd.name == "graph.move_to"
     assert passthrough == "graph/move_to"
-    assert args == {"node_id": "plateloc_out"}
+    assert args == {"node_id": "uplc_draw_home"}
 
 
 def test_resolve_refuses_non_move() -> None:
@@ -109,18 +109,18 @@ def test_resolve_refuses_non_move() -> None:
 
 @respx.mock
 async def test_propose_success() -> None:
-    _mock_status(["stop", "move.plateloc_out"])
+    _mock_status(["stop", "move.uplc_draw_home"])
     _mock_authz(True)
     out = json.loads(
         await ac._propose_action(
-            _registry(), "xarm", "move.plateloc_out", None, "stage the plate"
+            _registry(), "xarm", "move.uplc_draw_home", None, "stage the plate"
         )
     )
     prop = out["proposal"]
     assert prop["equipment_id"] == "xarm"
-    assert prop["action"] == "move.plateloc_out"
+    assert prop["action"] == "move.uplc_draw_home"
     assert prop["passthrough_action"] == "graph/move_to"
-    assert prop["args"] == {"node_id": "plateloc_out"}
+    assert prop["args"] == {"node_id": "uplc_draw_home"}
     assert prop["actor"] == ACTOR
     assert prop["reason"] == "stage the plate"
     assert prop["device_state"]["equipment_status"] == "ready"
@@ -242,7 +242,7 @@ async def test_propose_authz_disabled_env(monkeypatch: pytest.MonkeyPatch) -> No
 
 @respx.mock
 async def test_list_available_actions_marks_proposable() -> None:
-    _mock_status(["stop", "move.deck", "move.plateloc_out"])
+    _mock_status(["stop", "move.deck", "move.uplc_draw_home"])
     out = json.loads(await ac._list_available_actions(_registry(), "xarm"))
     by_action = {a["action"]: a for a in out["actions"]}
     assert by_action["stop"]["proposable"] is False

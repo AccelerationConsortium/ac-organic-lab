@@ -119,8 +119,9 @@ Project-specific rules live in each project repo's root `AGENT_RULES.md`
 
 ## Part II — Operations layer
 
-**Status:** live since 2026-08-10/11 — Hermes `lab-ops` profile on the central
-server, with the deployed instances listed below. This part records the
+**Status:** live since 2026-08-10/11 (Hermes `lab-ops` profile), extended
+2026-08-12 with the boxed `lab-runner` profile (verified: all three MCP
+servers connect) and the `lab-runs` trigger surface. This part records the
 *operations* agent setup: which MCP surfaces exist, their trust tiers, and how
 the per-machine host-ops fleet is deployed. The access **boundary** (what the
 agent may see) is owned by
@@ -154,6 +155,23 @@ unattended principal — timers, webhooks, and the Slack reporter belong to it
 and never to an `sdl2` profile. It carries no terminal, file, web, or cron
 toolset: ingesting attacker-influenceable text must be harmless by toolset,
 not by prompt.
+
+These two profiles are not the only agent surfaces in the lab. The full map,
+each with its own trust story and owning doc:
+
+| Surface | Runs as / backed by | Trust ceiling | Owned by |
+|---|---|---|---|
+| Dashboard assistant (Ask/Control bubble) | `claude` CLI, dashboard host | read telemetry; **propose** one action a human authorizes (never actuates) | `UI_DESIGN.md` §5, ARCHITECTURE #10 |
+| Hermes `lab-ops` | `sdl2`, human-driven | ops console incl. shell; attended only | this file |
+| Hermes `lab-runner` | boxed `hermes` user, unattended | trigger/watch/abort human-authorized runs; read + preflight | this file + HERMES_ACCESS_DESIGN |
+| PyPoe lab integration | `pypoe-slack` / `pypoe-web` services | read-only lab surface: alert fan-out to Slack, Kuma tile, `/lab-*` queries, headless `claude -p` investigations | `pypoe/CLAUDE.local.md` Appendix A, LAB_MONITORING §6b |
+
+Division of labour settled 2026-08-12: **PyPoe keeps the plumbing jobs**
+(alert fan-out, the `uptime_kuma` tile, investigations) and **`lab-runner`
+takes the conversational/trigger jobs** (run reporting, lab Q&A, preflight,
+the Slack leg when it lands). Two bots, distinct jobs — the alarm system and
+the operator; consolidation is a later decision, taken only after
+`lab-runner`'s Slack leg has a track record.
 
 A co-located agent on a device PC would gain no hardware reach (every device
 is already a Tailnet REST service) while adding an unaudited shell next to
@@ -246,12 +264,24 @@ authorized-run MCP surface over `api/app/workflow.py`, where the agent may
 pull a trigger a human has already loaded (bitácora run authorization,
 digest-pinned package, revocable mid-run) and nothing more — **shipped
 2026-08-12 as `lab-runs`** (`api/app/run_trigger.py`, registered in
-`mcp/servers.yaml`). It is deliberately **wired into no agent profile yet**:
-its attribution rides `LAB_ACTOR` trusted by network position, so the named
-prerequisite is the boxed `hermes` OS principal (HERMES_ACCESS_DESIGN
-Phase 0) with a Phase-1 roster identity — never a profile running as `sdl2`.
-Enabling `--allow-control` for an agent client remains a spec violation of
-the `mcp/servers.yaml` `lab-skills` entry, not a config choice.
+`mcp/servers.yaml`) **and wired the same day into the boxed `lab-runner`
+profile** — its named prerequisites were met first: the `hermes` OS
+principal (HERMES_ACCESS_DESIGN Phase 0) with the Phase-1 roster identity
+(`hermes@lab.local`) bound as `LAB_ACTOR` in the profile environment. The
+trigger must never be wired into a profile running as `sdl2` (attribution
+rides `LAB_ACTOR` trusted by network position), and enabling
+`--allow-control` for an agent client remains a spec violation of the
+`mcp/servers.yaml` `lab-skills` entry, not a config choice.
+
+The intended progression for `lab-runner` is recorded here so it is climbed
+deliberately: (1) trigger/watch/report — live; (2) lab-skills eyes
+(preflight + live state) — live; (3) plan *drafting* through conversation,
+entering bitácora **through the human who approves it** (never by agent
+write — HERMES_ACCESS_DESIGN Phase 4.6); (4) coarser approval granularity
+(campaign-level), still through the same authorized-run gate. At every rung
+what loosens is the granularity of human approval, never the existence of
+the hardware gate. Its learning/confidentiality rules are HERMES_ACCESS_DESIGN
+Phase 4 (memory holds the platform, never the science).
 
 ## See also
 

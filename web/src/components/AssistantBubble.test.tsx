@@ -37,9 +37,9 @@ const PROPOSAL = {
     equipment_id: "xarm",
     equipment_name: "UFactory xArm5",
     kind: "robot_arm",
-    action: "move.plateloc_out",
+    action: "move.uplc_draw_home",
     passthrough_action: "graph/move_to",
-    args: { node_id: "plateloc_out" },
+    args: { node_id: "uplc_draw_home" },
     reason: "stage the plate",
     actor: "alice@example.edu",
     expires_in_s: 120,
@@ -148,8 +148,8 @@ describe("AssistantBubble control mode", () => {
     // Confirm card shows the authoritative fields.
     await screen.findByText("Authorize action");
     expect(screen.getByText(/UFactory xArm5 \(xarm\)/)).toBeTruthy();
-    expect(screen.getByText("move.plateloc_out")).toBeTruthy();
-    expect(screen.getByText(/node_id=plateloc_out/)).toBeTruthy();
+    expect(screen.getByText("move.uplc_draw_home")).toBeTruthy();
+    expect(screen.getByText(/node_id=uplc_draw_home/)).toBeTruthy();
 
     // Authorize routes through the control passthrough with the passthrough
     // action + validated args.
@@ -158,10 +158,10 @@ describe("AssistantBubble control mode", () => {
       expect(authorizeAssistantAction).toHaveBeenCalledWith(
         "xarm",
         "graph/move_to",
-        { node_id: "plateloc_out" }
+        { node_id: "uplc_draw_home" }
       )
     );
-    await screen.findByText(/Authorized move\.plateloc_out/);
+    await screen.findByText(/Authorized move\.uplc_draw_home/);
   });
 
   it("marks a proposal expired after its TTL and blocks authorize", async () => {

@@ -254,11 +254,16 @@ def create_app(
                 )
 
         try:
-            loop.add_signal_handler(signal.SIGHUP, _reload_roster)
-        except (NotImplementedError, ValueError, RuntimeError):
-            # no event-loop signal support here (Windows, or a loop not on the
-            # main thread as under TestClient) — reload-on-SIGHUP is best-effort;
-            # a full restart always picks up roster changes.
+            # getattr, not signal.SIGHUP: on Windows the attribute itself does
+            # not exist, so a direct reference raises AttributeError before
+            # add_signal_handler's own guard can fire (found starting the
+            # sidecar on a device PC, 2026-08-11).
+            loop.add_signal_handler(getattr(signal, "SIGHUP"), _reload_roster)
+        except (AttributeError, NotImplementedError, ValueError, RuntimeError):
+            # no SIGHUP or no event-loop signal support here (Windows, or a
+            # loop not on the main thread as under TestClient) —
+            # reload-on-SIGHUP is best-effort; a full restart always picks up
+            # roster changes.
             _signal_registered = False
         else:
             _signal_registered = True
