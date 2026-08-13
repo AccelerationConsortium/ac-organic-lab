@@ -110,7 +110,7 @@ servers:
           execute_plan is never registered (the exclude above is belt and
           braces, not the gate). Enabling --allow-control for an agent is a
           human decision that requires an approval-gated execution design
-          (AGENT_RULES.md §1.3: only validated, human-approved plans execute)
+          (AGENTIC_LAB_DESIGN.md §1.3: only validated, human-approved plans execute)
           — e.g. the authorized-run executor in api/app/workflow.py.
         - >-
           preflight_plan reads live device state but issues no control
@@ -118,6 +118,9 @@ servers:
       known_clients:
         - Hermes `lab-ops` profile on the central server (read + preflight
           allowlist, no --allow-control)
+        - Hermes `lab-runner` profile under the boxed `hermes` OS user (same
+          read + preflight allowlist, no --allow-control; owner string
+          hermes:lab-runner)
 
   lab-runs:
     description: >-
@@ -161,7 +164,7 @@ servers:
         - >-
           The agent pulls a trigger a human already loaded, nothing more:
           this server MUST NOT grow a tool that composes, edits, lists, or
-          approves plans/authorizations (AGENT_OPS.md trust tiers). The
+          approves plans/authorizations (AGENTIC_LAB_DESIGN.md trust tiers). The
           authorization_id reaches the agent from a human (e.g. a Slack
           message), not from a discovery tool here — that absence is part of
           the design, not a gap.
