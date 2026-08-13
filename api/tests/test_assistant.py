@@ -41,6 +41,19 @@ def test_write_mcp_config_control_adds_lab_control(tmp_path, monkeypatch) -> Non
     assert path.name == "mcp.control.json"
 
 
+def test_write_mcp_config_binds_actor_to_lab_history(tmp_path, monkeypatch) -> None:
+    """record_observation stamps journal rows with LAB_ACTOR, in Ask mode too."""
+
+    monkeypatch.setenv("ASSISTANT_RUNTIME_DIR", str(tmp_path))
+    path = assistant._write_mcp_config(actor="alice@example.edu")
+    cfg = json.loads(path.read_text())
+    assert cfg["mcpServers"]["lab-history"]["env"]["LAB_ACTOR"] == "alice@example.edu"
+    # Anonymous sessions carry no actor: the journal write fails closed.
+    path = assistant._write_mcp_config()
+    cfg = json.loads(path.read_text())
+    assert "LAB_ACTOR" not in cfg["mcpServers"]["lab-history"]["env"]
+
+
 def test_write_mcp_config_control_without_actor_is_history_only(
     tmp_path, monkeypatch
 ) -> None:

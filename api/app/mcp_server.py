@@ -22,7 +22,11 @@ points at ``run()`` below.)
 
 Safety
 ------
-All tools are read-only. The journald tool's ``unit`` argument is whitelisted
+All tools are read-only except ``record_observation``, which appends one
+actor-stamped ``agent_observation`` row to the history DB (via the api's
+ingest endpoint — nothing here can touch hardware, and the write fails
+closed without a verified ``LAB_ACTOR``). The journald tool's ``unit``
+argument is whitelisted
 to dashboard-related services so this server cannot become a side channel
 into the host's full systemd journal. Limits on row counts and lookback
 hours match the API-bubble assistant in ``app/assistant.py``.
@@ -35,6 +39,7 @@ import json
 import logging
 import os
 import shutil
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -50,6 +55,7 @@ logger = logging.getLogger(__name__)
 MAX_LIMIT = 200
 MAX_SINCE_HOURS = 24 * 7
 MAX_JOURNAL_LINES = 200
+MAX_OBSERVATION_CHARS = 1000
 DASHBOARD_API_URL = os.environ.get("LAB_DASHBOARD_API_URL", "http://127.0.0.1:8001")
 
 ALLOWED_UNITS = frozenset(
@@ -162,6 +168,74 @@ async def _get_equipment_status(equipment_id: str) -> str:
             ),
         }
     )
+
+
+async def _record_observation(equipment_id: str, observation: str) -> str:
+    """Append one operational observation to the shared journal.
+
+    The learning loop the Phase 4 policy permits (HERMES_ACCESS_DESIGN §4):
+    device-scoped, actor-stamped, appended through the same ``/api/ingest``
+    path devices and PyPoe use — so decision #9's single-writer rule holds and
+    ``query_equipment_events(event_type="agent_observation")`` reads it back
+    next session. Deliberately NOT a memory store: rows are lab-public,
+    reviewable, and anchored to a device, never to a conversation.
+
+    Fails closed without a verified operator (``LAB_ACTOR``): an
+    unattributable journal row would be an audit hole, not a note.
+    """
+
+    actor = os.environ.get("LAB_ACTOR", "").strip()
+    if not actor:
+        return json.dumps(
+            {
+                "error": "observation journaling requires a verified operator "
+                "session; tell the user to sign in — do not retry"
+            }
+        )
+
+    observation = (observation or "").strip()
+    if not observation:
+        return json.dumps({"error": "observation is empty"})
+    if len(observation) > MAX_OBSERVATION_CHARS:
+        return json.dumps(
+            {
+                "error": f"observation is {len(observation)} chars; the journal "
+                f"caps notes at {MAX_OBSERVATION_CHARS} — compress it (notes are "
+                "for the finding, not the transcript)"
+            }
+        )
+
+    try:
+        data = await _fetch_equipment()
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"could not reach dashboard API: {exc}"})
+    known = {e.get("id") for e in data.get("equipment", [])}
+    if equipment_id not in known:
+        return json.dumps(
+            {
+                "error": f"no equipment with id {equipment_id!r}",
+                "known_ids": sorted(known),
+            }
+        )
+
+    body = {
+        "device_id": equipment_id,
+        "records": [
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event": "agent_observation",
+                "message": observation,
+                "extra": {"actor": actor, "origin": "dashboard-assistant"},
+            }
+        ],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(f"{DASHBOARD_API_URL}/api/ingest/events", json=body)
+            r.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"could not write observation: {exc}"})
+    return json.dumps({"recorded": True, "device_id": equipment_id, "actor": actor})
 
 
 async def _query_equipment_events(
@@ -299,6 +373,22 @@ def _build_server():
         in — list_equipment_now only returns one summary row per device."""
 
         return await _get_equipment_status(equipment_id)
+
+    @mcp.tool()
+    async def record_observation(equipment_id: str, observation: str) -> str:
+        """Append ONE operational observation about a device to the lab's
+        shared journal (readable next session via
+        query_equipment_events(event_type="agent_observation")).
+
+        Use ONLY for platform knowledge: device behavior, recurring faults,
+        quirks, timing, recovery steps that worked. NEVER for scientific or
+        project content (compounds, designs, results, goals) and never for
+        routine conversation. Journal when the operator asks you to note
+        something, or when you have verified a device-level finding a future
+        investigation should not have to rediscover. Notes are permanent,
+        lab-public, and stamped with the operator's identity."""
+
+        return await _record_observation(equipment_id, observation)
 
     @mcp.tool()
     async def query_equipment_events(
