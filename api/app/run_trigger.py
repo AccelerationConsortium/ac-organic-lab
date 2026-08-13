@@ -1,6 +1,6 @@
 """Authorized-run trigger MCP server (``lab-runs``).
 
-The "(future) authorized-run trigger" row of ``docs/AGENT_OPS.md``'s trust-tier
+The "(future) authorized-run trigger" row of ``docs/AGENTIC_LAB_DESIGN.md``'s trust-tier
 table, implemented: an agent may **pull a trigger a human has already loaded**
 — start, watch, and cooperatively abort a run whose plan a human authorized in
 bitácora — and nothing more.
@@ -23,7 +23,7 @@ human already authorized** — both audited (``plan_run`` rows, ``launched_by``
 carries this server's bound actor), both safe by construction (an abort is
 cooperative and takes effect at a step boundary; a start of a revoked or
 tampered package is refused by the executor). This server MUST NOT grow a
-tool that composes, edits, or approves a plan — that is the line AGENT_OPS.md
+tool that composes, edits, or approves a plan — that is the line AGENTIC_LAB_DESIGN.md
 draws, and it is enforced by the toolset, not by this comment.
 
 Actor binding

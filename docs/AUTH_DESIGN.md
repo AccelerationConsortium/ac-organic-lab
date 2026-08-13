@@ -7,15 +7,17 @@ limiting, the **`roster.yaml` allow-list** with fail-closed validation, per-scop
 restriction, and **project-based data scope**). What remains: data-isolation
 *enforcement* (`can_read`), finishing claim-authorization + closing the
 direct-device side-door, and automation approval — see *Phasing*. Drafted
-2026-06-23; last revised 2026-08-07 (**standalone installs**: absent banner MUST
-mean open — see *Policy*). Prior revision 2026-07-07 (login dropdown shows
-**names, not emails**; `/auth/request-code` → `/auth/login`; `/auth/*` namespace
-documented).
+2026-06-23; last revised 2026-08-12 (absorbed `SINGLE_EDGE_SSO_PLAN.md` as the
+*Single-edge SSO build-out* section — that file is retired). Prior revisions
+2026-08-07 (**standalone installs**: absent banner MUST mean open — see
+*Policy*) and 2026-07-07 (login dropdown shows **names, not emails**;
+`/auth/request-code` → `/auth/login`; `/auth/*` namespace documented).
 **Scope:** central auth/authorization **module inside `ac-organic-lab`** serving
 every platform and device. Single source of truth for *who may do what on which
 equipment, as what role* across a platform↔device graph, plus session
 management, per-user data isolation, and an audit trail. (Canonical auth doc;
-replaces the earlier `auth.md` and `AUTH_SERVICE_DESIGN.md`.)
+replaces the earlier `auth.md` and `AUTH_SERVICE_DESIGN.md`, and absorbs
+`SINGLE_EDGE_SSO_PLAN.md`.)
 
 ---
 
@@ -972,7 +974,8 @@ collapsing every UI behind one origin (path-routed) yields one cookie, set on a
 single registrable public domain (*not* `ts.net`), shared across the whole
 dashboard — genuine single sign-on, and the same move that closes the
 direct-device side-door (Phase 4). Per-host device UIs and a shared session are
-mutually exclusive; the edge is what reconciles them.
+mutually exclusive; the edge is what reconciles them. The build-out of that
+edge is recorded in *Single-edge SSO build-out* below.
 
 ## Auth flows
 
@@ -1149,6 +1152,237 @@ grants + the first project, then the cross-cutting infra (Phases 2–4): Caddy
 `forward_auth` → `/auth/verify` (+ X-Auth-* strip/re-inject), edge TLS +
 per-IP rate-limit, and the device-side roster pull in each device repo (e.g.
 `agilent-hplcms-server`'s `control/roster.py`, today static env lists).
+
+---
+
+## Single-edge SSO build-out — one login for every lab UI
+
+*(Absorbed from `SINGLE_EDGE_SSO_PLAN.md`, 2026-08-12; that file is retired.
+This is the concrete build-out of* Why sessions can't be shared per-host
+*above and of **Phase 4** in the phasing table. It does **not** change the
+auth model — `ac_auth` + `roster.yaml` stay the authority.)*
+
+**Status:** **Phase 1 edge deployed 2026-07-07** — Caddy on `http://100.64.254.6`
+serves the dashboard at `/`, one host-only `ac_auth_session` cookie, and
+`forward_auth`-gated device paths. Verified: `/` 200, login round-trips through
+the edge, `/xarm5` gate 401→login-redirect logged-out / proxies logged-in.
+Tasks 1–5 are ✅ — the xArm panel renders at `http://100.64.254.6/xarm5/web/`
+with edge-trusted identity (see *How a device learns who the operator is*
+above). Still open: publishing the one canonical URL (task 6), and Phases 2–3
+— close the direct-device side-door fleet-wide (the OT-2 gateways are already
+closed, see *The switch between the two postures*); friendly name + HTTPS.
+**Owner concern:** central server (`ac-organic-lab`) — the edge runs on the
+dashboard host.
+
+### The principle
+
+**SSO = one origin = one cookie = one login.** Users log in per-UI today only
+because each device-native UI is a *separate origin*, and a session cookie
+cannot cross origins (and cannot be shared across tailnet hosts — `ts.net` is on
+the Public Suffix List, so a `Domain=…ts.net` cookie is silently dropped;
+confirmed live 2026-07-06 on the xArm). The fix is not to share cookies across
+hosts — it is to **collapse every UI behind one origin**, so a single host-only
+cookie already covers every path.
+
+**Auth split is unchanged.** Tailscale is the *network* boundary (nothing is
+reachable off-tailnet). `ac_auth` email-code (single-factor, per decision to
+keep it simple) proves *who you are*; `roster.yaml` says *what you may do*. This
+build-out only changes **how many origins** you sign into — from N to 1.
+
+### Starting state (2026-07-07)
+
+- **Dashboard (Next.js)** at `100.64.254.6:8000`, already behind Caddy
+  (`deploy/Caddyfile`). One origin; `ac_auth_session` cookie; control/assistant
+  routes gated by `web/src/middleware.ts` → `100.64.254.6:8009/auth/verify`.
+  Every tile-based device is controlled *through* this one UI, so it is already
+  a single login for all of them.
+- **Device-native panels** on other hosts are the separate logins — chiefly the
+  **xArm `/web/`** panel at `sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000/web/`,
+  which runs its own auth banner (its own origin ⇒ its own login).
+- **`pypoe_web`** (`100.64.254.6:8006`) and AnaliticaDB `/docs`
+  (`100.64.254.6:8010`) are the other browsable surfaces.
+
+So "make login single-source" ≈ "pull the device-native panels onto the
+dashboard's origin behind the same `ac_auth`."
+
+### Phase 1 — interim single edge at `http://100.64.254.6`
+
+Make `http://100.64.254.6/` the one entrypoint; path-route every UI under it.
+Config: **`deploy/Caddyfile.single-edge`** (extends the existing `deploy/Caddyfile`).
+
+Tasks:
+
+1. ✅ **Extend the edge.** Path routes: `/xarm5` → xArm `/web/`, dashboard at `/`,
+   camera streams / gateway blocks. *(deployed; a stray one-line-block syntax bug
+   in the committed config was fixed on first deploy — commit b0e9619.)*
+2. ✅ **Gate UI paths with `forward_auth`** → `ac_auth /auth/verify`, injecting
+   `X-Auth-User` / `X-Auth-Role`. *(deployed; verified 401 logged-out / pass
+   logged-in on `/xarm5`.)*
+3. ✅ **Device panel trusts the edge identity.** *(xarm-translocation branch
+   `edge-sso-trust`, 2026-07-07.)* The device trusts the edge-injected
+   `X-Auth-User`/`X-Auth-Role` when they carry a matching `X-Edge-Auth` shared
+   secret (`XARM_EDGE_SHARED_SECRET`): `/auth/me` reports that identity
+   (`via: "edge"`) so the banner shows the user signed-in with no second login
+   and hides the per-panel sign-out; `_resolve_identity` returns it first, so
+   `/control/claim` stamps the edge user as owner and the login-gated endpoints
+   pass — all with **no** sidecar hop. Secret unset → headers ignored; interim
+   trust until Phase 2 loopback-binds `:8000`. (The per-device secret model this
+   grew into is *How a device learns who the operator is* above.)
+4. ✅ **Subpath vs base-path — resolved to base-path, edge strip-only.** The
+   panel's asset links were already **relative**, so the real breakage was the
+   API/WS base (`window.location.host` with no prefix) and the edge's
+   `rewrite * /web{uri}` (which sent `/xarm5/status` → `/web/status` → 404).
+   Fix: the edge now **strips `/xarm5` only** (no `/web` rewrite) and the panel
+   JS derives the `/xarm5` base-path from `window.location` and prefixes its own
+   API/WS calls (`main.js`/`graph.js`/`auth.js`). A FastAPI `root_path` was
+   tried and **rejected**: under Starlette 1.x it relocates the StaticFiles
+   mount to `/xarm5/web/`, which 404s once the edge has stripped the prefix.
+   Canonical URL: `http://100.64.254.6/xarm5/web/`.
+5. ✅ **Browser 401 → login redirect.** Chosen: `ac_auth`-side. `/auth/verify`
+   returns **302 → `AUTH_LOGIN_URL` (default `/`)** for `Accept: text/html`
+   navigations; Caddy copies the 3xx back on the `forward_auth` deny path.
+   API/XHR (`*/*`, JSON — incl. the Next middleware) still get 401. *(main.py;
+   `AUTH_LOGIN_URL` overrides the target.)*
+6. **One canonical entrypoint.** Publish only `http://100.64.254.6/`. The ts.net
+   hostname and device `host:port`s are different origins → second logins.
+   301-redirect the old dashboard hostname to the IP (or vice-versa) so nobody
+   splits the cookie.
+
+Outcome: sign in once at `http://100.64.254.6/`; the cookie covers the dashboard
+and every panel routed under it. Plain HTTP + non-Secure cookie over the tailnet
+(same as today).
+
+### Phase 2 — close the direct-device side-door
+
+Path-routing adds a front door; it does not remove the direct one — a tailnet
+member can still `curl sdl2-pc-03:8000/web/` un-gated. Make the edge the *only*
+path in:
+
+- **Tailscale ACL** so only the edge host (`100.64.254.6`) may reach device UI
+  ports, **or**
+- bind device panels to loopback and reverse-proxy locally (the pattern
+  `kasa-tapo-services` already uses at `127.0.0.1:8002`).
+
+This is Phase 4 of the phasing table above. Lower urgency among trusted tailnet
+members (Tailscale is still the network gate), but required for the login to be
+*authoritative* for control rather than advisory. The OT-2 gateways closed it
+first (`OT2_TRUST_LOCAL_UI=false`: direct hits 404, edge-only — see *The switch
+between the two postures*); the rest of the fleet follows.
+
+### Phase 3 — friendly name + real HTTPS (and multi-lab shape)
+
+Replace the hard-to-memorize IP/MagicDNS name with a chosen name that also gets
+a valid cert, keeping everything tailnet-only:
+
+- **`sdl2.accelerationconsortium.ai`** → the edge's Tailnet IP `100.64.254.6`
+  (public A record is harmless — `100.64.x` is unreachable off-tailnet — or a
+  Tailscale custom DNS record if the name should resolve only on-tailnet).
+- **DNS-01 wildcard cert** `*.accelerationconsortium.ai` via Caddy's DNS-provider
+  plugin (needs only DNS control, not public reachability) → HTTPS + `Secure`
+  cookie. Routing from Phase 1 is unchanged; only the site address at the top of
+  the Caddyfile changes.
+- **Multi-lab:** each lab is its own subdomain / own edge / own tailnet / own
+  roster — `sdl2.accelerationconsortium.ai`, `<lab>.accelerationconsortium.ai`.
+  Separate origins ⇒ per-lab logins (the wanted isolation). Equipment stays a
+  *path* under each lab's edge (`…/xarm5`). Do **not** use
+  `accelerationconsortium.ai/<lab>/…` (one origin) unless you actually want one
+  AC-wide login backed by one central auth service bridging every lab's tailnet.
+
+### Spec — xArm `/web/` behind the edge (Phase 1 tasks 3–4; since shipped)
+
+**Repo:** `xarm-translocation` (not in this monorepo). Kept as the spec the
+implementation followed — the symptom it opens with is fixed.
+
+**Symptom (pre-fix):** once the edge gate passed, `http://100.64.254.6/xarm5`
+rendered broken / 404s, and the panel still showed its own login. Two
+independent fixes.
+
+#### What the edge guarantees (the device can rely on this)
+
+- **Reached at** `sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000`. The edge does
+  `handle_path /xarm5/*` — as shipped it **strips `/xarm5` only** (the spec's
+  original `rewrite * /web{uri}` was removed in task 4) → reverse-proxy, so the
+  device receives requests at its own paths and the panel JS prefixes its own
+  API/WS calls.
+- **Auth is already done** at the edge (`forward_auth` → `/auth/verify`). On the
+  pass path Caddy injects **`X-Auth-User`** and **`X-Auth-Role`** onto the
+  proxied request. The device does **not** need to authenticate the human.
+
+#### Task 4 — render under the `/xarm5` prefix (asset paths)
+
+Root cause: the panel emitted **root-absolute** asset URLs (`/static/…`,
+`/web/…`). The browser resolves those against the edge origin as
+`http://100.64.254.6/static/…` (no `/xarm5` prefix) → the edge routes them to
+the **dashboard** → 404.
+
+**Fix (as shipped): make the panel base-path aware** — every generated URL is
+either **relative** or **`/xarm5`-prefixed** (derived from `window.location`;
+see task 4 above for why FastAPI `root_path` was rejected). Standalone
+`:8000/web/` still works when the prefix is absent.
+
+**Rejected: edge-side asset rewrites.** Routing `/static/*` and `/web/*` at the
+edge back to the xArm doesn't scale — those namespaces collide with the dashboard
+and with a second device panel. Base-path is the only approach that generalizes to
+N panels under one origin.
+
+#### Task 3 — trust the edge identity, drop the second login
+
+When reached via the edge the request carries a trusted **`X-Auth-User`**; the
+panel must **adopt that identity and skip its own login banner**, else the user is
+prompted twice.
+
+- **Behind the edge → no banner.** If `X-Auth-User` is present (and trusted, see
+  below), treat the session as authenticated as that user; don't render the
+  self-login.
+- **Trust boundary.** `X-Auth-User` is only sound if it can't be forged by a
+  direct caller. The device is directly reachable on the Tailnet, so a raw
+  `curl …:8000/web/ -H 'X-Auth-User: someone'` would spoof it. Two ways to make it
+  safe, in order of preference:
+  1. **Phase 2 first** — loopback-bind the panel / Tailscale-ACL `:8000` so **only
+     the edge** can reach it; then `X-Auth-User` is unspoofable and can be trusted
+     directly. (This is the clean sequencing.)
+  2. **Interim shared secret** — the edge injects `X-Edge-Auth: <secret>` and the
+     device trusts `X-Auth-User` **only** when `X-Edge-Auth` matches. This is
+     what shipped (per-device secrets — see *How a device learns who the
+     operator is* above).
+
+#### Deeper follow-on (not required for SSO; tracked in ROADMAP *Control-surface exposure*)
+
+Suppressing the login is the SSO fix. Separately, actions taken *in* the panel
+still drive the arm outside the dashboard's audited claim path. Making the panel
+**claim- and authz-aware** — acquire/hold a claim as `owner=X-Auth-User`, honor
+the roster role — is the side-door closure, related but beyond Phase 1.
+
+#### Acceptance criteria
+
+- [x] `http://100.64.254.6/xarm5/` renders the panel fully (all assets 200, no
+      `/static` 404s against the dashboard).
+- [x] A user already signed in at the edge reaches `/xarm5` with **no second
+      login prompt**; the panel shows them as `X-Auth-User`.
+- [x] Standalone `…:8000/web/` still works on-host (base-path unset).
+- [x] A direct `curl` with a forged `X-Auth-User` is **not** trusted (the
+      `X-Edge-Auth` per-device secret; Phase 2 ACL still pending).
+
+### Non-goals / decisions carried in
+
+- **No Google/OIDC, no UofT Entra, no public exposure.** Considered and set
+  aside: everything stays behind Tailscale; app login is per-user email-code.
+- **No Tailscale-identity-as-login.** Considered and rejected by the owner
+  (don't want to provision a Tailscale identity per user); users are on the
+  tailnet but authenticate to the app with their own `ac_auth` IDs.
+- **Single-factor is accepted** for now (simpler); MFA revisited only if control
+  ever leaves the tailnet (see *Going public…* above).
+- Shared/kiosk machines: Tailscale identity would be ambiguous there, but since
+  login is per-user `ac_auth` anyway, moot — noted only so it isn't re-raised.
+
+*(The plan's open questions all resolved in the body above: the 401→login
+redirect landed `ac_auth`-side (task 5); the xArm trusts the edge identity via
+the `X-Edge-Auth` secret (task 3).)*
+
+**Edge build-out configs:** `deploy/Caddyfile.single-edge` (the Phase 1 config)
+extends `deploy/Caddyfile` (the pre-single-edge, dashboard-only edge); the
+direct-device hole Phase 2 closes is `docs/ROADMAP.md` → *Control-surface
+exposure*.
 
 ## Risks / arguments against (recorded)
 

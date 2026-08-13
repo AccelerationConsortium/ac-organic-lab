@@ -96,7 +96,7 @@ Granted keys (one per line, keep this list current):
 | `lab-ops@sdl2-server-gaia` (ed25519) | central ops agent — deploy/maintain `sdl-lab-hostops`, incident diagnosis | `sdl2-pc-03-cytation`, 2026-08-11; `sdl2-pc-06-uplc`, 2026-08-11 |
 
 Routine host operations should go through the `sdl-lab-hostops` MCP surface
-(whitelisted, audited — see [`AGENT_OPS.md`](AGENT_OPS.md)); SSH is the
+(whitelisted, audited — see [`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md)); SSH is the
 maintenance/deploy path, not the everyday one.
 
 ## 3. Install a single device service
@@ -241,7 +241,7 @@ The lab account also needs the "Log on as a service" right. NSSM grants this aut
 | `torry-pines-shaker-server` | `torry-pines-shaker` | 8030 | `run --extra api torry-pines-shaker-serve` | `sdl2-pc-03-cytation.<tailnet>` |
 | `agilent-biostack4-standalone` | `biostack4`     | 8050 | `run --extra api agilent-biostack4-serve --dry-run` (set `[service].port = 8050` in `config.toml`: the 8030 default is taken by `torry-pines-shaker` on this shared PC) | `sdl2-pc-03-cytation.<tailnet>` |
 | `ac-organic-lab`          | `ac-organic-lab-api` | 8001 | `run uvicorn app.main:app --host 0.0.0.0 --port 8001` (AppDirectory=`api/`) | `sdl2-pc-03-cytation.<tailnet>` |
-| `sdl-lab-hostops`         | `sdl-lab-hostops` | 8060 | `run --extra serial lab-hostops-serve --transport http` — whitelisted host-ops MCP server (service status/logs/restart, serial enumeration, local `/status` probes) consumed by the central agent; see [`AGENT_OPS.md`](AGENT_OPS.md). **Documented §5 exception:** runs as `LocalSystem` — it needs service-control rights over its NSSM neighbours and touches no vendor `HKCU` profile or COM port, so neither reason behind §5 applies. Requires `HOSTOPS_TOKEN` in the service env (non-loopback bind refuses to start without it). | `sdl2-pc-03-cytation.<tailnet>` (deployed + verified 2026-08-11; one per device PC as rolled out) |
+| `sdl-lab-hostops`         | `sdl-lab-hostops` | 8060 | `run --extra serial lab-hostops-serve --transport http` — whitelisted host-ops MCP server (service status/logs/restart, serial enumeration, local `/status` probes) consumed by the central agent; see [`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md). **Documented §5 exception:** runs as `LocalSystem` — it needs service-control rights over its NSSM neighbours and touches no vendor `HKCU` profile or COM port, so neither reason behind §5 applies. Requires `HOSTOPS_TOKEN` in the service env (non-loopback bind refuses to start without it). | `sdl2-pc-03-cytation.<tailnet>` (deployed + verified 2026-08-11; one per device PC as rolled out) |
 | `fume_hood_actuator`      | `fume-hood`    | 5000 | —                                         | `fume-hood-pc.<tailnet>` |
 | `filter_every_well`       | `press`        | 8000 | —                                         | `press-pc.<tailnet>` |
 | `dose_every_well`         | `solid-doser`  | 8000 | —                                         | `solid-doser-pc.<tailnet>` |

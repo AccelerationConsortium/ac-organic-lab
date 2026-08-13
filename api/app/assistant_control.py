@@ -173,7 +173,7 @@ def _passthrough_action(sd: SkillDef) -> str:
 # * **Operator-only argument fields** (:data:`_FORBIDDEN_ARG_FIELDS`). A field
 #   that weakens an interlock or carries a credential is never model-settable:
 #   ``pick_up_tip.force`` overrides the gateway's cross-contamination guard
-#   (AGENT_RULES: never weaken an interlock at any layer),
+#   (AGENTIC_LAB_DESIGN.md §1.2: never weaken an interlock at any layer),
 #   ``move_to.force_direct`` opts out of the arced collision-safe path, and
 #   ``startup.password`` / ``host_alias`` are the gateway's to supply from its
 #   own service env — a model-supplied secret would render on the confirm card

@@ -17,9 +17,11 @@ Agents reference them; they do not restate, reinterpret, or work around them.
 If a working convention here ever conflicts with them, the contract wins — stop
 and flag the conflict.
 
-- **`docs/AGENT_RULES.md`** — canonical lab-wide operating rules: safety and
-  hardware, records and data integrity, protocols and change control, chemicals,
-  escalation. This is the "lab contract." Nothing may weaken a rule in it.
+- **`docs/AGENTIC_LAB_DESIGN.md` (Part I)** — canonical lab-wide operating
+  rules: safety and hardware, records and data integrity, protocols and change
+  control, chemicals, escalation. This is the "lab contract." Nothing may
+  weaken a rule in it. (Part II of the same file records the deployed
+  agent-ops layer; it is descriptive, not binding.)
 - **`docs/STATUS_SPEC.md`** — the authoritative device contract (v1.0 status
   envelope + v1.1 cooperative claims / `allowed_actions`). Every device I/O path
   conforms to it.
@@ -110,8 +112,8 @@ agents stay on the same page.
 - **`CLAUDE.md`** — Claude-Code-specific only: slash commands, the Claude memory
   directory, Claude Code behavior. Other agents keep their own equivalent files.
   Nothing another agent needs belongs here.
-- **`docs/AGENT_RULES.md`** — the binding contract; only changes when a human
-  explicitly asks. Never edit it to smooth over a working problem.
+- **`docs/AGENTIC_LAB_DESIGN.md` Part I** — the binding contract; only changes
+  when a human explicitly asks. Never edit it to smooth over a working problem.
 - **Cross-repo / MacBook-wide facts** (repo roles, stable machine setup, durable
   personal preferences) belong in the **agent's global memory** (Hermes memory,
   Codex `~/.codex/memories/`, Claude user memory) — *proposed for approval*,
@@ -134,8 +136,9 @@ Every other repo in this workspace is based on this pattern, layered:
 1. **This repo's `AGENTS.md` + `CLAUDE.md`** — the canonical base. Other repos
    start from these files and keep the structure.
 2. **The repo's own root files** — its `AGENTS.md` (repo-specific conventions),
-   its `AGENT_RULES.md` (links back to the canonical `docs/AGENT_RULES.md` here
-   and adds project rules — see `organic-hte-template/AGENT_RULES.md`), and a
+   its `AGENT_RULES.md` (links back to the canonical rules in
+   `docs/AGENTIC_LAB_DESIGN.md` Part I here and adds project rules — see
+   `organic-hte-template/AGENT_RULES.md`), and a
    thin `CLAUDE.md`.
 
 A repo file may add specifics; it may never weaken the binding contract or a

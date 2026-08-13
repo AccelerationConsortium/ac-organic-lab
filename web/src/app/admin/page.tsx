@@ -707,6 +707,7 @@ export default function AdminPage() {
 
         {/* ---- API keys ------------------------------------------------------ */}
         <Tile
+          wide
           title="API keys"
           sub="How automation accounts authenticate (X-Api-Key; humans use sessions instead). last_used_at separates dead keys from load-bearing ones."
         >
