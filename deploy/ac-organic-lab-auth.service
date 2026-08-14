@@ -1,39 +1,88 @@
+# This file is the unit as DEPLOYED, not an aspiration. It previously described
+# a /opt/ac-organic-lab install running as a dedicated `ac` user — a layout that
+# does not exist on the dashboard host and never has, so installing it would
+# have broken the service. Companion to the same fix for the API unit.
+#
+# The paths below are this host's (repo under /home/sdl2/caoyang). A different
+# layout means changing User/Group, WorkingDirectory, EnvironmentFile, ExecStart
+# and ReadWritePaths together — and relaxing ProtectHome only as far as the
+# checkout's location actually requires.
+#
+# Note production dropped `Requires=tailscaled.service` and kept
+# `After=tailscaled.service`. That is correct and worth preserving: `After=`
+# orders the start so the tailnet IP exists before `--host 100.64.254.6` binds,
+# without `Requires=`'s stop-cascade, which would take this sidecar down with
+# tailscaled on every Tailscale restart or update. Same failure mode that cost
+# 12.5 h on a device PC via SCM `DependOnService` (DEVICE_PC_SETUP §6).
 [Unit]
-Description=AC Organic Lab - Auth sidecar (ac_auth: email-code login + roster authz)
-# Binds the host's Tailscale IP, so the IP must exist before bind.
+Description=AC Organic Self-driving Lab Auth sidecar (email-code login)
+Documentation=https://github.com/AccelerationConsortium/ac-organic-lab
 After=network-online.target tailscaled.service
 Wants=network-online.target
-Requires=tailscaled.service
 
 [Service]
 Type=simple
 User=sdl2
-WorkingDirectory=/opt/ac-organic-lab/auth
-EnvironmentFile=-/opt/ac-organic-lab/.env
-# Dashboard is plain http over the Tailnet; flip to true once real TLS fronts it.
+Group=sdl2
+WorkingDirectory=/home/sdl2/caoyang/ac-organic-lab/auth
+# Optional `.env` at the repo root (shared with the api unit).
+EnvironmentFile=-/home/sdl2/caoyang/ac-organic-lab/.env
+
+# The dashboard is served over plain HTTP on the Tailnet (no TLS / no Caddy on
+# this host), so the session cookie must NOT be Secure or the browser drops it.
+# Flip to true only if the edge ever terminates TLS.
 Environment=AUTH_COOKIE_SECURE=false
+
+# Uses the shared uv-workspace venv at the repo root; `ac_auth` is an editable
+# install on sys.path, so `ac_auth.main:app` resolves from any cwd. DB +
+# Gmail credentials live under ~/.ac_auth (provisioned via ac_auth.cli /
+# ac_auth.setup_gmail); see ReadWritePaths below.
+#
+# Binds the Tailscale interface IP (NOT 127.0.0.1 like the api unit): the
+# device plane (e.g. agilent_uplc_ms @ 100.64.254.19) polls the roster
+# endpoint directly over the Tailnet, so loopback would be unreachable. The
+# tailscale0 address is the intended device-plane boundary (Tailnet-only, no
+# other interfaces). After=tailscaled.service ensures the IP exists at bind.
 # Fail closed: validate roster.yaml before (re)starting. A broken allow-list
-# aborts the start (the running instance keeps serving) rather than booting
-# with a bad/empty list.
-ExecStartPre=/opt/ac-organic-lab/.venv/bin/python -m ac_auth.cli validate
-# Bind the host's Tailscale IP, NOT loopback: the Next.js middleware calls
-# /auth/verify on it, and a remote Caddy forward_auth must reach it over the
-# Tailnet (see deploy/Caddyfile.auth-snippet). Adjust the IP per host.
-ExecStart=/opt/ac-organic-lab/.venv/bin/uvicorn ac_auth.main:app \
+# aborts the start (the service keeps running its previous instance) rather than
+# booting with a bad/empty list. Exit non-zero here blocks ExecStart.
+ExecStartPre=/home/sdl2/caoyang/ac-organic-lab/.venv/bin/python -m ac_auth.cli validate
+
+ExecStart=/home/sdl2/caoyang/ac-organic-lab/.venv/bin/uvicorn ac_auth.main:app \
     --host 100.64.254.6 \
     --port 8009 \
     --no-server-header \
     --log-level info
-# `systemctl reload` → SIGHUP → keep-last-good roster hot-reload.
+
+# `systemctl reload` → SIGHUP → hot-reload roster.yaml (keep-last-good on any
+# validation/mass-change failure; never drops to a broken list).
 ExecReload=/bin/kill -HUP $MAINPID
+
 Restart=on-failure
 RestartSec=3
-SyslogIdentifier=ac-organic-lab-auth
+TimeoutStopSec=10
 
+# Logging
+SyslogIdentifier=ac-organic-lab-auth
+StandardOutput=journal
+StandardError=journal
+
+# Sandboxing - relaxed from canonical because the repo lives under /home.
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
+# 'read-only' lets us read the repo + venv under /home; the RW carve-outs below
+# re-open exactly the dirs that need writes (bytecode caches + the auth DB dir).
+ProtectHome=read-only
 PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# auth/ for __pycache__ (editable install); ~/.ac_auth for the SQLite DB writes
+# (credentials.env is only read, which read-only home already permits).
+ReadWritePaths=/home/sdl2/caoyang/ac-organic-lab/auth /home/sdl2/.ac_auth
 
 [Install]
 WantedBy=multi-user.target
