@@ -435,8 +435,9 @@ Open:
   simulator** 2026-07-30 during the e0fc768 verification; only the
   real-arm repeat remains.)
 - [x] **Skill-name reconciliation** — **resolved device-side 2026-08-13**
-  (xarm-translocation, unreleased on branch
-  `feat/detect-box-simulation-mode`; deploy pending). The device now
+  (xarm-translocation commit ef540fe; merged to `main` 2026-08-14 and
+  **live on the device** — the service restarted on the new build, route
+  probe confirms it, see the `stop` item below). The device now
   advertises the catalog names `graph.{move_to,gripper,recover_to,record,
   mode}` in `allowed_actions` — which is what STATUS_SPEC's "skill names
   matching `Skill.name`" always asked for — so `lab.skills()` computes
@@ -450,7 +451,9 @@ Open:
   `gripper.<state>` enumeration **stays** — it is the device-authoritative
   "which targets are legal right now" signal the assistant's per-hop
   proposals are built on — so the UI_DESIGN §5.3 resolver bridge remains
-  in place and unchanged.
+  in place and unchanged. One wire check still open: at deploy time the
+  arm was `requires_init` (only `connect` advertised), so the `graph.*`
+  names in `allowed_actions` await an arm-connected `/status` read.
 - [ ] **Dashboard graph controls**: `RobotArmTile` still shows only the
   read-only three-row summary + deep-link; surface the `graph.*` actions
   through the audited passthrough.
@@ -468,7 +471,11 @@ Open:
   **`POST /control/clear_errors`** onto the same login-gated handlers, so
   the URL a generic STATUS_SPEC client composes from the advertised action
   names resolves instead of 404ing. The advertised `connect` is deliberately
-  not aliased (`do_not_call_connect`). Deploy pending with the item above.
+  not aliased (`do_not_call_connect`). **Deployed and verified live
+  2026-08-14**: `feat/detect-box-simulation-mode` fast-forwarded into
+  `main` (4a583bf) and the running service answers `GET /control/stop` /
+  `/control/clear_errors` with 405 (POST-only route exists) — a
+  side-effect-free probe an old build would 404.
 - [ ] Device-repo doc rot (same verification): `README.md` points at
   `src/docker/docker_setup.sh` (does not exist); `src/docs/PYXARM_TESTING.md`
   still documents the removed in-process `simulation_mode=True` path.
