@@ -14,7 +14,9 @@ into a permanently silent "record write failed".
 
 from __future__ import annotations
 
+import functools
 import json
+import os
 
 import httpx
 import pytest
@@ -176,28 +178,62 @@ async def test_a_url_without_a_secret_stays_off(monkeypatch):
 # matter — would be rejected 422 and lost.
 
 
-ADB_NOTE_KINDS = {"observation", "event", "deviation", "comment"}
+#: The enum as of 2026-08-13, used when AnaliticaDB is unreachable (CI, a dev
+#: laptop) so these tests never depend on the network. `adb_note_kinds` prefers
+#: the live spec, because a literal typed here is a snapshot that drifts — and
+#: the failure it would hide is a note being rejected and a step's failure
+#: record silently lost.
+FALLBACK_NOTE_KINDS = frozenset({"observation", "event", "deviation", "comment"})
+
+
+@functools.lru_cache(maxsize=1)
+def _live_note_kinds() -> frozenset[str] | None:
+    """`NoteCreate.kind`'s enum, read from AnaliticaDB's own OpenAPI.
+
+    `None` when the record layer is not configured or not reachable — the
+    caller falls back. Never raises: an offline test run must still be a test
+    run, just a slightly weaker one.
+    """
+    base = (os.environ.get("ANALITICADB_URL") or "").rstrip("/")
+    if not base:
+        return None
+    try:
+        spec = httpx.get(f"{base}/openapi.json", timeout=3.0).raise_for_status().json()
+        comp = spec["components"]["schemas"]
+        body = spec["paths"]["/notes"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        note = comp[body["$ref"].split("/")[-1]] if "$ref" in body else body
+        kind = note["properties"]["kind"]
+        kind = comp[kind["$ref"].split("/")[-1]] if "$ref" in kind else kind
+        return frozenset(kind["enum"]) or None
+    except Exception:
+        return None
+
+
+@pytest.fixture(scope="session")
+def adb_note_kinds() -> frozenset[str]:
+    """What the record layer actually accepts — live when we can reach it."""
+    return _live_note_kinds() or FALLBACK_NOTE_KINDS
 
 
 class TestNoteKindTranslation:
 
-    def test_every_executor_kind_maps_into_the_record_layer_enum(self):
+    def test_every_executor_kind_maps_into_the_record_layer_enum(self, adb_note_kinds):
         from app.record import NOTE_KIND
         for reported, mapped in NOTE_KIND.items():
-            assert mapped in ADB_NOTE_KINDS, f"{reported} -> {mapped} would 422"
+            assert mapped in adb_note_kinds, f"{reported} -> {mapped} would 422"
 
-    def test_an_unmapped_kind_still_lands_somewhere_valid(self):
+    def test_an_unmapped_kind_still_lands_somewhere_valid(self, adb_note_kinds):
         """A new executor kind must degrade to a valid enum value, never be
         posted verbatim and rejected."""
         out = rec.note_for_record({"kind": "something_new", "body": "b"})
-        assert out["kind"] in ADB_NOTE_KINDS
+        assert out["kind"] in adb_note_kinds
 
-    def test_an_unanswered_step_is_never_filed_as_a_deviation(self):
+    def test_an_unanswered_step_is_never_filed_as_a_deviation(self, adb_note_kinds):
         """`notes_from` is explicit: a note reading "deviation" invites someone
         to re-run a step that may already have moved liquid."""
         out = rec.note_for_record({"kind": "outcome_unknown", "body": "no answer"})
         assert out["kind"] != "deviation"
-        assert out["kind"] in ADB_NOTE_KINDS
+        assert out["kind"] in adb_note_kinds
 
     def test_the_executors_own_word_survives_the_translation(self):
         out = rec.note_for_record({"kind": "device_fault", "body": "stalled",
@@ -205,3 +241,22 @@ class TestNoteKindTranslation:
         assert out["kind"] == "deviation"
         assert out["data"]["kind_reported"] == "device_fault"
         assert out["data"]["status"] == "failed", "existing data is preserved"
+
+
+def test_the_offline_fallback_still_matches_the_live_enum(adb_note_kinds):
+    """Keep the snapshot honest.
+
+    Only meaningful where AnaliticaDB is reachable (the lab host); elsewhere the
+    fixture *is* the fallback and this is a tautology. It fails loudly rather
+    than warns because a stale literal makes every other test in this class
+    weaker without saying so.
+    """
+    live = _live_note_kinds()
+    if live is None:
+        pytest.skip("AnaliticaDB unreachable — nothing to compare the snapshot against")
+    assert live == FALLBACK_NOTE_KINDS, (
+        f"AnaliticaDB's NoteKind enum changed: live={sorted(live)}, "
+        f"FALLBACK_NOTE_KINDS={sorted(FALLBACK_NOTE_KINDS)}. Update the literal, "
+        "and check app.record.NOTE_KIND still maps into it."
+    )
+
