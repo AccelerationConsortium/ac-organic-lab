@@ -210,11 +210,12 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       actionError={actionError}
       bannerExtra={
         <>
-          {/* ON/OFF toggle: grey OFF → connect; green ON → confirm → disconnect.
-              Disconnect is disabled while the arm is moving. */}
+          {/* ON/INIT toggle: INIT (primary, grey dot) → connect; green ON →
+              confirm → disconnect. Disconnect is disabled while the arm is
+              moving. Same presentation as TileShell's lifecycle `initLabel`. */}
           <div className="relative">
             <TileButton
-              variant={isConnected ? "primary" : "default"}
+              variant="primary"
               disabled={ctrlBlocked || (isConnected && isBusy)}
               onClick={onToggle}
               title={
@@ -236,7 +237,7 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
                 ].join(" ")}
                 aria-hidden
               />
-              {isConnected ? "ON" : "OFF"}
+              {isConnected ? "ON" : "INIT"}
             </TileButton>
             {confirmOff && (
               <div className="absolute left-0 top-full z-20 mt-1 w-44 rounded-md border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">

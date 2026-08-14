@@ -109,6 +109,17 @@ export interface TileShellProps {
     offLabel?: string;
     stopLabel?: string;
     /**
+     * When set, the off-state toggle renders as an explicit initialize
+     * call-to-action: `primary` emphasis + this label (typically "INIT")
+     * instead of the muted "OFF" chip — the affordance operators actually
+     * look for on a `requires_init` tile. The click handler is unchanged
+     * (`onPowerToggle` still fires); the state dot stays grey so the
+     * off state remains legible. Opt in on tiles whose off state means
+     * "needs startup/connect"; leave unset where off is literal power
+     * (power strips), so their OFF chip stays honest.
+     */
+    initLabel?: string;
+    /**
      * When set, clicking the toggle in the ON→off direction opens a small
      * confirm popover with this question (e.g. "Switch all outlets off?")
      * before `onPowerToggle` fires — for tiles whose "off" is destructive
@@ -222,10 +233,14 @@ export function TileShell({
               <TileButton
                 onClick={handlePowerClick}
                 disabled={lifecycle.disabled}
-                variant={lifecycle.isOn ? "primary" : "default"}
+                variant={
+                  lifecycle.isOn || lifecycle.initLabel ? "primary" : "default"
+                }
                 title={lifecycle.powerTitle}
               >
-                {/* State dot + ON/OFF label, matching the xArm5 toggle. */}
+                {/* State dot + ON/OFF label, matching the xArm5 toggle.
+                    With `initLabel`, the off state reads as an INIT button
+                    (primary emphasis, grey dot) instead of a muted OFF. */}
                 <span
                   className={[
                     "mr-1 inline-block h-2 w-2 rounded-full",
@@ -237,7 +252,7 @@ export function TileShell({
                 />
                 {lifecycle.isOn
                   ? (lifecycle.onLabel ?? "ON")
-                  : (lifecycle.offLabel ?? "OFF")}
+                  : (lifecycle.initLabel ?? lifecycle.offLabel ?? "OFF")}
               </TileButton>
               {confirmOff && (
                 <div className="absolute left-0 top-full z-20 mt-1 w-44 rounded-md border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">

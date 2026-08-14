@@ -301,6 +301,7 @@ export function ShakerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         // ON toggles startup/shutdown; STOP is the halt (shake.stop aborts
         // the running cycle — motor + heating — without disconnecting).
         isOn: !isRequiresInit,
+        initLabel: "INIT",
         onPowerToggle: () =>
           isRequiresInit
             ? exec(() => postShakerStartup(snapshot.id))

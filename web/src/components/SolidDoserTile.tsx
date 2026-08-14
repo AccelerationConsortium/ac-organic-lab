@@ -217,6 +217,7 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         // endpoint, and per the template contract STOP must never alias a
         // shutdown/disconnect.
         isOn: !isRequiresInit,
+        initLabel: "INIT",
         onPowerToggle: () =>
           isRequiresInit
             ? exec("startup", () => postDoserStartup(snapshot.id))

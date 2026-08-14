@@ -472,6 +472,7 @@ export function PlateSealerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         // ON toggles startup/shutdown; STOP is the halt (seal.stop aborts the
         // seal cycle — always available, never a disconnect).
         isOn: !isRequiresInit,
+        initLabel: "INIT",
         onPowerToggle: () =>
           isRequiresInit
             ? exec(() => postSealerStartup(snapshot.id), { action: "startup" })

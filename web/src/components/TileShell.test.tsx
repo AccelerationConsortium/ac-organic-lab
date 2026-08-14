@@ -97,3 +97,69 @@ describe("TileShell status presentation", () => {
     ).toBeTruthy();
   });
 });
+
+const requiresInitSnapshot = {
+  ...degradedSnapshot,
+  status: {
+    ...degradedSnapshot.status,
+    equipment_status: "requires_init",
+    required_actions: ["startup"],
+    components: {},
+  },
+} as unknown as EquipmentSnapshot;
+
+describe("TileShell lifecycle INIT affordance", () => {
+  it("renders the off-state toggle as an INIT button when initLabel is set", () => {
+    const onPowerToggle = vi.fn();
+    render(
+      <TileShell
+        snapshot={requiresInitSnapshot}
+        headerRight={null}
+        lifecycle={{ isOn: false, initLabel: "INIT", onPowerToggle }}
+      >
+        <div>Tile body</div>
+      </TileShell>,
+    );
+
+    const init = screen.getByRole("button", { name: /INIT/ });
+    // Primary (call-to-action) emphasis, not the muted OFF chip.
+    expect(init.className).toContain("emerald");
+    fireEvent.click(init);
+    expect(onPowerToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the muted OFF chip when no initLabel is given (literal power)", () => {
+    render(
+      <TileShell
+        snapshot={requiresInitSnapshot}
+        headerRight={null}
+        lifecycle={{ isOn: false, onPowerToggle: vi.fn() }}
+      >
+        <div>Tile body</div>
+      </TileShell>,
+    );
+
+    const off = screen.getByRole("button", { name: /OFF/ });
+    expect(off.className).not.toContain("emerald");
+  });
+
+  it("shows ON while running even when initLabel is set", () => {
+    render(
+      <TileShell
+        snapshot={degradedSnapshot}
+        headerRight={null}
+        lifecycle={{ isOn: true, initLabel: "INIT", onPowerToggle: vi.fn() }}
+      >
+        <div>Tile body</div>
+      </TileShell>,
+    );
+
+    expect(screen.getByRole("button", { name: /ON/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /INIT/ })).toBeNull();
+  });
+
+  it("surfaces INIT on a requires_init shaker tile end-to-end", () => {
+    render(<ShakerTile snapshot={requiresInitSnapshot} />);
+    expect(screen.getByRole("button", { name: /INIT/ })).toBeTruthy();
+  });
+});

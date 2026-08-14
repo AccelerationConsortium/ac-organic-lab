@@ -170,6 +170,7 @@ export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) 
         // halt/abort endpoint (per the template contract STOP must never
         // alias a shutdown).
         isOn: deviceOn,
+        initLabel: "INIT",
         onPowerToggle: () =>
           deviceOn
             ? exec(() => postStackerShutdown(snapshot.id))

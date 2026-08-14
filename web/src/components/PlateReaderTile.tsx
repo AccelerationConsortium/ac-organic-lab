@@ -98,6 +98,7 @@ export function PlateReaderTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       actionError={actionError}
       lifecycle={{
         isOn: deviceOn,
+        initLabel: "INIT",
         onPowerToggle: () =>
           deviceOn
             ? runControl("shutdown", () => postPlateReaderShutdown(snapshot.id))

@@ -292,6 +292,7 @@ export function HplcTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         // deliberate manual procedure, not an API action). STOP halts the
         // current acquisition (run.abort).
         isOn: deviceOn,
+        initLabel: "INIT",
         onPowerToggle: () =>
           deviceOn
             ? runControl("instrument.standby", () => postHplcStandby(snapshot.id))

@@ -80,6 +80,7 @@ export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         // (de-energise valves; re-startup required). STOP doubles as the halt
         // — same endpoint, kept separate for the standardized banner shape.
         isOn: !isRequiresInit,
+        initLabel: "INIT",
         onPowerToggle: () =>
           isRequiresInit
             ? exec(() => postPressInit(snapshot.id))
