@@ -107,6 +107,48 @@ async def test_an_existing_experiment_is_reused_not_recreated():
     assert not created.called, "reused the campaign's Experiment, so none is created"
 
 
+@respx.mock
+@pytest.mark.anyio
+async def test_the_runs_project_scope_rides_every_call():
+    """AnaliticaDB's can_read filter reduces a caller without X-Auth-Projects
+    to an empty scope — the ensure-GET then reads [] even when the campaign's
+    Experiment exists, the create 409s, and the record is lost. The first live
+    dry-run (ra_67f32cb0920b4a41, 2026-08-14) failed exactly this way."""
+    get = respx.get(f"{BASE}/experiments").mock(return_value=httpx.Response(200, json=[]))
+    exp = respx.post(f"{BASE}/experiments").mock(
+        return_value=httpx.Response(200, json={"experiment_id": "exp-1"}))
+    plan = respx.post(f"{BASE}/plans").mock(
+        return_value=httpx.Response(200, json={"plan_id": "plan-1"}))
+    note = respx.post(f"{BASE}/notes").mock(return_value=httpx.Response(200, json={"note_id": "n1"}))
+
+    await RunRecorder(BASE, "s").write(
+        plan=PLAN, notes=NOTES, design_ref=None,
+        operator="me@lab", started_at="2026-08-13T00:00:00Z")
+
+    for route in (get, exp, plan, note):
+        assert route.calls[0].request.headers["X-Auth-Projects"] == "chanlam"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_invisible_existing_experiment_is_named_not_crashed_into():
+    """409 proves the Experiment exists; an empty re-read means this caller
+    cannot see it. That must surface as a scope/visibility error — the first
+    draft indexed the empty list and reported 'list indices must be integers
+    or slices, not str', which names neither the row nor the cause."""
+    respx.get(f"{BASE}/experiments").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{BASE}/experiments").mock(
+        return_value=httpx.Response(409, json={"detail": "exists"}))
+
+    out = await RunRecorder(BASE, "s").write(
+        plan=PLAN, notes=NOTES, design_ref=None,
+        operator="me@lab", started_at="2026-08-13T00:00:00Z")
+
+    assert out["written"] is False
+    assert "not readable" in out["error"] and "plate-1" in out["error"]
+    assert out["notes_pending"] == 1
+
+
 # ── property 1: a failed write is never a failed run ───────────────────
 
 

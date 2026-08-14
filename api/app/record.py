@@ -134,9 +134,20 @@ class RunRecorder:
         self._base_url = base_url.rstrip("/")
         self._secret = secret
         self._timeout = timeout
+        self._project = ""
 
     def _headers(self, user: str) -> dict[str, str]:
-        return {"X-Edge-Secret": self._secret, "X-Auth-User": user}
+        # X-Auth-Projects is load-bearing, not decoration: AnaliticaDB's
+        # can_read row filter reduces a caller without it to an EMPTY scope, so
+        # the ensure-GET reads [] even when the campaign's Experiment exists —
+        # then the create 409s and the run's record is lost. The executor
+        # asserts exactly the authorized run's own project (never a role, never
+        # PI scope): membership was established when a human authorized the
+        # run against that project. HERMES_ACCESS_DESIGN §2.1.
+        h = {"X-Edge-Secret": self._secret, "X-Auth-User": user}
+        if self._project:
+            h["X-Auth-Projects"] = self._project
+        return h
 
     async def _ensure_experiment(
         self, client: httpx.AsyncClient, *, project: str, hid: str,
@@ -170,8 +181,14 @@ class RunRecorder:
                                  params={"project": project, "hid": hid})
             r.raise_for_status()
             rows = r.json()
-            if rows:
-                return str(rows[0]["experiment_id"])
+            if not rows:
+                # The 409 proves the row exists; an empty re-read means this
+                # caller cannot SEE it — a scope/visibility gap, and indexing
+                # the empty list would crash with a message that names neither.
+                raise RuntimeError(
+                    f"experiment {hid!r} exists (409) but is not readable "
+                    f"with project scope {self._project!r} — can_read hides it")
+            return str(rows[0]["experiment_id"])
         r.raise_for_status()
         return str(r.json()["experiment_id"])
 
@@ -185,6 +202,7 @@ class RunRecorder:
         individually so one rejected note cannot cost the others.
         """
         project = plan.get("project") or ""
+        self._project = project
         protocol_path = plan.get("protocol_path") or ""
         hid = experiment_hid(design_ref=design_ref, protocol_path=protocol_path)
         commit = (plan.get("source_commit") or "")[:7]
