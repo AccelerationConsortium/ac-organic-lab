@@ -277,6 +277,58 @@ the operator to the dashboard assistant (for "what happened" questions) or
 the ELN agent (for multi-device work). The dashboard assistant likewise
 points at the ELN agent for anything requiring actuation or planning.
 
+### 2.5 Review-click convention — when one click, when two
+
+**Decision recorded 2026-08-13.** Assistant surfaces across the lab use two
+execution shapes, and the choice between them is a rule, not per-surface
+taste. What is uniform is the **vocabulary and the meaning of each click**;
+the *number* of clicks follows from what the server stores.
+
+- **Propose → confirm card → Authorize (one click).** For a **single
+  immediate action** executed while the operator watches, under a live or
+  per-request claim. The proposal object is the review artifact: validated
+  server-side, one action per card (no batches, no sequences — §5.3),
+  expiring, and re-validated at click time; the device's 412/423 is the
+  backstop. Authorize *is* the execution moment. Surfaces: the dashboard
+  bubble's Control mode (§5.3), the xArm panel assistant.
+
+- **Propose → Approve → Run (two clicks).** For a **stored multi-step
+  plan**. Approve pins *what*: it sends the content hash of exactly the
+  steps rendered, so a plan revised elsewhere 409s. Run decides *when*:
+  approvals expire, an approved plan can be non-executable
+  (`blocked_reason`), and the gap between the clicks is where physical
+  staging happens (labware on deck, tips loaded). Surfaces: the OT-2
+  gateway's plan store; the platform's workflow executor is the same shape
+  at campaign scale (bitácora run authorization → `execute_plan`).
+
+Two rules fall out, one in each direction:
+
+1. **Approve is only real when the reviewed artifact lives server-side** —
+   with a content hash, an expiry, and an executable re-check at run time.
+   Two buttons over client-held state pin nothing and survive nothing: that
+   is review theater, and it is not an acceptable middle state. A surface
+   without a plan store uses the one-click shape.
+2. **Never add a second click to a single, immediate, stoppable action.**
+   Friction must stay proportional to risk: when everything takes two
+   clicks, operators stop reading and double-click reflexively, which
+   erodes the review property exactly where it matters. This is why the
+   dashboard bubble stays one-click *by design* — its proposals are capped
+   at one action per card, and anything that outgrows consecutive single
+   cards is `execute_plan`'s job (§5.3b), which already carries the
+   two-step at the right altitude.
+
+**Graduation path.** When a surface's proposals grow into sequences, do not
+add clicks in place — give the device a plan store (the OT-2 gateway's
+`plans.py` is the reference: draft/approved/executing states, `step_hash`,
+approval expiry, executable re-check) or route through
+`execute_plan`/workflow authorization. **Watch item: the xArm panel
+assistant** — its proposals are becoming multi-hop pick/place sequences
+with gripper actions (dropping a plate is not reversible), which is the
+two-click profile. The port is mechanical if it comes due: a device-side
+plan object holding the resolved hop list with hash + expiry; Approve pins
+it; Run executes hop-by-hop under the operator's claim with the existing
+per-hop state re-checks; `/move/stop` stays the untouched safety floor.
+
 ### See also (embedded assistants)
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) decisions #7 and #10 — the two MCP
