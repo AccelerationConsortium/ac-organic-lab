@@ -1,3 +1,15 @@
+# This file is the unit as DEPLOYED, not an aspiration. It previously described
+# a /opt/ac-organic-lab install running as a dedicated `ac` user — a layout that
+# does not exist on the dashboard host and never has. Installing it would have
+# pointed the service at a missing directory and a missing user, i.e. broken the
+# dashboard; and `ProtectHome=true` alone would have prevented it from starting
+# from a checkout under /home at all.
+#
+# The paths below are this host's (repo under /home/sdl2/caoyang). Deploying to a
+# different layout means changing User/Group, WorkingDirectory, EnvironmentFile,
+# ExecStart and ReadWritePaths together — and relaxing ProtectHome only as far as
+# the checkout's location actually requires.
+
 [Unit]
 Description=AC Organic Self-driving Lab API (FastAPI aggregator)
 Documentation=https://github.com/AccelerationConsortium/ac-organic-lab
@@ -6,11 +18,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=ac
-Group=ac
-WorkingDirectory=/opt/ac-organic-lab/api
+User=sdl2
+Group=sdl2
+WorkingDirectory=/home/sdl2/caoyang/ac-organic-lab/api
 # Optional `.env` at the repo root; not required for v1 (read-only).
-EnvironmentFile=-/opt/ac-organic-lab/.env
+EnvironmentFile=-/home/sdl2/caoyang/ac-organic-lab/.env
 
 # Reads ../equipment.yaml relative to WorkingDirectory unless LAB_REGISTRY_PATH
 # is set in the EnvironmentFile.
@@ -18,7 +30,7 @@ EnvironmentFile=-/opt/ac-organic-lab/.env
 # Uses the shared uv-workspace venv at the repo root (see root pyproject.toml).
 # The editable install of `ac-organic-lab-dashboard-api` exposes top-level `app`
 # on sys.path, so `app.main:app` resolves regardless of WorkingDirectory.
-ExecStart=/opt/ac-organic-lab/.venv/bin/uvicorn app.main:app \
+ExecStart=/home/sdl2/caoyang/ac-organic-lab/.venv/bin/uvicorn app.main:app \
     --host 127.0.0.1 \
     --port 8001 \
     --no-server-header \
@@ -36,12 +48,12 @@ StandardError=journal
 # Resources
 LimitNOFILE=65536
 
-# Basic systemd sandboxing. These are safe for a Python FastAPI process
-# that only makes outbound HTTP to the tailnet and reads a YAML file from
-# WorkingDirectory.
+# Sandboxing - relaxed from canonical because the repo lives under /home.
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
+# 'read-only' (instead of 'true') still blocks writes to /home/* but lets
+# us read the repo and venv that live there. Tighter than off, looser than true.
+ProtectHome=read-only
 PrivateTmp=true
 PrivateDevices=true
 ProtectKernelTunables=true
@@ -49,10 +61,11 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
-# Allow writing only to the python bytecode cache dirs under the repo.
+# Allow writing only to the python bytecode cache dirs under the repo and
+# the SQLite database directory.
 # Both `api/` and `skills/` are needed because both are editable installs in
 # the shared workspace venv, and CPython writes __pycache__/ next to source.
-ReadWritePaths=/opt/ac-organic-lab/api /opt/ac-organic-lab/skills /opt/ac-organic-lab/data
+ReadWritePaths=/home/sdl2/caoyang/ac-organic-lab/api /home/sdl2/caoyang/ac-organic-lab/skills /home/sdl2/caoyang/ac-organic-lab/data
 
 [Install]
 WantedBy=multi-user.target
