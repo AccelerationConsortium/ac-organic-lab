@@ -19,6 +19,16 @@ so the SDK never auto-connects: control requires the arm to be connected
 first (the device returns 409/400 "connect first" otherwise), and
 ``status.allowed_actions`` drives runtime availability once it is. The
 ``requires_states`` below are the v1.0-style fallback.
+
+Since 2026-08-13 the device advertises these catalog names verbatim in
+``allowed_actions`` (gated per endpoint: ``graph.move_to`` /
+``graph.gripper`` need at least one whitelisted target in STRICT mode,
+``graph.record`` needs a real last transition, ``graph.recover_to`` /
+``graph.mode`` need a loaded graph), so ``lab.skills()`` availability
+works with no name mapping. Its finer-grained ``move.<node_id>`` /
+``gripper.<state>`` enumeration is advertised *alongside* — those are
+device-authoritative per-target availability, consumed by the dashboard
+assistant's per-hop proposals, and deliberately not SkillDefs here.
 """
 
 from __future__ import annotations

@@ -931,6 +931,16 @@ string arg drawn from a list the device publishes, no interlock-override or
 credential field (so `_FORBIDDEN_ARG_FIELDS` gains nothing), and the device
 refuses it outright unless the arm is parked at a pinned node in STRICT mode.
 
+> **Follow-up (2026-08-13, ROADMAP skill-name reconciliation):** the device
+> now *also* advertises the catalog family names
+> (`graph.{move_to,gripper,recover_to,record,mode}`) in `allowed_actions`, so
+> `lab.skills()` computes `robot_arm` availability without any bridging. The
+> per-target `move.<node_id>` / `gripper.<state>` names stay, and the resolver
+> bridge above stays with them — the target-in-the-name form is what makes a
+> proposal card refusal-proof, which a bare family name cannot be. The family
+> names surface in `list_available_actions` as `proposable: false` rows; that
+> is correct, not a gap.
+
 ### 5.4 What control mode does *not* change
 
 - **The tier-2 trust level (§2.2).** No tool in either mode actuates, so the

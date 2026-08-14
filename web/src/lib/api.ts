@@ -462,9 +462,12 @@ export async function postSashStop(equipmentId: string): Promise<unknown> {
 //
 // connect/disconnect (lifecycle) + move-stop/clear-errors live at the device
 // ROOT (siblings of /status, outside /control/*) and are claim-exempt, so
-// they can't go through controlPost. They ride the dashboard's /device/*
-// proxy (api/app/control.py) — auth + audit, no claim dance. TODO: fold back
-// into controlPost once the device exposes /control/* aliases.
+// they ride the dashboard's /device/* proxy (api/app/control.py) — auth +
+// audit, no claim dance. The device now aliases /control/stop and
+// /control/clear_errors (2026-08-13), but do NOT fold those back into
+// controlPost: the passthrough's claim→action→release dance would let a
+// workflow's held claim block an operator's stop, which the safety floor
+// must never allow. devicePost is the deliberate shape, not a workaround.
 
 function devicePost<TResp = ControlAck>(
   equipmentId: string,

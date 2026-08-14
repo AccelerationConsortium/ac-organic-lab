@@ -434,19 +434,23 @@ Open:
   tokenless move → 423 — was exercised end-to-end **against the Docker
   simulator** 2026-07-30 during the e0fc768 verification; only the
   real-arm repeat remains.)
-- [ ] **Skill-name reconciliation**: the device advertises
-  `allowed_actions` as `connect`/`stop`/`clear_errors`/`move.<node_id>`
-  (graph-derived, STRICT mode only) while the catalog registers
-  `graph.{move_to,gripper,recover_to,record,mode}` — so `lab.skills()`
-  reports every `graph.*` skill unavailable. Rename one side or map in the
-  SDK. **Widened 2026-08-13**: the device now also advertises
-  `gripper.<state>` (one per whitelisted catalog gripper state — it
-  previously advertised no gripper action at all, understating what
-  `/control/graph/gripper` has always honored), and the catalog gained the
-  matching `graph.gripper`. So the mismatch now spans two families, and the
-  assistant's resolver bridges both (UI_DESIGN §5.3 Step 1e) while
-  `lab.skills()` still sees neither. Fixing this one place would close it
-  for both.
+- [x] **Skill-name reconciliation** — **resolved device-side 2026-08-13**
+  (xarm-translocation, unreleased on branch
+  `feat/detect-box-simulation-mode`; deploy pending). The device now
+  advertises the catalog names `graph.{move_to,gripper,recover_to,record,
+  mode}` in `allowed_actions` — which is what STATUS_SPEC's "skill names
+  matching `Skill.name`" always asked for — so `lab.skills()` computes
+  `robot_arm` availability with no SDK-side mapping. Each family name is
+  gated on its endpoint's own state checks (§6.2): `graph.move_to` /
+  `graph.gripper` need ≥1 whitelisted target in STRICT and are advertised
+  unconditionally in ADVISORY/OFF (which honor any target — those modes
+  previously advertised nothing but `stop`); `graph.recover_to` /
+  `graph.mode` need a loaded graph; `graph.record` needs a real
+  (non-simulated) last transition. The per-target `move.<node_id>` /
+  `gripper.<state>` enumeration **stays** — it is the device-authoritative
+  "which targets are legal right now" signal the assistant's per-hop
+  proposals are built on — so the UI_DESIGN §5.3 resolver bridge remains
+  in place and unchanged.
 - [ ] **Dashboard graph controls**: `RobotArmTile` still shows only the
   read-only three-row summary + deep-link; surface the `graph.*` actions
   through the audited passthrough.
@@ -456,11 +460,15 @@ Open:
 - [ ] Run the device repo's Phase 6 hardware verification checklist
   (`src/docs/PHASE6_HARDWARE_VERIFICATION.md`) — needs a human at the
   machine.
-- [ ] **`stop` has no route**: `/status.allowed_actions` advertises `"stop"`
-  and the dashboard composes `POST /control/stop`, but the device implements
-  only `POST /move/stop` → 404 — the dashboard's stop button for this arm
-  cannot work (found during the assistant-control verification, 2026-08-11).
-  Fix device-side (a `/control/stop` alias) or map in `web/src/lib/api.ts`.
+- [x] **`stop` has no route** — **resolved 2026-08-13**, both halves. The
+  dashboard side had already been re-routed (`postArmStop` rides the
+  `/device/*` proxy to `POST /move/stop` — auth + audit, no claim dance,
+  which the safety floor must not have), so the tile works; the device now
+  additionally aliases **`POST /control/stop`** and
+  **`POST /control/clear_errors`** onto the same login-gated handlers, so
+  the URL a generic STATUS_SPEC client composes from the advertised action
+  names resolves instead of 404ing. The advertised `connect` is deliberately
+  not aliased (`do_not_call_connect`). Deploy pending with the item above.
 - [ ] Device-repo doc rot (same verification): `README.md` points at
   `src/docker/docker_setup.sh` (does not exist); `src/docs/PYXARM_TESTING.md`
   still documents the removed in-process `simulation_mode=True` path.
