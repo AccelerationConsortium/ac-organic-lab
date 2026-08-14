@@ -82,6 +82,24 @@ NOTE_KIND = {
 }
 
 
+#: AnaliticaDB's `PlanStatus`. `executing` is never used: the row is written
+#: after the run ends, so it is already terminal by the time we can post it.
+PLAN_STATUS = {"ok": "completed", "not_ok": "abandoned"}
+
+
+def _terminal_status(meta: dict[str, Any]) -> str | None:
+    """The status a finished run's Plan should carry, or None to leave it draft.
+
+    `None` for a dry run — it is a preflight, not an execution, and marking it
+    `completed` would put a run in the catalog that never touched hardware.
+    A run that failed or was aborted did not complete, so it is `abandoned`;
+    the *why* lives in the notes and `meta.ok`, which this never contradicts.
+    """
+    if meta.get("dry_run"):
+        return None
+    return PLAN_STATUS["ok"] if meta.get("ok") else PLAN_STATUS["not_ok"]
+
+
 def note_for_record(note: dict[str, Any]) -> dict[str, Any]:
     """Translate one executor note into a `NoteCreate` the record layer accepts."""
     reported = note.get("kind", "")
@@ -186,6 +204,27 @@ class RunRecorder:
                 r.raise_for_status()
                 plan_id = str(r.json()["plan_id"])
 
+                # A Plan is created `draft`. Left there, every filed run sits in
+                # the catalog as a draft forever — the row says a run happened
+                # while its status says one was never carried out.
+                #
+                # A *dry run* deliberately stays `draft`: it is a preflight, the
+                # plan was never executed, and `completed` would claim otherwise.
+                # `meta.dry_run` already records which it was.
+                status = _terminal_status(plan.get("meta") or {})
+                if status:
+                    try:
+                        rs = await client.post(
+                            f"{self._base_url}/plans/{plan_id}/status",
+                            headers=self._headers(operator), json={"status": status})
+                        rs.raise_for_status()
+                    except Exception as exc:  # noqa: BLE001 — the row is already filed
+                        status_error = str(exc)[:200]
+                    else:
+                        status_error = None
+                else:
+                    status_error = None
+
                 written, failed = 0, []
                 for note in notes:
                     try:
@@ -202,7 +241,9 @@ class RunRecorder:
 
                 return {"written": True, "experiment_id": experiment_id,
                         "plan_id": plan_id, "notes_written": written,
-                        "notes_failed": failed or None}
+                        "notes_failed": failed or None,
+                        "status": status or "draft",
+                        "status_error": status_error}
         except Exception as exc:  # noqa: BLE001 — property 1
             logger.warning("record write failed for %s: %s", protocol_path, exc)
             return {"written": False, "error": str(exc)[:300],

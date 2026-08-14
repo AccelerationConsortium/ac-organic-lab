@@ -186,13 +186,14 @@ async def test_a_url_without_a_secret_stays_off(monkeypatch):
 FALLBACK_NOTE_KINDS = frozenset({"observation", "event", "deviation", "comment"})
 
 
-@functools.lru_cache(maxsize=1)
-def _live_note_kinds() -> frozenset[str] | None:
-    """`NoteCreate.kind`'s enum, read from AnaliticaDB's own OpenAPI.
+@functools.lru_cache(maxsize=2)
+def _live_enum(path: str, prop: str) -> frozenset[str] | None:
+    """An enum from AnaliticaDB's own OpenAPI — the request body of `path`'s
+    POST, property `prop`.
 
-    `None` when the record layer is not configured or not reachable — the
-    caller falls back. Never raises: an offline test run must still be a test
-    run, just a slightly weaker one.
+    `None` when the record layer is not configured or not reachable, so the
+    caller falls back to its literal. Never raises: an offline test run must
+    still be a test run, just a slightly weaker one.
     """
     base = (os.environ.get("ANALITICADB_URL") or "").rstrip("/")
     if not base:
@@ -200,13 +201,19 @@ def _live_note_kinds() -> frozenset[str] | None:
     try:
         spec = httpx.get(f"{base}/openapi.json", timeout=3.0).raise_for_status().json()
         comp = spec["components"]["schemas"]
-        body = spec["paths"]["/notes"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-        note = comp[body["$ref"].split("/")[-1]] if "$ref" in body else body
-        kind = note["properties"]["kind"]
-        kind = comp[kind["$ref"].split("/")[-1]] if "$ref" in kind else kind
-        return frozenset(kind["enum"]) or None
+        deref = lambda x: comp[x["$ref"].split("/")[-1]] if "$ref" in x else x  # noqa: E731
+        body = deref(spec["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"])
+        return frozenset(deref(body["properties"][prop])["enum"]) or None
     except Exception:
         return None
+
+
+def _live_note_kinds() -> frozenset[str] | None:
+    return _live_enum("/notes", "kind")
+
+
+def _live_plan_statuses() -> frozenset[str] | None:
+    return _live_enum("/plans/{plan_id}/status", "status")
 
 
 @pytest.fixture(scope="session")
@@ -258,5 +265,105 @@ def test_the_offline_fallback_still_matches_the_live_enum(adb_note_kinds):
         f"AnaliticaDB's NoteKind enum changed: live={sorted(live)}, "
         f"FALLBACK_NOTE_KINDS={sorted(FALLBACK_NOTE_KINDS)}. Update the literal, "
         "and check app.record.NOTE_KIND still maps into it."
+    )
+
+
+
+# ── plan status: a filed run must not sit in the catalog as a draft ─────
+#
+# AnaliticaDB creates a Plan as `draft`. Left there, every run we file reads as
+# a plan nobody carried out — the row says a run happened, the status says it
+# never did.
+
+
+#: As of 2026-08-13; `adb_plan_statuses` prefers the live spec for the same
+#: reason `adb_note_kinds` does — a literal here is a snapshot that drifts.
+FALLBACK_PLAN_STATUSES = frozenset({"draft", "approved", "executing", "completed", "abandoned"})
+
+
+@pytest.fixture(scope="session")
+def adb_plan_statuses() -> frozenset[str]:
+    return _live_plan_statuses() or FALLBACK_PLAN_STATUSES
+
+
+def _plan_meta(**kw):
+    return {**PLAN, "meta": {"authorization_id": "ra_x", **kw}}
+
+
+class TestPlanStatus:
+
+    def test_every_status_we_post_is_in_the_enum(self, adb_plan_statuses):
+        from app.record import PLAN_STATUS
+        for k, v in PLAN_STATUS.items():
+            assert v in adb_plan_statuses, f"{k} -> {v} would 422"
+
+    def test_a_successful_run_completes(self):
+        assert rec._terminal_status({"ok": True}) == "completed"
+
+    def test_a_failed_or_aborted_run_is_abandoned(self):
+        """It did not complete. The *why* lives in the notes and meta.ok."""
+        assert rec._terminal_status({"ok": False}) == "abandoned"
+
+    def test_a_dry_run_stays_draft(self):
+        """A preflight never touched hardware; `completed` would claim it did."""
+        assert rec._terminal_status({"ok": True, "dry_run": True}) is None
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_real_run_posts_its_terminal_status():
+    respx.get(f"{BASE}/experiments").mock(return_value=httpx.Response(200, json=[{"experiment_id": "e"}]))
+    respx.post(f"{BASE}/plans").mock(return_value=httpx.Response(200, json={"plan_id": "p"}))
+    st = respx.post(f"{BASE}/plans/p/status").mock(return_value=httpx.Response(200, json={"plan_id": "p"}))
+
+    out = await RunRecorder(BASE, "s").write(
+        plan=_plan_meta(ok=True), notes=[], design_ref=None,
+        operator="me@lab", started_at="2026-08-13T00:00:00Z")
+
+    assert out["status"] == "completed" and out["status_error"] is None
+    assert json.loads(st.calls[0].request.content)["status"] == "completed"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_dry_run_does_not_post_a_status_at_all():
+    respx.get(f"{BASE}/experiments").mock(return_value=httpx.Response(200, json=[{"experiment_id": "e"}]))
+    respx.post(f"{BASE}/plans").mock(return_value=httpx.Response(200, json={"plan_id": "p"}))
+    st = respx.post(f"{BASE}/plans/p/status").mock(return_value=httpx.Response(200, json={}))
+
+    out = await RunRecorder(BASE, "s").write(
+        plan=_plan_meta(ok=True, dry_run=True), notes=[], design_ref=None,
+        operator="me@lab", started_at="2026-08-13T00:00:00Z")
+
+    assert not st.called, "a preflight must not be filed as an executed plan"
+    assert out["status"] == "draft"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_failed_status_post_does_not_lose_the_filed_run():
+    """The Plan and its notes are already stored; a status call that fails is
+    reported, never raised (property 1)."""
+    respx.get(f"{BASE}/experiments").mock(return_value=httpx.Response(200, json=[{"experiment_id": "e"}]))
+    respx.post(f"{BASE}/plans").mock(return_value=httpx.Response(200, json={"plan_id": "p"}))
+    respx.post(f"{BASE}/plans/p/status").mock(side_effect=httpx.ConnectError("gone"))
+
+    out = await RunRecorder(BASE, "s").write(
+        plan=_plan_meta(ok=True), notes=[], design_ref=None,
+        operator="me@lab", started_at="2026-08-13T00:00:00Z")
+
+    assert out["written"] is True and out["plan_id"] == "p"
+    assert "gone" in out["status_error"]
+
+
+def test_the_plan_status_fallback_still_matches_the_live_enum():
+    """Same guard as the note-kind snapshot, for the same reason."""
+    live = _live_plan_statuses()
+    if live is None:
+        pytest.skip("AnaliticaDB unreachable — nothing to compare the snapshot against")
+    assert live == FALLBACK_PLAN_STATUSES, (
+        f"AnaliticaDB's PlanStatus enum changed: live={sorted(live)}, "
+        f"FALLBACK_PLAN_STATUSES={sorted(FALLBACK_PLAN_STATUSES)}. Update the literal, "
+        "and check app.record.PLAN_STATUS still maps into it."
     )
 
