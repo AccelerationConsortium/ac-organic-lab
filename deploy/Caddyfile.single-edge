@@ -284,7 +284,13 @@ http://100.64.254.6 {
 	@bitacora path /bitacora /bitacora/*
 	forward_auth @bitacora 100.64.254.6:8009 {
 		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
+		# X-Auth-Projects / X-Auth-Pi-Projects are load-bearing, not extra: the ELN
+		# forwards them to AnaliticaDB, whose read rule is `admin OR PI OR active
+		# member`, and which learns membership from these headers alone. Without
+		# them every non-admin reaches the record layer with an empty scope, so a
+		# project's own PI sees none of their runs (measured 2026-08-14). The
+		# AnaliticaDB route below already copies them; this one did not.
+		copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
 	}
 	handle @bitacora {
 		# Same no-store override as the dashboard route: Next.js defaults HTML
