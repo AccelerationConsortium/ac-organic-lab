@@ -49,16 +49,32 @@ services rather than the docs:
 - **The cut through AnaliticaDB is real and clean.** Its 24 routes separate raw
   data from record along precisely the wording of the requirement.
 
-### 2.1 Two leaks this design does not close
+### 2.1 Two leaks this design does not close (the first has since closed)
 
 Recorded so they are accepted knowingly rather than discovered later.
 
 - **Names encode design.** Sample ids and filenames routinely carry the
   experiment (`plate3_pd_ligand_screen_48h`), so reading `/measurements` and
   `/files` leaks *some* intent regardless of how the routes split. The
-  mitigation is project-scoping the raw reads as well — which needs
-  `can_read(project, caller)`, and that does not exist yet in either service
-  (checked). Until it lands, this leak is open.
+  mitigation is project-scoping the raw reads as well.
+
+  **Closed since this was written (verified 2026-08-14).** `can_read` is
+  implemented in AnaliticaDB (`src/analytica_db/authz.py`) as
+  `admin OR PI of the project OR active member of the (active) project`, and
+  `api/deps.py::filter_readable` applies it row-by-row on the list routes —
+  `/measurements`, `/files`, `/samples`, `/analyses`. ac_auth supplies the
+  caller's scope (`authz.data_scope`, emitted as `X-Auth-Projects` /
+  `X-Auth-Pi-Projects` from the roster's project memberships). So a caller
+  outside a project no longer sees its rows, names included; within a project
+  the names are visible to people already entitled to the design.
+
+  The residual risk is not the rule but its **inputs**: scope arrives only as
+  those two headers, so any surface that forwards `X-Auth-User` and
+  `X-Auth-Role` without them silently reduces every non-admin to an empty
+  scope. That is not hypothetical — bitácora's ELN and its edge route both did
+  exactly that until 2026-08-14, and the symptom (only admins could see
+  anything) reads as a role tier rather than as a dropped header. When adding a
+  surface that reads the record layer, forward all four.
 - **Working on the ELN is not reading the ELN.** `bitacora/.hermes/plans/`
   already exists — Hermes develops that repo today and should keep doing so.
   But developing means running it, seeding fixtures, reading logs, all of which
