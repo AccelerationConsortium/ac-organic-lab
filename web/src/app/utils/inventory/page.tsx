@@ -3,7 +3,7 @@
 import { useUserAuth } from "@/lib/user-auth";
 
 /**
- * Inventory — the lab's chemical stock, framed from Bitacora.
+ * Inventory — the lab chemical stock, framed from Bitacora.
  *
  * Lives under /utils so the pill row (Inventory, Bambu Printer, API Reference,
  * Labware builder, None) stays visible while the iframe renders below it.
@@ -20,7 +20,7 @@ export default function UtilsInventoryPage() {
     return (
       <div className="mt-8 rounded-xl border border-dashed border-slate-300 p-10 text-center dark:border-slate-700">
         <p className="text-sm font-medium text-ink-muted dark:text-slate-400">
-          Inventory — sign in to view the lab's chemical stock.
+          {"Inventory — sign in to view the lab's chemical stock."}
         </p>
       </div>
     );
