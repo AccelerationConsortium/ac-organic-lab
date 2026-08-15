@@ -356,6 +356,17 @@ export async function postSealerStageOut(equipmentId: string): Promise<ControlAc
   return controlPost(equipmentId, "stage/out", {});
 }
 
+// -- Generic lifecycle (kinds without a dedicated tile) --------------------
+//
+// Exactly the standard STATUS_SPEC startup verb, offered by the generic
+// EquipmentStatusCard when the device itself advertises it. Deliberately
+// NOT `connect`: the xArm gates claims behind an operator-only /connect
+// that must never be one click away (ROADMAP → xarm `do_not_call_connect`).
+
+export async function postGenericStartup(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "startup", {});
+}
+
 // -- Shaker (Torrey Pines SC20 / torry-pines-shaker-server) ---------------
 //
 // Endpoint shapes mirror skills/.../skill_catalog/shaker.py. The device is

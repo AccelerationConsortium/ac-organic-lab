@@ -2,6 +2,8 @@
 
 import type { EquipmentSnapshot } from "@/types/api";
 import { kindLabel } from "@/lib/format";
+import { postGenericStartup } from "@/lib/api";
+import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
 import { kindHasDestructiveControls } from "@/lib/tile-policy";
 import { LockButton } from "./ControlLock";
@@ -25,10 +27,36 @@ export function EquipmentStatusCard({ snapshot }: { snapshot: EquipmentSnapshot 
   // §6b for the operator-facing explanation.
   const showsLock = kindHasDestructiveControls(snapshot.kind);
   const { locked, countdown, toggle } = useControlLock(snapshot.id);
+  const { actionError, exec, isPending } = useActionError();
+
+  // Generic INIT: a `requires_init` device that itself advertises the
+  // standard `startup` verb gets the template's initialize button even
+  // without a kind-specific tile — a service restart must never strand a
+  // device in requires_init with no dashboard recovery (the doser after
+  // the 2026-07-31 reboot; the fume-hood Pi after the 2026-08-14 outage).
+  // The device is the authority: no advertised `startup`, no button. Only
+  // this direction is wired — shutdown stays with kind-specific tiles.
+  const requiresInit = status.equipment_status === "requires_init";
+  const advertisesStartup =
+    (status.allowed_actions ?? []).includes("startup") ||
+    (status.required_actions ?? []).includes("startup");
+  const offersInit = requiresInit && advertisesStartup && !snapshot.fetch_error;
 
   return (
     <TileShell
       snapshot={snapshot}
+      actionError={actionError}
+      lifecycle={
+        offersInit
+          ? {
+              isOn: false,
+              initLabel: "INIT",
+              onPowerToggle: () => exec(() => postGenericStartup(snapshot.id)),
+              disabled: locked || isPending,
+              powerTitle: "Device needs initialization — click to run startup",
+            }
+          : undefined
+      }
       headerRight={
         <>
           {showsLock && (
