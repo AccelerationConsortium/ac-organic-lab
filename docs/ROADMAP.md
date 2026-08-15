@@ -363,9 +363,25 @@ intentional; both change what a poller sees.
 
 #### `dose_every_well`
 
+- [x] **Branch-switched-under-a-live-editable-service trap — hit and
+  cleared 2026-08-15.** The Pi's checkout had been switched to `main`
+  (v0.7-era) under the running `platedoser-api`, whose install is
+  **editable** — the July-8 process kept serving old in-memory
+  `develop-modular` code (its startup 500'd on a config name,
+  `with_cnc_solid_doser`, that existed only in a stale `.pyc`), while a
+  restart would have silently booted v0.7 and lost the v1.1 claims
+  surface. Cleared by checking `develop-modular` back out (tip `5c2d706`,
+  which matches the served action surface) and restarting; the device now
+  boots clean to `requires_init` / `["startup"]`. **Rule this teaches: on
+  an editable-install device host, the checked-out branch IS the deploy —
+  never park the tree on another branch.** Current `/control/startup`
+  takes no body (config selection is device-side; serial ports pinned to
+  `/dev/serial/by-id` at `5c2d706`), so the dashboard's stray
+  `config_name` is ignored — remove the dead param from
+  `postDoserStartup` in `web/src/lib/api.ts` at the next quiet web build.
 - [ ] Cosmetic: `pyproject` version still `0.8.0` (`__version__` is
   `0.9.0`); `fastapi`/`uvicorn` not yet declared as deps (present on the
-  Pi). Shipped state: branch `develop-modular`, commit `252d04e`.
+  Pi). Shipped state: branch `develop-modular`, now at `5c2d706`.
 
 #### `fume_hood_actuator`
 
