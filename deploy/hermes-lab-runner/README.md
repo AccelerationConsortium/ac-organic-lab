@@ -44,7 +44,18 @@ Add (alongside the existing OPENROUTER_API_KEY):
 ```
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...   # only if the manifest uses Socket Mode
+SLACK_HOME_CHANNEL=C...    # default delivery channel (see the trap below)
+SLACK_HOME_CHANNEL_NAME=Lab
 ```
+
+> **Home-channel trap (hit 2026-08-14).** The env var above is the ONLY
+> reliable way to set the home channel for this profile. In `config.yaml`,
+> `home_channel:` must be a *dict* (`{platform, chat_id, name}`) — a bare
+> string is **silently ignored** (same class of trap as `custom_toolsets`).
+> And the gateway's native `/sethome` is admin-tier, so with
+> `user_allowed_commands` locked to `help/status/stop` no channel user can
+> set it from Slack. The live profile carries `SLACK_HOME_CHANNEL` in its
+> `.env` since 2026-08-14; restart `hermes-slack.service` after changing it.
 
 ### 4. Fill the allowlist BEFORE first start
 

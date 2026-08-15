@@ -521,6 +521,28 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
 
 #### `ot2_hte`
 
+- [x] **2026-08-14: the fleet's first real authorized run** executed on
+  `ot2_complexation` — `ra_67f32cb0920b4a41`, the 14-step
+  `ot2-transfer-smoke` protocol, Slack-triggered by the boxed `lab-runner`
+  agent, per-step claims, all steps ok in 146 s, record filed in
+  AnaliticaDB (AGENTIC_ELN_PLAN D-23; the two record-write fixes it
+  surfaced are commits `5d064c4` and `e5bb24c`). Both robots' network
+  paths were moved off campus Wi-Fi the same night — see *Operational
+  regressions*.
+- [ ] **Device repo: self-heal the stale-run 409.** After the robot
+  rebooted mid-outage, the gateway kept POSTing commands at its cached run
+  id, got 409 `Run … is not the current run`, and latched `error`; recovery
+  needed an operator `shutdown` → `startup` cycle. That 409 is a definitive
+  signal the cached run died with the robot — the gateway should drop the
+  reference and recreate instead of latching. Related: `/status`'s
+  `details.robot` block served hours-stale `reachable: true` during the
+  outage (it fooled the run preflight); publish a readback age alongside
+  it, like the Cytation's `readback_age_s`.
+- [ ] Verify + record the SSH grant on `ot2-complexation`: the
+  `lab-agents@sdl2-server-gaia` key (`id_ed25519_lab_pi`) was planted in
+  the robot's `authorized_keys` during the 2026-08-14 outage but never
+  round-trip-verified (the network window closed first). Once confirmed,
+  add the row to DEVICE_PC_SETUP §2.4 and plant the same key on `ot2-hte`.
 - [x] SkillDefs + typed args for the protocol-execution actions
   (`setup`, `home`, `aspirate`, `dispense`, `pick_up_tip`, `drop_tip`,
   `move_labware`) — shipped 2026-07-12 in `skill_catalog/liquid_handler.py`
@@ -730,6 +752,39 @@ next instance is a minutes-long diagnosis. This incident class — a service
 left dead by an external event, discovered hours later — is what the
 `sdl-lab-hostops` fleet (AGENTIC_LAB_DESIGN.md) now exists to catch and, where
 whitelisted, remediate remotely. Residual watch item below.
+
+**Campus Wi-Fi (`compsci`) outage, 2026-08-14 → both OT-2 control paths
+moved off Wi-Fi permanently.** The `172.31/16` campus Wi-Fi the robots and
+several Pis ride lost its uplink ~14:45 EDT and flapped for the rest of the
+day: both OT-2s, `sdl2-pi0-fumehood3-actuator`, and `sdl2-pi5-cnc-01`
+dropped off the tailnet simultaneously (two APs on different bands; LAN-local
+traffic kept working, so the signature is tailscale `tx … rx 0` while SSH
+over wired paths still answers). The first authorized-run attempt failed
+mid-`home` on exactly this (`command_transport_failed`); the successful run
+landed inside a brief up-window. Same-night workaround, now the **standing
+configuration — the gateways no longer reach the robots over Wi-Fi at all**:
+
+- `ot2-gateway-hte` → the robot's wired Pi Ethernet at `192.168.254.50`
+  (lab switch subnet).
+- `ot2-gateway-complexation` → a `netsh` port-forward bridge on the UPLC PC
+  (`100.64.254.19:31950` → the robot's USB link-local `169.254.40.81:31950`,
+  listener bound to the tailnet IP only, firewall rule
+  `ot2-complexation-usb-bridge`). The robot's USB-B cable into the UPLC PC
+  is load-bearing — label it.
+
+**All of this is config, not code.** Robot addresses live in each gateway
+service's NSSM env on the Cytation PC — change with
+`C:\SDL_Tools\nssm.exe set ot2-gateway-<x> AppEnvironmentExtra …` (edit
+`OT2_HTTP_BASE_URL`, hte also `OT2_HOST_ALIAS`) then `nssm restart`; revert =
+restore `http://172.31.60.10:31950` (hte) / the tailnet name (complexation).
+The bridge is `netsh interface portproxy delete|add v4tov4 …` on the UPLC PC
+(persistent across reboots). Open hardening: a DHCP reservation for hte's
+wired MAC (`b8:27:eb:33:af:b6`); complexation's link-local IP can renumber
+on a robot reboot (update the portproxy if so); report the outage to campus
+IT. The durable conclusion is the same one the `env_hte` DHCP item already
+reached: **lab devices belong on lab-owned network**, and this outage is the
+strongest argument yet. The robots' own Wi-Fi/tailscale remains for SSH
+convenience only — nothing operational depends on it anymore.
 
 Active watch items (not regressions; behavioural notes):
 

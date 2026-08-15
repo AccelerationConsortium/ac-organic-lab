@@ -274,8 +274,14 @@ rides `LAB_ACTOR` trusted by network position), and enabling
 `mcp/servers.yaml` `lab-skills` entry, not a config choice.
 
 The intended progression for `lab-runner` is recorded here so it is climbed
-deliberately: (1) trigger/watch/report — live; (2) lab-skills eyes
-(preflight + live state) — live; (3) plan *drafting* through conversation,
+deliberately: (1) trigger/watch/report — live, and **proven on hardware
+2026-08-14**: the fleet's first real authorized run
+(`ra_67f32cb0920b4a41`, 14 steps on `ot2_complexation`) was Slack-triggered
+by `lab-runner`, executed under per-step claims with the human
+authorization pinned underneath, and filed in AnaliticaDB — the full
+rung-1 loop, dry-run and live, from a phone-reachable surface; (2)
+lab-skills eyes (preflight + live state) — live; (3) plan *drafting*
+through conversation,
 entering bitácora **through the human who approves it** (never by agent
 write — HERMES_ACCESS_DESIGN Phase 4.6); (4) coarser approval granularity
 (campaign-level), still through the same authorized-run gate. At every rung
