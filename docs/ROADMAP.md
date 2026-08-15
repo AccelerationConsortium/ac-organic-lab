@@ -724,7 +724,22 @@ Zone `env_hte` is live and registered (see the fleet notes above). Open:
   `100.64.254.100` base_url.
 - [ ] `equipment_version` is `null` on `/status` (the package is at 0.2.0).
 - [ ] Remaining three zones need hardware; `sdl2-pi0-environ-02` is enrolled
-  in the tailnet but offline.
+  in the tailnet but has never come online. **Found alive 2026-08-15** during
+  the compsci-outage LAN sweep: on the lab Wi-Fi at a DHCP address
+  (`172.31.33.98`, MAC `2c:cf:67:e8:9b:24`), `tailscaled` running but not
+  connected (last tailnet contact 7 d ago — likely logged out / never
+  `tailscale up`'d), lab key accepted on `:22`, and **static hostname still
+  the imager default `sdl2`** — set the hostname (and the port-2222 sshd
+  convention if desired) before provisioning, or its tailnet name and
+  MagicDNS will be wrong from day one.
+- 2026-08-14 operational note, worth keeping: `env_hte` **recorded straight
+  through the campus-Wi-Fi outage** (~420 readings/h, two 1–2 min blips)
+  because the aggregator host holds a *direct LAN* tailscale path to it that
+  needs no internet once established. During such an outage reachability is
+  **observer-dependent** — the node looks offline from any machine not on
+  its LAN (no DERP, no control plane) while the dashboard keeps polling it
+  fine. Check the uptime/readings history before concluding a sensor node
+  was down.
 
 ## Operational regressions
 
