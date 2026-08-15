@@ -67,7 +67,11 @@ const ADMIN_API_RE = /^\/api\/admin(?:\/.*)?$/;
 // Gating the page itself on an ac-organic-lab session means an unauthorized
 // visitor never sees the iframe at all — same-cheap fix as /admin above, just
 // sign-in rather than the admin role.
-const NOTEBOOKS_PAGE_RE = /^\/notebooks(?:\/.*)?$/;
+// /inventory frames the same app and inherits the same reasoning: an anonymous
+// visitor would otherwise see Bitácora's own auth screen nested inside this
+// dashboard. Sign-in only — the whole lab may read the shelf; uploading is
+// admin-gated by Bitácora's API, not here.
+const FRAMED_ELN_PAGE_RE = /^\/(?:notebooks|inventory)(?:\/.*)?$/;
 
 const AUTH_SERVICE_BASE =
   process.env.AUTH_SERVICE_BASE ?? "http://127.0.0.1:8009";
@@ -143,8 +147,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // ---- Notebooks page guard (sign-in required) ----------------------------
-  if (NOTEBOOKS_PAGE_RE.test(pathname)) {
+  // ---- Framed-ELN page guard: /notebooks and /inventory (sign-in required) -
+  if (FRAMED_ELN_PAGE_RE.test(pathname)) {
     if (CONTROL_OPEN) return NextResponse.next();
     const v = await verifySession(request);
     if (!v.ok) {
@@ -192,5 +196,6 @@ export const config = {
     "/admin/:path*",
     "/api/admin/:path*",
     "/notebooks/:path*",
+      "/inventory/:path*",
   ],
 };
