@@ -881,12 +881,6 @@ export default function HistoryPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header>
-        <p className="text-sm text-ink-muted dark:text-slate-400">
-          Module uptime, environmental sensor trends, and power consumption. Refreshes every 30 s.
-        </p>
-      </header>
-
       {/* Section tabs — same pill format as the Platforms tab. Pinned so
           they stay reachable while the cards scroll. */}
       <div className={stickyPillRow}>
