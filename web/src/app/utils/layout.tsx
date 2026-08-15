@@ -12,10 +12,9 @@ import { pillClass, stickyPillRow } from "@/lib/pill";
  */
 const UTILS: { slug: string; label: string; description: string; href?: string }[] = [
   {
-    // Not a /utils/<slug> page: the inventory is lab-wide and has a page of its
-    // own at /inventory. The pill is a way in, not the implementation.
+    // Inventory is a /utils/<slug> page (not a top-level route) so the pill
+    // row stays visible while the iframe renders below it.
     slug: "inventory",
-    href: "/inventory",
     label: "Inventory",
     description: "The lab's chemical stock — search by name, CAS or location.",
   },
