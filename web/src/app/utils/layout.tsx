@@ -10,11 +10,14 @@ import { pillClass, stickyPillRow } from "@/lib/pill";
  * between them (same pill pattern as the Platforms tab), and None (the /utils
  * index) shows nothing. Register new utilities in UTILS below.
  */
-const UTILS: { slug: string; label: string; description: string }[] = [
+const UTILS: { slug: string; label: string; description: string; href?: string }[] = [
   {
-    slug: "xarm_control",
-    label: "xArm Control",
-    description: "Operator panel for the xArm translocation arm.",
+    // Not a /utils/<slug> page: the inventory is lab-wide and has a page of its
+    // own at /inventory. The pill is a way in, not the implementation.
+    slug: "inventory",
+    href: "/inventory",
+    label: "Inventory",
+    description: "The lab's chemical stock — search by name, CAS or location.",
   },
   {
     slug: "bambu_printer",
@@ -39,7 +42,7 @@ export default function UtilsLayout({ children }: { children: React.ReactNode })
     <div className="flex flex-col gap-4">
       <div className={`${stickyPillRow}`} role="tablist" aria-label="Utilities">
         {UTILS.map((u) => {
-          const href = `/utils/${u.slug}`;
+          const href = u.href ?? `/utils/${u.slug}`;
           const active = pathname.startsWith(href);
           return (
             <Link
