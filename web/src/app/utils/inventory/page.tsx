@@ -3,7 +3,7 @@
 import { useUserAuth } from "@/lib/user-auth";
 
 /**
- * Inventory — the lab's chemical stock, framed from Bitácora.
+ * Inventory — the lab's chemical stock, framed from Bitacora.
  *
  * Lives under /utils so the pill row (Inventory, Bambu Printer, API Reference,
  * Labware builder, None) stays visible while the iframe renders below it.
