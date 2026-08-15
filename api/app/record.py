@@ -229,19 +229,33 @@ class RunRecorder:
                 # A *dry run* deliberately stays `draft`: it is a preflight, the
                 # plan was never executed, and `completed` would claim otherwise.
                 # `meta.dry_run` already records which it was.
+                #
+                # AnaliticaDB admits no draft → completed edge: `completed` is
+                # reachable only through the full lifecycle, so a successful run
+                # walks draft → approved → executing → completed, while
+                # `abandoned` is one legal hop from draft. The `approved` edge
+                # stamps a sign-off, so it is posted as the human who authorized
+                # the run in bitácora (meta.authorized_by) — never the launcher,
+                # which for an agent-triggered run is the automation principal.
+                # (The first live run, ra_67f32cb0920b4a41, filed as a permanent
+                # draft because the single completed POST 409'd on this.)
                 status = _terminal_status(plan.get("meta") or {})
+                status_error = None
                 if status:
-                    try:
-                        rs = await client.post(
-                            f"{self._base_url}/plans/{plan_id}/status",
-                            headers=self._headers(operator), json={"status": status})
-                        rs.raise_for_status()
-                    except Exception as exc:  # noqa: BLE001 — the row is already filed
-                        status_error = str(exc)[:200]
-                    else:
-                        status_error = None
-                else:
-                    status_error = None
+                    walk = (["approved", "executing", "completed"]
+                            if status == "completed" else [status])
+                    approver = (plan.get("meta") or {}).get("authorized_by") or operator
+                    for target in walk:
+                        try:
+                            rs = await client.post(
+                                f"{self._base_url}/plans/{plan_id}/status",
+                                headers=self._headers(
+                                    approver if target == "approved" else operator),
+                                json={"status": target})
+                            rs.raise_for_status()
+                        except Exception as exc:  # noqa: BLE001 — the row is already filed
+                            status_error = f"{target}: {str(exc)[:180]}"
+                            break
 
                 written, failed = 0, []
                 for note in notes:

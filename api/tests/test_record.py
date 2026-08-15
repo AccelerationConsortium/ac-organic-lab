@@ -353,17 +353,41 @@ class TestPlanStatus:
 
 @respx.mock
 @pytest.mark.anyio
-async def test_a_real_run_posts_its_terminal_status():
+async def test_a_real_run_walks_the_lifecycle_to_completed():
+    """AnaliticaDB has no draft → completed edge, so a successful run must
+    walk approved → executing → completed. The first live run filed as a
+    permanent draft because a single completed POST 409'd on this."""
     respx.get(f"{BASE}/experiments").mock(return_value=httpx.Response(200, json=[{"experiment_id": "e"}]))
     respx.post(f"{BASE}/plans").mock(return_value=httpx.Response(200, json={"plan_id": "p"}))
     st = respx.post(f"{BASE}/plans/p/status").mock(return_value=httpx.Response(200, json={"plan_id": "p"}))
 
     out = await RunRecorder(BASE, "s").write(
-        plan=_plan_meta(ok=True), notes=[], design_ref=None,
-        operator="me@lab", started_at="2026-08-13T00:00:00Z")
+        plan=_plan_meta(ok=True, authorized_by="pi@lab"), notes=[], design_ref=None,
+        operator="agent@lab", started_at="2026-08-13T00:00:00Z")
 
     assert out["status"] == "completed" and out["status_error"] is None
-    assert json.loads(st.calls[0].request.content)["status"] == "completed"
+    walked = [json.loads(c.request.content)["status"] for c in st.calls]
+    assert walked == ["approved", "executing", "completed"]
+    # The approved edge stamps a sign-off: it must carry the human who
+    # authorized the run, never the (possibly agent) launcher.
+    assert st.calls[0].request.headers["X-Auth-User"] == "pi@lab"
+    assert st.calls[1].request.headers["X-Auth-User"] == "agent@lab"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_failed_run_is_abandoned_in_one_hop():
+    """abandoned is a legal edge straight from draft — no lifecycle walk."""
+    respx.get(f"{BASE}/experiments").mock(return_value=httpx.Response(200, json=[{"experiment_id": "e"}]))
+    respx.post(f"{BASE}/plans").mock(return_value=httpx.Response(200, json={"plan_id": "p"}))
+    st = respx.post(f"{BASE}/plans/p/status").mock(return_value=httpx.Response(200, json={"plan_id": "p"}))
+
+    out = await RunRecorder(BASE, "s").write(
+        plan=_plan_meta(ok=False), notes=[], design_ref=None,
+        operator="me@lab", started_at="2026-08-13T00:00:00Z")
+
+    assert out["status"] == "abandoned" and out["status_error"] is None
+    assert [json.loads(c.request.content)["status"] for c in st.calls] == ["abandoned"]
 
 
 @respx.mock
