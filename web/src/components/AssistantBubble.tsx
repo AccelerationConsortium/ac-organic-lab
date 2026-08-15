@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 
 import { ApiError, authorizeAssistantAction } from "@/lib/api";
 import { useUserAuth } from "@/lib/user-auth";
@@ -87,7 +88,27 @@ function defaultPosition(): { x: number; y: number } {
   };
 }
 
+/**
+ * Not on /notebooks. That page frames Bitácora, which floats its own chat in the
+ * same corner — two bubbles stacked, one of which cannot see the notebook it is
+ * sitting on. The ELN's chat knows the room, the protocol and the selected
+ * plate; this one knows the lab. On that page the room is the subject, so the
+ * ELN's wins and this one stands down.
+ *
+ * A wrapper rather than an early return inside the component: this one is a
+ * single hook and may return before rendering, whereas bailing out inside the
+ * body would leave thirty-odd hooks below the branch and break the rules of
+ * hooks the moment someone opened Notebooks. It also means the bubble does no
+ * work at all there — no session restore, no health check — instead of
+ * mounting and hiding.
+ */
 export function AssistantBubble() {
+  const pathname = usePathname();
+  if (pathname?.startsWith("/notebooks")) return null;
+  return <AssistantBubbleInner />;
+}
+
+function AssistantBubbleInner() {
   const { authenticated, identity } = useUserAuth();
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
