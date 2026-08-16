@@ -1,21 +1,22 @@
 import type { EquipmentSnapshot } from "@/types/api";
-import { StatusDots } from "@/components/StatusDots";
-import { STATE_META, effectiveState } from "@/lib/state-meta";
+import { EquipmentStatusCard } from "@/components/EquipmentStatusCard";
 
 /**
  * The lab's host machines — the servers and device PCs the equipment services
- * run on. This is a hand-maintained inventory (hosts are not equipment, so
- * they have no registry entry); keep it in sync with DEVICE_PC_SETUP.md §7.
+ * run on, rendered in the same tile style as the Bambu printer panel below.
+ * This is a hand-maintained inventory (hosts are not equipment, so they have
+ * no registry entry); keep it in sync with DEVICE_PC_SETUP.md §7.
  *
- * `opsId` marks a host that runs the `sdl-lab-hostops` agent and names its
- * equipment.yaml id; those rows show the agent's live status (the hostops
- * entries stay registered and polled — they just no longer sit on the
- * Overview's Services card).
+ * `opsId` marks a host running the `sdl-lab-hostops` agent and names its
+ * equipment.yaml id; those hosts render the agent's live equipment tile (the
+ * same card the Services grid used to show — the entries stay registered and
+ * polled, they just live here now). Hosts without ops get a static card in
+ * matching chrome.
  */
 type LabHost = {
   id: string;
   name: string;
-  group: "Servers" | "Device PCs";
+  kind: "server" | "device PC";
   hostname: string;
   os: string;
   runs: string;
@@ -26,15 +27,15 @@ const LAB_HOSTS: LabHost[] = [
   {
     id: "gaia",
     name: "Central Server (gaia)",
-    group: "Servers",
+    kind: "server",
     hostname: "sdl2-server-gaia",
     os: "Linux",
     runs: "Dashboard (web + API), auth edge, camera/plug gateway + go2rtc, Uptime Kuma, PyPoe, Hermes, AnaliticaDB, Bitácora",
   },
   {
     id: "cytation-pc",
-    name: "Cytation PC",
-    group: "Device PCs",
+    name: "Cytation PC Ops",
+    kind: "device PC",
     hostname: "sdl2-pc-03-cytation",
     os: "Windows",
     runs: "xArm, PlateLoc, both OT-2 gateways, shaker, Cytation 5, BioStack",
@@ -42,8 +43,8 @@ const LAB_HOSTS: LabHost[] = [
   },
   {
     id: "uplc-pc",
-    name: "UPLC PC",
-    group: "Device PCs",
+    name: "UPLC PC Ops",
+    kind: "device PC",
     hostname: "sdl2-pc-06-uplc",
     os: "Windows",
     runs: "UPLC-MS sidecar, OT-2 complexation USB bridge",
@@ -51,27 +52,26 @@ const LAB_HOSTS: LabHost[] = [
   },
 ];
 
-const GROUPS: LabHost["group"][] = ["Servers", "Device PCs"];
+// Mirrors TileShell's card chrome so static host cards sit flush with the
+// live equipment tiles around them.
+const TILE_CARD =
+  "flex h-full flex-col gap-2 overflow-hidden rounded-xl border border-slate-200 bg-surface-raised p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900";
 
-function OpsStatus({ snapshot }: { snapshot: EquipmentSnapshot | undefined }) {
-  if (!snapshot) {
-    return (
-      <span className="text-xs text-ink-muted dark:text-slate-500">
-        host-ops: no data
-      </span>
-    );
-  }
-  const state = effectiveState(snapshot);
+function StaticHostCard({ host, note }: { host: LabHost; note: string }) {
   return (
-    <span className="flex items-center gap-1.5">
-      <span className="rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:border-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
-        host-ops
-      </span>
-      <span className="text-xs text-ink-muted dark:text-slate-400">
-        {STATE_META[state].label}
-      </span>
-      <StatusDots snapshot={snapshot} />
-    </span>
+    <article className={TILE_CARD}>
+      <header className="flex min-w-0 flex-col gap-0.5">
+        <h3 className="truncate text-sm font-semibold text-ink dark:text-slate-100">
+          {host.name}
+        </h3>
+        <p className="truncate text-xs text-ink-subtle dark:text-slate-500">
+          <span className="uppercase">{host.kind}</span> ·{" "}
+          <span className="font-mono">{host.hostname}</span> · {host.os}
+        </p>
+      </header>
+      <p className="text-xs text-ink-subtle dark:text-slate-400">{host.runs}</p>
+      <p className="mt-auto text-[10px] text-ink-subtle dark:text-slate-500">{note}</p>
+    </article>
   );
 }
 
@@ -84,50 +84,36 @@ export function HostsPanel({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
           PCs &amp; Servers
         </h1>
         <p className="text-sm text-ink-subtle dark:text-slate-400">
-          The machines the lab&apos;s services run on. Hosts marked{" "}
-          <span className="font-medium">host-ops</span> run the whitelisted
-          remote-ops agent and show its live status.
+          The machines the lab&apos;s services run on. Hosts running the
+          host-ops agent show its live tile; hover a tile for what runs there.
         </p>
       </header>
-      {GROUPS.map((group) => (
-        <div key={group} className="flex flex-col gap-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-muted dark:text-slate-500">
-            {group}
-          </h2>
-          <ul className="flex flex-col gap-2">
-            {LAB_HOSTS.filter((h) => h.group === group).map((host) => (
-              <li
-                key={host.id}
-                className="flex flex-col gap-1 rounded-md border border-slate-200 bg-white/60 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-sm font-medium text-ink dark:text-slate-100">
-                      {host.name}
-                    </span>
-                    <span className="font-mono text-[11px] text-ink-muted dark:text-slate-500">
-                      {host.hostname}
-                    </span>
-                    <span className="text-[11px] text-ink-muted dark:text-slate-500">
-                      {host.os}
-                    </span>
-                  </div>
-                  {host.opsId ? (
-                    <OpsStatus snapshot={byId.get(host.opsId)} />
-                  ) : (
-                    <span className="text-xs text-ink-muted dark:text-slate-500">
-                      no ops agent
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-ink-subtle dark:text-slate-400">
-                  {host.runs}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
+      {/* Same grid geometry as EquipmentGrid; every host card is a 2×1 tile. */}
+      <div
+        className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:[grid-template-columns:repeat(4,minmax(0,262px))]"
+        style={{ gridAutoRows: "minmax(220px, auto)" }}
+      >
+        {LAB_HOSTS.map((host) => {
+          const snapshot = host.opsId ? byId.get(host.opsId) : undefined;
+          return (
+            <div
+              key={host.id}
+              className="h-full"
+              style={{ gridColumn: "span 2", gridRow: "span 1" }}
+              title={host.runs}
+            >
+              {snapshot ? (
+                <EquipmentStatusCard snapshot={snapshot} />
+              ) : (
+                <StaticHostCard
+                  host={host}
+                  note={host.opsId ? "host-ops agent — no data yet" : "no ops agent"}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }
