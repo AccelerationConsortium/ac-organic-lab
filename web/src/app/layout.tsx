@@ -4,6 +4,7 @@ import "./globals.css";
 import { QueryProvider } from "@/lib/query-client";
 import { UserAuthProvider } from "@/lib/user-auth";
 import { AssistantBubble } from "@/components/AssistantBubble";
+import { KeepAliveEmbeds } from "@/components/KeepAliveEmbeds";
 import { Nav } from "@/components/Nav";
 import { StateReferencePanel } from "@/components/StateReferencePanel";
 import { Logo } from "@/components/Logo";
@@ -92,6 +93,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 `py-*` (lib/pill.ts); pages without one start flush too. */}
             <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pb-6 sm:px-6 lg:px-8">
               {children}
+              {/* Bitácora keep-alive frames (/notebooks, /inventory) — those
+                  pages render nothing when signed in and the live frame shows
+                  here, in the same column, surviving tab switches. */}
+              <KeepAliveEmbeds />
             </div>
           </main>
           {/* Pinned. */}

@@ -1,6 +1,5 @@
 "use client";
 
-import { RememberedFrame } from "@/components/RememberedFrame";
 import { useUserAuth } from "@/lib/user-auth";
 
 /**
@@ -13,9 +12,12 @@ import { useUserAuth } from "@/lib/user-auth";
  * permissions").
  *
  * Framed rather than reimplemented: one implementation, in the app that owns
- * the data. Same reasoning — and the same russian-doll guard — as /notebooks.
- * Uploading is admin-only and enforced by Bitácora's API, not here; this page
- * gates on *sign-in* only, so the whole lab can read the shelf.
+ * the data. As with /notebooks, the iframe lives in the root layout's
+ * <KeepAliveEmbeds /> (hidden, not unmounted, between visits) so the search
+ * and scroll state survive dashboard tab switches; this page contributes only
+ * the auth-guard states. Uploading is admin-only and enforced by Bitácora's
+ * API, not here; the guard gates on *sign-in* only, so the whole lab can read
+ * the shelf.
  */
 export default function InventoryPage() {
   const { loading, authenticated } = useUserAuth();
@@ -33,15 +35,6 @@ export default function InventoryPage() {
     );
   }
 
-  return (
-    <div>
-      <RememberedFrame
-        storageKey="eln:inventory"
-        defaultSrc="/bitacora/inventory/embed"
-        scope="/bitacora/inventory"
-        title="Chemical inventory"
-        className="h-[calc(100vh-190px)] min-h-[640px] w-full rounded-xl border border-slate-200 bg-transparent dark:border-slate-800"
-      />
-    </div>
-  );
+  // Signed in: the keep-alive frame in the root layout shows here.
+  return null;
 }
