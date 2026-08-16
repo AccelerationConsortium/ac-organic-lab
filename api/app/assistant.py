@@ -90,6 +90,21 @@ DEFAULT_TIMEOUT_S = float(os.environ.get("ASSISTANT_CLAUDE_TIMEOUT_S", "120"))
 DEFAULT_BACKEND = os.environ.get("ASSISTANT_BACKEND", "claude-cli")
 CONTROL_BACKEND = os.environ.get("ASSISTANT_CONTROL_BACKEND", DEFAULT_BACKEND)
 ALLOWED_TOOL_GLOB = "mcp__lab-history__*"
+# Server-side include-list for the spawned lab-history server (its
+# LAB_HISTORY_TOOLS env var). The assistant deliberately does not get the
+# dosing-run data tools (query_runs, query_well_results): run/well outcomes
+# are experiment data, not platform telemetry, and everything a tool can
+# return transits the model provider (OpenRouter on the openai backend).
+# Server-side because only the claude CLI has a client-side filter — the
+# openai backend registers whatever list_tools returns. Fail-closed: a tool
+# added to the server later stays invisible here until named. Override per
+# deployment via ASSISTANT_HISTORY_TOOLS.
+HISTORY_TOOLS = os.environ.get(
+    "ASSISTANT_HISTORY_TOOLS",
+    "list_equipment_now,get_equipment_status,record_observation,"
+    "query_equipment_events,query_service_uptime,query_sensor_readings,"
+    "tail_journald",
+)
 # Chemical stock (bitácora's /inventory API, read-only) rides its own server
 # in both modes; see app/inventory_mcp.py for the contract-stability note.
 INVENTORY_TOOL_GLOB = "mcp__lab-inventory__*"
@@ -211,6 +226,28 @@ def _control_server_env(actor: str) -> dict[str, str]:
     return env
 
 
+def _history_server_env(actor: str | None) -> dict[str, str]:
+    """Environment for the spawned ``lab-history`` MCP server.
+
+    The verified actor rides the environment for the same reason as
+    lab-control's ``LAB_ACTOR`` (UI_DESIGN §5.3): record_observation stamps its
+    journal rows with it and fails closed when it is absent. Everything else
+    on lab-history ignores it. ``LAB_HISTORY_TOOLS`` narrows the server's
+    registered toolset to :data:`HISTORY_TOOLS` — the server-side twin of the
+    CLI's ``--allowedTools``, and the only filter the openai backend has.
+    Shared by both backends (``_write_mcp_config`` here and
+    ``assistant_openai._server_specs``) so the toolsets cannot drift.
+    """
+
+    env: dict[str, str] = {"LAB_HISTORY_TOOLS": HISTORY_TOOLS}
+    if actor:
+        env["LAB_ACTOR"] = actor
+    dashboard_url = os.environ.get("LAB_DASHBOARD_API_URL")
+    if dashboard_url:
+        env["LAB_DASHBOARD_API_URL"] = dashboard_url
+    return env
+
+
 def _write_mcp_config(*, include_control: bool = False, actor: str | None = None) -> Path:
     """Materialise the explicit MCP config and return its path.
 
@@ -222,16 +259,7 @@ def _write_mcp_config(*, include_control: bool = False, actor: str | None = None
     """
 
     history_cmd, history_args = _mcp_server_command("lab-history-mcp")
-    # The verified actor rides the environment for the same reason as
-    # lab-control's LAB_ACTOR (UI_DESIGN §5.3): record_observation stamps its
-    # journal rows with it and fails closed when it is absent. Everything else
-    # on lab-history ignores it.
-    history_env: dict[str, str] = {}
-    if actor:
-        history_env["LAB_ACTOR"] = actor
-    dashboard_url = os.environ.get("LAB_DASHBOARD_API_URL")
-    if dashboard_url:
-        history_env["LAB_DASHBOARD_API_URL"] = dashboard_url
+    history_env = _history_server_env(actor)
     inventory_cmd, inventory_args = _mcp_server_command("lab-inventory-mcp")
     inventory_env: dict[str, str] = {}
     bitacora_url = os.environ.get("BITACORA_URL")
@@ -297,8 +325,6 @@ lab-history:
 * query_service_uptime -- reachability transitions + overall uptime % over a
   window for one device.
 * query_sensor_readings -- environmental sensor history (~1/min).
-* query_runs -- recent dosing-run records.
-* query_well_results -- per-well dispense results for one run.
 * tail_journald -- last N lines of one of the dashboard's systemd units.
 * record_observation -- append ONE operational note about a device to the
   shared journal (it comes back to future sessions via
@@ -326,6 +352,10 @@ happens through bitácora's own inventory page.
 
 You cannot actuate hardware. If the user asks you to, say so and offer to
 investigate the relevant logs/history instead.
+
+You have no access to experiment results (run records, per-well outcomes) —
+that is deliberate, not an outage. If asked, say so and point the operator
+at the dashboard's History tab.
 
 Be terse. Operators are glancing at a small chat panel, not reading prose.
 

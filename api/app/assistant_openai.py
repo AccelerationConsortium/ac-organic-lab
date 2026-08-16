@@ -47,6 +47,7 @@ from .assistant import (
     SYSTEM_PROMPT,
     ChatMessage,
     _control_server_env,
+    _history_server_env,
     _mcp_server_command,
     _proposal_from_tool_result,
     _sse,
@@ -84,12 +85,9 @@ def _server_specs(control: bool, actor: str | None) -> dict[str, dict[str, Any]]
     minus the JSON file (we spawn the servers ourselves)."""
 
     history_cmd, history_args = _mcp_server_command("lab-history-mcp")
-    history_env: dict[str, str] = {}
-    if actor:
-        history_env["LAB_ACTOR"] = actor
-    dashboard_url = os.environ.get("LAB_DASHBOARD_API_URL")
-    if dashboard_url:
-        history_env["LAB_DASHBOARD_API_URL"] = dashboard_url
+    # Includes LAB_HISTORY_TOOLS: this loop registers whatever list_tools
+    # returns, so the include-list on the server is its only tool filter.
+    history_env = _history_server_env(actor)
     inventory_cmd, inventory_args = _mcp_server_command("lab-inventory-mcp")
     inventory_env: dict[str, str] = {}
     bitacora_url = os.environ.get("BITACORA_URL")

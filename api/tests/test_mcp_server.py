@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import json
 
+import pytest
 import respx
 from httpx import Response
 
 from app.mcp_server import (
+    ALL_TOOLS,
     DASHBOARD_API_URL,
     MAX_OBSERVATION_CHARS,
     _get_equipment_status,
+    _included_tools,
     _list_equipment_now,
     _record_observation,
 )
@@ -138,3 +141,55 @@ async def test_record_observation_refuses_oversized_note(monkeypatch):
     monkeypatch.setenv("LAB_ACTOR", "alice@example.edu")
     out = json.loads(await _record_observation("ot2_hte", "x" * (MAX_OBSERVATION_CHARS + 1)))
     assert "compress" in out["error"]
+
+
+# ---------------------------------------------------------------------------
+# LAB_HISTORY_TOOLS include-list
+# ---------------------------------------------------------------------------
+
+
+def test_included_tools_unset_means_no_filter(monkeypatch):
+    monkeypatch.delenv("LAB_HISTORY_TOOLS", raising=False)
+    assert _included_tools() is None
+
+
+def test_included_tools_parses_and_strips(monkeypatch):
+    monkeypatch.setenv(
+        "LAB_HISTORY_TOOLS", " list_equipment_now, query_runs ,tail_journald "
+    )
+    assert _included_tools() == {"list_equipment_now", "query_runs", "tail_journald"}
+
+
+def test_included_tools_unknown_name_fails_fast(monkeypatch):
+    monkeypatch.setenv("LAB_HISTORY_TOOLS", "list_equipment_now,query_run")
+    with pytest.raises(ValueError, match="query_run"):
+        _included_tools()
+
+
+def test_included_tools_set_but_empty_fails_fast(monkeypatch):
+    monkeypatch.setenv("LAB_HISTORY_TOOLS", " , ,")
+    with pytest.raises(ValueError, match="names no tools"):
+        _included_tools()
+
+
+async def test_build_server_registers_only_included_tools(monkeypatch):
+    pytest.importorskip("mcp")
+    from app.mcp_server import _build_server
+
+    monkeypatch.setenv(
+        "LAB_HISTORY_TOOLS",
+        "list_equipment_now,get_equipment_status,record_observation,"
+        "query_equipment_events,query_service_uptime,query_sensor_readings,"
+        "tail_journald",
+    )
+    names = {t.name for t in await _build_server().list_tools()}
+    assert names == ALL_TOOLS - {"query_runs", "query_well_results"}
+
+
+async def test_build_server_unfiltered_registers_all_tools(monkeypatch):
+    pytest.importorskip("mcp")
+    from app.mcp_server import _build_server
+
+    monkeypatch.delenv("LAB_HISTORY_TOOLS", raising=False)
+    names = {t.name for t in await _build_server().list_tools()}
+    assert names == ALL_TOOLS

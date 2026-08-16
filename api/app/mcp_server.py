@@ -30,6 +30,14 @@ argument is whitelisted
 to dashboard-related services so this server cannot become a side channel
 into the host's full systemd journal. Limits on row counts and lookback
 hours match the API-bubble assistant in ``app/assistant.py``.
+
+``LAB_HISTORY_TOOLS`` (env, optional) is a comma-separated include-list of
+tool names: when set, only those tools are registered; when unset, all are.
+This is the server-side knob every client shares (the claude CLI's
+``--allowedTools`` filters only its own calls; the openai backend's tool
+loop has no client-side filter at all). The dashboard assistant sets it to
+exclude the dosing-run data tools — see ``assistant.HISTORY_TOOLS``. An
+unknown name fails the server at startup rather than silently vanishing.
 """
 
 from __future__ import annotations
@@ -66,6 +74,46 @@ ALLOWED_UNITS = frozenset(
         "ac-go2rtc.service",
     }
 )
+
+# Every tool this server can register. _build_server() asserts its decorated
+# set equals this, so the include-list validation below can't drift from the
+# real registrations.
+ALL_TOOLS = frozenset(
+    {
+        "list_equipment_now",
+        "get_equipment_status",
+        "record_observation",
+        "query_equipment_events",
+        "query_service_uptime",
+        "query_sensor_readings",
+        "query_runs",
+        "query_well_results",
+        "tail_journald",
+    }
+)
+
+
+def _included_tools() -> frozenset[str] | None:
+    """Parse the ``LAB_HISTORY_TOOLS`` include-list; ``None`` means no filter.
+
+    Fail-fast on unknown or empty lists: a typo'd tool name must kill the
+    server at startup, not silently narrow the toolset to something other
+    than what the deployment intended.
+    """
+
+    raw = os.environ.get("LAB_HISTORY_TOOLS", "").strip()
+    if not raw:
+        return None
+    names = frozenset(n.strip() for n in raw.split(",") if n.strip())
+    if not names:
+        raise ValueError("LAB_HISTORY_TOOLS is set but names no tools")
+    unknown = names - ALL_TOOLS
+    if unknown:
+        raise ValueError(
+            f"LAB_HISTORY_TOOLS names unknown tools {sorted(unknown)}; "
+            f"known tools: {sorted(ALL_TOOLS)}"
+        )
+    return names
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +402,18 @@ def _build_server():
 
     mcp = FastMCP("lab-history")
 
-    @mcp.tool()
+    include = _included_tools()
+    defined: set[str] = set()
+
+    def tool(fn):
+        """Register ``fn`` as an MCP tool unless the include-list drops it."""
+
+        defined.add(fn.__name__)
+        if include is None or fn.__name__ in include:
+            mcp.tool()(fn)
+        return fn
+
+    @tool
     async def list_equipment_now() -> str:
         """Return the live status of every registered lab device (id, kind,
         equipment_status, message, fetch_error, latency_ms). Sourced from the
@@ -364,7 +423,7 @@ def _build_server():
 
         return await _list_equipment_now()
 
-    @mcp.tool()
+    @tool
     async def get_equipment_status(equipment_id: str) -> str:
         """Full live status envelope for ONE device: components (e.g. the
         OT-2's pipette mounts), details (deck snapshot, tip racks, loaded
@@ -374,7 +433,7 @@ def _build_server():
 
         return await _get_equipment_status(equipment_id)
 
-    @mcp.tool()
+    @tool
     async def record_observation(equipment_id: str, observation: str) -> str:
         """Append ONE operational observation about a device to the lab's
         shared journal (readable next session via
@@ -390,7 +449,7 @@ def _build_server():
 
         return await _record_observation(equipment_id, observation)
 
-    @mcp.tool()
+    @tool
     async def query_equipment_events(
         device_id: str, limit: int = 50, event_type: str | None = None
     ) -> str:
@@ -404,7 +463,7 @@ def _build_server():
 
         return await _query_equipment_events(device_id, limit, event_type)
 
-    @mcp.tool()
+    @tool
     async def query_service_uptime(device_id: str, days: int = 7) -> str:
         """Reachability transitions (up/down/recovered) plus the overall
         uptime % over the requested window. Use for "has X been flaky"
@@ -412,7 +471,7 @@ def _build_server():
 
         return await _query_service_uptime(device_id, days)
 
-    @mcp.tool()
+    @tool
     async def query_sensor_readings(
         sensor_id: str,
         metric: str,
@@ -424,20 +483,20 @@ def _build_server():
 
         return await _query_sensor_readings(sensor_id, metric, since_hours, limit)
 
-    @mcp.tool()
+    @tool
     async def query_runs(device_id: str | None = None, limit: int = 20) -> str:
         """Recent dosing-run records, newest first. Optionally filter by
         device_id (e.g. dose_every_well)."""
 
         return await _query_runs(device_id, limit)
 
-    @mcp.tool()
+    @tool
     async def query_well_results(run_id: str) -> str:
         """Per-well dispense results for one dosing run."""
 
         return await _query_well_results(run_id)
 
-    @mcp.tool()
+    @tool
     async def tail_journald(unit: str, lines: int = 50) -> str:
         """Last N lines of one of the dashboard's systemd units. Whitelisted
         units: ac-organic-lab-api.service, ac-organic-lab-web.service,
@@ -445,6 +504,13 @@ def _build_server():
         API logging" or "why did the gateway crash"."""
 
         return await _tail_journald(unit, lines)
+
+    if defined != ALL_TOOLS:
+        raise RuntimeError(
+            "mcp_server drift: decorated tools "
+            f"{sorted(defined)} != ALL_TOOLS {sorted(ALL_TOOLS)} — "
+            "update ALL_TOOLS when adding/removing a tool"
+        )
 
     return mcp
 

@@ -288,7 +288,16 @@ Three pieces:
   `tail_journald` (last N lines of a **whitelisted** dashboard systemd unit).
   Row counts and lookback are capped. The same server can be registered
   directly with a developer's own Claude Code via `claude mcp add` — the
-  chat bubble is just one of its two consumers.
+  chat bubble is just one of its two consumers. Since 2026-08-15 the server
+  honours a `LAB_HISTORY_TOOLS` env include-list (unknown names fail the
+  server at startup), and the **assistant spawns it with the dosing-run data
+  tools — `query_runs`, `query_well_results` — excluded**
+  (`assistant.HISTORY_TOOLS`, override via `ASSISTANT_HISTORY_TOOLS`):
+  run/well outcomes are experiment data, not platform telemetry, and
+  everything a tool returns transits the model provider. The filter lives
+  server-side because only the claude CLI has a client-side `--allowedTools`;
+  the openai backend registers whatever `list_tools` returns. A direct
+  `claude mcp add` registration still sees the full toolset.
 
 Configuration is via env vars (`ASSISTANT_BACKEND`, `ASSISTANT_CLAUDE_MODEL`,
 `ASSISTANT_CLAUDE_BIN`, `ASSISTANT_CLAUDE_TIMEOUT_S`, `ASSISTANT_RUNTIME_DIR`,

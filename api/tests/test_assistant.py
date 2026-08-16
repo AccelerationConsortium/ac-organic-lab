@@ -69,6 +69,32 @@ def test_write_mcp_config_control_without_actor_is_history_only(
     assert set(cfg["mcpServers"]) == {"lab-history", "lab-inventory"}
 
 
+def test_write_mcp_config_narrows_lab_history_toolset(tmp_path, monkeypatch) -> None:
+    """The assistant must not see the dosing-run data tools: run/well outcomes
+    are experiment data, and tool results transit the model provider."""
+
+    monkeypatch.setenv("ASSISTANT_RUNTIME_DIR", str(tmp_path))
+    path = assistant._write_mcp_config()
+    cfg = json.loads(path.read_text())
+    include = cfg["mcpServers"]["lab-history"]["env"]["LAB_HISTORY_TOOLS"]
+    names = {n.strip() for n in include.split(",") if n.strip()}
+    assert "query_runs" not in names
+    assert "query_well_results" not in names
+    # record_observation (the journal write) stays — platform knowledge loop.
+    assert "record_observation" in names
+
+
+def test_history_tools_default_matches_server_registry() -> None:
+    """Cross-module parity: every tool the assistant asks for must exist
+    server-side (a typo here would kill the spawned server at startup), and
+    the exclusion is exactly the two run-data tools."""
+
+    from app.mcp_server import ALL_TOOLS
+
+    names = {n.strip() for n in assistant.HISTORY_TOOLS.split(",") if n.strip()}
+    assert names == ALL_TOOLS - {"query_runs", "query_well_results"}
+
+
 def test_mcp_servers_launch_without_uv_when_console_scripts_exist(
     tmp_path, monkeypatch
 ) -> None:
