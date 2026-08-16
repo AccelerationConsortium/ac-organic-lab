@@ -2,8 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Follow the site's own theme class, not the OS preference: `light dark`
+   lets the UA pick, so an OS-dark user viewing the light theme got dark,
+   high-contrast scrollbars (and form controls) on a light page. The `dark`
+   class is set on <html> before first paint (layout.tsx THEME_INIT). */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
 }
 
 html, body {
