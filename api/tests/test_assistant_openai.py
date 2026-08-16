@@ -65,14 +65,14 @@ def test_merge_tool_call_delta_accumulates_across_chunks() -> None:
 def test_server_specs_control_requires_actor(monkeypatch) -> None:
     monkeypatch.delenv("LAB_DASHBOARD_API_URL", raising=False)
     ask = assistant_openai._server_specs(False, "op@lab.local")
-    assert set(ask) == {"lab-history"}
+    assert set(ask) == {"lab-history", "lab-inventory"}
     assert ask["lab-history"]["env"]["LAB_ACTOR"] == "op@lab.local"
 
     anonymous_control = assistant_openai._server_specs(True, None)
-    assert set(anonymous_control) == {"lab-history"}
+    assert set(anonymous_control) == {"lab-history", "lab-inventory"}
 
     control = assistant_openai._server_specs(True, "op@lab.local")
-    assert set(control) == {"lab-history", "lab-control"}
+    assert set(control) == {"lab-history", "lab-inventory", "lab-control"}
     assert control["lab-control"]["env"]["LAB_ACTOR"] == "op@lab.local"
 
 

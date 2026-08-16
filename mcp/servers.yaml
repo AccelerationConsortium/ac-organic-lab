@@ -184,6 +184,65 @@ servers:
         - Hermes `lab-runner` profile under the boxed `hermes` OS user
           (LAB_ACTOR=hermes@lab.local; full 4-tool allowlist)
 
+  lab-inventory:
+    description: >-
+      First-party read-only chemical-stock server (api/app/inventory_mcp.py
+      in this repo): search chemicals by name/CAS/synonym, sufficiency
+      checks ("is 50 mL of THF on the shelf"), full per-CAS records
+      (hazards, SDS, vendor/lot/expiry per bottle), and per-group totals.
+      A thin HTTP front over bitácora's /inventory API (the LIMS Phase 1
+      store) — it never opens the store's SQLite file directly.
+    transport: stdio
+    # Console script `lab-inventory-mcp` from the api/ package; resolve
+    # through the deployment's venv (see the lab-history note). Reaches
+    # bitácora at BITACORA_URL (default loopback :8050) — the same env var
+    # the workflow executor uses.
+    command: lab-inventory-mcp
+    optional: true
+
+    provenance:
+      repository: https://github.com/AccelerationConsortium/ac-organic-lab
+      license: MIT
+      reviewed_version: api 0.1.0
+      reviewed_commit: e2cc321243f05c9b6339e49639707dce2ed613aa
+      reviewed_at: 2026-08-15
+
+    tools:
+      # The durable agent-facing contract: these names are question-shaped
+      # (not storage-shaped) so the planned backend swap to AnaliticaDB's
+      # Substance/Lot/Container ledger (DATABASE_DESIGN.md §5) changes
+      # nothing client-side.
+      include:
+        - search_inventory
+        - check_stock
+        - get_chemical
+        - inventory_stats
+
+    sampling:
+      enabled: false
+
+    data_policy:
+      confidential_data: prohibited
+      authoritative_inventory_source: false
+      authoritative_safety_source: false
+      notes:
+        - >-
+          Read surface only; bitácora's store is authoritative. This server
+          MUST stay read-only: inventory writes (import, tombstone, future
+          auto-deduction) are admin actions gated on edge-verified identity
+          at bitácora and must never appear here as tools.
+        - >-
+          Hazard fields (GHS/H/P codes, SDS links) are convenience copies
+          enriched from PubChem — not an authoritative safety source; the
+          SDS itself is.
+        - >-
+          The authoritative_inventory_source flag above refers to the
+          EQUIPMENT inventory (equipment.yaml, owned by lab-skills), not
+          chemical stock — hence false here despite the name.
+      known_clients:
+        - dashboard assistant bubble (api/app/assistant.py, both Ask and
+          Control modes; allowlist mirrors tools.include above)
+
   lab-hostops:
     description: >-
       Whitelisted host-operations server (one instance per lab machine):

@@ -187,6 +187,7 @@ session that produced this; the operative rule is below.
 | `lab-skills` (no `--allow-control`) | list equipment/skills, live status, `validate_plan`, `preflight_plan` | register `execute_plan` for an agent client |
 | `sdl-lab-hostops` instances | service status/log-tail, serial enumeration, loopback `/status` probes; `restart_service` for that host's `restartable` subset | touch device `/control/*`, run arbitrary shell |
 | `lab-runs` (authorized-run trigger, `api/app/run_trigger.py`) | start/watch/abort a run a human already authorized — a thin client over `api/app/workflow.py`, which re-verifies everything | compose, edit, list, or approve plans itself |
+| `lab-inventory` (chemical stock, `api/app/inventory_mcp.py`) | read chemical stock over bitácora's `/inventory` API: search, sufficiency checks, per-CAS detail, group totals | grow a write tool (import, tombstone, deduction — those stay identity-gated at bitácora's edge); open the store's SQLite file directly |
 
 Two enforcement layers, deliberately redundant:
 

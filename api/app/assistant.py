@@ -90,6 +90,9 @@ DEFAULT_TIMEOUT_S = float(os.environ.get("ASSISTANT_CLAUDE_TIMEOUT_S", "120"))
 DEFAULT_BACKEND = os.environ.get("ASSISTANT_BACKEND", "claude-cli")
 CONTROL_BACKEND = os.environ.get("ASSISTANT_CONTROL_BACKEND", DEFAULT_BACKEND)
 ALLOWED_TOOL_GLOB = "mcp__lab-history__*"
+# Chemical stock (bitácora's /inventory API, read-only) rides its own server
+# in both modes; see app/inventory_mcp.py for the contract-stability note.
+INVENTORY_TOOL_GLOB = "mcp__lab-inventory__*"
 # Control mode (UI_DESIGN §5) adds the propose-only lab-control server. Neither
 # of its tools actuates; the model's most privileged act is returning a
 # validated proposal the operator then authorizes in the browser.
@@ -211,9 +214,9 @@ def _control_server_env(actor: str) -> dict[str, str]:
 def _write_mcp_config(*, include_control: bool = False, actor: str | None = None) -> Path:
     """Materialise the explicit MCP config and return its path.
 
-    Always registers the read-only ``lab-history`` server. When
-    ``include_control`` (Control mode with a verified ``actor``), also registers
-    the propose-only ``lab-control`` server. Every path written here is
+    Always registers the read-only ``lab-history`` and ``lab-inventory``
+    servers. When ``include_control`` (Control mode with a verified ``actor``),
+    also registers the propose-only ``lab-control`` server. Every path written here is
     absolute (see :func:`_mcp_server_command`), so the servers resolve
     regardless of the subprocess cwd.
     """
@@ -229,13 +232,24 @@ def _write_mcp_config(*, include_control: bool = False, actor: str | None = None
     dashboard_url = os.environ.get("LAB_DASHBOARD_API_URL")
     if dashboard_url:
         history_env["LAB_DASHBOARD_API_URL"] = dashboard_url
+    inventory_cmd, inventory_args = _mcp_server_command("lab-inventory-mcp")
+    inventory_env: dict[str, str] = {}
+    bitacora_url = os.environ.get("BITACORA_URL")
+    if bitacora_url:
+        inventory_env["BITACORA_URL"] = bitacora_url
     servers: dict[str, Any] = {
         "lab-history": {
             "type": "stdio",
             "command": history_cmd,
             "args": history_args,
             "env": history_env,
-        }
+        },
+        "lab-inventory": {
+            "type": "stdio",
+            "command": inventory_cmd,
+            "args": inventory_args,
+            "env": inventory_env,
+        },
     }
     if include_control and actor:
         control_cmd, control_args = _mcp_server_command("lab-control-mcp")
@@ -264,8 +278,11 @@ SYSTEM_PROMPT = """You are the AC Organic Self-driving Lab assistant. You help
 lab operators understand what is happening to equipment in real time and
 across history.
 
-You have one MCP server connected: lab-history. Its tools read the lab; none
-of them can actuate hardware:
+You have two MCP servers connected: lab-history (equipment telemetry) and
+lab-inventory (chemical stock). Their tools read the lab; none of them can
+actuate hardware.
+
+lab-history:
 
 * list_equipment_now -- live snapshot of every device (id, kind, equipment_status,
   message, fetch_error, latency_ms). Use this first when you need the canonical
@@ -292,6 +309,20 @@ of them can actuate hardware:
   content (compounds, designs, results) or routine conversation; notes are
   permanent and visible to the whole lab. Before an investigation, check the
   journal for prior notes on that device.
+
+lab-inventory (what is on the shelf — chemicals and bottles, not devices):
+
+* search_inventory -- find chemicals by name, CAS, or synonym; each match
+  includes per-bottle group, location, amount remaining, and unit. Empty
+  query browses.
+* check_stock -- "is there enough X": sufficiency for one CAS, optionally
+  against a needed amount + unit. Prefer this for availability questions.
+* get_chemical -- full record for one CAS: GHS/H/P hazard codes, storage
+  class, SDS link, vendor/lot/expiry per bottle.
+* inventory_stats -- totals plus per-group (per-lab) bottle counts.
+
+Inventory is read-only here: you cannot add, deduct, or remove stock — that
+happens through bitácora's own inventory page.
 
 You cannot actuate hardware. If the user asks you to, say so and offer to
 investigate the relevant logs/history instead.
@@ -610,9 +641,9 @@ async def _run_claude(
     prompt = _format_prompt(messages)
     mcp_config_path = _write_mcp_config(include_control=include_control, actor=actor)
     system_prompt = SYSTEM_PROMPT + (CONTROL_PROMPT_ADDENDUM if include_control else "")
-    allowed_tools = ALLOWED_TOOL_GLOB
+    allowed_tools = f"{ALLOWED_TOOL_GLOB} {INVENTORY_TOOL_GLOB}"
     if include_control:
-        allowed_tools = f"{ALLOWED_TOOL_GLOB} {CONTROL_TOOL_GLOB}"
+        allowed_tools = f"{allowed_tools} {CONTROL_TOOL_GLOB}"
     args = [
         binary,
         "--print",
@@ -805,7 +836,7 @@ def build_assistant_router() -> APIRouter:
             "control_model": (
                 assistant_openai.OPENAI_CONTROL_MODEL if ctl_openai else CONTROL_MODEL
             ),
-            "allowed_tools": ALLOWED_TOOL_GLOB,
+            "allowed_tools": f"{ALLOWED_TOOL_GLOB} {INVENTORY_TOOL_GLOB}",
             "cwd": _claude_cwd(),
         }
 

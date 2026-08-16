@@ -3,10 +3,10 @@
 ``assistant.py``'s claude-CLI backend shells out to Claude Code; this module
 is the second backend: it speaks the OpenAI chat-completions protocol to any
 compatible endpoint (default: OpenRouter) and drives the SAME stdio MCP
-servers — ``lab-history``, plus ``lab-control`` in Control mode — through its
-own tool loop. The safety story is unchanged and worth restating: the toolset
-is the boundary. This loop can only call tools the two propose/read-only
-servers expose, the acting identity is bound into the servers' environment
+servers — ``lab-history`` and ``lab-inventory``, plus ``lab-control`` in
+Control mode — through its own tool loop. The safety story is unchanged and
+worth restating: the toolset is the boundary. This loop can only call tools
+the propose/read-only servers expose, the acting identity is bound into the servers' environment
 (never model-chosen), and a ``propose_action`` result still only renders a
 confirm card the operator must click (ARCHITECTURE decision #10).
 
@@ -90,8 +90,18 @@ def _server_specs(control: bool, actor: str | None) -> dict[str, dict[str, Any]]
     dashboard_url = os.environ.get("LAB_DASHBOARD_API_URL")
     if dashboard_url:
         history_env["LAB_DASHBOARD_API_URL"] = dashboard_url
+    inventory_cmd, inventory_args = _mcp_server_command("lab-inventory-mcp")
+    inventory_env: dict[str, str] = {}
+    bitacora_url = os.environ.get("BITACORA_URL")
+    if bitacora_url:
+        inventory_env["BITACORA_URL"] = bitacora_url
     specs: dict[str, dict[str, Any]] = {
-        "lab-history": {"command": history_cmd, "args": history_args, "env": history_env}
+        "lab-history": {"command": history_cmd, "args": history_args, "env": history_env},
+        "lab-inventory": {
+            "command": inventory_cmd,
+            "args": inventory_args,
+            "env": inventory_env,
+        },
     }
     if control and actor:
         control_cmd, control_args = _mcp_server_command("lab-control-mcp")

@@ -18,11 +18,17 @@ from app.assistant import ChatRequest
 # ---------------------------------------------------------------------------
 
 
-def test_write_mcp_config_ask_is_history_only(tmp_path, monkeypatch) -> None:
+def test_write_mcp_config_ask_is_read_only_servers(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("ASSISTANT_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("BITACORA_URL", "http://bitacora.test:8050")
     path = assistant._write_mcp_config()
     cfg = json.loads(path.read_text())
-    assert set(cfg["mcpServers"]) == {"lab-history"}
+    assert set(cfg["mcpServers"]) == {"lab-history", "lab-inventory"}
+    # The inventory server reaches bitácora where the executor does.
+    assert (
+        cfg["mcpServers"]["lab-inventory"]["env"]["BITACORA_URL"]
+        == "http://bitacora.test:8050"
+    )
     assert path.name == "mcp.json"
 
 
@@ -31,7 +37,7 @@ def test_write_mcp_config_control_adds_lab_control(tmp_path, monkeypatch) -> Non
     monkeypatch.setenv("AUTH_SERVICE_BASE", "http://authz.test:8009")
     path = assistant._write_mcp_config(include_control=True, actor="alice@example.edu")
     cfg = json.loads(path.read_text())
-    assert set(cfg["mcpServers"]) == {"lab-history", "lab-control"}
+    assert set(cfg["mcpServers"]) == {"lab-history", "lab-inventory", "lab-control"}
     ctl = cfg["mcpServers"]["lab-control"]
     # Either launch mode is acceptable here; the command must name the server.
     assert "lab-control-mcp" in " ".join([ctl["command"], *ctl["args"]])
@@ -60,7 +66,7 @@ def test_write_mcp_config_control_without_actor_is_history_only(
     monkeypatch.setenv("ASSISTANT_RUNTIME_DIR", str(tmp_path))
     path = assistant._write_mcp_config(include_control=True, actor=None)
     cfg = json.loads(path.read_text())
-    assert set(cfg["mcpServers"]) == {"lab-history"}
+    assert set(cfg["mcpServers"]) == {"lab-history", "lab-inventory"}
 
 
 def test_mcp_servers_launch_without_uv_when_console_scripts_exist(
@@ -79,7 +85,7 @@ def test_mcp_servers_launch_without_uv_when_console_scripts_exist(
     monkeypatch.setenv("ASSISTANT_RUNTIME_DIR", str(tmp_path))
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for name in ("lab-history-mcp", "lab-control-mcp"):
+    for name in ("lab-history-mcp", "lab-inventory-mcp", "lab-control-mcp"):
         script = bindir / name
         script.write_text("#!/bin/sh\nexit 0\n")
         script.chmod(0o755)
@@ -92,6 +98,7 @@ def test_mcp_servers_launch_without_uv_when_console_scripts_exist(
     )
     for name, script in (
         ("lab-history", "lab-history-mcp"),
+        ("lab-inventory", "lab-inventory-mcp"),
         ("lab-control", "lab-control-mcp"),
     ):
         entry = cfg["mcpServers"][name]

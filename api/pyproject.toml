@@ -23,6 +23,7 @@ dependencies = [
 lab-history-mcp = "app.mcp_server:run"
 lab-control-mcp = "app.assistant_control:run"
 lab-runs-mcp = "app.run_trigger:run"
+lab-inventory-mcp = "app.inventory_mcp:run"
 
 [project.optional-dependencies]
 dev = [

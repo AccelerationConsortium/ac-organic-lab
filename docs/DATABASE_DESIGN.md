@@ -228,6 +228,28 @@ What breaks if modeled literally:
 This keeps the user's *lifecycle* (procure → enter → consume → reorder)
 fully expressible — as ledger events, which is what those verbs are.
 
+**Interim state (recorded 2026-08-15).** Until this ledger module is built,
+the *live* chemical inventory is bitácora's LIMS Phase 1 store — a two-table
+SQLite file (`chemicals` by CAS, `bottles` by barcode; see
+`bitacora/docs/INVENTORY_DESIGN.md`) fed by LIMS .xlsx imports and served
+over bitácora's `/inventory/*` API. Three rules keep the eventual migration
+cheap, decided with the `lab-inventory` MCP server (2026-08-15):
+
+1. **All consumers go through the HTTP API** — the dashboard, agents (via the
+   `lab-inventory` MCP server in `api/app/inventory_mcp.py`), and scripts.
+   Nothing but the bitácora service opens `inventory.sqlite3`; the storage
+   engine is an implementation detail no reader can observe.
+2. **The agent-facing contract is the MCP tool surface** (`search_inventory`,
+   `check_stock`, `get_chemical`, `inventory_stats` — question-shaped, not
+   storage-shaped, pinned in `mcp/servers.yaml`). When this section's ledger
+   ships, that server repoints its backend and the tool names survive.
+3. **The Phase-1 store is absorbed, not upgraded**: its import/snapshot/
+   reconciliation flow becomes the ingest path (`receive`/`adjust` ledger
+   actions), then the SQLite store retires. It is deliberately not ported
+   to Postgres as-is, and it never runs as a second writer beside the
+   ledger — that would split provenance across stores, the exact failure
+   this section exists to prevent.
+
 ## 6. Labware — containers as first-class physical objects, unified with bottles
 
 Correct instinct, and it unifies with §5 more deeply than proposed: **a vendor
