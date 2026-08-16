@@ -7,8 +7,9 @@ import { pillClass, stickyPillRow } from "@/lib/pill";
 /**
  * Utils section — operator tools that aren't tied to one piece of equipment.
  * Each utility is a route under /utils/<slug>; the pill row here switches
- * between them (same pill pattern as the Platforms tab), and None (the /utils
- * index) shows nothing. Register new utilities in UTILS below.
+ * between them (same pill pattern as the Platforms tab). The /utils index
+ * redirects to Inventory, the default utility. Register new utilities in
+ * UTILS below.
  */
 const UTILS: { slug: string; label: string; description: string; href?: string }[] = [
   {
@@ -56,15 +57,6 @@ export default function UtilsLayout({ children }: { children: React.ReactNode })
             </Link>
           );
         })}
-        <Link
-          href="/utils"
-          role="tab"
-          aria-selected={pathname === "/utils"}
-          title="Show nothing"
-          className={pillClass(pathname === "/utils")}
-        >
-          None
-        </Link>
       </div>
       {children}
     </div>
