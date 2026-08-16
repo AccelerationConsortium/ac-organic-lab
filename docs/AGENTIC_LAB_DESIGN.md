@@ -188,6 +188,7 @@ session that produced this; the operative rule is below.
 | `sdl-lab-hostops` instances | service status/log-tail, serial enumeration, loopback `/status` probes; `restart_service` for that host's `restartable` subset | touch device `/control/*`, run arbitrary shell |
 | `lab-runs` (authorized-run trigger, `api/app/run_trigger.py`) | start/watch/abort a run a human already authorized — a thin client over `api/app/workflow.py`, which re-verifies everything | compose, edit, list, or approve plans itself |
 | `lab-inventory` (chemical stock, `api/app/inventory_mcp.py`) | read chemical stock over bitácora's `/inventory` API: search, sufficiency checks, per-CAS detail, group totals | grow a write tool (import, tombstone, deduction — those stay identity-gated at bitácora's edge); open the store's SQLite file directly |
+| `lab-control` (propose-only, `api/app/assistant_control.py`; spawned only by the dashboard assistant's Control mode, never wired into an agent profile) | validate ONE action against live `allowed_actions`, the skill catalog, and per-equipment authz, then return a proposal object the dashboard renders as a confirm card a human must authorize (UI_DESIGN §5) | issue a control call itself; accept the acting identity as a tool argument (bound via `LAB_ACTOR` in the server env); propose safety-floor actions (stop verbs, the xArm's connect / clear_errors) |
 
 Two enforcement layers, deliberately redundant:
 
