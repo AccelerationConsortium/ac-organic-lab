@@ -408,12 +408,12 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills:
       link_label: "GO"
-      link_href: /utils/bambu_printer
+      link_href: /utils/devices
       internal: true
 
   # Per-printer STATUS_SPEC surfaces served from the same gateway. They are
   # intentionally omitted from Overview sections and rendered together on
-  # /utils/bambu_printer instead. The per-printer envelopes are v1.2 (print-job
+  # /utils/devices instead. The per-printer envelopes are v1.2 (print-job
   # `activity` observed from the printer's gcode state); the aggregate gateway
   # `/status` above stays v1.0 — it fronts printers and has no primary
   # operation of its own.

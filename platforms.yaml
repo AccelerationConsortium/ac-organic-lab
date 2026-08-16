@@ -9,7 +9,9 @@ sections:
     title: Services
     description: Lab web UIs and dashboards
     kind: platform
-    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, bitacora_eln, pypoe_web, kasa_tapo_gateway, bambu_gateway, uptime_kuma, hermes_web, hostops_cytation_pc, hostops_uplc_pc]
+    # hostops_* stay registered + polled in equipment.yaml but render on
+    # /utils/devices (the PCs & Servers panel), not on this card.
+    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, bitacora_eln, pypoe_web, kasa_tapo_gateway, bambu_gateway, uptime_kuma, hermes_web]
     
   - id: complexation
     title: Complexation Platform
