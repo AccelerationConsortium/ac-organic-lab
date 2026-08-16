@@ -47,7 +47,7 @@ def test_bambu_gateway_and_printers_are_registered() -> None:
     assert gateway.base_url == "http://127.0.0.1:8012"
     assert gateway.status_path == "/status"
     assert gateway.pills.link_label == "GO"
-    assert gateway.pills.link_href == "/utils/bambu_printer"
+    assert gateway.pills.link_href == "/utils/devices"
     assert gateway.pills.internal is True
 
     assert registry.by_id("bambu_p1s_01") is not None
