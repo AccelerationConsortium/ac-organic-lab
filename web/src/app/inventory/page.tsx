@@ -1,5 +1,6 @@
 "use client";
 
+import { RememberedFrame } from "@/components/RememberedFrame";
 import { useUserAuth } from "@/lib/user-auth";
 
 /**
@@ -34,8 +35,10 @@ export default function InventoryPage() {
 
   return (
     <div>
-      <iframe
-        src="/bitacora/inventory/embed"
+      <RememberedFrame
+        storageKey="eln:inventory"
+        defaultSrc="/bitacora/inventory/embed"
+        scope="/bitacora/inventory"
         title="Chemical inventory"
         className="h-[calc(100vh-190px)] min-h-[640px] w-full rounded-xl border border-slate-200 bg-transparent dark:border-slate-800"
       />

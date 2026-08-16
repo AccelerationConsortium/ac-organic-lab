@@ -1,5 +1,6 @@
 "use client";
 
+import { RememberedFrame } from "@/components/RememberedFrame";
 import { useUserAuth } from "@/lib/user-auth";
 
 /**
@@ -40,9 +41,13 @@ export default function NotebooksPage() {
     // surface share the column.
     <div>
       {/* A card edge now that it sits in the column: without one, a framed app
-          bleeds into the page and its own top bar reads as this page's. */}
-      <iframe
-        src="/bitacora/"
+          bleeds into the page and its own top bar reads as this page's.
+          RememberedFrame resumes the ELN at the room/notebook the user last
+          had open instead of restarting at the Bitácora root on every visit. */}
+      <RememberedFrame
+        storageKey="eln:notebooks"
+        defaultSrc="/bitacora/"
+        scope="/bitacora/"
         title="Bitácora — Agentic ELN"
         className="h-[calc(100vh-190px)] min-h-[640px] w-full rounded-xl border border-slate-200 bg-transparent dark:border-slate-800"
       />
