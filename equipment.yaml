@@ -505,6 +505,27 @@ equipment:
       # accounts holding a role on this equipment (admin, per roster).
       authorized_only: true
 
+  # Hermes Agent — the Hermes web dashboard on this host (loopback :9119),
+  # fronted by the single auth edge at /hermes/ (Caddyfile.single-edge:
+  # forward_auth + handle_path). It serves no STATUS_SPEC /status, so like
+  # Analitica Chat this is a link-out tile (adapter: mock, not health-polled).
+  # No roster grants exist for this id and the pill is authorized_only, so the
+  # Open link renders for org admins only (same pattern as uptime_kuma); the
+  # edge's forward_auth remains the real gate — hiding the pill is UX, not
+  # security.
+  - id: hermes_web
+    name: Hermes Agent
+    kind: other
+    adapter: mock
+    base_url: http://100.64.254.6/hermes/
+    poll_timeout_seconds: 3.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills:
+      link_label: "Open"
+      link_href: http://100.64.254.6/hermes/
+      authorized_only: true
+
   # LaAgenteAnalitica — the agent chat UI (React/Vite) on a separate PC,
   # fronted by the edge at /agente/ (the built Vite base) so it shows the shared
   # auth banner and one sign-in. Displayed as "AnaliticaChat" on the dashboard.
