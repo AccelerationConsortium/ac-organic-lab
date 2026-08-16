@@ -632,7 +632,7 @@ equipment:
   # v1.2 with no control surface — MCP tools are bearer-token gated); no
   # "Open" pill, it is not a browsable UI.
   - id: hostops_cytation_pc
-    name: Host Ops (Cytation PC)
+    name: Cytation PC Ops
     kind: other
     adapter: http
     protocol: "1.2"
@@ -645,7 +645,7 @@ equipment:
     pills: {}
 
   - id: hostops_uplc_pc
-    name: Host Ops (UPLC PC)
+    name: UPLC PC Ops
     kind: other
     adapter: http
     protocol: "1.2"
