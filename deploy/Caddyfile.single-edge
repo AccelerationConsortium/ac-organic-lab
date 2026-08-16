@@ -303,6 +303,42 @@ http://100.64.254.6 {
 		reverse_proxy 127.0.0.1:3001
 	}
 
+	# ---- Hermes Agent web dashboard (this host), path-routed ONTO this origin
+	# The Hermes dashboard (FastAPI + React SPA) runs at 127.0.0.1:9119 on gaia,
+	# loopback-only — Caddy's forward_auth is its sole gate. handle_path strips
+	# /hermes so the SPA sees its own root paths (/assets/*, /api/*, /login, …).
+	# forward_auth gates every /hermes/* request against ac_auth and injects the
+	# identity headers; on 401 the browser redirects to / (the lab dashboard's
+	# email+code login), same as every other edge-gated panel.
+	#
+	# /hermes/api/ws is EXEMPT from forward_auth: the Chat tab uses a WebSocket
+	# upgrade, and forward_auth sends the Upgrade headers to ac_auth's /auth/verify
+	# which answers 403 before the WS handshake completes (same issue as /xarm5/ws).
+	# The WS is authenticated by the dashboard's own session token, not the cookie.
+	# Canonical URL: http://100.64.254.6/hermes/
+	@hermes_ws path /hermes/api/ws
+	handle @hermes_ws {
+		reverse_proxy 127.0.0.1:9119 {
+			header_up Host 127.0.0.1
+			header_up X-Forwarded-Prefix /hermes
+		}
+	}
+	@hermes {
+		path /hermes /hermes/*
+		not path /hermes/api/ws
+	}
+	forward_auth @hermes 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
+	redir /hermes /hermes/ 308
+	handle_path /hermes/* {
+		reverse_proxy 127.0.0.1:9119 {
+			header_up Host 127.0.0.1
+			header_up X-Forwarded-Prefix /hermes
+		}
+	}
+
 	# ---- dashboard (Next.js) at root ---------------------------------------
 	# Next.js serves / and /api/* (it rewrites /api/* to FastAPI on :8001) and
 	# enforces its own control/assistant gate via web/src/middleware.ts against
