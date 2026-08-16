@@ -27,12 +27,16 @@ export function Nav() {
     ? [{ href: "/platforms", label: "Platforms" }]
     : [];
 
-  // Notebooks embeds Bitácora (the agentic ELN) in an iframe at /notebooks.
-  // The tab renders only after sign-in so an anonymous visitor never sees the
-  // ELN's own auth screen nested inside this dashboard (the middleware
-  // redirects direct navigations too — this is just the visibility half).
+  // Notebooks and Inventory both embed Bitácora in an iframe (/notebooks,
+  // /inventory). The tabs render only after sign-in so an anonymous visitor
+  // never sees the ELN's own auth screen nested inside this dashboard (the
+  // middleware redirects direct navigations too — this is just the
+  // visibility half).
   const notebooksTabs = authenticated
-    ? [{ href: "/notebooks", label: "Notebooks" }]
+    ? [
+        { href: "/notebooks", label: "Notebooks" },
+        { href: "/inventory", label: "Inventory" },
+      ]
     : [];
 
   // Visibility only — the /admin route is enforced by the middleware + sidecar.

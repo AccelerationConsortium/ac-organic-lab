@@ -35,7 +35,7 @@ export default function InventoryPage() {
   return (
     <div>
       <iframe
-        src="/bitacora/inventory"
+        src="/bitacora/inventory/embed"
         title="Chemical inventory"
         className="h-[calc(100vh-190px)] min-h-[640px] w-full rounded-xl border border-slate-200 bg-transparent dark:border-slate-800"
       />
