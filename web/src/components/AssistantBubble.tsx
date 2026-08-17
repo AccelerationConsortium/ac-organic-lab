@@ -624,7 +624,7 @@ function AssistantBubbleInner() {
 
           <div
             ref={scrollerRef}
-            className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-sm"
+            className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-base"
           >
             {turns.length === 0 && (
               <div className="text-xs text-ink-subtle dark:text-slate-500">
@@ -704,7 +704,7 @@ function AssistantBubbleInner() {
                 }
                 rows={2}
                 disabled={sending}
-                className={`flex-1 resize-none rounded border border-slate-300 bg-white px-2 py-1 text-sm text-ink shadow-inner focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${focusClass}`}
+                className={`flex-1 resize-none rounded border border-slate-300 bg-white px-2 py-1 text-base text-ink shadow-inner focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${focusClass}`}
               />
               <button
                 type="submit"
@@ -715,9 +715,8 @@ function AssistantBubbleInner() {
               </button>
             </div>
             {backendInfo?.model && (
-              <p className="mt-1 text-center text-[10px] text-ink-subtle dark:text-slate-500">
-                model: {backendInfo.model}
-                {backendInfo.backend ? ` · ${backendInfo.backend}` : ""}
+              <p className="mt-1 text-center text-sm text-ink-subtle dark:text-slate-500">
+                model: {backendInfo.model} · Hermes agents
               </p>
             )}
           </form>
