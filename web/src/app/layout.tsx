@@ -4,7 +4,6 @@ import "./globals.css";
 import { QueryProvider } from "@/lib/query-client";
 import { UserAuthProvider } from "@/lib/user-auth";
 import { AssistantBubble } from "@/components/AssistantBubble";
-import { KeepAliveEmbeds } from "@/components/KeepAliveEmbeds";
 import { Nav } from "@/components/Nav";
 import { StateReferencePanel } from "@/components/StateReferencePanel";
 import { Logo } from "@/components/Logo";
@@ -60,15 +59,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
          <UserAuthProvider>
           {/* Pinned chrome: title, logo, then the nav tabs beneath them. */}
           <div className="shrink-0">
-            <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 pt-6 sm:px-6 lg:px-8">
+            <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 pt-3 sm:px-6 lg:px-8">
               <div className="flex items-center justify-between gap-4">
                 <div className="min-w-0">
                   <h1 className="text-2xl font-semibold tracking-tight text-ink dark:text-slate-100 md:text-3xl">
                     Organic Self-driving Lab
                   </h1>
-                  <p className="mt-1 text-base text-ink-muted dark:text-slate-400 md:text-lg">
-                    Live Status of Lab and Platforms
-                  </p>
                 </div>
                 <Logo />
               </div>
@@ -91,12 +87,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {/* No top padding: a page's pinned pill row must sit flush under
                 the nav tabs, at rest and while scrolled. Rows carry their own
                 `py-*` (lib/pill.ts); pages without one start flush too. */}
-            <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pb-6 sm:px-6 lg:px-8">
+            <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 pb-6 sm:px-6 lg:px-8">
               {children}
-              {/* Bitácora keep-alive frames (/notebooks, /inventory) — those
-                  pages render nothing when signed in and the live frame shows
-                  here, in the same column, surviving tab switches. */}
-              <KeepAliveEmbeds />
             </div>
           </main>
           {/* Pinned. */}
