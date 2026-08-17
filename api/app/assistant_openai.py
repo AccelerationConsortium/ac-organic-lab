@@ -256,6 +256,15 @@ async def run_openai_turn(
         return
 
     system_prompt = SYSTEM_PROMPT + (CONTROL_PROMPT_ADDENDUM if include_control else "")
+    # Identity is templated from the same config var that selects the model
+    # (ASSISTANT_OPENAI_MODEL / ASSISTANT_OPENAI_CONTROL_MODEL), so it stays
+    # truthful without any hardcoded model name to edit when the model changes:
+    # flip the env var, restart, and the self-report follows automatically.
+    identity = (
+        "You are running as %s via OpenRouter. If the user asks what model you "
+        "are, reply with exactly that identifier." % model
+    )
+    system_prompt = identity + "\n\n" + system_prompt
     convo: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
     convo += [{"role": m.role, "content": m.content} for m in messages]
 
