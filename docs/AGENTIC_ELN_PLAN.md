@@ -198,6 +198,27 @@ artifacts; remove or version `experiment_tables` PATCH; `analysis_inputs`
 M2M (analysis → analysis derivation chains). Plus, from the assessment:
 **agent regression evals** before the agent authors trusted records.
 
+**Multi-template projects** (accepted 2026-08-16; build when the second
+experiment type is concrete, not before). A bitacora project is stamped
+from one template, and its repo's frozen `schema/protocol.schema.json`
+governs every protocol in it — so a campaign mixing experiment types
+(e.g. HTE + echem) has no first-class shape. The accepted design: the
+template registry grows beyond `hte`; project creation stamps a base
+plus chosen experiment *modules*, each contributing
+`schema/<type>.schema.json`, examples, and its own pin in `pins.yaml`
+(today a single self-pin with a test enforcing it); protocols declare
+their type and the editor resolves the matching schema (extending
+bitacora `main.py::_get_room_editor`, which already prefers the
+project's own copy). Explicitly rejected alternatives: splitting one
+campaign into per-platform projects (the project boundary is data
+ownership, not hardware — and it would motivate cross-project chat,
+which would hole the member-only visibility rule), and per-room schema
+divergence via room branches (mechanically possible, collides at merge).
+Interim answer until built: one project whose repo carries a composite
+`oneOf`-by-`type` schema — supported today precisely because the
+project's schema copy, not the platform template, is authoritative for
+both the editor and the project's CI.
+
 ## 5. Prioritization rationale
 
 Track 1 Steps 1–2 deliver the Design third with zero actuation risk and are
