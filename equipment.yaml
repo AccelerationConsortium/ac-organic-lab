@@ -105,7 +105,10 @@ equipment:
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000
     tailscale_ip: 100.64.254.16
     status_path: /status
-    poll_timeout_seconds: 2.0
+    # 8 s: this PC is reached over Wi-Fi (no wired path to gaia), with RTT
+    # spikes to ~1.7 s. 2 s timed out half the polls (2026-08-16); 8 s is the
+    # aggregator hard cap (_MAX_FETCH_SECONDS), same as ot2_hte on this host.
+    poll_timeout_seconds: 8.0
     # STATUS_SPEC v1.2 (device repo commit c91dd05, verified live 2026-07-30):
     # activity / activity_since are observed from the controller's motion
     # state (not derived from equipment_status), and allowed_actions is gated
@@ -235,7 +238,8 @@ equipment:
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8010
     tailscale_ip: 100.64.254.16
     status_path: /status
-    poll_timeout_seconds: 2.0
+    # 8 s: Wi-Fi path to this PC (see xarm_translocation note). Was 2 s.
+    poll_timeout_seconds: 8.0
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -248,7 +252,8 @@ equipment:
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8040
     tailscale_ip: 100.64.254.16
     status_path: /status
-    poll_timeout_seconds: 3.0
+    # 8 s: Wi-Fi path to this PC (see xarm_translocation note). Was 3 s.
+    poll_timeout_seconds: 8.0
     # The agilent-cytation-server repo conforms to STATUS_SPEC v1.2.
     # /control/* is wired (claim/heartbeat/release, drawer, plate
     # management, reads, imaging). The skill catalog entry lives in
@@ -271,7 +276,8 @@ equipment:
     base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8010
     tailscale_ip: 100.64.254.19
     status_path: /status
-    poll_timeout_seconds: 5.0
+    # 8 s: Wi-Fi path to this PC (see xarm_translocation note). Was 5 s.
+    poll_timeout_seconds: 8.0
     # protocol >= "1.1" turns on the aggregator's per-request claim dance
     # (api/app/control.py) — the agilent-hplcms-server sidecar hard-enforces
     # X-Claim-Token on /control/*. do_not_call_connect was removed: the sidecar
@@ -291,7 +297,8 @@ equipment:
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8050
     tailscale_ip: 100.64.254.16
     status_path: /status
-    poll_timeout_seconds: 2.0
+    # 8 s: Wi-Fi path to this PC (see xarm_translocation note). Was 2 s.
+    poll_timeout_seconds: 8.0
     do_not_call_connect: true
     tiles:
       hte: { w: 2, h: 1 }
@@ -639,7 +646,8 @@ equipment:
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8060
     tailscale_ip: 100.64.254.16
     status_path: /status
-    poll_timeout_seconds: 3.0
+    # 8 s: Wi-Fi path to this PC (see xarm_translocation note). Was 3 s.
+    poll_timeout_seconds: 8.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -652,7 +660,8 @@ equipment:
     base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8060
     tailscale_ip: 100.64.254.19
     status_path: /status
-    poll_timeout_seconds: 3.0
+    # 8 s: Wi-Fi path to this PC (see xarm_translocation note). Was 3 s.
+    poll_timeout_seconds: 8.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
