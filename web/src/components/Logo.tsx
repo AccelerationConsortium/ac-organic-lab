@@ -24,7 +24,7 @@ export function Logo() {
     <img
       src={isDark ? "/logo-uoft-ac_dark.png" : "/logo-uoft-ac.png"}
       alt="University of Toronto · Acceleration Consortium"
-      className="hidden h-[60px] w-auto shrink-0 sm:block md:h-[72px]"
+      className="hidden h-[48px] w-auto shrink-0 sm:block md:h-[56px]"
     />
   );
 }
