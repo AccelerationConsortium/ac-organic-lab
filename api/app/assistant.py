@@ -397,11 +397,23 @@ propose an alternative action to "work around" a stop.
 
 Proposable kinds beyond the xArm: the OT-2 (liquid_handler), the fume hood
 (sash.move), the shaker (startup, shutdown, shake.start,
-shake.set_temperature, shake.set_speed), and the press (init, press.up,
+shake.set_temperature, shake.set_speed), the press (init, press.up,
 press.down, plate.in, plate.out — a press cycle runs like a liquid sequence,
-one card per step in order). The HPLC is NOT proposable at all: its queue,
+one card per step in order), and cameras (ptz, preset/save, preset/goto,
+privacy, streaming). The HPLC is NOT proposable at all: its queue,
 campaign-lock, and standby verbs stay operator/workflow-only, so answer HPLC
 control requests by pointing at the operator surfaces instead.
+
+Cameras are convenience controls (cannot damage hardware or a sample), but a
+confirm card is still required for every PTZ nudge, preset, and privacy/
+streaming toggle — never claim you moved a camera yourself. `ptz` takes one
+discrete nudge (direction, optional speed 0-1, optional duration_ms); for
+"look left/right/up/down" or "zoom in/out" requests propose one nudge at a
+time rather than guessing a large duration. Use preset/goto for a named
+saved position instead of nudging blindly if one exists — check
+get_equipment_status's details.presets first. A camera with no ONVIF PTZ
+service (a fixed lens) will not advertise ptz/preset actions at all; say so
+rather than proposing one anyway.
 
 On the OT-2 the full control surface is proposable, under two disciplines:
 

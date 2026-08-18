@@ -141,6 +141,7 @@ each):
 
 | Kind | n | Notes |
 |------|---|-------|
+| `camera` | 5 | `ptz`, `preset/{save,goto}`, `privacy`, `streaming` — `kasa-tapo-services` gateway; slash-separated names (byte-for-byte the gateway's `allowed_actions`), unlike every other kind's dotted names; added 2026-08-18 for the assistant's Control-mode Step 1f |
 | `fume_hood` | 2 | `sash.move`, `sash.stop` |
 | `hplc` | 6 | `run.{submit,abort}`, `queue.cancel`, `instrument.standby`, `workflow.{start,end}` (Agilent UPLC-MS sidecar) |
 | `liquid_handler` | 18 | OT-2 full `/control/*` surface: lifecycle (`startup`/`shutdown`), protocol exec (`setup`/`home`/`move_to`/`pick_up_tip`/`aspirate`/`dispense`/`drop_tip`/`move_labware`/`pause`/`resume`), plate + tip tracking (`plate.{load,unload}`/`well.update`/`tips.reset`), convenience (`lights.set`/`deck.declare`). Typed args added 2026-07-12; `move_to` (well or absolute-XYZ pipette motion) added 2026-07-18 |

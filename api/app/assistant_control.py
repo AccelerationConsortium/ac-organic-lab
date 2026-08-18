@@ -34,7 +34,8 @@ A proposal is exactly one action on one device. In scope:
   ``details.motion_graph`` snapshot (see :func:`_list_available_actions`).
 * the per-kind allowlist in :data:`_PROPOSABLE` — the ``liquid_handler``
   (OT-2) control surface plus, since Step 1d, ``fume_hood`` / ``shaker`` /
-  ``press``. The table carries the scope history and per-kind rationale;
+  ``press``, and since Step 1f, ``camera`` (PTZ nudge, presets, privacy,
+  streaming). The table carries the scope history and per-kind rationale;
   :data:`_FORBIDDEN_ARG_FIELDS` holds the argument fields that are never
   model-settable (interlock overrides, device credentials). The ``hplc``
   kind is deliberately absent — see the table's Step 1d note.
@@ -278,6 +279,20 @@ _PROPOSABLE: dict[str, frozenset[str]] = {
             "plate.out",
         }
     ),
+    # Step 1f (2026-08-18): cameras. Unlike every other proposable kind,
+    # ``kind: camera`` is in EQUIP_GUIDE.md's UNGATED_KINDS — PTZ, presets,
+    # privacy, and streaming are convenience controls that cannot damage
+    # hardware or a sample, the same criterion that keeps them off the
+    # CONTROL_PASSWORD lock chip on the tile itself. The full advertised
+    # surface minus the un-mappable ``preset/{id}`` delete template (see the
+    # module docstring) is admitted with no new mechanism: every action is
+    # one card-evaluable act with no interlock-override or credential field,
+    # so _FORBIDDEN_ARG_FIELDS gains no entries here either. Names are
+    # byte-for-byte what the gateway advertises (slash-separated, unlike
+    # every other kind's dotted names — see kasa_tapo_services
+    # routes/cameras.py) so the direct name-match branch of _resolve needs
+    # no camera-specific bridging.
+    "camera": frozenset({"ptz", "preset/save", "preset/goto", "privacy", "streaming"}),
 }
 
 # Argument fields the model may never set, per kind — see the rationale above.

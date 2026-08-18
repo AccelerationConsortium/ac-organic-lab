@@ -751,6 +751,185 @@ async def test_propose_bench_bad_args_rejected() -> None:
     assert out["code"] == "invalid_args"
 
 
+# ---------------------------------------------------------------------------
+# camera proposals (UI_DESIGN §5 Step 1f) — PTZ nudge, presets, privacy,
+# streaming. Unlike every bench kind above, camera is in EQUIP_GUIDE.md's
+# UNGATED_KINDS (convenience; cannot damage hardware), but a confirm card is
+# still required — the assistant proposes, it never actuates.
+# ---------------------------------------------------------------------------
+
+CAMERA_BASE = "http://camera.test:8002"
+
+# Byte-for-byte what kasa_tapo_services routes/cameras.py advertises, mapped
+# to the passthrough URL segment. preset/{id} (delete) is deliberately absent
+# — it is a literal template in allowed_actions, not a resolvable id.
+_CAMERA_SURFACE = {
+    "ptz": "ptz",
+    "preset/save": "preset/save",
+    "preset/goto": "preset/goto",
+    "privacy": "privacy",
+    "streaming": "streaming",
+}
+
+
+def _camera_registry() -> Registry:
+    return Registry(
+        equipment=[
+            EquipmentEntry(
+                id="cam_lab499_west",
+                name="Lab 499 (West) Camera",
+                kind="camera",
+                adapter="http",
+                base_url=CAMERA_BASE,
+                status_path="/status",
+                protocol="1.0",
+            )
+        ]
+    )
+
+
+def _mock_camera_status(allowed_actions: list[str]) -> None:
+    respx.get(f"{CAMERA_BASE}/status").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "equipment_id": "cam_lab499_west",
+                "equipment_name": "Lab 499 (West) Camera",
+                "equipment_kind": "camera",
+                "equipment_status": "ready",
+                "message": "ok",
+                "allowed_actions": allowed_actions,
+                "device_time": "2026-08-18T12:00:00Z",
+            },
+        )
+    )
+
+
+@pytest.mark.parametrize(("action", "passthrough"), sorted(_CAMERA_SURFACE.items()))
+def test_resolve_camera_surface(action: str, passthrough: str) -> None:
+    """Every proposable camera action resolves by direct catalog-name lookup —
+    no xArm-style bridging needed even though names are slash-separated."""
+
+    entry = _camera_registry().equipment[0]
+    sd, resolved_passthrough, args = ac._resolve(entry, action, {})
+    assert sd.name == action
+    assert resolved_passthrough == passthrough
+    assert args == {}
+
+
+def test_resolve_refuses_camera_preset_delete_template() -> None:
+    """``preset/{id}`` is the device's literal template string for "you may
+    DELETE any preset", not a resolvable action name — never proposable."""
+
+    entry = _camera_registry().equipment[0]
+    with pytest.raises(ac.ProposalRefused) as exc:
+        ac._resolve(entry, "preset/{id}", {})
+    assert exc.value.code == "unmappable_action"
+
+
+@respx.mock
+async def test_propose_camera_ptz_nudge() -> None:
+    _mock_camera_status(list(_CAMERA_SURFACE))
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _camera_registry(),
+            "cam_lab499_west",
+            "ptz",
+            {"direction": "left", "speed": 0.5, "duration_ms": 400},
+            "pan left to see the deck",
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "ptz"
+    assert prop["passthrough_action"] == "ptz"
+    assert prop["args"] == {"direction": "left", "speed": 0.5, "duration_ms": 400}
+    assert prop["kind"] == "camera"
+
+
+@respx.mock
+async def test_propose_camera_preset_goto() -> None:
+    _mock_camera_status(list(_CAMERA_SURFACE))
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _camera_registry(),
+            "cam_lab499_west",
+            "preset/goto",
+            {"preset_id": "1"},
+            "return to the bench view",
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "preset/goto"
+    assert prop["passthrough_action"] == "preset/goto"
+    assert prop["args"] == {"preset_id": "1"}
+
+
+@respx.mock
+async def test_propose_camera_privacy_toggle() -> None:
+    _mock_camera_status(list(_CAMERA_SURFACE))
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _camera_registry(), "cam_lab499_west", "privacy", {"enabled": True}, ""
+        )
+    )
+    assert out["proposal"]["passthrough_action"] == "privacy"
+
+
+@respx.mock
+async def test_propose_camera_bad_ptz_args_rejected() -> None:
+    # speed must be within 0..1.
+    _mock_camera_status(list(_CAMERA_SURFACE))
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _camera_registry(), "cam_lab499_west", "ptz",
+            {"direction": "left", "speed": 5.0}, ""
+        )
+    )
+    assert out["code"] == "invalid_args"
+
+
+@respx.mock
+async def test_propose_camera_not_advertised_is_refused() -> None:
+    """A fixed-lens camera (no ONVIF PTZ service) never advertises ptz/preset
+    actions (STATUS_SPEC §6.2) — proposing one anyway is refused as
+    not_allowed, not sent on to earn a 412/404 from the gateway."""
+
+    _mock_camera_status(["privacy", "streaming"])
+    out = json.loads(
+        await ac._propose_action(
+            _camera_registry(), "cam_lab499_west", "ptz",
+            {"direction": "left"}, ""
+        )
+    )
+    assert out["code"] == "not_allowed"
+    assert out["allowed_actions"] == ["privacy", "streaming"]
+
+
+def test_proposable_camera_equals_gateway_surface_minus_delete_template() -> None:
+    """Step 1f admitted the full advertised surface except the unresolvable
+    preset/{id} delete template — pinned so a silent narrowing or widening
+    both fail."""
+
+    assert ac._PROPOSABLE["camera"] == set(_CAMERA_SURFACE)
+
+
+@respx.mock
+async def test_list_available_actions_camera_full_surface() -> None:
+    _mock_camera_status(list(_CAMERA_SURFACE) + ["preset/{id}"])
+    out = json.loads(await ac._list_available_actions(_camera_registry(), "cam_lab499_west"))
+    by_action = {a["action"]: a for a in out["actions"]}
+    for action, passthrough in _CAMERA_SURFACE.items():
+        assert by_action[action]["proposable"] is True, action
+        assert by_action[action]["passthrough_action"] == passthrough
+    # The delete template is listed (it's genuinely in allowed_actions) but
+    # not proposable — nothing here can resolve it to a concrete preset id.
+    assert by_action["preset/{id}"]["proposable"] is False
+
+
 @respx.mock
 async def test_list_available_actions_ot2_full_surface_and_stripped_schemas() -> None:
     _mock_ot2_status(_OT2_ADVERTISED)

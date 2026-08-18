@@ -21,6 +21,7 @@ def test_registry_populated_for_active_kinds() -> None:
     assert "solid_doser" in SKILL_REGISTRY
     assert "fume_hood" in SKILL_REGISTRY
     assert "hplc" in SKILL_REGISTRY
+    assert "camera" in SKILL_REGISTRY
 
 
 def test_plate_reader_catalog_registered() -> None:
@@ -305,6 +306,41 @@ def test_plate_sealer_skill_endpoints_match_spec() -> None:
     assert by_name["seal.set_time"].endpoint == "/control/seal/time"
     assert by_name["stage.in"].endpoint == "/control/stage/in"
     assert by_name["stage.out"].endpoint == "/control/stage/out"
+
+
+def test_camera_catalog_registered() -> None:
+    """kasa-tapo-services gateway (STATUS_SPEC v1.0, gateway-fronted): PTZ
+    nudge, presets, privacy, streaming. Action names are slash-separated
+    (byte-for-byte what the gateway advertises in allowed_actions), unlike
+    every other kind's dotted names.
+    """
+
+    defs = {d.name: d for d in SKILL_REGISTRY["camera"]}
+    assert set(defs) == {"ptz", "preset/save", "preset/goto", "privacy", "streaming"}
+    for name, d in defs.items():
+        assert d.kind == "camera"
+        assert d.endpoint == f"/control/{name}"
+        assert d.method == "POST"
+
+    ptz_fields = defs["ptz"].args_schema.model_fields
+    assert {"direction", "speed", "duration_ms"} <= set(ptz_fields)
+    assert defs["preset/save"].args_schema.model_fields["name"].is_required()
+    assert defs["preset/goto"].args_schema.model_fields["preset_id"].is_required()
+    assert defs["privacy"].args_schema.model_fields["enabled"].is_required()
+    assert defs["streaming"].args_schema.model_fields["enabled"].is_required()
+
+
+def test_camera_ptz_args_schema_validates_ranges() -> None:
+    from lab_skills.skill_catalog.camera import PtzNudgeArgs
+
+    PtzNudgeArgs(direction="left")  # ok, defaults fill in
+    PtzNudgeArgs(direction="up_right", speed=1.0, duration_ms=5000)  # ok, at bounds
+    with pytest.raises(Exception):
+        PtzNudgeArgs(direction="left", speed=1.5)  # > 1.0
+    with pytest.raises(Exception):
+        PtzNudgeArgs(direction="left", duration_ms=5001)  # > 5000 ms
+    with pytest.raises(Exception):
+        PtzNudgeArgs(direction="sideways")  # not a PtzDirection
 
 
 def test_each_skill_def_has_pydantic_args_schema() -> None:

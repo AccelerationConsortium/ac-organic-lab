@@ -729,7 +729,7 @@ single-glyph surfaces; rendering pre-tracking time as zero usage.
 
 ---
 
-## 5. Assistant control mode [IMPLEMENTED — Steps 1, 1b, 1c, 1d, 1e]
+## 5. Assistant control mode [IMPLEMENTED — Steps 1, 1b, 1c, 1d, 1e, 1f]
 
 **Drafted 2026-08-07** on branch `actionable-assistant`; **Step 1 implemented
 2026-08-11**. Extends the tier-2 dashboard assistant (§2) from a purely
@@ -1005,6 +1005,47 @@ refuses it outright unless the arm is parked at a pinned node in STRICT mode.
 > proposal card refusal-proof, which a bare family name cannot be. The family
 > names surface in `list_available_actions` as `proposable: false` rows; that
 > is correct, not a gap.
+
+#### Step 1f — cameras: PTZ, presets, privacy, streaming (2026-08-18)
+
+Cameras (`kind: camera`, the `kasa-tapo-services` gateway) admitted with the
+same criterion as Step 1d and, again, **no new mechanism**: a new
+`skill_catalog/camera.py` module registers the gateway's advertised surface,
+and `_PROPOSABLE["camera"]` scopes it exactly as any bench kind. What makes
+cameras distinctive is not the mechanism but the *risk tier* — `camera` is
+one of the two kinds in `EQUIP_GUIDE.md`'s `UNGATED_KINDS` (§6b there): PTZ,
+presets, snapshots, and recording carry no `CONTROL_PASSWORD` lock chip on
+the tile itself because they cannot damage hardware or a sample. Step 1f does
+not weaken the *assistant's* commitment on that account — every camera action
+still renders a confirm card and still requires an authorized actor with
+`operator`+ on the device (§5.2) — it only explains why the admission bar was
+easy to clear.
+
+| Kind | Proposable | Excluded |
+|---|---|---|
+| `camera` | `ptz`, `preset/save`, `preset/goto`, `privacy`, `streaming` | `preset/{id}` (delete) |
+
+Two things worth recording:
+
+- **Action names are slash-separated, not dotted** (`preset/save`, not
+  `preset.save`) — the one respect in which this kind differs cosmetically
+  from every other entry in `_PROPOSABLE`. That is simply what
+  `kasa_tapo_services/routes/cameras.py` puts on the wire in
+  `allowed_actions`, and the resolver's direct name-match branch does not
+  care either way — no camera-specific bridging code was needed, unlike the
+  xArm's `move.<node_id>` / `gripper.<state>`.
+- **`preset/{id}` (the delete verb) is excluded, not merely unscoped.** The
+  gateway always advertises it as the literal string `"preset/{id}"` — a
+  template announcing "you may `DELETE` any preset", never a concrete,
+  resolvable id (see `camera.py`'s module docstring). There is nothing for a
+  generic name-match lookup to resolve it to, so it stays operator-only by
+  construction, the same category as a stop verb even though nothing here
+  is safety-floor.
+
+Also fixed in the same change: `skills/tests/test_skills.py`'s
+"kind with no registered defs" fixture previously used `camera` as its
+example of an equipment kind with an empty skill catalog — no longer true —
+and was repointed at `smart_plug`, which still has none.
 
 ### 5.4 What control mode does *not* change
 

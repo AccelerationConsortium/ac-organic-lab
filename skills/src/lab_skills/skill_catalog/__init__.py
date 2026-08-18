@@ -26,6 +26,7 @@ from .registry import SKILL_REGISTRY, register, skills_for
 # Eager imports so that consumers of the catalog see a fully populated
 # SKILL_REGISTRY without having to know which kind modules exist. Each
 # module's top-level ``register(...)`` call runs at this point.
+from . import camera as _camera  # noqa: F401
 from . import fume_hood as _fume_hood  # noqa: F401
 from . import hplc as _hplc  # noqa: F401
 from . import liquid_handler as _liquid_handler  # noqa: F401
