@@ -57,21 +57,13 @@ const ASSISTANT_PUBLIC_PATHS = new Set(["/api/assistant/health"]);
 const ADMIN_PAGE_RE = /^\/admin(?:\/.*)?$/;
 const ADMIN_API_RE = /^\/api\/admin(?:\/.*)?$/;
 
-// -- /notebooks page gate (sign-in required) ----------------------------------
-//
-// /notebooks embeds Bitácora (a separate app, own auth-gated route) in an
-// iframe. Bitácora renders its own full dashboard chrome — including its own
-// login/authorization screen — when the viewer isn't signed in to it. If an
-// anonymous ac-organic-lab visitor can reach /notebooks, they see that whole
-// second dashboard nested inside this one (a "russian doll" of dashboards).
-// Gating the page itself on an ac-organic-lab session means an unauthorized
-// visitor never sees the iframe at all — same-cheap fix as /admin above, just
-// sign-in rather than the admin role.
-// /inventory frames the same app and inherits the same reasoning: an anonymous
-// visitor would otherwise see Bitácora's own auth screen nested inside this
-// dashboard. Sign-in only — the whole lab may read the shelf; uploading is
-// admin-gated by Bitácora's API, not here.
-const FRAMED_ELN_PAGE_RE = /^\/(?:notebooks|inventory)(?:\/.*)?$/;
+// Stale Notebooks bookmark. /notebooks no longer exists as an in-dashboard
+// route (Bitácora opens in its own browser tab). An old bookmark (or a direct
+// URL) is redirected to Bitácora for a signed-in visitor, or back to the
+// dashboard Overview when they aren't — they may not have Bitácora access, and
+// the Overview is where they'd sign in. (/inventory is a real public page
+// again — a chrome-less embed — so it is not redirected.)
+const STALE_ELN_REDIRECT_RE = /^\/notebooks(?:\/.*)?$/;
 
 const AUTH_SERVICE_BASE =
   process.env.AUTH_SERVICE_BASE ?? "http://127.0.0.1:8009";
@@ -104,6 +96,16 @@ async function verifySession(
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // ---- Stale /notebooks → Bitácora (or Overview) --------------------------
+  if (STALE_ELN_REDIRECT_RE.test(pathname)) {
+    let to = "/";
+    if (CONTROL_OPEN || (await verifySession(request)).ok) to = "/bitacora/";
+    const url = request.nextUrl.clone();
+    url.pathname = to;
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
 
   // ---- Assistant guard (it reads all lab history — sign-in required) -----
   if (
@@ -140,18 +142,6 @@ export async function middleware(request: NextRequest) {
           { status: v.ok ? 403 : 401 },
         );
       }
-      const url = request.nextUrl.clone();
-      url.pathname = "/";
-      return NextResponse.redirect(url);
-    }
-    return NextResponse.next();
-  }
-
-  // ---- Framed-ELN page guard: /notebooks and /inventory (sign-in required) -
-  if (FRAMED_ELN_PAGE_RE.test(pathname)) {
-    if (CONTROL_OPEN) return NextResponse.next();
-    const v = await verifySession(request);
-    if (!v.ok) {
       const url = request.nextUrl.clone();
       url.pathname = "/";
       return NextResponse.redirect(url);
@@ -196,6 +186,5 @@ export const config = {
     "/admin/:path*",
     "/api/admin/:path*",
     "/notebooks/:path*",
-      "/inventory/:path*",
   ],
 };

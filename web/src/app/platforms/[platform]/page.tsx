@@ -41,17 +41,17 @@ export default function PlatformWorkflowPlaceholder() {
         the Platforms tab.
       </p>
       <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-        {/* Same visibility rule as the Nav's Notebooks tab: /notebooks is
-            sign-in-gated by the middleware (a signed-out click would just
-            bounce to /), so show the link only to signed-in viewers and say
-            why it's absent otherwise. */}
+        {/* Same visibility rule as the Nav's Notebooks tab, which now opens
+            Bitácora in its own browser tab. */} 
         {!loading && authenticated && (
-          <Link
-            href="/notebooks"
+          <a
+            href="/bitacora/"
+            target="_blank"
+            rel="noopener noreferrer"
             className="rounded-md bg-orange-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-orange-700 dark:bg-orange-500 dark:hover:bg-orange-600"
           >
             Open the notebook →
-          </Link>
+          </a>
         )}
         <Link
           href="/platforms"

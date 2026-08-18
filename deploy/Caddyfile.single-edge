@@ -281,7 +281,30 @@ http://100.64.254.6 {
 	# silently destroyed by the next edge deploy — which is exactly what happened
 	# on 2026-08-02 (three edge fixes that evening; the ELN 404'd until someone
 	# opened the tab). One file, one owner.
-	@bitacora path /bitacora /bitacora/*
+	# Public chemical-inventory embed — the dashboard frames
+	# /bitacora/inventory/embed and it must load WITHOUT login (the shelf is
+	# read-only; Bitácora's own reads are unauthenticated — only upload is
+	# admin-gated). Exempt the embed page, its read-only API, and the shared
+	# _next/static assets (code only) from forward_auth. Everything else under
+	# /bitacora stays gated. Upload/import is still refused by Bitácora's own
+	# require_admin even after the edge lets the request through (no identity
+	# header → fails closed), so this does not open a write path.
+	@bitacora_inventory path /bitacora/inventory/embed /bitacora/inventory/embed/*\
+		/bitacora/api/inventory /bitacora/api/inventory/* /bitacora/_next/static/*
+	handle @bitacora_inventory {
+		# No-store on the embed page's HTML only (Next.js would otherwise pin
+		# its chunk hashes for a year); static assets and API pass through.
+		@inv_html not path /bitacora/_next/static/* /bitacora/api/*
+		reverse_proxy @inv_html 127.0.0.1:3001 {
+			header_down Cache-Control "private, no-cache, no-store, max-age=0, must-revalidate"
+		}
+		reverse_proxy 127.0.0.1:3001
+	}
+	@bitacora {
+		path /bitacora /bitacora/*
+		not path /bitacora/inventory/embed /bitacora/inventory/embed/*\
+			/bitacora/api/inventory /bitacora/api/inventory/* /bitacora/_next/static/*
+	}
 	forward_auth @bitacora 100.64.254.6:8009 {
 		uri /auth/verify
 		# X-Auth-Projects / X-Auth-Pi-Projects are load-bearing, not extra: the ELN
