@@ -583,6 +583,46 @@ Three consequences worth deciding before the first campaign, not after:
   means the Experiment boundary is expensive to move later — samples would have
   to be reparented. Choose it once.
 
+## Evidence scopes and outcome axes (2026-08-18, from bitácora's information model)
+
+Adopted from bitácora's `docs/INFORMATION_MODEL.md` (the ELN-side rationale
+record: two lanes — authored vs recorded — joined by the authorization
+digest); recorded here because the vocabulary names record-layer entities.
+
+**Four evidence scopes, one word each, never reused:**
+
+| Scope | Artifact | Lane |
+|---|---|---|
+| per run | **run finding** — the per-plate / per-batch outcome | recorded |
+| per experiment | **Results** — the cross-plate synthesis (`Analysis` rows: combined replicates, controls compared across plates, invalid runs excluded) | recorded, insert-not-update |
+| per claim | **Conclusion** — the verdict on the design's claim; in the project repo at `analysis/<design>/conclusion.md` (template 1.9.0) | authored (git) |
+| per project | **Summary** — roll-up of every experiment's Claim → verdict | generated |
+
+"Results" never names a single plate's outcome — one experiment spans plates
+by design (§ELN artifacts), so no single plate can answer a claim — and
+"conclusion" never names an experiment's data synthesis.
+
+**Two orthogonal outcome axes, never collapsed into one vocabulary:**
+
+- **Execution validity**, on the run (recorded): `ok / failed / aborted /
+  refused` — did the machine do what was prescribed.
+- **Epistemic verdict**, on the Conclusion (authored): `supported / refuted /
+  inconclusive` — what the evidence says about the claim.
+
+A mechanically-`ok` run can feed an inconclusive verdict; a refuted
+hypothesis is a *successful* experiment. The anti-bias rule: an invalid run
+is **excluded with a stated reason, never hidden** — bitácora's
+`write_conclusion` refuses an exclusion without a reason, because a silently
+dropped run is how an autonomous lab learns from a censored evidence set and
+repeats work.
+
+**Sample lineage is the ledger's, not the tree's.** A sample is created in
+one run and consumed in another, so UI "Samples" surfaces are views onto
+ledger entities (`Sample`, `Container`), never owners — nesting under a
+protocol tab must not read as ownership. (Consistent with §"ELN artifacts":
+`Sample` is a child of exactly one `Experiment`, and cross-plate comparison
+is a query.)
+
 ## Plate identity — the device ↔ record join (2026-08-04, from an OT-2 bench run)
 
 Device services already track "which plate is on the deck and what is in each

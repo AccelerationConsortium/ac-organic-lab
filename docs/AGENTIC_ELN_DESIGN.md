@@ -378,6 +378,21 @@ is borrowed from LaAgenteAnalitica's `domains/` layout):
 | `domains/analitica_db/` | AnaliticaDB HTTP, pinned to `ontology.json` (exact `SCHEMA_VERSION`) | read/write the record layer — Plans, Notes, Analyses, run-authorization linkage |
 | `domains/undermind/` | Undermind (literature search API) | research papers, synthesize prior art, cite — the capability that expands the agent beyond lab operations into experimental design informed by the literature |
 
+### Overview layer — claims roll-up and propositions (2026-08-18 addendum)
+
+The project Overview's Claims section is a **generated roll-up**: every
+experiment's Claim → verdict, read from `analysis/<design>/conclusion.md`
+(bitácora template 1.9.0), nothing independently authored — generated content
+cannot drift. Cross-experiment **propositions** ("solubility follows
+log-linear mixing across this solvent family") are the one thing a roll-up
+cannot hold; when a real one exists it becomes an authored artifact in the
+Overview that **cites experiment conclusions and owns nothing**. Deferred
+until one exists. The governing rule: **ownership is a tree; science is a
+graph** — the tree says where an artifact lives, citation links say what
+supports, derives from, or continues what. Rationale record: bitácora
+`docs/INFORMATION_MODEL.md` (two lanes, four entities, four evidence scopes;
+see also `DATABASE_DESIGN.md` § "Evidence scopes and outcome axes").
+
 ## 7. Repository creation and server workspace lifecycle [PROPOSED]
 
 ### Template, not fork — seeded, not generated
