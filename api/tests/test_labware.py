@@ -41,7 +41,11 @@ def _definition(load_name: str = "matterlab_24_vialplate_2ml", **overrides: Any)
             "displayCategory": "wellPlate",
             "displayVolumeUnits": "µL",
         },
-        "brand": {"brand": "MatterLab"},
+        "brand": {
+            "brand": "MatterLab",
+            "brandId": ["ML-24-2ML"],
+            "links": ["https://example.com/products/ml-24-2ml"],
+        },
         "parameters": {
             "format": "irregular",
             "isTiprack": False,
@@ -115,6 +119,15 @@ def test_validate_requires_tip_length_for_tipracks() -> None:
     assert any("tipLength" in p for p in validate_definition(bad))
 
 
+def test_validate_checks_standard_brand_metadata() -> None:
+    bad = _definition()
+    bad["brand"]["brandId"] = "ML-24-2ML"
+    bad["brand"]["links"] = ["not a URL"]
+    problems = validate_definition(bad)
+    assert any("brand.brandId" in p for p in problems)
+    assert any("brand.links" in p for p in problems)
+
+
 # ---- store ----------------------------------------------------------------
 
 
@@ -125,6 +138,11 @@ def test_list_merges_repo_and_uploaded(client: TestClient) -> None:
     assert names["lab_repo_96_plate_360ul"]["source"] == "repo"
     assert names["lab_repo_96_plate_360ul"]["rows"] == 2
     assert names["lab_repo_96_plate_360ul"]["columns"] == 2
+    assert names["lab_repo_96_plate_360ul"]["vendor"] == "MatterLab"
+    assert names["lab_repo_96_plate_360ul"]["product_numbers"] == ["ML-24-2ML"]
+    assert names["lab_repo_96_plate_360ul"]["product_links"] == [
+        "https://example.com/products/ml-24-2ml"
+    ]
 
     up = client.post("/api/labware", json={"definition": _definition()}, headers=ADMIN)
     assert up.status_code == 200, up.text
@@ -200,13 +218,9 @@ def test_delete_uploaded_only(client: TestClient) -> None:
         == 403
     )
     assert (
-        client.delete("/api/labware/matterlab_24_vialplate_2ml", headers=ADMIN).status_code
-        == 204
+        client.delete("/api/labware/matterlab_24_vialplate_2ml", headers=ADMIN).status_code == 204
     )
     assert (
-        client.delete("/api/labware/matterlab_24_vialplate_2ml", headers=ADMIN).status_code
-        == 404
+        client.delete("/api/labware/matterlab_24_vialplate_2ml", headers=ADMIN).status_code == 404
     )
-    assert (
-        client.delete("/api/labware/lab_repo_96_plate_360ul", headers=ADMIN).status_code == 409
-    )
+    assert client.delete("/api/labware/lab_repo_96_plate_360ul", headers=ADMIN).status_code == 409

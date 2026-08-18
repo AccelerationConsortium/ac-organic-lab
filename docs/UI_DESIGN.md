@@ -155,8 +155,12 @@ Three tiers of custom-labware support, added 2026-07-16 and **retained**:
    gateway would parse it as a legacy kind string). Unknown names round-trip
    verbatim.
 2. **Labware builder** (`/utils/labware_builder`) — a parametric form (grid,
-   footprint, offsets, spacing, well geometry) that generates a complete
-   Opentrons **schema-2** definition JSON with a live to-scale preview.
+   footprint, offsets, spacing, well geometry, and manufacturer metadata)
+   that generates a complete Opentrons **schema-2** definition JSON with a
+   live to-scale preview. Vendor, OEM part/product numbers, and manufacturer
+   product links use the schema's standard `brand.brand`, `brand.brandId[]`,
+   and `brand.links[]` fields, so they survive load-to-edit round trips and
+   remain valid input to robot-server.
    Validation ports `opentrons-server`'s `LabwareGenerator` limits (footprint
    127 × 85.5 mm, height 200 mm, wells inside the footprint). Anyone can build
    + **download** the JSON; building never touches a robot.

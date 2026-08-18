@@ -33,6 +33,7 @@ import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -149,14 +150,37 @@ def validate_definition(defn: Any) -> list[str]:
             # "_" as load_names; a name without one would be mistaken for a
             # legacy kind string on declaration.
             errors.append("parameters.loadName must contain at least one underscore")
-        if params.get("isTiprack") and not isinstance(
-            params.get("tipLength"), (int, float)
-        ):
+        if params.get("isTiprack") and not isinstance(params.get("tipLength"), (int, float)):
             errors.append("parameters.tipLength is required when isTiprack is true")
 
     meta = defn.get("metadata")
     if not isinstance(meta, dict) or not meta.get("displayName"):
         errors.append("metadata.displayName is required")
+
+    # Opentrons schema-2's standard manufacturer metadata. Keeping these
+    # inside `brand` means the exact JSON remains loadable by robot-server;
+    # custom top-level metadata would be rejected by the official schema.
+    brand = defn.get("brand")
+    if (
+        not isinstance(brand, dict)
+        or not isinstance(brand.get("brand"), str)
+        or not brand["brand"].strip()
+    ):
+        errors.append("brand.brand (vendor / manufacturer) is required")
+    else:
+        brand_ids = brand.get("brandId", [])
+        if not isinstance(brand_ids, list) or not all(
+            isinstance(item, str) and item.strip() for item in brand_ids
+        ):
+            errors.append("brand.brandId must be a list of non-empty product-number strings")
+        links = brand.get("links", [])
+        if not isinstance(links, list) or not all(
+            isinstance(item, str)
+            and urlparse(item).scheme in {"http", "https"}
+            and bool(urlparse(item).netloc)
+            for item in links
+        ):
+            errors.append("brand.links must be a list of HTTP(S) manufacturer URLs")
 
     dims = defn.get("dimensions")
     if not isinstance(dims, dict):
@@ -251,6 +275,7 @@ def _summary(load_name: str, item: dict[str, Any]) -> dict[str, Any]:
     rows, columns = _grid(defn)
     meta = defn.get("metadata") or {}
     params = defn.get("parameters") or {}
+    brand = defn.get("brand") or {}
     wells = defn.get("wells") or {}
     first_well = next(iter(wells.values()), {}) if isinstance(wells, dict) else {}
     return {
@@ -264,6 +289,9 @@ def _summary(load_name: str, item: dict[str, Any]) -> dict[str, Any]:
         "well_volume_ul": first_well.get("totalLiquidVolume"),
         "version": defn.get("version"),
         "namespace": defn.get("namespace"),
+        "vendor": brand.get("brand"),
+        "product_numbers": brand.get("brandId") or [],
+        "product_links": brand.get("links") or [],
         "source": item["source"],
     }
 
@@ -300,9 +328,7 @@ def _require_admin(request: Request) -> str:
     return user
 
 
-async def _audit(
-    request: Request, action: str, load_name: str, owner: str, outcome: str
-) -> None:
+async def _audit(request: Request, action: str, load_name: str, owner: str, outcome: str) -> None:
     """Best-effort control_action audit row; never raises."""
     db = getattr(request.app.state, "db", None)
     if db is None:
@@ -370,9 +396,7 @@ def build_labware_router() -> APIRouter:
     async def get_standard_labware(load_name: str) -> dict[str, Any]:
         defn = _load_standard(load_name)
         if defn is None:
-            raise HTTPException(
-                status_code=404, detail=f"Unknown standard labware {load_name!r}"
-            )
+            raise HTTPException(status_code=404, detail=f"Unknown standard labware {load_name!r}")
         return {"source": "standard", "definition": defn}
 
     @router.get("/{load_name}")
@@ -416,11 +440,11 @@ def build_labware_router() -> APIRouter:
             path = directory / f"{load_name}.json"
             replaced = path.exists()
             tmp = path.with_suffix(".json.tmp")
-            tmp.write_text(
-                json.dumps(body.definition, indent=2, sort_keys=True), encoding="utf-8"
-            )
+            tmp.write_text(json.dumps(body.definition, indent=2, sort_keys=True), encoding="utf-8")
             tmp.replace(path)
-        await _audit(request, "labware.upload", load_name, owner, "replaced" if replaced else "created")
+        await _audit(
+            request, "labware.upload", load_name, owner, "replaced" if replaced else "created"
+        )
         return _summary(load_name, {"definition": body.definition, "source": "uploaded"})
 
     @router.delete("/{load_name}", status_code=204)
@@ -434,7 +458,9 @@ def build_labware_router() -> APIRouter:
                 )
             path = _upload_dir() / f"{load_name}.json"
             if not path.is_file():
-                raise HTTPException(status_code=404, detail=f"Unknown uploaded labware {load_name!r}")
+                raise HTTPException(
+                    status_code=404, detail=f"Unknown uploaded labware {load_name!r}"
+                )
             path.unlink()
         await _audit(request, "labware.delete", load_name, owner, "deleted")
 

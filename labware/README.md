@@ -21,6 +21,10 @@ builder UI):
 - `metadata.displayName`; `dimensions` within the OT-2 slot envelope
   (127 × 85.5 × 200 mm); every well inside the footprint; `ordering`
   consistent with `wells`; `parameters.tipLength` when `isTiprack`.
+- Manufacturer metadata uses Opentrons schema-2's standard `brand` object:
+  `brand.brand` is the vendor/manufacturer, `brand.brandId[]` holds OEM
+  part/product numbers, and `brand.links[]` holds HTTP(S) manufacturer
+  product pages. Do not add custom top-level metadata keys.
 
 Consumers: the OT-2 control page's deck picker ("Custom" group — declares
 intent only) and workflow `setup` plans via lab-skills (the definition rides

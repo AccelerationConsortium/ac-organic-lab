@@ -44,6 +44,11 @@ data/*.db-wal
 # Shared deck-layout store (runtime state, written by api/app/deck.py)
 data/deck_layouts.json
 
+# Admin-uploaded labware definitions (runtime state of the labware store, next
+# to lab.db). Definitions meant to be version-controlled belong in labware/,
+# which the store serves as source="repo".
+data/labware/
+
 # Local runtime and deployment state
 .run/
 deploy/local/

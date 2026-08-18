@@ -315,7 +315,11 @@ export default function LabwareBuilderPage() {
   const standardMatches = (standardLibrary?.definitions ?? []).filter((d) => {
     const q = standardQuery.trim().toLowerCase();
     return (
-      !q || d.load_name.toLowerCase().includes(q) || d.display_name.toLowerCase().includes(q)
+      !q ||
+      d.load_name.toLowerCase().includes(q) ||
+      d.display_name.toLowerCase().includes(q) ||
+      d.vendor?.toLowerCase().includes(q) ||
+      d.product_numbers.some((part) => part.toLowerCase().includes(q))
     );
   });
 
@@ -396,12 +400,30 @@ export default function LabwareBuilderPage() {
                 className={inputCls}
               />
             </Field>
-            <Field label="Brand" issue={issueFor("brand")}>
+            <Field label="Vendor / manufacturer" issue={issueFor("brand")}>
               <input
                 type="text"
                 value={spec.brand}
                 onChange={(e) => set("brand", e.target.value)}
-                placeholder="MatterLab"
+                placeholder="Corning"
+                className={inputCls}
+              />
+            </Field>
+            <Field label="Part / product number(s)">
+              <textarea
+                value={spec.brandIds}
+                onChange={(e) => set("brandIds", e.target.value)}
+                placeholder={"CLS3596\nCLS3599 (one per line)"}
+                rows={2}
+                className={inputCls}
+              />
+            </Field>
+            <Field label="Product link(s)" issue={issueFor("productLinks")}>
+              <textarea
+                value={spec.productLinks}
+                onChange={(e) => set("productLinks", e.target.value)}
+                placeholder={"https://www.corning.com/…\n(one per line)"}
+                rows={2}
                 className={inputCls}
               />
             </Field>
@@ -601,6 +623,24 @@ export default function LabwareBuilderPage() {
                       <p className="truncate font-mono text-[10px] text-ink-subtle dark:text-slate-500">
                         {d.load_name} · {d.rows}×{d.columns}
                       </p>
+                      {(d.vendor || d.product_numbers.length > 0) && (
+                        <p className="truncate text-[10px] text-ink-subtle dark:text-slate-500">
+                          {[d.vendor, ...d.product_numbers].filter(Boolean).join(" · ")}
+                          {d.product_links[0] && (
+                            <>
+                              {" · "}
+                              <a
+                                href={d.product_links[0]}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-sky-700 hover:underline dark:text-sky-400"
+                              >
+                                product page ↗
+                              </a>
+                            </>
+                          )}
+                        </p>
+                      )}
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <span
@@ -665,6 +705,11 @@ export default function LabwareBuilderPage() {
                     <p className="truncate font-mono text-[10px] text-ink-subtle dark:text-slate-500">
                       {d.load_name} · {d.rows}×{d.columns}
                     </p>
+                    {(d.vendor || d.product_numbers.length > 0) && (
+                      <p className="truncate text-[10px] text-ink-subtle dark:text-slate-500">
+                        {[d.vendor, ...d.product_numbers].filter(Boolean).join(" · ")}
+                      </p>
+                    )}
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
                     <span

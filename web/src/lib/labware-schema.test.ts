@@ -14,6 +14,8 @@ function goodSpec(overrides: Partial<LabwareSpec> = {}): LabwareSpec {
     loadName: "matterlab_24_vialplate_2ml",
     displayName: "MatterLab 24 vial plate 2 mL",
     brand: "MatterLab",
+    brandIds: "ML-24-2ML\nML-24-2ML-B",
+    productLinks: "https://example.com/products/ml-24-2ml",
     rows: 4,
     columns: 6,
     spacingX: 18,
@@ -65,6 +67,19 @@ describe("validateSpec", () => {
       validateSpec(goodSpec({ displayCategory: "tipRack", tipLength: 59.3 })),
     ).toEqual([]);
   });
+
+  it("rejects malformed and non-HTTP product links", () => {
+    expect(
+      validateSpec(goodSpec({ productLinks: "not a URL" })).some(
+        (i) => i.field === "productLinks",
+      ),
+    ).toBe(true);
+    expect(
+      validateSpec(goodSpec({ productLinks: "ftp://example.com/plate" })).some(
+        (i) => i.field === "productLinks",
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("buildDefinition", () => {
@@ -72,6 +87,11 @@ describe("buildDefinition", () => {
     const defn = buildDefinition(goodSpec()) as Record<string, any>;
     expect(defn.schemaVersion).toBe(2);
     expect(defn.parameters.loadName).toBe("matterlab_24_vialplate_2ml");
+    expect(defn.brand).toEqual({
+      brand: "MatterLab",
+      brandId: ["ML-24-2ML", "ML-24-2ML-B"],
+      links: ["https://example.com/products/ml-24-2ml"],
+    });
     expect(Object.keys(defn.wells)).toHaveLength(24);
     // Column-major ordering: first column is A1..D1.
     expect(defn.ordering[0]).toEqual(["A1", "B1", "C1", "D1"]);

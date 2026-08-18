@@ -25,7 +25,12 @@ export type DisplayCategory = "wellPlate" | "reservoir" | "tipRack" | "tubeRack"
 export interface LabwareSpec {
   loadName: string;
   displayName: string;
+  /** Vendor or manufacturer; emitted as Opentrons `brand.brand`. */
   brand: string;
+  /** One OEM part/product number per line; emitted as `brand.brandId[]`. */
+  brandIds: string;
+  /** One manufacturer product URL per line; emitted as `brand.links[]`. */
+  productLinks: string;
   displayCategory: DisplayCategory;
   rows: number;
   columns: number;
@@ -61,6 +66,8 @@ export function defaultSpec(): LabwareSpec {
     loadName: "",
     displayName: "",
     brand: "",
+    brandIds: "",
+    productLinks: "",
     displayCategory: "wellPlate",
     rows: 8,
     columns: 12,
@@ -107,7 +114,15 @@ export function validateSpec(spec: LabwareSpec): ValidationIssue[] {
     err("loadName", "Must contain at least one underscore (e.g. brand_24_vialplate_2ml).");
   }
   if (!spec.displayName.trim()) err("displayName", "Display name is required.");
-  if (!spec.brand.trim()) err("brand", "Brand is required (e.g. MatterLab).");
+  if (!spec.brand.trim()) err("brand", "Vendor / manufacturer is required (e.g. Corning).");
+  for (const link of lines(spec.productLinks)) {
+    try {
+      const url = new URL(link);
+      if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error();
+    } catch {
+      err("productLinks", `Not a valid HTTP(S) URL: ${link}`);
+    }
+  }
 
   if (!Number.isInteger(spec.rows) || spec.rows < 1) err("rows", "At least 1 row.");
   if (!Number.isInteger(spec.columns) || spec.columns < 1) err("columns", "At least 1 column.");
@@ -196,7 +211,11 @@ export function buildDefinition(spec: LabwareSpec): Record<string, unknown> {
       displayVolumeUnits: "µL",
       tags: [],
     },
-    brand: { brand: spec.brand },
+    brand: {
+      brand: spec.brand.trim(),
+      brandId: lines(spec.brandIds),
+      links: lines(spec.productLinks),
+    },
     parameters: {
       format: "irregular",
       isTiprack: spec.displayCategory === "tipRack",
@@ -226,6 +245,14 @@ function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
+/** Parse the builder's one-value-per-line metadata fields. */
+function lines(value: string): string[] {
+  return value
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 /**
  * Best-effort inverse of {@link buildDefinition}: populate the parametric
  * form from an existing schema-2 definition so it can be modified and
@@ -240,7 +267,7 @@ export function specFromDefinition(defn: Record<string, unknown>): {
   const warnings: string[] = [];
   const d = defn as {
     metadata?: { displayName?: string; displayCategory?: string };
-    brand?: { brand?: string };
+    brand?: { brand?: string; brandId?: string[]; links?: string[] };
     parameters?: { loadName?: string; isTiprack?: boolean; tipLength?: number };
     dimensions?: { xDimension?: number; yDimension?: number; zDimension?: number };
     ordering?: string[][];
@@ -264,6 +291,8 @@ export function specFromDefinition(defn: Record<string, unknown>): {
   spec.loadName = d.parameters?.loadName ?? "";
   spec.displayName = d.metadata?.displayName ?? "";
   spec.brand = d.brand?.brand ?? "";
+  spec.brandIds = Array.isArray(d.brand?.brandId) ? d.brand.brandId.join("\n") : "";
+  spec.productLinks = Array.isArray(d.brand?.links) ? d.brand.links.join("\n") : "";
   const category = d.metadata?.displayCategory;
   if (
     category === "wellPlate" ||

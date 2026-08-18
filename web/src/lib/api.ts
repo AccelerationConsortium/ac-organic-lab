@@ -892,6 +892,9 @@ export interface LabwareSummary {
   well_volume_ul?: number | null;
   version?: number | null;
   namespace?: string | null;
+  vendor?: string | null;
+  product_numbers: string[];
+  product_links: string[];
   source: "repo" | "uploaded" | "standard";
 }
 
