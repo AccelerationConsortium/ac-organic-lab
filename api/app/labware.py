@@ -4,11 +4,25 @@ Two sources, merged and served read-only to every dashboard user:
 
 - **Repo-committed** (``<repo>/labware/*.json``, env ``LABWARE_REPO_DIR``) —
   PR-reviewed definitions; the durable, versioned tier. Read-only via the API.
+  Authorship is git (the PR), not stamped here.
 - **Uploaded** (``<data-dir>/labware/*.json`` next to ``lab.db``, env
   ``LABWARE_UPLOAD_DIR``) — operator-built definitions saved from the
-  dashboard's labware builder. Writes are **admin-gated** (a wrong well depth
-  crashes a pipette into a plate, so the shared store is deliberately behind
-  the admin role; anyone can still download a built JSON from the browser).
+  dashboard's labware builder. Writes require a **signed-in session** (any
+  role — opened from admin-only 2026-08-18); every save/delete is audited as
+  a ``control_action`` on the ``labware_store`` pseudo-device, and the
+  uploader's ac_auth identity (``X-Auth-User``) is stamped onto the file as
+  store-side authorship — never into the Opentrons definition itself, never
+  from the request body. Anyone, signed in or not, can still download a built
+  JSON from the browser without saving it.
+
+Uploaded files are a small **store envelope** wrapping the schema-2
+definition so authorship survives next to the geometry without polluting it::
+
+    {"definition": {...}, "created_by": "...", "created_at": "...",
+     "updated_by": "...", "updated_at": "..."}
+
+Legacy raw definition files (pre-envelope) still load; authorship fields are
+null until the next save, which rewrites them as an envelope.
 
 The store never talks to a robot. Definitions are consumed by (1) the OT-2
 control page's deck picker ("Custom" group — declaring intent only) and
@@ -30,6 +44,7 @@ import logging
 import os
 import re
 import threading
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -54,6 +69,10 @@ _LOAD_NAME_RE = re.compile(r"^[a-z0-9._]+$")
 _AUDIT_DEVICE_ID = "labware_store"
 
 _DASHBOARD_OWNER = "ac-organic-lab-dashboard"
+
+# Store-envelope authorship keys. Stamped from X-Auth-User on write; never
+# accepted from the request body (identity comes from the trusted edge).
+_AUTHORSHIP_KEYS = ("created_by", "created_at", "updated_by", "updated_at")
 
 
 def _repo_dir() -> Path:
@@ -238,20 +257,52 @@ def validate_definition(defn: Any) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _empty_authorship() -> dict[str, Any]:
+    return {key: None for key in _AUTHORSHIP_KEYS}
+
+
+def _parse_store_file(raw: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split a store file into (definition, authorship).
+
+    Uploaded files may be either:
+    - a **store envelope** ``{definition, created_by, …}`` (current shape), or
+    - a legacy raw schema-2 definition (``parameters.loadName`` at the top).
+
+    Repo-committed files are always raw definitions. Authorship is never
+    trusted from anywhere except the envelope keys we ourselves wrote.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("labware store file must be a JSON object")
+    params = raw.get("parameters")
+    if isinstance(params, dict) and isinstance(params.get("loadName"), str):
+        return raw, _empty_authorship()
+    defn = raw.get("definition")
+    if not isinstance(defn, dict):
+        raise ValueError("labware store envelope missing definition")
+    authorship = _empty_authorship()
+    for key in _AUTHORSHIP_KEYS:
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            authorship[key] = value.strip()
+    return defn, authorship
+
+
 def _read_dir(directory: Path, source: str) -> dict[str, dict[str, Any]]:
-    """{load_name: {definition, source}} from one directory (bad files logged
-    and skipped — one malformed upload must not take the endpoint down)."""
+    """{load_name: {definition, source, authorship…}} from one directory
+    (bad files logged and skipped — one malformed upload must not take the
+    endpoint down)."""
     out: dict[str, dict[str, Any]] = {}
     if not directory.is_dir():
         return out
     for path in sorted(directory.glob("*.json")):
         try:
-            defn = json.loads(path.read_text(encoding="utf-8"))
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            defn, authorship = _parse_store_file(raw)
             load_name = defn["parameters"]["loadName"]
         except Exception:  # noqa: BLE001
             logger.warning("skipping malformed labware definition %s", path)
             continue
-        out[str(load_name)] = {"definition": defn, "source": source}
+        out[str(load_name)] = {"definition": defn, "source": source, **authorship}
     return out
 
 
@@ -293,7 +344,50 @@ def _summary(load_name: str, item: dict[str, Any]) -> dict[str, Any]:
         "product_numbers": brand.get("brandId") or [],
         "product_links": brand.get("links") or [],
         "source": item["source"],
+        # Store-side authorship (ac_auth X-Auth-User). Null for repo / standard /
+        # legacy raw uploads that have not been re-saved as an envelope.
+        "created_by": item.get("created_by"),
+        "created_at": item.get("created_at"),
+        "updated_by": item.get("updated_by"),
+        "updated_at": item.get("updated_at"),
     }
+
+
+def _stamp_authorship(
+    *, owner: str, previous: dict[str, Any] | None
+) -> dict[str, str]:
+    """Build authorship for a write. Creator is sticky; updater always moves.
+
+    ``owner`` is the verified ac_auth principal (or the dashboard fallback when
+    authz is deliberately open). Never take these fields from the body.
+    """
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
+    if previous and previous.get("created_by") and previous.get("created_at"):
+        return {
+            "created_by": str(previous["created_by"]),
+            "created_at": str(previous["created_at"]),
+            "updated_by": owner,
+            "updated_at": now,
+        }
+    return {
+        "created_by": owner,
+        "created_at": now,
+        "updated_by": owner,
+        "updated_at": now,
+    }
+
+
+def _write_envelope(path: Path, definition: dict[str, Any], authorship: dict[str, str]) -> None:
+    # Authorship lives on the envelope only. Drop any smuggled copies from the
+    # definition body so a caller cannot plant a fake created_by inside the
+    # geometry JSON (schema-2 also forbids unknown top-level keys).
+    clean = {k: v for k, v in definition.items() if k not in _AUTHORSHIP_KEYS}
+    envelope = {"definition": clean, **authorship}
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(envelope, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
 
 
 # ---------------------------------------------------------------------------
@@ -301,30 +395,23 @@ def _summary(load_name: str, item: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _require_admin(request: Request) -> str:
-    """Writes to the shared store are admin-gated.
+def _require_signed_in(request: Request) -> str:
+    """Writes to the shared store require a signed-in identity, not a role.
 
     Identity arrives as X-Auth-User / X-Auth-Role, injected by the Next.js
     middleware only after verifying the session (it strips client-supplied
     copies first). Mirroring deck.py: a header-less request means a
     deliberately open deployment (CONTROL_AUTHZ_ENFORCE=false / dev) or a
     direct loopback call that skipped the edge — allowed, attributed to the
-    generic dashboard owner. With a verified identity present, the role must
-    be admin.
+    generic dashboard owner. Any signed-in role may save or delete; there is
+    no privilege check beyond having a verified identity (opened from
+    admin-only 2026-08-18 — see labware/README.md). Every write is still
+    audited via ``_audit`` below, so a bad definition is traceable to
+    whoever saved it.
     """
     user = request.headers.get("x-auth-user")
     if not _authz_enforced() or not user:
         return user or _DASHBOARD_OWNER
-    role = (request.headers.get("x-auth-role") or "").lower()
-    if role != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Saving to the shared labware store is admin-only "
-                "(you can still download the built JSON). "
-                f"{user} has role {role or 'none'}."
-            ),
-        )
     return user
 
 
@@ -406,11 +493,18 @@ def build_labware_router() -> APIRouter:
         item = merged.get(load_name)
         if item is None:
             raise HTTPException(status_code=404, detail=f"Unknown labware {load_name!r}")
-        return {"source": item["source"], "definition": item["definition"]}
+        return {
+            "source": item["source"],
+            "definition": item["definition"],
+            "created_by": item.get("created_by"),
+            "created_at": item.get("created_at"),
+            "updated_by": item.get("updated_by"),
+            "updated_at": item.get("updated_at"),
+        }
 
     @router.post("")
     async def upload_labware(body: LabwareUpload, request: Request) -> dict[str, Any]:
-        owner = _require_admin(request)
+        owner = _require_signed_in(request)
         problems = validate_definition(body.definition)
         if problems:
             raise HTTPException(
@@ -438,18 +532,34 @@ def build_labware_router() -> APIRouter:
             directory = _upload_dir()
             directory.mkdir(parents=True, exist_ok=True)
             path = directory / f"{load_name}.json"
+            previous: dict[str, Any] | None = None
+            if path.is_file():
+                try:
+                    _, previous = _parse_store_file(
+                        json.loads(path.read_text(encoding="utf-8"))
+                    )
+                except Exception:  # noqa: BLE001
+                    # Corrupt/legacy file we are about to replace — treat as create.
+                    previous = None
+            authorship = _stamp_authorship(owner=owner, previous=previous)
             replaced = path.exists()
-            tmp = path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(body.definition, indent=2, sort_keys=True), encoding="utf-8")
-            tmp.replace(path)
+            # Strip smuggled authorship keys from the definition body before
+            # both write and response — store identity is envelope-only.
+            clean_definition = {
+                k: v for k, v in body.definition.items() if k not in _AUTHORSHIP_KEYS
+            }
+            _write_envelope(path, clean_definition, authorship)
         await _audit(
             request, "labware.upload", load_name, owner, "replaced" if replaced else "created"
         )
-        return _summary(load_name, {"definition": body.definition, "source": "uploaded"})
+        return _summary(
+            load_name,
+            {"definition": clean_definition, "source": "uploaded", **authorship},
+        )
 
     @router.delete("/{load_name}", status_code=204)
     async def delete_labware(load_name: str, request: Request) -> None:
-        owner = _require_admin(request)
+        owner = _require_signed_in(request)
         with _LOCK:
             if load_name in _read_dir(_repo_dir(), "repo"):
                 raise HTTPException(

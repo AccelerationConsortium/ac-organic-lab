@@ -143,13 +143,88 @@ def test_list_merges_repo_and_uploaded(client: TestClient) -> None:
     assert names["lab_repo_96_plate_360ul"]["product_links"] == [
         "https://example.com/products/ml-24-2ml"
     ]
+    # Repo authorship is git, not stamped on the file.
+    assert names["lab_repo_96_plate_360ul"]["created_by"] is None
 
     up = client.post("/api/labware", json={"definition": _definition()}, headers=ADMIN)
     assert up.status_code == 200, up.text
     assert up.json()["source"] == "uploaded"
+    assert up.json()["created_by"] == "admin@lab"
+    assert up.json()["updated_by"] == "admin@lab"
+    assert up.json()["created_at"]
+    assert up.json()["updated_at"] == up.json()["created_at"]
 
     names = {d["load_name"]: d for d in client.get("/api/labware").json()["definitions"]}
     assert names["matterlab_24_vialplate_2ml"]["source"] == "uploaded"
+    assert names["matterlab_24_vialplate_2ml"]["created_by"] == "admin@lab"
+
+
+def test_upload_stamps_ac_auth_identity_and_preserves_creator(client: TestClient) -> None:
+    """Authorship comes from X-Auth-User, never the body; creator is sticky."""
+    created = client.post(
+        "/api/labware",
+        json={"definition": _definition()},
+        headers=ADMIN,
+    )
+    assert created.status_code == 200, created.text
+    created_at = created.json()["created_at"]
+
+    # A body-supplied authorship field must be ignored — LabwareUpload only
+    # accepts `definition`, and even a smuggled key inside the definition
+    # must not become the store's created_by.
+    smuggled = _definition()
+    smuggled["created_by"] = "spoof@evil"
+    replaced = client.post(
+        "/api/labware",
+        json={"definition": smuggled},
+        headers=OPERATOR,
+    )
+    assert replaced.status_code == 200, replaced.text
+    body = replaced.json()
+    assert body["created_by"] == "admin@lab"
+    assert body["created_at"] == created_at
+    assert body["updated_by"] == "op@lab"
+    assert body["updated_at"]  # present; may equal created_at within the same second
+
+    listed = {
+        d["load_name"]: d for d in client.get("/api/labware").json()["definitions"]
+    }["matterlab_24_vialplate_2ml"]
+    assert listed["created_by"] == "admin@lab"
+    assert listed["updated_by"] == "op@lab"
+
+    detail = client.get("/api/labware/matterlab_24_vialplate_2ml").json()
+    assert detail["created_by"] == "admin@lab"
+    assert detail["updated_by"] == "op@lab"
+    assert "created_by" not in detail["definition"]
+
+
+def test_legacy_raw_upload_loads_without_authorship(client: TestClient) -> None:
+    """Pre-envelope files (raw schema-2 JSON) still list; authorship is null
+    until the next save rewrites them as an envelope."""
+    import os
+
+    uploads = Path(os.environ["LABWARE_UPLOAD_DIR"])
+    uploads.mkdir(parents=True, exist_ok=True)
+    (uploads / "legacy_raw_plate.json").write_text(json.dumps(_definition("legacy_raw_plate")))
+
+    listed = {
+        d["load_name"]: d for d in client.get("/api/labware").json()["definitions"]
+    }["legacy_raw_plate"]
+    assert listed["source"] == "uploaded"
+    assert listed["created_by"] is None
+    assert listed["updated_by"] is None
+
+    # Re-saving stamps the signed-in identity and upgrades to an envelope.
+    res = client.post(
+        "/api/labware",
+        json={"definition": _definition("legacy_raw_plate")},
+        headers=OPERATOR,
+    )
+    assert res.status_code == 200
+    assert res.json()["created_by"] == "op@lab"
+    on_disk = json.loads((uploads / "legacy_raw_plate.json").read_text())
+    assert "definition" in on_disk
+    assert on_disk["created_by"] == "op@lab"
 
 
 def test_get_detail_and_404(client: TestClient) -> None:
@@ -159,9 +234,11 @@ def test_get_detail_and_404(client: TestClient) -> None:
     assert client.get("/api/labware/nope_nothing").status_code == 404
 
 
-def test_upload_requires_admin_role(client: TestClient) -> None:
+def test_upload_allows_any_signed_in_role(client: TestClient) -> None:
+    """Saving requires a signed-in identity, not the admin role (opened from
+    admin-only 2026-08-18 — see labware/README.md)."""
     res = client.post("/api/labware", json={"definition": _definition()}, headers=OPERATOR)
-    assert res.status_code == 403
+    assert res.status_code == 200, res.text
     # Header-less = dev-open / direct loopback (mirrors deck.py) — allowed.
     res = client.post("/api/labware", json={"definition": _definition()})
     assert res.status_code == 200
@@ -213,14 +290,13 @@ def test_upload_cannot_shadow_standard_definition(client: TestClient) -> None:
 
 def test_delete_uploaded_only(client: TestClient) -> None:
     client.post("/api/labware", json={"definition": _definition()}, headers=ADMIN)
+    # Any signed-in role may delete — same as upload.
     assert (
         client.delete("/api/labware/matterlab_24_vialplate_2ml", headers=OPERATOR).status_code
-        == 403
+        == 204
     )
     assert (
-        client.delete("/api/labware/matterlab_24_vialplate_2ml", headers=ADMIN).status_code == 204
-    )
-    assert (
-        client.delete("/api/labware/matterlab_24_vialplate_2ml", headers=ADMIN).status_code == 404
+        client.delete("/api/labware/matterlab_24_vialplate_2ml", headers=OPERATOR).status_code
+        == 404
     )
     assert client.delete("/api/labware/lab_repo_96_plate_360ul", headers=ADMIN).status_code == 409

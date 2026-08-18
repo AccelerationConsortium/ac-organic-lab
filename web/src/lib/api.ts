@@ -877,9 +877,9 @@ export interface RobotModule {
 // -- Central custom-labware store (/api/labware) -----------------------------
 //
 // Two merged sources served by api/app/labware.py: repo-committed
-// (<repo>/labware/*.json, PR-reviewed) and admin-uploaded (data/labware/).
-// Reads are public; POST/DELETE are session-gated at the middleware and
-// admin-enforced server-side.
+// (<repo>/labware/*.json, PR-reviewed) and uploaded (data/labware/).
+// Reads are public; POST/DELETE are session-gated at the middleware — any
+// signed-in role may write, as of 2026-08-18 (previously admin-only).
 
 export interface LabwareSummary {
   load_name: string;
@@ -896,6 +896,13 @@ export interface LabwareSummary {
   product_numbers: string[];
   product_links: string[];
   source: "repo" | "uploaded" | "standard";
+  /** ac_auth principal (X-Auth-User) who first saved this upload. Null for
+   *  repo / standard / legacy raw uploads that have not been re-saved. */
+  created_by?: string | null;
+  created_at?: string | null;
+  /** ac_auth principal who last overwrote this upload. */
+  updated_by?: string | null;
+  updated_at?: string | null;
 }
 
 export async function getLabwareList(): Promise<{ definitions: LabwareSummary[] }> {

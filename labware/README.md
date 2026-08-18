@@ -2,8 +2,10 @@
 
 Opentrons **schema-2** labware definition JSON files, one per file, named
 `<loadName>.json`. This is the **reviewed tier** of the lab's custom-labware
-store: definitions here are merged with admin-uploaded ones
-(`<data-dir>/labware/` on the dashboard host) and served read-only at
+store: definitions here are merged with uploaded ones
+(`<data-dir>/labware/` on the dashboard host — any signed-in user can save
+one, not just admins, as of 2026-08-18; see
+`api/app/labware.py::_require_signed_in`) and served read-only at
 `GET /api/labware`; a repo-committed definition **wins** over an uploaded one
 with the same `loadName`, and the API refuses to upload/delete over a
 repo-committed name (change these via PR only).
@@ -25,6 +27,11 @@ builder UI):
   `brand.brand` is the vendor/manufacturer, `brand.brandId[]` holds OEM
   part/product numbers, and `brand.links[]` holds HTTP(S) manufacturer
   product pages. Do not add custom top-level metadata keys.
+- **Authorship is not in these files.** Repo definitions are attributed by
+  git (the PR). Uploaded definitions get `created_by` / `updated_by` stamped
+  from the saver's ac_auth identity (`X-Auth-User`) onto a store-side
+  envelope next to the definition — never into the schema-2 JSON, never from
+  the request body. See `api/app/labware.py`.
 
 Consumers: the OT-2 control page's deck picker ("Custom" group — declares
 intent only) and workflow `setup` plans via lab-skills (the definition rides

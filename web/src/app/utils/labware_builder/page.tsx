@@ -30,8 +30,9 @@ import { useUserAuth } from "@/lib/user-auth";
  * Builds Opentrons schema-2 labware definition JSON from a parametric form,
  * with live top-down preview and the OT-2 slot-envelope validation. Anyone
  * signed out can build + download; saving to the shared lab store
- * (POST /api/labware) is admin-only, and repo-committed definitions are
- * immutable here (change via PR). See docs/UI_DESIGN.md §1.
+ * (POST /api/labware) requires signing in (any role — opened from admin-only
+ * 2026-08-18), and repo-committed definitions are immutable here (change via
+ * PR). See docs/UI_DESIGN.md §1.
  */
 
 function Field({
@@ -211,8 +212,8 @@ interface EditingSource {
 const STANDARD_LIST_CAP = 30;
 
 export default function LabwareBuilderPage() {
-  const { identity } = useUserAuth();
-  const isAdmin = identity?.role === "admin";
+  const { authenticated } = useUserAuth();
+  const canSave = authenticated;
   const queryClient = useQueryClient();
   const [spec, setSpec] = useState<LabwareSpec>(defaultSpec());
   const [showJson, setShowJson] = useState(false);
@@ -342,8 +343,8 @@ export default function LabwareBuilderPage() {
         </h2>
         <p className="text-xs text-ink-subtle dark:text-slate-500">
           Builds an Opentrons <span className="font-mono">schema-2</span> definition JSON.
-          Anyone can download the file; saving to the shared lab store is{" "}
-          <span className="font-semibold">admin-only</span>, and repo-committed definitions
+          Anyone can download the file; saving to the shared lab store requires{" "}
+          <span className="font-semibold">signing in</span>, and repo-committed definitions
           change via PR. Building a definition does not load anything on a robot.
         </p>
       </header>
@@ -534,13 +535,13 @@ export default function LabwareBuilderPage() {
             <button
               type="button"
               onClick={saveToStore}
-              disabled={!valid || !isAdmin || busy || protectedNameCollision}
+              disabled={!valid || !canSave || busy || protectedNameCollision}
               title={
                 protectedNameCollision
                   ? "This load name belongs to a standard / repo-committed definition — pick a new load name to save a variant"
-                  : isAdmin
+                  : canSave
                     ? "Save to the shared lab store (available in the OT-2 deck picker)"
-                    : "Admin-only — download the JSON and ask an admin to add it (or open a PR to labware/)"
+                    : "Sign in to save — you can still download the JSON"
               }
               className="rounded-md border border-sky-600 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-sky-300 dark:hover:bg-sky-950/40"
             >
@@ -641,6 +642,21 @@ export default function LabwareBuilderPage() {
                           )}
                         </p>
                       )}
+                      {d.created_by && (
+                        <p
+                          className="truncate text-[10px] text-ink-subtle dark:text-slate-500"
+                          title={
+                            d.updated_by && d.updated_by !== d.created_by
+                              ? `Created by ${d.created_by}${d.created_at ? ` · ${d.created_at}` : ""}; last edited by ${d.updated_by}${d.updated_at ? ` · ${d.updated_at}` : ""}`
+                              : `Saved by ${d.created_by}${d.created_at ? ` · ${d.created_at}` : ""}`
+                          }
+                        >
+                          by {d.created_by}
+                          {d.updated_by && d.updated_by !== d.created_by
+                            ? ` · edited by ${d.updated_by}`
+                            : ""}
+                        </p>
+                      )}
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <span
@@ -665,7 +681,7 @@ export default function LabwareBuilderPage() {
                       >
                         Load
                       </button>
-                      {isAdmin && d.source === "uploaded" && (
+                      {canSave && d.source === "uploaded" && (
                         <button
                           type="button"
                           onClick={() => removeUploaded(d.load_name)}

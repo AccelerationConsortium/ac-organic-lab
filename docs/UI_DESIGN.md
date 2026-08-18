@@ -169,11 +169,20 @@ Three tiers of custom-labware support, added 2026-07-16 and **retained**:
    - **(a) repo-committed**: `<repo>/labware/*.json`, PR-reviewed (see
      `labware/README.md`); wins on name collisions and is immutable via the
      API.
-   - **(b) admin-uploaded**: `<data-dir>/labware/*.json`, written by
-     `POST /api/labware` (session verified at the middleware, **admin role
-     enforced server-side**; uploads validated with the same rules; every
-     write audited as a `control_action` on the `labware_store`
-     pseudo-device). `DELETE` removes uploaded definitions only.
+   - **(b) uploaded**: `<data-dir>/labware/*.json`, written by
+     `POST /api/labware` (session verified at the middleware; **any
+     signed-in role may write, as of 2026-08-18** — previously admin-only;
+     uploads validated with the same rules; every write audited as a
+     `control_action` on the `labware_store` pseudo-device). `DELETE`
+     removes uploaded definitions only. Uploaded files are a store
+     **envelope** wrapping the schema-2 definition so authorship
+     (`created_by` / `created_at` / `updated_by` / `updated_at`) can ride
+     next to the geometry without polluting it; the saver's ac_auth
+     identity (`X-Auth-User`, injected by the edge after session verify)
+     is stamped on write and never taken from the request body. Creator
+     is sticky across overwrites; updater moves. Repo definitions stay
+     unstamped — git is their authorship. Legacy raw (pre-envelope)
+     uploads still load with null authorship until the next save.
 
    Workflows fetch the full JSON (`GET /api/labware/{name}`) to pass as the
    labware `config` in a lab-skills `setup` plan
