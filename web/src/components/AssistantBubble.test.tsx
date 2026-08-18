@@ -313,9 +313,10 @@ describe("AssistantBubble control mode", () => {
     sessionStorage.clear();
     installFetch([]);
     await openPanel();
-    // Model attribution comes from /api/assistant/health.
+    // Model attribution comes from /api/assistant/health; the caption names the
+    // agent layer rather than the transport, so the backend id is not shown.
     expect((await screen.findByText(/model: sonnet/)).textContent).toContain(
-      "claude-code-cli"
+      "Hermes agents"
     );
     // Clear is always rendered for discoverability; disabled until there are turns.
     const clear = screen.getByRole("button", { name: "Clear" });
