@@ -1081,6 +1081,28 @@ authority: a human authorizes a main-merged package in bitácora, `lab-runs`
 starts it, and `execute_plan` re-checks the Cytation's live
 `allowed_actions`, claims it per step, and records the run.
 
+#### Step 1h — PlateLoc sealer (2026-08-19)
+
+The PlateLoc (`kind: plate_sealer`) is admitted with the same criterion as
+Step 1d / 1g and, again, **no new mechanism**. A seal cycle is one bounded
+act: the device owns the 0.5–12 s duration timer and withholds `seal.start`
+from `allowed_actions` until the heater is in band and the stage is in, so
+a confirm card that names temperature and time is evaluable. Stage in/out
+and the two setpoint verbs are the same one-card shape already used for
+the press cycle.
+
+| Proposable | Operator-only |
+|---|---|
+| `startup`, `shutdown`, `stage.in`, `stage.out`, `seal.set_temperature`, `seal.set_time`, `seal.start` | `seal.stop` |
+
+`seal.stop` is the safety-floor stop verb on this kind — reachable from
+the tile without the assistant, never proposed. Stage in → seal.start →
+stage out is sequence-shaped and runs under Step 1c's discipline: one
+card per step, re-checking `allowed_actions` between cards. If
+`seal.start` is not advertised (heater still ramping, stage out, or an
+uncleared recent-failure window), the assistant must say so rather than
+propose it anyway.
+
 ### 5.4 What control mode does *not* change
 
 - **The tier-2 trust level (§2.2).** No tool in either mode actuates, so the

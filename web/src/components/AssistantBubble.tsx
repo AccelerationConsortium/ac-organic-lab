@@ -633,6 +633,8 @@ function AssistantBubbleInner() {
                     a single action for you to authorize. For example:
                     <ul className="mt-2 list-disc space-y-1 pl-4">
                       <li>Move the xArm to the plateloc-out node.</li>
+                      <li>Press up on Waters Filtration.</li>
+                      <li>Seal a plate on the PlateLoc at 170 °C for 3 seconds.</li>
                       <li>What can the xArm do right now?</li>
                     </ul>
                   </>

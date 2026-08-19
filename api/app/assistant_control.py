@@ -41,18 +41,19 @@ A proposal is exactly one action on one device. In scope:
 * the per-kind allowlist in :data:`_PROPOSABLE` — the ``liquid_handler``
   (OT-2) control surface plus, since Step 1d, ``fume_hood`` / ``shaker`` /
   ``press``, since Step 1f, ``camera`` (PTZ nudge, presets, privacy,
-  streaming), since Step 1g, the Cytation's finite plate-reader actions, and
-  since Step 1h, PlateLoc's bounded seal-cycle actions. The table carries the
-  scope history and per-kind rationale;
-  :data:`_FORBIDDEN_ARG_FIELDS` holds the argument fields that are never
-  model-settable (interlock overrides, device credentials). The ``hplc``
-  kind is deliberately absent — see the table's Step 1d note.
+  streaming), since Step 1g, the Cytation's finite plate-reader actions,
+  and since Step 1h, the PlateLoc sealer's finite surface (lifecycle,
+  stage, setpoints, ``seal.start``). The table carries the scope history
+  and per-kind rationale; :data:`_FORBIDDEN_ARG_FIELDS` holds the
+  argument fields that are never model-settable (interlock overrides,
+  device credentials). The ``hplc`` kind is deliberately absent — see
+  the table's Step 1d note.
 
 Safety-floor actions are deliberately **not** proposable — they are operator
 buttons and must stay reachable without the assistant. That is the xArm's
 ``stop`` / ``connect`` / ``clear_errors``, and every kind's stop verb
-(``sash.stop``, ``shake.stop``, the press's ``stop``). Anything the resolver
-cannot map is refused.
+(``sash.stop``, ``shake.stop``, the press's ``stop``, the PlateLoc's
+``seal.stop``). Anything the resolver cannot map is refused.
 
 Transport
 ---------
@@ -167,6 +168,28 @@ def _passthrough_action(sd: SkillDef) -> str:
     if ep.startswith(prefix):
         return ep[len(prefix):]
     return ep.lstrip("/")
+
+
+def _canonical_action(kind: str | None, action: str) -> str:
+    """Map a passthrough URL segment back to the catalog / advertised name.
+
+    ``list_available_actions`` returns both ``action`` (dotted, what the
+    device advertises — ``press.up``) and ``passthrough_action`` (the slash
+    form the browser POSTs — ``press/up``). Models frequently pass the
+    latter to ``propose_action``, which then failed the ``allowed_actions``
+    membership check and never emitted a confirm card. Kind-scoped: the
+    press's ``init`` maps from ``startup``, which must not collide with the
+    shaker's catalog name ``startup``.
+    """
+
+    proposable = _PROPOSABLE.get(kind or "", frozenset())
+    if action in proposable:
+        return action
+    for name in proposable:
+        sd = _find_skill_def(kind, name)
+        if sd is not None and _passthrough_action(sd) == action:
+            return name
+    return action
 
 
 # Per-kind allowlist of actions the assistant may propose. Fail-closed: a kind
@@ -375,6 +398,8 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
             "model-settable (interlock override or device credential); omit it "
             "and re-propose",
         )
+
+    action = _canonical_action(entry.kind, action)
 
     if entry.kind == "robot_arm" and action.startswith("move."):
         node_id = action[len("move."):]
@@ -628,6 +653,7 @@ async def _propose_action(
     except (EquipmentUnreachable, LabError) as exc:
         return _err("unreachable", f"could not read /status for {equipment_id!r}: {exc}")
 
+    action = _canonical_action(entry.kind, action)
     if action not in (status.allowed_actions or []):
         return _err(
             "not_allowed",

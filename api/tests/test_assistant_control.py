@@ -616,7 +616,12 @@ _BENCH_SURFACES: dict[str, dict[str, str]] = {
 }
 
 # Stop verbs are the safety floor on every kind — never proposable.
-_STOP_VERBS = {"fume_hood": "sash.stop", "shaker": "shake.stop", "press": "stop"}
+_STOP_VERBS = {
+    "fume_hood": "sash.stop",
+    "shaker": "shake.stop",
+    "press": "stop",
+    "plate_sealer": "seal.stop",
+}
 
 BENCH_BASE = "http://bench.test:9000"
 
@@ -673,6 +678,29 @@ def test_resolve_bench_surfaces(kind: str, action: str, passthrough: str) -> Non
     assert args == {}
 
 
+@pytest.mark.parametrize(
+    ("kind", "passthrough", "catalog"),
+    [
+        (kind, passthrough, catalog)
+        for kind, surface in sorted(_BENCH_SURFACES.items())
+        for catalog, passthrough in sorted(surface.items())
+        if passthrough != catalog
+    ],
+)
+def test_resolve_passthrough_alias(
+    kind: str, passthrough: str, catalog: str
+) -> None:
+    """Models often pass ``passthrough_action`` (``press/up``) instead of the
+    advertised name (``press.up``). That used to fail ``allowed_actions``
+    membership and never raise a confirm card."""
+
+    entry = _bench_registry(kind).equipment[0]
+    sd, resolved_passthrough, args = ac._resolve(entry, passthrough, {})
+    assert sd.name == catalog
+    assert resolved_passthrough == passthrough
+    assert args == {}
+
+
 @pytest.mark.parametrize(("kind", "action"), sorted(_STOP_VERBS.items()))
 def test_resolve_refuses_stop_verbs(kind: str, action: str) -> None:
     """The safety floor generalized: stop verbs stay operator-only on every
@@ -697,6 +725,33 @@ def test_resolve_refuses_all_hplc_actions(action: str) -> None:
     with pytest.raises(ac.ProposalRefused) as exc:
         ac._resolve(entry, action, {})
     assert exc.value.code == "unmappable_action"
+
+
+@respx.mock
+@pytest.mark.parametrize("action", ["press.up", "press/up"])
+async def test_propose_press_up_accepts_slash_alias(action: str) -> None:
+    """A Control-mode 'press up' must produce a proposal whether the model
+    used the advertised name or the URL segment list_available_actions also
+    returns. Live filter_every_well advertises press.up even when already UP."""
+
+    _mock_bench_status(
+        "press", ["stop", "press.up", "press.down", "plate.in", "plate.out"]
+    )
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("press"),
+            "press_test",
+            action,
+            {"hold_time": 2.0},
+            "raise the platen",
+        )
+    )
+    prop = out["proposal"]
+    assert "error" not in out
+    assert prop["action"] == "press.up"
+    assert prop["passthrough_action"] == "press/up"
+    assert prop["args"] == {"hold_time": 2.0}
 
 
 @respx.mock
@@ -1035,6 +1090,92 @@ async def test_list_available_actions_plate_reader_marks_workflow_only() -> None
         assert by_action[action]["passthrough_action"] == passthrough
     for action in _PLATE_READER_WORKFLOW_ONLY:
         assert by_action[action]["proposable"] is False, action
+
+
+# ---------------------------------------------------------------------------
+# plate-sealer proposals (UI_DESIGN §5 Step 1h)
+# ---------------------------------------------------------------------------
+
+# Finite PlateLoc actions. seal.stop is the safety floor (never proposable);
+# the device withholds seal.start until heater-in-band and stage-in, so a
+# proposal for it is only legal when advertised.
+_PLATE_SEALER_SURFACE = {
+    "startup": "startup",
+    "shutdown": "shutdown",
+    "seal.start": "seal/start",
+    "seal.set_temperature": "seal/temperature",
+    "seal.set_time": "seal/time",
+    "stage.in": "stage/in",
+    "stage.out": "stage/out",
+}
+
+
+@pytest.mark.parametrize(
+    ("action", "passthrough"), sorted(_PLATE_SEALER_SURFACE.items())
+)
+def test_resolve_plate_sealer_finite_surface(
+    action: str, passthrough: str
+) -> None:
+    entry = _bench_registry("plate_sealer").equipment[0]
+    sd, resolved_passthrough, args = ac._resolve(entry, action, {})
+    assert sd.name == action
+    assert resolved_passthrough == passthrough
+    assert args == {}
+
+
+def test_proposable_plate_sealer_equals_finite_surface() -> None:
+    assert ac._PROPOSABLE["plate_sealer"] == set(_PLATE_SEALER_SURFACE)
+
+
+@respx.mock
+async def test_propose_plate_sealer_seal_start() -> None:
+    _mock_bench_status("plate_sealer", list(_PLATE_SEALER_SURFACE))
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("plate_sealer"),
+            "plate_sealer_test",
+            "seal.start",
+            {"temperature_c": 170, "seconds": 3.0},
+            "seal the loaded plate",
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "seal.start"
+    assert prop["passthrough_action"] == "seal/start"
+    assert prop["args"] == {"temperature_c": 170, "seconds": 3.0}
+    assert prop["kind"] == "plate_sealer"
+
+
+@respx.mock
+async def test_propose_plate_sealer_rejects_out_of_range_setpoint() -> None:
+    _mock_bench_status("plate_sealer", ["seal.set_temperature"])
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("plate_sealer"),
+            "plate_sealer_test",
+            "seal.set_temperature",
+            {"temperature_c": 10},
+            "",
+        )
+    )
+    assert out["code"] == "invalid_args"
+
+
+@respx.mock
+async def test_list_available_actions_plate_sealer_marks_stop_operator_only() -> None:
+    advertised = list(_PLATE_SEALER_SURFACE) + ["seal.stop"]
+    _mock_bench_status("plate_sealer", advertised)
+    out = json.loads(
+        await ac._list_available_actions(
+            _bench_registry("plate_sealer"), "plate_sealer_test"
+        )
+    )
+    by_action = {a["action"]: a for a in out["actions"]}
+    for action, passthrough in _PLATE_SEALER_SURFACE.items():
+        assert by_action[action]["proposable"] is True, action
+        assert by_action[action]["passthrough_action"] == passthrough
+    assert by_action["seal.stop"]["proposable"] is False
 
 
 @respx.mock
