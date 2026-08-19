@@ -77,9 +77,22 @@ class DeckDeclareArgs(BaseModel):
     string (e.g. ``"96-well"``, ``"tiprack"``, ``"waste"``), a
     ``{"load_name"|"kind": ...}`` object, or ``null`` to clear that slot. An
     empty ``slots`` map clears the whole declaration.
+
+    A labware object may also carry ``definition`` — a full Opentrons schema-2
+    labware definition — alongside ``load_name``: ``{"load_name": ...,
+    "definition": {...}}``. When present, the gateway derives ``kind`` /
+    ``rows`` / ``columns`` / ``is_tiprack`` from the real geometry instead of
+    guessing from ``load_name`` alone (``opentrons-server``
+    ``gateway/models.py::DeckDeclareRequest``). This is required for any
+    custom labware whose ``load_name`` doesn't parse via the gateway's
+    ``classify_labware`` regex — without it, the slot silently degrades to
+    ``kind: "unknown"`` with no grid. The value type below is ``Dict[str,
+    Any]`` (not ``Dict[str, str]``) specifically so ``definition`` — a nested
+    object — round-trips; a narrower type here previously made it impossible
+    to send a real definition through this skill at all.
     """
 
-    slots: Dict[str, Optional[Union[str, Dict[str, str]]]] = Field(default_factory=dict)
+    slots: Dict[str, Optional[Union[str, Dict[str, Any]]]] = Field(default_factory=dict)
 
 
 class StartupArgs(BaseModel):

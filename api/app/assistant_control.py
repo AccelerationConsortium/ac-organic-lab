@@ -7,13 +7,19 @@ control mode, Step 1). It is a *second* console script beside
 
 Safety
 ------
-**Neither tool actuates hardware.** The most privileged thing this server can
-do is return a *validated proposal object*; the actual control POST happens
-later, in the browser, when the operator clicks *Authorize* over the existing
-``/api/equipment/{id}/control/{action}`` passthrough. With no actuating tool
-registered, the worst a prompt-injected instruction can achieve is raising a
-confirm card a human must read and click — the read-only-by-construction
-guarantee of ARCHITECTURE decision #10 survives (UI_DESIGN §5.1 / §5.4).
+**None of the three tools actuate hardware.** The most privileged thing this
+server can do is return a *validated proposal object*; the actual control
+POST happens later, in the browser, when the operator clicks *Authorize* over
+the existing ``/api/equipment/{id}/control/{action}`` passthrough. With no
+actuating tool registered, the worst a prompt-injected instruction can
+achieve is raising a confirm card a human must read and click — the
+read-only-by-construction guarantee of ARCHITECTURE decision #10 survives
+(UI_DESIGN §5.1 / §5.4). ``lookup_custom_labware`` (added 2026-08-19) is a
+plain read against the dashboard's own labware store (``api/app/labware.py``)
+— already served unauthenticated to every dashboard user — so it adds no new
+privilege; it exists only to give the model a real definition to attach to a
+``deck.declare``/``setup`` proposal instead of a bare, unresolvable
+``load_name``.
 
 Actor binding
 -------------
@@ -35,8 +41,9 @@ A proposal is exactly one action on one device. In scope:
 * the per-kind allowlist in :data:`_PROPOSABLE` — the ``liquid_handler``
   (OT-2) control surface plus, since Step 1d, ``fume_hood`` / ``shaker`` /
   ``press``, since Step 1f, ``camera`` (PTZ nudge, presets, privacy,
-  streaming), and since Step 1g, the Cytation's finite plate-reader actions.
-  The table carries the scope history and per-kind rationale;
+  streaming), since Step 1g, the Cytation's finite plate-reader actions, and
+  since Step 1h, PlateLoc's bounded seal-cycle actions. The table carries the
+  scope history and per-kind rationale;
   :data:`_FORBIDDEN_ARG_FIELDS` holds the argument fields that are never
   model-settable (interlock overrides, device credentials). The ``hplc``
   kind is deliberately absent — see the table's Step 1d note.
@@ -280,6 +287,23 @@ _PROPOSABLE: dict[str, frozenset[str]] = {
             "plate.out",
         }
     ),
+    # Step 1h (2026-08-19): PlateLoc's complete finite surface except its
+    # safety-floor abort. `seal.start` is a bounded cycle (the device caps time
+    # at 12 s), and its full temperature/time body fits on the confirm card.
+    # Stage motion follows the same one-card/operator-sequenced discipline as
+    # the press. Live allowed_actions plus the device's 412 checks enforce
+    # heater-stable and stage-in preconditions before a seal can start.
+    "plate_sealer": frozenset(
+        {
+            "startup",
+            "shutdown",
+            "seal.start",
+            "seal.set_temperature",
+            "seal.set_time",
+            "stage.in",
+            "stage.out",
+        }
+    ),
     # Step 1f (2026-08-18): cameras. Unlike every other proposable kind,
     # ``kind: camera`` is in EQUIP_GUIDE.md's UNGATED_KINDS — PTZ, presets,
     # privacy, and streaming are convenience controls that cannot damage
@@ -463,6 +487,44 @@ async def _read_status(registry: Registry, equipment_id: str):
         return await client.status()
 
 
+async def _lookup_custom_labware(load_name: str) -> str:
+    """One custom (non-standard) labware's full Opentrons schema-2 definition
+    from the dashboard's labware store — the same store the deck-declare
+    picker and workflow authors read (``api/app/labware.py``). Attach the
+    returned ``definition`` to a ``deck.declare`` / ``setup`` proposal's
+    matching field so the gateway derives real geometry instead of guessing
+    from ``load_name`` alone; a bare ``load_name`` for a custom labware whose
+    name the gateway's ``classify_labware`` regex cannot parse silently
+    resolves to ``kind: "unknown"`` with no grid.
+
+    Read-only; the store already serves reads to every dashboard user without
+    a session. Covers only custom (repo-committed or uploaded) labware — a
+    standard Opentrons definition needs no lookup, just its bare
+    ``load_name``.
+    """
+
+    from fastapi import HTTPException
+
+    from .labware import _LOCK, _load_all, _require_complete_definition
+
+    with _LOCK:
+        merged = _load_all()
+    item = merged.get(load_name)
+    if item is None:
+        return _err(
+            "unknown_labware",
+            f"no custom labware definition named {load_name!r} in the "
+            "dashboard's labware store",
+        )
+    try:
+        definition = _require_complete_definition(
+            load_name, item["definition"], item["source"]
+        )
+    except HTTPException as exc:
+        return _err("incomplete_definition", str(exc.detail))
+    return _dumps({"load_name": load_name, "source": item["source"], "definition": definition})
+
+
 async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
     """Live ``allowed_actions`` for a device, each annotated with whether the
     assistant can propose it and (when it can) the JSON-Schema for its args.
@@ -629,6 +691,22 @@ def _build_server(registry: Registry):
         proposed one ``move.<node_id>`` hop at a time."""
 
         return await _list_available_actions(registry, equipment_id)
+
+    @server.tool()
+    async def lookup_custom_labware(load_name: str) -> str:
+        """Fetch one custom labware's full Opentrons schema-2 definition from
+        the dashboard's labware store. Call this BEFORE proposing
+        deck.declare or setup for any load_name that is not a standard
+        built-in Opentrons definition, then include the returned
+        "definition" object in the proposal's matching field (deck.declare's
+        per-slot {"load_name":..., "definition":...}, or setup's labware[].
+        config for a non-ot_default entry). A bare load_name for custom
+        labware resolves to unusable geometry (kind "unknown", no grid) on
+        the gateway. Returns an error object if load_name is not in the
+        store — do not guess or fabricate a definition in that case; tell
+        the operator it needs to be uploaded first."""
+
+        return await _lookup_custom_labware(load_name)
 
     @server.tool()
     async def propose_action(
