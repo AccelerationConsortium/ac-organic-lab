@@ -164,6 +164,41 @@ describe("AssistantBubble control mode", () => {
     await screen.findByText(/Authorized move\.uplc_draw_home/);
   });
 
+  it("shows a plate-reader measurement response without sending it back to the model", async () => {
+    (
+      authorizeAssistantAction as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce({ wells: { A1: 0.042 }, wavelength_nm: 600 });
+    installFetch([
+      `data: ${JSON.stringify({
+        type: "proposal",
+        proposal: {
+          ...PROPOSAL.proposal,
+          equipment_id: "cytation_5",
+          equipment_name: "BioTek Cytation 5",
+          kind: "plate_reader",
+          action: "read.absorbance",
+          passthrough_action: "read/absorbance",
+          args: { wells: ["A1"], wavelength_nm: 600 },
+          reason: "read the diagnostic well",
+        },
+      })}\n\n`,
+      'data: {"type":"done"}\n\n',
+    ]);
+    await openPanel();
+    const control = await screen.findByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const box = screen.getByPlaceholderText(/operate a device/i);
+    fireEvent.change(box, { target: { value: "read A1 at 600 nm" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("Authorize action");
+    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    await screen.findByText("Device response");
+    expect(screen.getByText(/0\.042/)).toBeTruthy();
+    expect(screen.getByText(/wavelength_nm/)).toBeTruthy();
+  });
+
   it("marks a proposal expired after its TTL and blocks authorize", async () => {
     vi.useFakeTimers();
     const shortProposal = {

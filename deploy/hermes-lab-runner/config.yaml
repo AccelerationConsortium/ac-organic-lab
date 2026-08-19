@@ -64,10 +64,18 @@ mcp_servers:
   # tool is never registered; adding it here is a spec violation of the
   # mcp/servers.yaml lab-skills entry, not a config choice. Actuation for
   # this agent goes through lab-runs (human-authorized plans) and nothing
-  # else.
+  # else. The explicit Cytation binding lets list_skills / validate_plan /
+  # preflight_plan inspect plate-reader steps; lab-runs still executes the
+  # binding pinned in each human authorization.
   lab-skills:
     command: /home/sdl2/caoyang/ac-organic-lab/.venv/bin/lab-skills
-    args: [mcp, serve, --owner, "hermes:lab-runner"]
+    args:
+      - mcp
+      - serve
+      - --owner
+      - "hermes:lab-runner"
+      - --binding
+      - "plate_reader=cytation_5"
     env:
       LAB_REGISTRY_PATH: /home/sdl2/caoyang/ac-organic-lab/equipment.yaml
     tools:

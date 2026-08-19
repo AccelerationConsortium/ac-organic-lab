@@ -44,6 +44,15 @@ logger = logging.getLogger("ac_dashboard.api.control")
 # (filter_every_well) blocks for its `hold_time` parameter, which the
 # device caps at 10 s — budget is set above that with slack.
 _CONTROL_TIMEOUT_SECONDS = 15.0
+# Cytation reads and autofocus imaging are synchronous device calls. The live
+# skill catalog budgets up to 30 s, so the dashboard needs a wider request
+# window while it keeps the per-action claim alive below.
+_PLATE_READER_CONTROL_TIMEOUT_SECONDS = 90.0
+_CLAIM_HEARTBEAT_FAILURE_BUDGET = 3
+
+
+class _ClaimHeartbeatError(RuntimeError):
+    """The dashboard could no longer prove its device claim was alive."""
 
 
 def _control_url(base_url: str, status_path: str, action: str) -> str:
@@ -359,21 +368,21 @@ async def _acquire_claim_with_fallback(
     equipment_id: str,
     owner: str,
     candidates: list[dict[str, str]],
-) -> tuple[str, dict[str, str]]:
+) -> tuple[str, float, dict[str, str]]:
     """Claim, trying each credential until one is not rejected as unknown.
 
-    Returns ``(claim_token, headers_that_worked)`` — the caller reuses those
-    headers for the action and the release, so one sequence never mixes
-    credentials.
+    Returns ``(claim_token, heartbeat_interval_s, headers_that_worked)`` — the
+    caller reuses the credentials for heartbeat, action, and release, so one
+    sequence never mixes identities.
     """
 
     for index, headers in enumerate(candidates):
         try:
-            token = await _acquire_claim(
+            token, heartbeat_interval_s = await _acquire_claim(
                 client, base_url, status_path, equipment_id, owner,
                 extra_headers=headers or None,
             )
-            return token, headers
+            return token, heartbeat_interval_s, headers
         except HTTPException as exc:
             if (
                 exc.status_code not in _AUTH_FALLBACK_STATUS
@@ -515,8 +524,8 @@ async def _acquire_claim(
     equipment_id: str,
     owner: str,
     extra_headers: dict[str, str] | None = None,
-) -> str:
-    """POST /control/claim and return the claim token.
+) -> tuple[str, float]:
+    """POST /control/claim and return its token and heartbeat interval.
 
     ``owner`` is the authenticated actor (or dashboard fallback); the device
     records it in ``details.claimed_by.owner`` and resolves its role from the
@@ -538,8 +547,13 @@ async def _acquire_claim(
 
     if resp.status_code == 200:
         try:
-            return str(resp.json()["claim_token"])
-        except (ValueError, KeyError) as exc:
+            payload = resp.json()
+            token = str(payload["claim_token"])
+            heartbeat_interval_s = float(payload["heartbeat_interval_s"])
+            if heartbeat_interval_s <= 0:
+                raise ValueError("heartbeat_interval_s must be positive")
+            return token, heartbeat_interval_s
+        except (TypeError, ValueError, KeyError) as exc:
             raise HTTPException(
                 status_code=502,
                 detail=f"Malformed claim response from {claim_url}",
@@ -552,6 +566,42 @@ async def _acquire_claim(
     except ValueError:
         detail = resp.text
     raise HTTPException(status_code=resp.status_code, detail=detail)
+
+
+async def _heartbeat_claim(
+    client: httpx.AsyncClient,
+    base_url: str,
+    status_path: str,
+    token: str,
+    equipment_id: str,
+    interval_s: float,
+    extra_headers: dict[str, str] | None = None,
+) -> None:
+    """Renew a dashboard claim until cancelled or the failure budget is spent."""
+
+    heartbeat_url = _control_url(base_url, status_path, "heartbeat")
+    consecutive_failures = 0
+    last_error = ""
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            response = await client.post(
+                heartbeat_url,
+                headers={"X-Claim-Token": token, **(extra_headers or {})},
+            )
+            if response.status_code >= 400:
+                raise _ClaimHeartbeatError(
+                    f"heartbeat returned HTTP {response.status_code}"
+                )
+        except (httpx.HTTPError, _ClaimHeartbeatError) as exc:
+            consecutive_failures += 1
+            last_error = str(exc)
+            if consecutive_failures >= _CLAIM_HEARTBEAT_FAILURE_BUDGET:
+                raise _ClaimHeartbeatError(
+                    f"claim heartbeat failed for {equipment_id}: {last_error}"
+                ) from exc
+        else:
+            consecutive_failures = 0
 
 
 async def _release_claim_best_effort(
@@ -596,7 +646,7 @@ async def _record_control_event(
     The dashboard now *writes* to devices (per-request claims), so every
     mutating passthrough call is recorded with the actor (``owner``), the
     action, and the outcome (``ok`` / ``refused`` / ``claim_denied`` /
-    ``timeout`` / ``transport_error``).
+    ``claim_lost`` / ``timeout`` / ``transport_error``).
 
     ``duration_s`` is the wall-clock of the device interaction (the full
     claim → action → release dance for v1.1 devices) as seen from the
@@ -691,7 +741,9 @@ async def _proxy(
     )
 
     # Shared, long-lived httpx client (configured in main.lifespan with
-    # ``trust_env=False`` and a 15 s default timeout). Re-using one client
+    # ``trust_env=False`` and a 15 s default timeout). Cytation overrides the
+    # action request to 90 s because reads and autofocus imaging are synchronous.
+    # Re-using one client
     # is what unlocks HTTP/1.1 keep-alive — for v1.1 devices the three
     # round-trips (claim → action → release) share one warm socket
     # instead of paying TCP handshake × 3 per click.
@@ -705,6 +757,11 @@ async def _proxy(
     # the device stamps/audits the real operator. Empty when unauthenticated.
     auth_candidates = _device_auth_candidates(request, entry)
     edge_headers = auth_candidates[0]
+    action_timeout = (
+        _PLATE_READER_CONTROL_TIMEOUT_SECONDS
+        if getattr(entry, "kind", None) == "plate_reader"
+        else _CONTROL_TIMEOUT_SECONDS
+    )
     # Wall-clock of the whole device interaction (claim → action → release),
     # stamped into the audit payload as `duration_s`. Started here — after
     # auth, before the first device hop — so refusals that never reach the
@@ -713,21 +770,44 @@ async def _proxy(
     try:
         async def _send(headers: dict[str, str] | None) -> httpx.Response:
             if method == "POST":
-                return await client.post(target, json=body or {}, headers=headers)
+                return await client.post(
+                    target,
+                    json=body or {},
+                    headers=headers,
+                    timeout=action_timeout,
+                )
             if method == "GET":
-                return await client.get(target, headers=headers)
+                return await client.get(
+                    target, headers=headers, timeout=action_timeout
+                )
             if method == "DELETE":
-                return await client.delete(target, headers=headers)
+                return await client.delete(
+                    target, headers=headers, timeout=action_timeout
+                )
             # pragma: no cover - guarded by FastAPI routing
             raise HTTPException(status_code=405, detail=f"Unsupported method: {method}")
 
         token: str | None = None
+        heartbeat_task: asyncio.Task[None] | None = None
+        heartbeat_error: _ClaimHeartbeatError | None = None
         if needs_claim:
             # The claim is the first hop, so it is where the credential gets
             # settled; the action and release below reuse whatever worked.
-            token, edge_headers = await _acquire_claim_with_fallback(
+            token, heartbeat_interval_s, edge_headers = await _acquire_claim_with_fallback(
                 client, entry.base_url, entry.status_path, equipment_id, owner,
                 auth_candidates,
+            )
+            heartbeat_task = asyncio.create_task(
+                _heartbeat_claim(
+                    client,
+                    entry.base_url,
+                    entry.status_path,
+                    token,
+                    equipment_id,
+                    heartbeat_interval_s,
+                    extra_headers=edge_headers,
+                ),
+                name=f"dashboard-claim-heartbeat-{equipment_id}",
             )
         try:
             if token is not None:
@@ -739,11 +819,37 @@ async def _proxy(
                     _send, auth_candidates
                 )
         finally:
+            if heartbeat_task is not None:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+                except _ClaimHeartbeatError as exc:
+                    heartbeat_error = exc
             if token is not None:
                 await _release_claim_best_effort(
                     client, entry.base_url, entry.status_path, token, equipment_id,
                     extra_headers=edge_headers,
                 )
+        if heartbeat_error is not None:
+            raise heartbeat_error
+    except _ClaimHeartbeatError as exc:
+        # Unlike a claim denial, this happens after the action returned. Say so
+        # explicitly: the physical operation may have completed, but the
+        # dashboard cannot report a claim-protected sequence as successful.
+        detail = (
+            "Device action returned, but the dashboard lost its claim "
+            f"heartbeat: {exc}"
+        )
+        logger.warning("control claim lost %s %s: %s", method, equipment_id, exc)
+        await _record_control_event(
+            request, equipment_id, action, method,
+            owner=owner, status_code=502,
+            outcome="claim_lost", detail=detail,
+            duration_s=time.monotonic() - started,
+        )
+        raise HTTPException(status_code=502, detail=detail) from exc
     except HTTPException as exc:
         # The action never executed: claim acquisition was refused
         # (409/423/503/422) or the method was unsupported. Audit the

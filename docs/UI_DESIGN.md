@@ -1047,6 +1047,40 @@ Also fixed in the same change: `skills/tests/test_skills.py`'s
 example of an equipment kind with an empty skill catalog — no longer true —
 and was repointed at `smart_plug`, which still has none.
 
+#### Step 1g — Cytation plate reader (2026-08-19)
+
+The Cytation (`kind: plate_reader`) is now available in Control mode after its
+15-skill catalog was aligned to the live device OpenAPI. The assistant still
+has no actuating tool: it validates one proposal, the signed-in operator
+authorizes the card, and the dashboard's existing claim → act → release
+passthrough performs the request.
+
+| Proposable finite actions | Workflow/operator-only |
+|---|---|
+| `startup`, `shutdown`, `drawer.open`, `drawer.close`, `plate.load`, `plate.unload`, `well.update`, `read.absorbance`, `read.fluorescence`, `read.luminescence`, `imaging.capture` | `incubator.set_temperature`, `incubator.stop`, `shake.start`, `shake.stop` |
+
+The split follows §5.3b's standalone-act test, not a device-kind exception.
+Each admitted action terminates in one request and its complete
+wells/wavelength/exposure body fits on the confirm card. Temperature control
+and shaking do not: both starts outlive the POST and require a later stop.
+Those complete start/use/stop sequences belong in a human-authorized workflow;
+the stop verbs remain safety-floor controls.
+
+Because Cytation reads and autofocus imaging can exceed the dashboard's normal
+15-second device timeout, plate-reader passthroughs use a 90-second action
+window and heartbeat the per-request claim until the action returns. Release
+still runs in `finally`; repeated heartbeat failure reports that the action may
+have completed but the protected sequence failed, instead of presenting an
+unprotected read as successful.
+
+Read and imaging responses are rendered in a bounded JSON block after
+Authorize. They stay browser-side: the model turn has already ended, so the
+measurement is not silently sent back to the assistant's model provider.
+For multi-step or record-bearing work, the `lab-runner` path remains the
+authority: a human authorizes a main-merged package in bitácora, `lab-runs`
+starts it, and `execute_plan` re-checks the Cytation's live
+`allowed_actions`, claims it per step, and records the run.
+
 ### 5.4 What control mode does *not* change
 
 - **The tier-2 trust level (§2.2).** No tool in either mode actuates, so the

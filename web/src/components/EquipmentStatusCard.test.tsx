@@ -17,10 +17,10 @@ vi.mock("@/lib/use-control-lock", () => ({
   }),
 }));
 
-const postGenericStartup = vi.fn(async () => ({ ok: true }));
+const postGenericStartup = vi.fn(async (_equipmentId: string) => ({ ok: true }));
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  postGenericStartup: (...args: unknown[]) => postGenericStartup(...args),
+  postGenericStartup: (equipmentId: string) => postGenericStartup(equipmentId),
 }));
 
 function snapshot(over: {

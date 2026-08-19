@@ -7,6 +7,7 @@ that the right gateway URL is hit with the right body.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 from unittest.mock import MagicMock
@@ -404,6 +405,99 @@ def test_v12_control_still_runs_the_claim_dance() -> None:
     assert r.status_code == 200
     assert claim_route.called
     assert action_route.calls.last.request.headers["x-claim-token"] == "tok-v12"
+
+
+@respx.mock
+def test_plate_reader_control_heartbeats_during_synchronous_read() -> None:
+    """A Cytation read may exceed the dashboard's normal 15 s budget. Keep its
+    claim alive and use the plate-reader-specific request timeout."""
+    entry = _v11_entry(id="cytation_5", kind="plate_reader", protocol="1.2")
+    app = _make_app(entry)
+
+    respx.post("http://127.0.0.1:9999/control/claim").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "claim_token": "tok-reader",
+                "heartbeat_interval_s": 0.01,
+                "expires_at": "2026-08-19T17:00:00Z",
+            },
+        )
+    )
+    heartbeat_route = respx.post(
+        "http://127.0.0.1:9999/control/heartbeat"
+    ).mock(return_value=httpx.Response(204))
+
+    async def slow_read(_request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.04)
+        return httpx.Response(
+            200,
+            json={"wells": {"A1": 0.042}, "wavelength_nm": 600.0},
+        )
+
+    action_route = respx.post(
+        "http://127.0.0.1:9999/control/read/absorbance"
+    ).mock(side_effect=slow_read)
+    respx.post("http://127.0.0.1:9999/control/release").mock(
+        return_value=httpx.Response(204)
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/equipment/cytation_5/control/read/absorbance",
+            json={"wells": ["A1"], "wavelength_nm": 600.0},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["wells"] == {"A1": 0.042}
+    assert heartbeat_route.call_count >= 1
+    assert (
+        heartbeat_route.calls.last.request.headers["x-claim-token"]
+        == "tok-reader"
+    )
+    assert action_route.calls.last.request.extensions["timeout"]["read"] == 90.0
+
+
+@respx.mock
+def test_plate_reader_reports_claim_loss_after_action_returns() -> None:
+    entry = _v11_entry(id="cytation_5", kind="plate_reader", protocol="1.2")
+    app = _make_app(entry)
+
+    respx.post("http://127.0.0.1:9999/control/claim").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "claim_token": "tok-reader",
+                "heartbeat_interval_s": 0.005,
+                "expires_at": "2026-08-19T17:00:00Z",
+            },
+        )
+    )
+    heartbeat_route = respx.post(
+        "http://127.0.0.1:9999/control/heartbeat"
+    ).mock(return_value=httpx.Response(503))
+
+    async def slow_read(_request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.04)
+        return httpx.Response(200, json={"wells": {"A1": 0.042}})
+
+    respx.post("http://127.0.0.1:9999/control/read/absorbance").mock(
+        side_effect=slow_read
+    )
+    release_route = respx.post(
+        "http://127.0.0.1:9999/control/release"
+    ).mock(return_value=httpx.Response(204))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/equipment/cytation_5/control/read/absorbance",
+            json={"wells": ["A1"], "wavelength_nm": 600.0},
+        )
+
+    assert response.status_code == 502
+    assert "Device action returned" in response.json()["detail"]
+    assert heartbeat_route.call_count == 3
+    assert release_route.called
 
 
 @respx.mock

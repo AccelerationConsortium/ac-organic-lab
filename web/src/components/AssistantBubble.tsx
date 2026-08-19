@@ -110,6 +110,10 @@ function AssistantBubbleInner() {
   const [proposalExpired, setProposalExpired] = useState(false);
   const [authorizing, setAuthorizing] = useState(false);
   const [authorizeResult, setAuthorizeResult] = useState<string | null>(null);
+  const [authorizeResponse, setAuthorizeResponse] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
   const [authorizeError, setAuthorizeError] = useState<string | null>(null);
   // null = still checking; once resolved, we know whether to render at all.
   // The bubble only renders if the backend's health endpoint reports it can
@@ -294,7 +298,7 @@ function AssistantBubbleInner() {
     if (scrollerRef.current) {
       scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
     }
-  }, [turns, open, proposal]);
+  }, [turns, open, proposal, authorizeResponse]);
 
   const clearProposal = useCallback(() => {
     if (expiryRef.current) {
@@ -334,6 +338,7 @@ function AssistantBubbleInner() {
       // A new turn supersedes any pending proposal / result banner.
       clearProposal();
       setAuthorizeResult(null);
+      setAuthorizeResponse(null);
 
       const nextTurns: ChatTurn[] = [
         ...turns,
@@ -412,6 +417,7 @@ function AssistantBubbleInner() {
         const p = event.proposal as Proposal;
         setAuthorizeError(null);
         setAuthorizeResult(null);
+        setAuthorizeResponse(null);
         setProposalExpired(false);
         setProposal(p);
         if (expiryRef.current) clearTimeout(expiryRef.current);
@@ -452,13 +458,23 @@ function AssistantBubbleInner() {
     setAuthorizing(true);
     setAuthorizeError(null);
     try {
-      await authorizeAssistantAction(
+      const response = await authorizeAssistantAction(
         proposal.equipment_id,
         proposal.passthrough_action,
         proposal.args
       );
       setAuthorizeResult(
         `Authorized ${proposal.action} on ${proposal.equipment_name}.`
+      );
+      // Read/imaging responses are the useful output of operating a plate
+      // reader. Keep them browser-side and visible; the assistant model's turn
+      // has already ended, so scientific values are not fed back to it.
+      setAuthorizeResponse(
+        proposal.kind === "plate_reader" &&
+          (proposal.action.startsWith("read.") ||
+            proposal.action === "imaging.capture")
+          ? response
+          : null
       );
       clearProposal();
     } catch (e) {
@@ -648,6 +664,14 @@ function AssistantBubbleInner() {
             {authorizeResult && (
               <div className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200">
                 {authorizeResult}
+              </div>
+            )}
+            {authorizeResponse && (
+              <div className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200">
+                <div className="mb-1 font-medium">Device response</div>
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-emerald-100/70 p-1.5 font-mono text-[10px] leading-snug dark:bg-emerald-900/30">
+                  {JSON.stringify(authorizeResponse, null, 2)}
+                </pre>
               </div>
             )}
             {error && (

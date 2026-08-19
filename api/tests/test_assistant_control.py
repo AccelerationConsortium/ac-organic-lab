@@ -930,6 +930,113 @@ async def test_list_available_actions_camera_full_surface() -> None:
     assert by_action["preset/{id}"]["proposable"] is False
 
 
+# ---------------------------------------------------------------------------
+# plate-reader proposals (UI_DESIGN §5 Step 1g)
+# ---------------------------------------------------------------------------
+
+# Finite, card-evaluable Cytation actions. Temperature control and shaking are
+# intentionally absent: both outlive the POST and require a later stop, so they
+# belong in a validated workflow rather than a standalone confirm card.
+_PLATE_READER_SURFACE = {
+    "startup": "startup",
+    "shutdown": "shutdown",
+    "drawer.open": "drawer/open",
+    "drawer.close": "drawer/close",
+    "plate.load": "plate/load",
+    "plate.unload": "plate/unload",
+    "well.update": "well/update",
+    "read.absorbance": "read/absorbance",
+    "read.fluorescence": "read/fluorescence",
+    "read.luminescence": "read/luminescence",
+    "imaging.capture": "imaging/capture",
+}
+_PLATE_READER_WORKFLOW_ONLY = {
+    "incubator.set_temperature",
+    "incubator.stop",
+    "shake.start",
+    "shake.stop",
+}
+
+
+@pytest.mark.parametrize(
+    ("action", "passthrough"), sorted(_PLATE_READER_SURFACE.items())
+)
+def test_resolve_plate_reader_finite_surface(
+    action: str, passthrough: str
+) -> None:
+    entry = _bench_registry("plate_reader").equipment[0]
+    sd, resolved_passthrough, args = ac._resolve(entry, action, {})
+    assert sd.name == action
+    assert resolved_passthrough == passthrough
+    assert args == {}
+
+
+@pytest.mark.parametrize("action", sorted(_PLATE_READER_WORKFLOW_ONLY))
+def test_resolve_plate_reader_refuses_persistent_and_stop_actions(
+    action: str,
+) -> None:
+    entry = _bench_registry("plate_reader").equipment[0]
+    with pytest.raises(ac.ProposalRefused) as exc:
+        ac._resolve(entry, action, {})
+    assert exc.value.code == "unmappable_action"
+
+
+def test_proposable_plate_reader_equals_finite_surface() -> None:
+    assert ac._PROPOSABLE["plate_reader"] == set(_PLATE_READER_SURFACE)
+
+
+@respx.mock
+async def test_propose_plate_reader_absorbance_read() -> None:
+    _mock_bench_status("plate_reader", list(_PLATE_READER_SURFACE))
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("plate_reader"),
+            "plate_reader_test",
+            "read.absorbance",
+            {"wells": ["A1", "B2"], "wavelength_nm": 600.0},
+            "measure the loaded diagnostic plate",
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "read.absorbance"
+    assert prop["passthrough_action"] == "read/absorbance"
+    assert prop["args"] == {"wells": ["A1", "B2"], "wavelength_nm": 600.0}
+    assert prop["kind"] == "plate_reader"
+
+
+@respx.mock
+async def test_propose_plate_reader_rejects_removed_read_gain() -> None:
+    _mock_bench_status("plate_reader", ["read.absorbance"])
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("plate_reader"),
+            "plate_reader_test",
+            "read.absorbance",
+            {"wells": ["A1"], "wavelength_nm": 600.0, "gain": 10.0},
+            "",
+        )
+    )
+    assert out["code"] == "invalid_args"
+
+
+@respx.mock
+async def test_list_available_actions_plate_reader_marks_workflow_only() -> None:
+    advertised = list(_PLATE_READER_SURFACE) + list(_PLATE_READER_WORKFLOW_ONLY)
+    _mock_bench_status("plate_reader", advertised)
+    out = json.loads(
+        await ac._list_available_actions(
+            _bench_registry("plate_reader"), "plate_reader_test"
+        )
+    )
+    by_action = {a["action"]: a for a in out["actions"]}
+    for action, passthrough in _PLATE_READER_SURFACE.items():
+        assert by_action[action]["proposable"] is True, action
+        assert by_action[action]["passthrough_action"] == passthrough
+    for action in _PLATE_READER_WORKFLOW_ONLY:
+        assert by_action[action]["proposable"] is False, action
+
+
 @respx.mock
 async def test_list_available_actions_ot2_full_surface_and_stripped_schemas() -> None:
     _mock_ot2_status(_OT2_ADVERTISED)

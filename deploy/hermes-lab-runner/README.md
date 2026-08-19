@@ -98,10 +98,24 @@ are inside the agent's memory audience — same judgement as `allow_from`.
 
 ### 6. Verify (in Slack, from an allowlisted account)
 
+The runner does not author or compile protocols. Before testing a real
+Cytation run, the selected project repo must map its protocol action to a
+`plate_reader` skill in `compile/actions.yaml`, pin
+`plate_reader: cytation_5` in `compile/binding.yaml`, merge the protocol to
+`main`, and obtain a human-created bitácora authorization. The generic bitácora
+template intentionally leaves those project-specific maps empty.
+
 - DM the bot: "which model are you?" → it answers from its config (SOUL.md
   mandates truthful model disclosure — the "show the model" requirement).
 - "list current equipment" → ~33 entries via lab-history.
+- "preflight a plate-reader absorbance step for A1 at 600 nm" → uses the
+  template's `plate_reader=cytation_5` binding and reports a dry-run verdict;
+  it must not claim or POST to the reader.
 - "get_run run_nope" → relays `unknown_run` (proves lab-runs through Slack).
+- Given an authorization id supplied by a human for a main-merged Cytation
+  protocol, `start_run(..., dry_run=true)` must pass before the real
+  `start_run(..., dry_run=false)` is offered. The executor, not the bot,
+  re-verifies the digest, binding, revocation, live actions, and interlocks.
 - From a NON-allowlisted account: the bot must not respond.
 - `sudo -iu hermes ls /home/sdl2/caoyang/ac-organic-lab/.env` still denied
   (the box holds with the gateway running).

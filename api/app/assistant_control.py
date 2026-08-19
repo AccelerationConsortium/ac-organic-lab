@@ -34,8 +34,9 @@ A proposal is exactly one action on one device. In scope:
   ``details.motion_graph`` snapshot (see :func:`_list_available_actions`).
 * the per-kind allowlist in :data:`_PROPOSABLE` — the ``liquid_handler``
   (OT-2) control surface plus, since Step 1d, ``fume_hood`` / ``shaker`` /
-  ``press``, and since Step 1f, ``camera`` (PTZ nudge, presets, privacy,
-  streaming). The table carries the scope history and per-kind rationale;
+  ``press``, since Step 1f, ``camera`` (PTZ nudge, presets, privacy,
+  streaming), and since Step 1g, the Cytation's finite plate-reader actions.
+  The table carries the scope history and per-kind rationale;
   :data:`_FORBIDDEN_ARG_FIELDS` holds the argument fields that are never
   model-settable (interlock overrides, device credentials). The ``hplc``
   kind is deliberately absent — see the table's Step 1d note.
@@ -293,6 +294,31 @@ _PROPOSABLE: dict[str, frozenset[str]] = {
     # routes/cameras.py) so the direct name-match branch of _resolve needs
     # no camera-specific bridging.
     "camera": frozenset({"ptz", "preset/save", "preset/goto", "privacy", "streaming"}),
+    # Step 1g (2026-08-19): the finite Cytation actions. A read or image is a
+    # single bounded request whose complete wells/wavelength/exposure body is
+    # visible on the confirm card; drawer and plate-record changes follow the
+    # same one-card/operator-sequenced rule already used for the OT-2.
+    #
+    # The incubator and shaker are deliberately absent despite being in the
+    # catalog. `incubator.set_temperature` and `shake.start` outlive the POST
+    # and need a later stop, so neither is a correct standalone act. Their stop
+    # verbs remain part of the operator safety floor. Use an authorized
+    # workflow that contains the full start/use/stop sequence instead.
+    "plate_reader": frozenset(
+        {
+            "startup",
+            "shutdown",
+            "drawer.open",
+            "drawer.close",
+            "plate.load",
+            "plate.unload",
+            "well.update",
+            "read.absorbance",
+            "read.fluorescence",
+            "read.luminescence",
+            "imaging.capture",
+        }
+    ),
 }
 
 # Argument fields the model may never set, per kind — see the rationale above.

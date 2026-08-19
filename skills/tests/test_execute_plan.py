@@ -28,6 +28,7 @@ from lab_skills.registry import EquipmentEntry, Registry
 from lab_skills.sync import Lab as SyncLab
 
 BASE = "http://plateloc.local:8010"
+READER_BASE = "http://cytation.local:8040"
 
 
 @pytest.fixture(autouse=True)
@@ -122,6 +123,91 @@ async def test_happy_path_executes_all_steps_under_claims() -> None:
     # The claim token is attached to each control POST (hard-enforcement pass).
     assert in_route.calls.last.request.headers.get("X-Claim-Token") == "tok-1"
     assert out_route.calls.last.request.headers.get("X-Claim-Token") == "tok-1"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_plate_reader_plan_executes_read_under_claim_and_keeps_response() -> None:
+    """The authorized-run path is generic execute_plan: a Cytation role,
+    catalog skill, and pinned args require no agent-side control exception."""
+    registry = Registry(
+        equipment=[
+            EquipmentEntry(
+                id="cytation_5",
+                name="BioTek Cytation 5",
+                kind="plate_reader",
+                adapter="http",
+                base_url=READER_BASE,
+                protocol="1.2",
+                status_path="/status",
+            )
+        ]
+    )
+    respx.get(f"{READER_BASE}/status").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "protocol_version": "1.2",
+                "equipment_id": "cytation_5",
+                "equipment_name": "BioTek Cytation 5",
+                "equipment_kind": "plate_reader",
+                "equipment_status": "ready",
+                "activity": "idle",
+                "allowed_actions": ["read.absorbance"],
+                "components": {
+                    "shaker": {"connected": True, "state": "idle"}
+                },
+                "device_time": "2026-08-19T12:00:00Z",
+            },
+        )
+    )
+    respx.post(f"{READER_BASE}/control/claim").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "claim_token": "reader-token",
+                "heartbeat_interval_s": 10_000.0,
+                "expires_at": "2099-01-01T00:00:00Z",
+            },
+        )
+    )
+    respx.post(f"{READER_BASE}/control/heartbeat").mock(
+        return_value=httpx.Response(204)
+    )
+    respx.post(f"{READER_BASE}/control/release").mock(
+        return_value=httpx.Response(204)
+    )
+    read_route = respx.post(f"{READER_BASE}/control/read/absorbance").mock(
+        return_value=httpx.Response(
+            200,
+            json={"wells": {"A1": 0.042}, "wavelength_nm": 600.0},
+        )
+    )
+    plan = Plan(
+        steps=[
+            Step(
+                id="read_diagnostic_well",
+                role="plate_reader",
+                skill="read.absorbance",
+                args={"wells": ["A1"], "wavelength_nm": 600.0},
+            )
+        ]
+    )
+
+    async with Lab.connect(
+        registry=registry, binding={"plate_reader": "cytation_5"}
+    ) as lab:
+        report = await execute_plan(plan, lab, owner="hermes@lab.local")
+
+    assert report.ok
+    assert report.steps[0].response == {
+        "wells": {"A1": 0.042},
+        "wavelength_nm": 600.0,
+    }
+    assert (
+        read_route.calls.last.request.headers.get("X-Claim-Token")
+        == "reader-token"
+    )
 
 
 @respx.mock

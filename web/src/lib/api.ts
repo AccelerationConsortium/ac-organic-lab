@@ -128,13 +128,15 @@ async function controlPost<TBody extends object, TResp = ControlAck>(
  * `X-Control-Origin: assistant` so the audit trail separates assistant-
  * originated actions from tile clicks. `action` is the proposal's
  * `passthrough_action` (e.g. `graph/move_to`); `args` its validated body.
+ * The concrete response is preserved because plate-reader reads and imaging
+ * return measurements/metadata rather than the generic `{ok: true}` ack.
  */
 export async function authorizeAssistantAction(
   equipmentId: string,
   action: string,
   args: Record<string, unknown>,
-): Promise<ControlAck> {
-  return fetchJson<ControlAck>(controlUrl(equipmentId, action), {
+): Promise<Record<string, unknown>> {
+  return fetchJson<Record<string, unknown>>(controlUrl(equipmentId, action), {
     method: "POST",
     body: JSON.stringify(args ?? {}),
     headers: {

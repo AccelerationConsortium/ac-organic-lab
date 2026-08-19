@@ -81,6 +81,55 @@ def test_a_valid_authorization_passes_every_gate() -> None:
     assert len(plan_from(auth).steps) == 2
 
 
+@pytest.mark.asyncio
+async def test_authorized_plate_reader_package_reaches_the_sdk_plan_gate() -> None:
+    """lab-runs is device-agnostic: a pinned Cytation binding and the live
+    plate-reader catalog are enough; the agent needs no direct control tool."""
+    from lab_skills import Lab, validate_plan
+    from lab_skills.registry import EquipmentEntry, Registry
+
+    pkg = _package(
+        protocol="cytation-absorbance-smoke",
+        steps=[
+            {
+                "step_id": "read_diagnostic_wells",
+                "role": "plate_reader",
+                "skill": "read.absorbance",
+                "args": {"wells": ["A1", "B2"], "wavelength_nm": 600.0},
+            }
+        ],
+        parameters={},
+    )
+    auth = _auth(
+        package=pkg,
+        protocol_path="protocols/cytation-absorbance-smoke.yaml",
+        binding={"plate_reader": "cytation_5"},
+    )
+    assert_executable(auth)
+    verify_package_digest(auth)
+    plan = plan_from(auth)
+
+    registry = Registry(
+        equipment=[
+            EquipmentEntry(
+                id="cytation_5",
+                name="BioTek Cytation 5",
+                kind="plate_reader",
+                adapter="http",
+                base_url="http://cytation.test:8040",
+                status_path="/status",
+                protocol="1.2",
+            )
+        ]
+    )
+    async with Lab.connect(registry=registry, binding=auth.binding) as lab:
+        report = validate_plan(plan, lab)
+
+    assert report.ok
+    assert report.steps[0].role == "plate_reader"
+    assert report.steps[0].skill == "read.absorbance"
+
+
 def test_a_revoked_authorization_is_refused() -> None:
     """Revocation is only real if the runner asks at run time — the reason the
     handover is a pull rather than a push (D-21)."""
