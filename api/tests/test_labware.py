@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +81,29 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 ADMIN = {"X-Auth-User": "admin@lab", "X-Auth-Role": "admin"}
 OPERATOR = {"X-Auth-User": "op@lab", "X-Auth-Role": "operator"}
+
+REQUIRED_SCHEMA_2_FIELDS = {
+    "dimensions",
+    "ordering",
+    "wells",
+    "parameters",
+    "namespace",
+    "version",
+    "schemaVersion",
+    "metadata",
+    "brand",
+}
+
+
+def _assert_complete_definition(
+    definition: dict[str, Any], load_name: str
+) -> None:
+    assert REQUIRED_SCHEMA_2_FIELDS <= definition.keys()
+    assert definition["schemaVersion"] == 2
+    assert definition["parameters"]["loadName"] == load_name
+    assert {"x", "y", "z", "depth", "totalLiquidVolume", "shape"} <= definition[
+        "wells"
+    ]["A1"].keys()
 
 
 # ---- validation -----------------------------------------------------------
@@ -201,8 +225,6 @@ def test_upload_stamps_ac_auth_identity_and_preserves_creator(client: TestClient
 def test_legacy_raw_upload_loads_without_authorship(client: TestClient) -> None:
     """Pre-envelope files (raw schema-2 JSON) still list; authorship is null
     until the next save rewrites them as an envelope."""
-    import os
-
     uploads = Path(os.environ["LABWARE_UPLOAD_DIR"])
     uploads.mkdir(parents=True, exist_ok=True)
     (uploads / "legacy_raw_plate.json").write_text(json.dumps(_definition("legacy_raw_plate")))
@@ -227,11 +249,32 @@ def test_legacy_raw_upload_loads_without_authorship(client: TestClient) -> None:
     assert on_disk["created_by"] == "op@lab"
 
 
-def test_get_detail_and_404(client: TestClient) -> None:
+def test_custom_list_is_summary_but_detail_is_complete(client: TestClient) -> None:
+    listed = {
+        item["load_name"]: item
+        for item in client.get("/api/labware").json()["definitions"]
+    }["lab_repo_96_plate_360ul"]
+    assert "definition" not in listed
+    assert "wells" not in listed
+
     res = client.get("/api/labware/lab_repo_96_plate_360ul")
     assert res.status_code == 200
-    assert res.json()["definition"]["parameters"]["loadName"] == "lab_repo_96_plate_360ul"
+    definition = res.json()["definition"]
+    _assert_complete_definition(definition, "lab_repo_96_plate_360ul")
+    assert definition == _definition("lab_repo_96_plate_360ul")
     assert client.get("/api/labware/nope_nothing").status_code == 404
+
+
+def test_custom_detail_rejects_partial_stored_definition(client: TestClient) -> None:
+    repo = Path(os.environ["LABWARE_REPO_DIR"])
+    (repo / "partial_plate.json").write_text(
+        json.dumps({"parameters": {"loadName": "partial_plate"}})
+    )
+
+    res = client.get("/api/labware/partial_plate")
+
+    assert res.status_code == 500
+    assert "incomplete" in res.json()["detail"]
 
 
 def test_upload_allows_any_signed_in_role(client: TestClient) -> None:
@@ -272,9 +315,17 @@ def test_standard_definitions_served(client: TestClient) -> None:
 
     detail = client.get("/api/labware/standard/corning_96_wellplate_360ul_flat")
     assert detail.status_code == 200
-    assert detail.json()["definition"]["parameters"]["loadName"] == (
-        "corning_96_wellplate_360ul_flat"
+    _assert_complete_definition(
+        detail.json()["definition"], "corning_96_wellplate_360ul_flat"
     )
+
+    tiprack = client.get("/api/labware/standard/opentrons_96_tiprack_300ul")
+    assert tiprack.status_code == 200
+    tiprack_definition = tiprack.json()["definition"]
+    _assert_complete_definition(tiprack_definition, "opentrons_96_tiprack_300ul")
+    assert tiprack_definition["parameters"]["isTiprack"] is True
+    assert tiprack_definition["parameters"]["tipLength"] == 59.3
+    assert tiprack_definition["parameters"]["tipOverlap"] == 7.47
     assert client.get("/api/labware/standard/nope_nothing").status_code == 404
 
 

@@ -64,6 +64,23 @@ _MAX_DIMENSIONS = {"x": 127.0, "y": 85.5, "z": 200.0}
 
 _LOAD_NAME_RE = re.compile(r"^[a-z0-9._]+$")
 
+# Fields every schema-2 definition carries. Detail routes verify this boundary
+# before returning a store/package document so a corrupt summary-like object
+# can never masquerade as a loadable definition.
+_REQUIRED_DEFINITION_FIELDS = frozenset(
+    {
+        "dimensions",
+        "ordering",
+        "wells",
+        "parameters",
+        "namespace",
+        "version",
+        "schemaVersion",
+        "metadata",
+        "brand",
+    }
+)
+
 # Audit rows land in equipment_events under this pseudo-device id, with the
 # same control_action payload shape control.py / deck.py use.
 _AUDIT_DEVICE_ID = "labware_store"
@@ -135,6 +152,76 @@ def _load_standard(load_name: str) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         logger.exception("standard labware definition %s unreadable", path)
         return None
+
+
+def _require_complete_definition(
+    load_name: str, definition: dict[str, Any], source: str
+) -> dict[str, Any]:
+    """Reject a corrupt summary-like object at the detail-route boundary."""
+    problems = sorted(_REQUIRED_DEFINITION_FIELDS - definition.keys())
+    parameters = definition.get("parameters")
+    if definition.get("schemaVersion") != 2:
+        problems.append("schemaVersion=2")
+    if not isinstance(parameters, dict) or parameters.get("loadName") != load_name:
+        problems.append("parameters.loadName")
+    for field in ("dimensions", "wells", "metadata", "brand"):
+        if not isinstance(definition.get(field), dict):
+            problems.append(f"{field} object")
+    if not isinstance(definition.get("ordering"), list):
+        problems.append("ordering list")
+    if not isinstance(definition.get("namespace"), str) or not definition["namespace"]:
+        problems.append("namespace")
+    if isinstance(definition.get("version"), bool) or not isinstance(
+        definition.get("version"), int
+    ):
+        problems.append("version")
+
+    dimensions = definition.get("dimensions")
+    if isinstance(dimensions, dict) and any(
+        not isinstance(dimensions.get(field), (int, float))
+        for field in ("xDimension", "yDimension", "zDimension")
+    ):
+        problems.append("dimensions geometry")
+    metadata = definition.get("metadata")
+    if isinstance(metadata, dict) and not isinstance(metadata.get("displayName"), str):
+        problems.append("metadata.displayName")
+    brand = definition.get("brand")
+    if isinstance(brand, dict) and not isinstance(brand.get("brand"), str):
+        problems.append("brand.brand")
+
+    if isinstance(parameters, dict) and parameters.get("isTiprack"):
+        if not isinstance(parameters.get("tipLength"), (int, float)):
+            problems.append("parameters.tipLength")
+
+    wells = definition.get("wells")
+    ordering = definition.get("ordering")
+    if source != "standard" and (
+        not isinstance(wells, dict)
+        or not wells
+        or not isinstance(ordering, list)
+        or not ordering
+    ):
+        problems.append("custom wells and ordering")
+    if isinstance(wells, dict):
+        geometry_fields = {"x", "y", "z", "depth", "totalLiquidVolume", "shape"}
+        if any(
+            not isinstance(well, dict) or not geometry_fields.issubset(well)
+            for well in wells.values()
+        ):
+            problems.append("well geometry")
+
+    if problems:
+        logger.error(
+            "%s labware definition %s is incomplete: %s",
+            source,
+            load_name,
+            ", ".join(sorted(set(problems))),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Stored {source} labware definition {load_name!r} is incomplete",
+        )
+    return definition
 
 
 # ---------------------------------------------------------------------------
@@ -484,7 +571,10 @@ def build_labware_router() -> APIRouter:
         defn = _load_standard(load_name)
         if defn is None:
             raise HTTPException(status_code=404, detail=f"Unknown standard labware {load_name!r}")
-        return {"source": "standard", "definition": defn}
+        return {
+            "source": "standard",
+            "definition": _require_complete_definition(load_name, defn, "standard"),
+        }
 
     @router.get("/{load_name}")
     async def get_labware(load_name: str) -> dict[str, Any]:
@@ -495,7 +585,9 @@ def build_labware_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=f"Unknown labware {load_name!r}")
         return {
             "source": item["source"],
-            "definition": item["definition"],
+            "definition": _require_complete_definition(
+                load_name, item["definition"], item["source"]
+            ),
             "created_by": item.get("created_by"),
             "created_at": item.get("created_at"),
             "updated_by": item.get("updated_by"),

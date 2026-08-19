@@ -103,6 +103,31 @@ def test_post_preset_save_supports_nested_action() -> None:
 
 
 @respx.mock
+def test_deck_declare_preserves_load_name_only_declarations() -> None:
+    """Deck declarations describe intent; the central API must not invent a
+    definition from their load_name-only summaries."""
+    entry = _entry(status_path="/status")
+    app = _make_app(entry)
+    route = respx.post(
+        "http://127.0.0.1:8002/control/deck/declare",
+    ).mock(return_value=httpx.Response(200, json={"ok": True}))
+    declarations = {
+        "2": {"load_name": "plate_a"},
+        "5": "corning_96_wellplate_360ul_flat",
+    }
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/cam_lab499_west/control/deck/declare",
+            json={"slots": declarations},
+        )
+
+    assert r.status_code == 200
+    sent = json.loads(route.calls.last.request.content)
+    assert sent["slots"] == declarations
+
+
+@respx.mock
 def test_delete_preset_proxies_method() -> None:
     entry = _entry()
     app = _make_app(entry)
