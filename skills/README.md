@@ -24,7 +24,7 @@ What's in the package today:
 | `status_adapters` | `http` (STATUS_SPEC v1.0–v1.2), `legacy_http` (per-device translation; unused since LG2 closed), `mock`. |
 | `models` | `EquipmentStatus` envelope, `ProbeResponse`, `HealthResponse`, `ComponentStatus`, `MetricValue`, `ErrorInfo`. |
 | `lab` / `session` / `client` | `Lab.connect(...)` → `LabSession` (async ctx mgr) → `EquipmentClient` (read: `status()`/`probe()`/`health()`; write: `command()`). |
-| `typed_clients` | Per-kind subclasses with typed methods (`PlateSealerClient`, `PressClient`, `RobotArmClient`, `SolidDoserClient`, `FumeHoodClient`). |
+| `typed_clients` | Per-kind subclasses with typed methods (`PlateSealerClient`, `PlateReaderClient`, `PressClient`, `RobotArmClient`, `SolidDoserClient`, `FumeHoodClient`). |
 | `skill_catalog` | `SkillDef` registry per `kind` + runtime `Skill` evaluation against `/status` (`allowed_actions` on v1.1 devices, `requires_states` fallback on v1.0). |
 | `claims` | `ClaimManager` for STATUS_SPEC v1.1 `/control/claim,heartbeat,release` with TTL/lease semantics. |
 | `plan` | `Plan` / `Step` / `validate_plan(...)` → `PlanReport` (offline preflight), and `execute_plan(...)` → `PlanRunReport` (live: per-step `ClaimManager`, layer-3 + layer-4 re-checks before each step, `wait_timeout_s` for time-clearing preconditions, `dry_run` preflight). |

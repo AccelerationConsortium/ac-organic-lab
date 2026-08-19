@@ -24,6 +24,7 @@ from lab_skills import (
     EquipmentEntry,
     FumeHoodClient,
     Lab,
+    PlateReaderClient,
     PlateSealerClient,
     PressClient,
     Registry,
@@ -91,6 +92,16 @@ async def test_get_returns_robot_arm_client_for_robot_arm_kind() -> None:
     assert isinstance(client, RobotArmClient)
     # No control methods exposed in v0.2.
     assert not hasattr(client, "move")
+
+
+@pytest.mark.asyncio
+async def test_get_returns_plate_reader_client_for_plate_reader_kind() -> None:
+    entry = _entry("cytation_5", kind="plate_reader", base_url="http://c.test:8040")
+    registry = Registry(equipment=[entry])
+    async with Lab.connect(registry=registry) as lab:
+        client = lab.get(entry.id)
+    assert isinstance(client, PlateReaderClient)
+    assert isinstance(client, EquipmentClient)
 
 
 @pytest.mark.asyncio
@@ -311,3 +322,102 @@ async def test_fume_hood_move_round_trip() -> None:
         async with Lab.connect(registry=registry) as lab:
             await lab.get(entry.id).move(position=3)
     assert captured["json"] == {"position": 3}
+
+
+# ---------------------------------------------------------------------------
+# PlateReaderClient (Cytation 5 — live OpenAPI 2026-08-19)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_plate_reader_read_absorbance_acceptance() -> None:
+    """``await lab.role("plate_reader").read_absorbance(...)`` posts the
+    catalog body with no ``gain`` field."""
+
+    entry = _entry("cytation_5", kind="plate_reader", base_url="http://c.test:8040")
+    registry = Registry(equipment=[entry])
+    captured: dict = {}
+
+    def _record(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, json={"wells": {"A1": 0.042}})
+
+    with respx.mock(base_url=entry.base_url) as router:
+        router.post("/control/read/absorbance").mock(side_effect=_record)
+        async with Lab.connect(
+            registry=registry, binding={"plate_reader": entry.id}
+        ) as lab:
+            result = await lab.role("plate_reader").read_absorbance(
+                wells=["A1"], wavelength_nm=600.0
+            )
+
+    assert captured["json"] == {"wells": ["A1"], "wavelength_nm": 600.0}
+    assert "gain" not in captured["json"]
+    assert result == {"wells": {"A1": 0.042}}
+
+
+@pytest.mark.asyncio
+async def test_plate_reader_read_absorbance_validates_args_locally() -> None:
+    from pydantic import ValidationError
+
+    entry = _entry("cytation_5", kind="plate_reader", base_url="http://c.test:8040")
+    registry = Registry(equipment=[entry])
+
+    with respx.mock(base_url=entry.base_url, assert_all_called=False) as router:
+        route = router.post("/control/read/absorbance").mock(
+            return_value=httpx.Response(200, json={"wells": {}})
+        )
+        async with Lab.connect(registry=registry) as lab:
+            reader = lab.get(entry.id)
+            with pytest.raises(ValidationError):
+                await reader.read_absorbance(wells=["A1"], wavelength_nm=200.0)
+        assert route.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_plate_reader_imaging_and_shake_round_trip() -> None:
+    entry = _entry("cytation_5", kind="plate_reader", base_url="http://c.test:8040")
+    registry = Registry(equipment=[entry])
+    captured: dict = {}
+
+    def _record_capture(request: httpx.Request) -> httpx.Response:
+        captured["capture"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "well": "A1",
+                "channel": "brightfield",
+                "focal_height_mm": 5.0,
+                "exposure_ms": 10.0,
+                "gain": 0.0,
+            },
+        )
+
+    with respx.mock(base_url=entry.base_url) as router:
+        load = router.post("/control/plate/load").mock(
+            return_value=httpx.Response(
+                200, json={"plate_id": "bench", "model": "square_96_19mm"}
+            )
+        )
+        capture = router.post("/control/imaging/capture").mock(
+            side_effect=_record_capture
+        )
+        shake = router.post("/control/shake/start").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        stop = router.post("/control/shake/stop").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        async with Lab.connect(registry=registry) as lab:
+            reader = lab.get(entry.id)
+            await reader.plate_load(plate_id="bench", model="square_96_19mm")
+            await reader.imaging_capture(well="A1", channel="brightfield")
+            await reader.shake_start(pattern="orbital", displacement_mm=3)
+            await reader.shake_stop()
+
+    assert load.call_count == 1
+    assert capture.call_count == 1
+    assert shake.call_count == 1
+    assert stop.call_count == 1
+    assert captured["capture"]["channel"] == "brightfield"
+    assert captured["capture"]["gain"] == 0.0

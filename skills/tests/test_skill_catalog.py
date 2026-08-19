@@ -22,6 +22,7 @@ def test_registry_populated_for_active_kinds() -> None:
     assert "fume_hood" in SKILL_REGISTRY
     assert "hplc" in SKILL_REGISTRY
     assert "camera" in SKILL_REGISTRY
+    assert "plate_reader" in SKILL_REGISTRY
 
 
 def test_plate_reader_catalog_registered() -> None:
@@ -34,7 +35,57 @@ def test_plate_reader_catalog_registered() -> None:
         "plate.load", "plate.unload", "well.update",
         "read.absorbance", "read.fluorescence", "read.luminescence",
         "imaging.capture",
+        "incubator.set_temperature", "incubator.stop",
+        "shake.start", "shake.stop",
     } <= names
+
+
+def test_plate_reader_reads_take_no_gain() -> None:
+    """The device 422s a `gain` on any read rather than ignoring it, because a
+    dropped gain yields a plausible number measured at some other gain."""
+    from lab_skills.skill_catalog import SKILL_REGISTRY
+
+    for skill in SKILL_REGISTRY["plate_reader"]:
+        if skill.name.startswith("read."):
+            assert "gain" not in skill.args_schema.model_fields
+
+
+def test_plate_reader_read_args_match_device_ranges() -> None:
+    """Absorbance 230-999 nm; FL ex/em 250-700; focal height 4.5-13.88 mm.
+    Extra fields (including a read `gain`) are forbidden, matching the device.
+    """
+    from pydantic import ValidationError
+
+    from lab_skills.skill_catalog.plate_reader import (
+        AbsorbanceArgs,
+        FluorescenceArgs,
+        ImagingCaptureArgs,
+        LuminescenceArgs,
+    )
+
+    AbsorbanceArgs(wells=["A1"], wavelength_nm=230.0)
+    AbsorbanceArgs(wells=["A1"], wavelength_nm=999.0)
+    with pytest.raises(ValidationError):
+        AbsorbanceArgs(wells=["A1"], wavelength_nm=200.0)
+    with pytest.raises(ValidationError):
+        AbsorbanceArgs(wells=["A1"], wavelength_nm=600.0, gain=50.0)  # type: ignore[call-arg]
+
+    FluorescenceArgs(wells=["A1"], excitation_nm=250.0, emission_nm=700.0)
+    with pytest.raises(ValidationError):
+        FluorescenceArgs(wells=["A1"], excitation_nm=200.0, emission_nm=528.0)
+    with pytest.raises(ValidationError):
+        FluorescenceArgs(
+            wells=["A1"], excitation_nm=485.0, emission_nm=528.0, focal_height_mm=0.0
+        )
+
+    LuminescenceArgs(wells=["A1"], focal_height_mm=4.5)
+    with pytest.raises(ValidationError):
+        LuminescenceArgs(wells=["A1"], focal_height_mm=30.0)
+
+    ImagingCaptureArgs(well="A1", channel="brightfield", gain=0.0)
+    ImagingCaptureArgs(well="A1", channel="brightfield", gain=47.0)
+    with pytest.raises(ValidationError):
+        ImagingCaptureArgs(well="A1", channel="brightfield", gain=50.0)
 
 
 def test_liquid_handler_catalog_registered() -> None:

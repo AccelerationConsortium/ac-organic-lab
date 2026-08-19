@@ -145,7 +145,7 @@ each):
 | `fume_hood` | 2 | `sash.move`, `sash.stop` |
 | `hplc` | 6 | `run.{submit,abort}`, `queue.cancel`, `instrument.standby`, `workflow.{start,end}` (Agilent UPLC-MS sidecar) |
 | `liquid_handler` | 18 | OT-2 full `/control/*` surface: lifecycle (`startup`/`shutdown`), protocol exec (`setup`/`home`/`move_to`/`pick_up_tip`/`aspirate`/`dispense`/`drop_tip`/`move_labware`/`pause`/`resume`), plate + tip tracking (`plate.{load,unload}`/`well.update`/`tips.reset`), convenience (`lights.set`/`deck.declare`). Typed args added 2026-07-12; `move_to` (well or absolute-XYZ pipette motion) added 2026-07-18 |
-| `plate_reader` | 11 | Mirrors `agilent-cytation-server` `/control/*` surface |
+| `plate_reader` | 15 | Mirrors live `agilent-cytation-server` `/control/*` (drawer, plate, three reads, imaging, incubator, shaker). Arg ranges aligned to the device OpenAPI 2026-08-19: absorbance 230–999 nm, FL ex/em 250–700 nm, no `gain` on reads, camera analog gain 0–47 dB. |
 | `plate_sealer` | 8 | Includes 412-precondition skills with `requires_components` (heater + stage) |
 | `plate_stacker` | 6 | Agilent BioStack `/control/*` surface |
 | `press` | 6 | `init`, `stop`, `press.{up,down}`, `plate.{in,out}` |
@@ -270,12 +270,13 @@ host. Spec is what the device's live `/status` envelope reports.
    `/control/plate/{load,unload}` + `/control/well/update`, and
    `details.loaded_plate` is on the live envelope (`null` with no plate
    loaded). Phase 4's `plate_reader.py` is registered in
-   `skill_catalog/` (11 SkillDefs). With the v1.2 work of 2026-08-02 this
-   device has no open migration items; what remains is **hardware
-   verification of the write surface** — the `/control/*` reads and
-   imaging capture have only ever been exercised dry-run
-   (`RUNBOOK.md` §3-§4), so no measurement has yet been driven end-to-end
-   from a workflow.
+   `skill_catalog/` (15 SkillDefs, including incubator + shaker; arg
+   ranges match the live OpenAPI as of 2026-08-19). With the v1.2 work
+   of 2026-08-02 this device has no open migration items; what remains
+   is **hardware verification of the write surface** — the `/control/*`
+   reads and imaging capture have only ever been exercised dry-run
+   (`RUNBOOK.md` §3-§4), so no measurement has yet been driven
+   end-to-end from a workflow.
 
 ### Conformance checklists
 
@@ -630,6 +631,13 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
 
 Open:
 
+- [x] **Skill catalog aligned to the live write surface** (2026-08-19).
+  15 SkillDefs (was 11): added `incubator.{set_temperature,stop}` and
+  `shake.{start,stop}`; read ranges tightened to the driver's
+  (absorbance 230–999 nm, FL 250–700 nm, focal height 4.5–13.88 mm);
+  `gain` removed from every `read.*` (device 422s it); imaging gain is
+  camera analog dB (0–47). Typed `PlateReaderClient` so
+  `session.role("plate_reader").read_absorbance(...)` works.
 - [ ] **Hardware verification of the write surface.** Reads, drawer moves
   and `imaging.capture` have only been exercised dry-run; the live envelope
   is verified but no measurement has been driven end-to-end. See

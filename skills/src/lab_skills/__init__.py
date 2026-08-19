@@ -20,6 +20,7 @@ from .skill_catalog import SKILL_REGISTRY, Skill, SkillDef
 from .client import EquipmentClient
 from .typed_clients import (
     FumeHoodClient,
+    PlateReaderClient,
     PlateSealerClient,
     PressClient,
     RobotArmClient,
@@ -137,6 +138,7 @@ __all__ = [
     "Plan",
     "PlanReport",
     "PlanRunReport",
+    "PlateReaderClient",
     "PlateSealerClient",
     "PlatformSection",
     "PlatformsConfig",

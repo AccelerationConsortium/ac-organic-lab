@@ -9,10 +9,9 @@ catalog (single source of truth); the method bodies are thin wrappers over
 
 The :func:`client_for` factory dispatches on ``entry.kind`` to pick the right
 subclass; kinds without a registered wrapper (``liquid_handler``,
-``plate_reader``, ``plate_stacker``, ``hplc``, ``environmental_sensor``,
-``other``) fall back to the plain :class:`EquipmentClient`. Workflow code
-that only needs ``status()`` / ``probe()`` / ``health()`` works the same on
-both.
+``plate_stacker``, ``hplc``, ``environmental_sensor``, ``other``) fall back
+to the plain :class:`EquipmentClient`. Workflow code that only needs
+``status()`` / ``probe()`` / ``health()`` works the same on both.
 """
 
 from __future__ import annotations
@@ -23,6 +22,7 @@ from ..client import EquipmentClient
 from ..models import EquipmentKind
 from ..registry import EquipmentEntry
 from .fume_hood import FumeHoodClient
+from .plate_reader import PlateReaderClient
 from .plate_sealer import PlateSealerClient
 from .press import PressClient
 from .robot_arm import RobotArmClient
@@ -30,6 +30,7 @@ from .solid_doser import SolidDoserClient
 
 _CLIENT_BY_KIND: dict[EquipmentKind, type[EquipmentClient]] = {
     "plate_sealer": PlateSealerClient,
+    "plate_reader": PlateReaderClient,
     "press": PressClient,
     "solid_doser": SolidDoserClient,
     "fume_hood": FumeHoodClient,
@@ -50,6 +51,7 @@ def client_for(entry: EquipmentEntry, http: httpx.AsyncClient) -> EquipmentClien
 
 __all__ = [
     "FumeHoodClient",
+    "PlateReaderClient",
     "PlateSealerClient",
     "PressClient",
     "RobotArmClient",

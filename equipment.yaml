@@ -256,8 +256,9 @@ equipment:
     poll_timeout_seconds: 8.0
     # The agilent-cytation-server repo conforms to STATUS_SPEC v1.2.
     # /control/* is wired (claim/heartbeat/release, drawer, plate
-    # management, reads, imaging). The skill catalog entry lives in
-    # lab_skills/skill_catalog/plate_reader.py.
+    # management, three reads, imaging, incubator, shaker). Catalog:
+    # lab_skills/skill_catalog/plate_reader.py (15 SkillDefs, ranges
+    # match the live OpenAPI).
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
