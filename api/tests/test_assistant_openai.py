@@ -13,6 +13,7 @@ import contextlib
 import json
 
 import pytest
+import itertools
 import respx
 from httpx import Response
 
@@ -179,8 +180,19 @@ async def test_tool_round_then_text(monkeypatch) -> None:
             )
         ]
     )
-    assert [f["type"] for f in frames] == ["tool_use", "tool_result", "text", "text", "done"]
-    assert frames[0]["name"] == "query_runs"
+    # One status frame opens each round: the silent stretch before the round's
+    # first visible token is exactly what the pill covers.
+    assert [f["type"] for f in frames] == [
+        "status",
+        "tool_use",
+        "tool_result",
+        "status",
+        "text",
+        "text",
+        "done",
+    ]
+    assert frames[0]["phase"] == "thinking"
+    assert frames[1]["name"] == "query_runs"
     assert calls == [("mcp__lab-history__query_runs", {"limit": 5})]
 
 
@@ -214,14 +226,16 @@ async def test_proposal_frame_and_audit_hook(monkeypatch) -> None:
         ]
     )
     assert [f["type"] for f in frames] == [
+        "status",
         "tool_use",
         "tool_result",
         "proposal",
+        "status",
         "text",
         "text",
         "done",
     ]
-    assert frames[2]["proposal"] == proposal
+    assert frames[3]["proposal"] == proposal
     assert audited == [proposal]
 
 
@@ -247,3 +261,103 @@ async def test_http_error_surfaces_as_error_frame(monkeypatch) -> None:
     )
     assert frames[-1]["type"] == "error"
     assert "402" in frames[-1]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Progress signalling (reasoning models)
+# ---------------------------------------------------------------------------
+
+
+def _mock_reasoning_round(reasoning_field: str, beats: int = 3) -> None:
+    """One round that thinks for `beats` deltas, then answers."""
+
+    events: list[dict | str] = [
+        {"choices": [{"delta": {reasoning_field: f"step {i} "}}]} for i in range(beats)
+    ]
+    events += [
+        {"choices": [{"delta": {"content": "Done."}}]},
+        {
+            "usage": {
+                "completion_tokens": 9,
+                "completion_tokens_details": {"reasoning_tokens": 400},
+            },
+            "choices": [],
+        },
+        "[DONE]",
+    ]
+    respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=Response(
+            200,
+            content=_sse_body(events),
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+
+
+@pytest.mark.parametrize("field", ["reasoning", "reasoning_content"])
+@respx.mock
+async def test_reasoning_deltas_signal_progress_without_leaking_text(
+    monkeypatch, field: str
+) -> None:
+    """A reasoning model spends most of a slow turn emitting thinking tokens.
+
+    Two things must hold, and neither did before: the monologue must NOT
+    reach the browser as assistant text, and the stretch must NOT be
+    silence — that silence is what made a 40 s answer look like a hung
+    connection. OpenRouter normalises the field to ``reasoning``; DeepSeek's
+    native API calls it ``reasoning_content``; both are handled.
+    """
+
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    monkeypatch.setattr(assistant_openai, "STATUS_HEARTBEAT_S", 0.0)
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _fake_sessions_factory([], "{}"),
+    )
+    _mock_reasoning_round(field)
+
+    frames = _frames(
+        [
+            f
+            async for f in assistant_openai.run_openai_turn(
+                [ChatMessage(role="user", content="think hard")]
+            )
+        ]
+    )
+
+    # The thinking text never becomes assistant text.
+    assert [f["delta"] for f in frames if f["type"] == "text"] == ["Done."]
+    assert not any("step " in json.dumps(f) for f in frames)
+    # ...and the wait is covered by pills, not by dead air: one status frame
+    # opening the round plus one per reasoning delta (heartbeat unthrottled
+    # here), all before the first visible token.
+    status_before_text = list(
+        itertools.takewhile(lambda f: f["type"] != "text", frames)
+    )
+    assert [f["type"] for f in status_before_text] == ["status"] * 4
+    assert all(f["phase"] == "thinking" for f in status_before_text)
+
+
+@respx.mock
+async def test_reasoning_heartbeat_is_throttled(monkeypatch) -> None:
+    """Thinking tokens arrive far too fast to forward one frame each. At the
+    production interval a short round emits the opening status frame only."""
+
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _fake_sessions_factory([], "{}"),
+    )
+    _mock_reasoning_round("reasoning", beats=50)
+
+    frames = _frames(
+        [
+            f
+            async for f in assistant_openai.run_openai_turn(
+                [ChatMessage(role="user", content="think hard")]
+            )
+        ]
+    )
+    assert [f["type"] for f in frames].count("status") == 1

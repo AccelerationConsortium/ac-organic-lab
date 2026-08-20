@@ -649,10 +649,11 @@ def _translate_event(event: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert one ``claude -p --output-format stream-json`` line into zero
     or more frames suitable for the AssistantBubble SSE consumer.
 
-    The Bubble understands ``text`` (token delta), ``tool_use`` (model is
-    about to call a tool), ``tool_result`` (tool returned), ``done``, and
-    ``error``. Everything else from claude-code's richer event taxonomy is
-    dropped on the floor.
+    The Bubble understands ``status`` (phase of a stretch that produces no
+    visible token), ``text`` (token delta), ``tool_use`` (model is about to
+    call a tool), ``tool_result`` (tool returned), ``done``, and ``error``.
+    Everything else from claude-code's richer event taxonomy is dropped on
+    the floor.
     """
 
     out: list[dict[str, Any]] = []
@@ -689,6 +690,10 @@ def _translate_event(event: dict[str, Any]) -> list[dict[str, Any]]:
                     # the Bubble's match-most-recent logic accepts any name
                     # so we pass through "tool" if absent.
                     out.append({"type": "tool_result", "name": "tool"})
+                    # Control returns to the model, which now thinks before
+                    # its next visible token. Without this the bubble goes
+                    # blank again between every tool call.
+                    out.append({"type": "status", "phase": "thinking"})
                     # Control mode: a propose_action result carries a validated
                     # proposal. Surface it as a dedicated frame so the Bubble
                     # can render a confirm card the operator must authorize.
@@ -807,6 +812,11 @@ async def _run_claude(
 
     loop = asyncio.get_running_loop()
     timeout_handle = loop.call_later(DEFAULT_TIMEOUT_S, _on_timeout)
+
+    # Before any CLI output: process spawn, MCP server handshakes, then the
+    # model's first think. Announce the phase so the bubble shows a live pill
+    # for that stretch instead of an empty turn.
+    yield _sse({"type": "status", "phase": "thinking"})
 
     last_rate_limit: dict[str, Any] | None = None
     saw_terminal = False  # did we already yield a done/error frame?

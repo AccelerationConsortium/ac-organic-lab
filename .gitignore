@@ -74,3 +74,6 @@ CLAUDE.local.md
 # pytest --basetemp scratch dir
 .tmp_pytest/
 LAAGENTEANALITICA_ASSESSMENT.md
+
+# Stray service-topology diagram (not project source — kept local only)
+ac-organic-lab-service-topology.pptx

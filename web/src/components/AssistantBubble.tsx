@@ -29,12 +29,33 @@ import { useUserAuth } from "@/lib/user-auth";
 
 type Role = "user" | "assistant";
 
+/** What the backend is doing during a stretch that produces no visible
+ *  token. Today there is one: the model is reasoning (or still queued). */
+type Phase = "thinking";
+
+interface ToolCall {
+  name: string;
+  ok: boolean;
+  /** Epoch ms the call started, for the elapsed counter on the live pill.
+   *  Absent on turns restored from an older sessionStorage payload. */
+  startedAt?: number;
+}
+
 interface ChatTurn {
   role: Role;
   /** Plain text content. For assistants, accumulates as `text` deltas arrive. */
   text: string;
   /** Tool calls observed during this assistant turn, oldest first. */
-  tools: { name: string; ok: boolean }[];
+  tools: ToolCall[];
+  /** Live phase, set by `status` frames and cleared by the first visible
+   *  token or tool call. Only rendered on the streaming turn, so a value
+   *  left behind by an aborted turn can never show as a stuck pill. */
+  phase?: Phase | null;
+  /** Human stage under the current phase (e.g. "waiting…" vs "reasoning…"),
+   *  so the pill says what is happening instead of a static "thinking". */
+  phaseLabel?: string;
+  /** Epoch ms the current phase began — same role as `ToolCall.startedAt`. */
+  phaseSince?: number;
   /** Which mode the turn was sent under — history keeps its original accent
    * (Ask emerald / Control purple) when the toggle later flips. Absent on
    * turns persisted before this field existed; those render as Ask, which
@@ -65,25 +86,58 @@ type Mode = "ask" | "control";
 
 const STORAGE_KEY = "ac-assistant-history-v1";
 const POSITION_KEY = "ac-assistant-position-v1";
+const SIZE_KEY = "ac-assistant-size-v1";
 const MAX_STORED_TURNS = 20;
-// Keep in sync with the literal w-[…px] class on the panel div (Tailwind
-// needs literal class names at build time).
 const PANEL_W = 460;
 const PANEL_H = 520;
+const MIN_PANEL_W = 360;
+const MIN_PANEL_H = 400;
 // How much of the header must stay on screen so the user can always grab it
 // to drag the panel back into view.
 const MIN_VISIBLE = 80;
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function viewport(): { w: number; h: number } {
+  if (typeof window === "undefined") return { w: PANEL_W, h: PANEL_H };
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  return {
+    w: Number.isFinite(w) && w > 0 ? w : PANEL_W,
+    h: Number.isFinite(h) && h > 0 ? h : PANEL_H,
+  };
+}
+
+function clampSize(w: number, h: number): { w: number; h: number } {
+  const view = viewport();
+  const maxW = Math.max(16, view.w - 16);
+  const maxH = Math.max(16, view.h - 16);
+  return {
+    w: clamp(Math.round(w), Math.min(MIN_PANEL_W, maxW), maxW),
+    h: clamp(Math.round(h), Math.min(MIN_PANEL_H, maxH), maxH),
+  };
+}
+
+function defaultSize(): { w: number; h: number } {
+  return clampSize(PANEL_W, PANEL_H);
+}
 
 /**
  * Default placement: tucked into the bottom-right corner just above the
  * launcher bubble, mirroring the prior fixed `bottom-20 right-5` Tailwind
  * classes. Computed lazily because `window` isn't available during SSR.
  */
-function defaultPosition(): { x: number; y: number } {
+function defaultPosition(size: { w: number; h: number } = defaultSize()): {
+  x: number;
+  y: number;
+} {
   if (typeof window === "undefined") return { x: 0, y: 0 };
+  const view = viewport();
   return {
-    x: Math.max(0, window.innerWidth - PANEL_W - 20),
-    y: Math.max(0, window.innerHeight - PANEL_H - 80),
+    x: Math.max(0, view.w - size.w - 20),
+    y: Math.max(0, view.h - size.h - 80),
   };
 }
 
@@ -97,6 +151,15 @@ function AssistantBubbleInner() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  // Drives the elapsed counter on in-flight pills. One interval for the
+  // whole bubble, and only while a turn is actually running.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!sending) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [sending]);
   const [error, setError] = useState<string | null>(null);
   // Ask (read-only) vs Control (propose-only). Deliberately NOT persisted:
   // resets to Ask on reload / panel close (UI_DESIGN §5.2). The server decides
@@ -133,15 +196,38 @@ function AssistantBubbleInner() {
   // size. Persisted to sessionStorage so the panel stays where the user
   // last left it within one tab.
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  // Null until the operator resizes (or a prior size is restored). Default
+  // is PANEL_W × PANEL_H, clamped to the viewport.
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [resizing, setResizing] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const expiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True once a run has reached a terminal SSE frame ("done" or "error").
+  // A stream that ends without one was cut mid-turn, not completed — that is
+  // the "went quiet / non-responsive" case, and it must be surfaced instead
+  // of letting the turn freeze in silence.
+  const terminatedRef = useRef(false);
   // Captured at pointerdown; (px,py) = pointer at start, (bx,by) = panel
   // top-left at start. Cleared on pointerup.
   const dragStartRef = useRef<
     null | { px: number; py: number; bx: number; by: number }
   >(null);
+  const resizeStartRef = useRef<
+    null | {
+      px: number;
+      py: number;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      corner: "nw" | "se";
+    }
+  >(null);
+
+  const panelSize = size ?? defaultSize();
+  const panelPos = position ?? defaultPosition(panelSize);
 
   const controlMode = mode === "control";
 
@@ -251,15 +337,50 @@ function AssistantBubbleInner() {
     }
   }, [position]);
 
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(SIZE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed?.w === "number" && typeof parsed?.h === "number") {
+          setSize(clampSize(parsed.w, parsed.h));
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useEffect(() => {
+    if (!size) return;
+    try {
+      sessionStorage.setItem(SIZE_KEY, JSON.stringify(size));
+    } catch {
+      /* quota */
+    }
+  }, [size]);
+
+  const clampPanelPos = useCallback(
+    (x: number, y: number, w: number) => {
+      const view = viewport();
+      const maxX = Math.max(0, view.w - MIN_VISIBLE);
+      const maxY = Math.max(0, view.h - 40);
+      const minX = -(w - MIN_VISIBLE);
+      return { x: clamp(x, minX, maxX), y: clamp(y, 0, maxY) };
+    },
+    []
+  );
+
   // Pointer drag handlers. Attaches global pointermove/pointerup on
   // pointerdown so the drag keeps tracking even if the pointer leaves the
   // header element.
   const onDragStart = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      // Let header buttons (minimize / clear / mode toggle) handle their own clicks.
+      // Let header buttons (minimize / clear / mode toggle) and the corner
+      // resize handles handle their own pointerdowns.
       if ((e.target as HTMLElement).closest("button")) return;
+      if ((e.target as HTMLElement).closest("[data-resize]")) return;
       e.preventDefault();
-      const base = position ?? defaultPosition();
+      const base = position ?? defaultPosition(panelSize);
       dragStartRef.current = {
         px: e.clientX,
         py: e.clientY,
@@ -273,13 +394,7 @@ function AssistantBubbleInner() {
         if (!start) return;
         const dx = ev.clientX - start.px;
         const dy = ev.clientY - start.py;
-        const maxX = Math.max(0, window.innerWidth - MIN_VISIBLE);
-        const maxY = Math.max(0, window.innerHeight - 40);
-        const minX = -(PANEL_W - MIN_VISIBLE);
-        setPosition({
-          x: Math.max(minX, Math.min(maxX, start.bx + dx)),
-          y: Math.max(0, Math.min(maxY, start.by + dy)),
-        });
+        setPosition(clampPanelPos(start.bx + dx, start.by + dy, panelSize.w));
       };
       const onUp = () => {
         dragStartRef.current = null;
@@ -290,7 +405,62 @@ function AssistantBubbleInner() {
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [position]
+    [position, panelSize, clampPanelPos]
+  );
+
+  const onResizeStart = useCallback(
+    (corner: "nw" | "se") => (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const pos = position ?? defaultPosition(panelSize);
+      resizeStartRef.current = {
+        px: e.clientX,
+        py: e.clientY,
+        x: pos.x,
+        y: pos.y,
+        w: panelSize.w,
+        h: panelSize.h,
+        corner,
+      };
+      setResizing(true);
+
+      const onMove = (ev: PointerEvent) => {
+        const start = resizeStartRef.current;
+        if (!start) return;
+        const dx = ev.clientX - start.px;
+        const dy = ev.clientY - start.py;
+        let nextW: number;
+        let nextH: number;
+        let nextX = start.x;
+        let nextY = start.y;
+        if (start.corner === "se") {
+          nextW = start.w + dx;
+          nextH = start.h + dy;
+        } else {
+          // NW: the pointer moves the top-left; the bottom-right stays put
+          // until min/max size clamps. That's the grow-into-the-page direction
+          // when the panel is docked bottom-right.
+          nextW = start.w - dx;
+          nextH = start.h - dy;
+        }
+        const clamped = clampSize(nextW, nextH);
+        if (start.corner === "nw") {
+          nextX = start.x + start.w - clamped.w;
+          nextY = start.y + start.h - clamped.h;
+        }
+        setSize(clamped);
+        setPosition(clampPanelPos(nextX, nextY, clamped.w));
+      };
+      const onUp = () => {
+        resizeStartRef.current = null;
+        setResizing(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [position, panelSize, clampPanelPos]
   );
 
   // Auto-scroll to bottom when content lands.
@@ -351,6 +521,7 @@ function AssistantBubbleInner() {
 
       const controller = new AbortController();
       abortRef.current = controller;
+      terminatedRef.current = false;
 
       try {
         const res = await fetch("/api/assistant/chat", {
@@ -398,6 +569,17 @@ function AssistantBubbleInner() {
             applyEvent(event);
           }
         }
+        // The fetch stream ended (server closed the response). A completed
+        // turn always ends with a "done"/"error" frame; reaching the end of
+        // the stream without one means the connection was cut mid-turn —
+        // the exact "assistant went quiet / non-responsive" case. Surface it
+        // instead of leaving a frozen pill. Deliberate user aborts throw
+        // AbortError and return earlier, so they never hit this.
+        if (!terminatedRef.current) {
+          setError(
+            "Connection lost — the assistant stopped responding before it finished. Check the service, then try again."
+          );
+        }
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
         setError((e as Error).message);
@@ -429,22 +611,55 @@ function AssistantBubbleInner() {
         const last = prev[prev.length - 1];
         if (!last || last.role !== "assistant") return prev;
         const updated: ChatTurn = { ...last };
-        if (event.type === "text" && typeof event.delta === "string") {
+        if (event.type === "status") {
+          // Repeat frames for the same phase are heartbeats, not new phases:
+          // keep the original start time so the counter keeps climbing
+          // instead of resetting to zero every second.
+          const phase = event.phase === "thinking" ? "thinking" : null;
+          updated.phase = phase;
+          updated.phaseLabel =
+            phase && typeof event.label === "string" ? event.label : undefined;
+          updated.phaseSince =
+            phase && last.phase === phase
+              ? last.phaseSince ?? Date.now()
+              : Date.now();
+        } else if (event.type === "text" && typeof event.delta === "string") {
           updated.text = (updated.text || "") + event.delta;
+          // A visible token supersedes the phase pill — the answer itself is
+          // now the progress indicator.
+          updated.phase = null;
+          updated.phaseLabel = undefined;
         } else if (event.type === "tool_use" && typeof event.name === "string") {
-          updated.tools = [...updated.tools, { name: event.name, ok: false }];
+          updated.tools = [
+            ...updated.tools,
+            { name: event.name, ok: false, startedAt: Date.now() },
+          ];
+          updated.phase = null;
+          updated.phaseLabel = undefined;
         } else if (event.type === "tool_result" && typeof event.name === "string") {
-          // Mark the most recent matching tool as completed.
+          // Mark the most recent matching tool as completed. The claude-cli
+          // SSE bridge emits tool_result name "tool" (it does not have the
+          // MCP name on that event); treat that as "the in-flight tool".
           const idx = [...updated.tools]
             .reverse()
-            .findIndex((t) => t.name === event.name && !t.ok);
+            .findIndex(
+              (t) =>
+                !t.ok && (t.name === event.name || event.name === "tool")
+            );
           if (idx >= 0) {
             const realIdx = updated.tools.length - 1 - idx;
             updated.tools = updated.tools.map((t, i) =>
               i === realIdx ? { ...t, ok: true } : t
             );
           }
+        } else if (event.type === "done") {
+          // Natural end of a completed turn. Marks the run as terminated so
+          // the stream-end check below knows it finished, not got cut.
+          terminatedRef.current = true;
+          updated.phase = null;
+          updated.phaseLabel = undefined;
         } else if (event.type === "error" && typeof event.message === "string") {
+          terminatedRef.current = true;
           setError(event.message);
         }
         return [...prev.slice(0, -1), updated];
@@ -561,15 +776,22 @@ function AssistantBubbleInner() {
           role="dialog"
           aria-label="Lab assistant"
           style={{
-            left: (position ?? defaultPosition()).x,
-            top: (position ?? defaultPosition()).y,
+            left: panelPos.x,
+            top: panelPos.y,
+            width: panelSize.w,
+            height: panelSize.h,
           }}
-          className={`fixed z-50 flex h-[520px] w-[460px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border bg-surface-raised shadow-2xl dark:bg-slate-900 ${
+          className={`fixed z-50 flex flex-col overflow-hidden rounded-xl border bg-surface-raised shadow-2xl dark:bg-slate-900 ${
             controlMode
               ? "border-purple-300 dark:border-purple-800"
               : "border-slate-200 dark:border-slate-700"
-          }`}
+          } ${resizing ? "select-none" : ""}`}
         >
+          <ResizeHandle
+            corner="nw"
+            controlMode={controlMode}
+            onPointerDown={onResizeStart("nw")}
+          />
           <header
             onPointerDown={onDragStart}
             className={`flex items-center justify-between gap-2 border-b px-3 py-2 ${
@@ -577,9 +799,9 @@ function AssistantBubbleInner() {
                 ? "border-purple-200 bg-purple-50/60 dark:border-purple-800 dark:bg-purple-950/30"
                 : "border-slate-200 dark:border-slate-700"
             } ${dragging ? "cursor-grabbing" : "cursor-grab"} select-none touch-none`}
-            title="Drag to move"
+            title="Drag to move · corners resize"
           >
-            <div className="flex flex-col">
+            <div className="flex flex-col pl-3">
               <span className="text-sm font-semibold text-ink dark:text-slate-100">
                 Lab Assistant
               </span>
@@ -623,7 +845,7 @@ function AssistantBubbleInner() {
 
           <div
             ref={scrollerRef}
-            className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-base"
+            className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3 text-base"
           >
             {turns.length === 0 && (
               <div className="text-xs text-ink-subtle dark:text-slate-500">
@@ -651,7 +873,16 @@ function AssistantBubbleInner() {
               </div>
             )}
             {turns.map((turn, i) => (
-              <Turn key={i} turn={turn} />
+              <Turn
+                key={i}
+                turn={turn}
+                live={
+                  sending &&
+                  i === turns.length - 1 &&
+                  turn.role === "assistant"
+                }
+                now={now}
+              />
             ))}
             {proposal && (
               <ProposalCard
@@ -729,9 +960,56 @@ function AssistantBubbleInner() {
               </p>
             )}
           </form>
+          <ResizeHandle
+            corner="se"
+            controlMode={controlMode}
+            onPointerDown={onResizeStart("se")}
+          />
         </div>
       )}
     </>
+  );
+}
+
+function ResizeHandle({
+  corner,
+  controlMode,
+  onPointerDown,
+}: {
+  corner: "nw" | "se";
+  controlMode: boolean;
+  onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+}) {
+  const pos =
+    corner === "se"
+      ? "bottom-0 right-0 cursor-se-resize"
+      : "top-0 left-0 cursor-nw-resize";
+  const label =
+    corner === "se"
+      ? "Resize assistant panel"
+      : "Resize assistant panel from top left";
+  const stroke = controlMode ? "stroke-purple-400" : "stroke-slate-400";
+  return (
+    <div
+      data-resize={corner}
+      role="separator"
+      aria-label={label}
+      aria-orientation="horizontal"
+      title="Drag to resize"
+      onPointerDown={onPointerDown}
+      className={`absolute z-10 flex h-4 w-4 touch-none items-center justify-center ${pos}`}
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 12 12"
+        className={`h-3 w-3 ${stroke} ${corner === "nw" ? "rotate-180" : ""}`}
+        fill="none"
+        aria-hidden="true"
+      >
+        <path d="M8 12 L12 8" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M4 12 L12 4" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    </div>
   );
 }
 
@@ -928,8 +1206,130 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Turn({ turn }: { turn: ChatTurn }) {
+/** Same pill family as the OT-2 panel assistant (`opentrons-server` ToolPills):
+ *  running = pulsing purple, succeeded = emerald, so a finished tool call is
+ *  the green chip operators already recognize on that surface. */
+const TOOL_PILL_TONE = {
+  running:
+    "border-purple-300 bg-purple-50 text-purple-800 dark:border-purple-700 dark:bg-purple-950/50 dark:text-purple-300",
+  succeeded:
+    "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
+  // A call that never reported back because the turn ended first (abort, or
+  // a reload mid-flight). It is NOT running, so it must not keep pulsing as
+  // though it were.
+  stopped:
+    "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400",
+} as const;
+
+function toolLabel(name: string): string {
+  return name.replaceAll("_", " ");
+}
+
+/** Seconds a pill has been in flight, shown only once the wait is long
+ *  enough to be worth reporting. A sub-2 s pill flashing "1s" is noise; the
+ *  counter exists for the 30 s+ reasoning rounds that prompted all this. */
+function elapsedLabel(startedAt: number | undefined, now: number | undefined): string {
+  if (!startedAt || now === undefined) return "";
+  const s = Math.floor((now - startedAt) / 1000);
+  return s >= 2 ? ` ${s}s` : "";
+}
+
+/** The turn's progress row: one pill per tool call, oldest first, plus a
+ *  pill for the current no-visible-token phase when there is one. Names
+ *  only — arguments and results stay out of the transcript deliberately. */
+function ToolPills({
+  tools,
+  phase,
+  phaseSince,
+  phaseLabel,
+  now,
+  live = false,
+  className = "",
+}: {
+  tools: ToolCall[];
+  phase?: Phase | null;
+  phaseSince?: number;
+  /** Stage label under the current phase — shown on the pill so it reads
+   *  "waiting…"/"reasoning…" instead of a static "thinking". */
+  phaseLabel?: string;
+  now?: number;
+  /** Whether this turn is still streaming. Gates both the pulse and the
+   *  elapsed counter — neither means anything once the turn has ended. */
+  live?: boolean;
+  className?: string;
+}) {
+  const items: {
+    key: string;
+    label: string;
+    ok: boolean;
+    startedAt?: number;
+  }[] = tools.map((t, i) => ({
+    key: `${t.name}-${i}`,
+    label: toolLabel(t.name),
+    ok: t.ok,
+    startedAt: t.startedAt,
+  }));
+  // The phase pill trails the tools it precedes in time: a tool that has
+  // already returned reads as history, and the live pill belongs at the end
+  // of the row where the eye lands.
+  if (phase === "thinking") {
+    items.push({
+      key: "phase-thinking",
+      label: phaseLabel ?? "thinking",
+      ok: false,
+      startedAt: phaseSince,
+    });
+  }
+  if (items.length === 0) return null;
+  return (
+    <div className={`flex flex-wrap gap-1 ${className}`}>
+      {items.map((t) => {
+        const running = !t.ok && live;
+        const tone = t.ok
+          ? TOOL_PILL_TONE.succeeded
+          : running
+            ? TOOL_PILL_TONE.running
+            : TOOL_PILL_TONE.stopped;
+        return (
+          <span
+            key={t.key}
+            title={
+              t.ok
+                ? "Tool finished"
+                : running
+                  ? "Working…"
+                  : "Did not finish — the turn ended first"
+            }
+            className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${tone} ${
+              running ? "animate-pulse" : ""
+            }`}
+          >
+            {t.ok ? "✓" : running ? "↻" : "◦"} {t.label}
+            {running ? elapsedLabel(t.startedAt, now) : ""}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function Turn({
+  turn,
+  live = false,
+  now,
+}: {
+  turn: ChatTurn;
+  /** True only for the turn currently streaming. Gates the phase pill, so a
+   *  phase left behind by an aborted or reloaded turn can never render as a
+   *  pill that pulses forever. */
+  live?: boolean;
+  now?: number;
+}) {
   const isUser = turn.role === "user";
+  // While a pill is pulsing it already says "working"; the placeholder
+  // ellipsis underneath would just be a second, worse spinner.
+  const livePill =
+    live && (turn.phase === "thinking" || turn.tools.some((t) => !t.ok));
   // Accent follows the mode the turn was SENT under, so flipping the toggle
   // never repaints history — a purple bubble is a durable "this was said in
   // Control mode" marker, in the same spirit as the audit trail.
@@ -940,27 +1340,27 @@ function Turn({ turn }: { turn: ChatTurn }) {
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[85%] whitespace-pre-wrap break-words rounded-lg px-3 py-2 text-[13px] leading-relaxed ${
+        className={`max-w-[85%] break-words rounded-lg px-3 py-2 text-[13px] leading-relaxed ${
           isUser
             ? userBg
             : "bg-slate-100 text-ink dark:bg-slate-800 dark:text-slate-100"
         }`}
       >
-        {turn.tools.length > 0 && (
-          <div className="mb-1 space-y-0.5">
-            {turn.tools.map((t, i) => (
-              <div
-                key={i}
-                className="text-[10px] font-mono opacity-70"
-                title={t.ok ? "Tool finished" : "Tool running"}
-              >
-                {t.ok ? "✓" : "•"} {t.name}
-              </div>
-            ))}
-          </div>
-        )}
-        {turn.text || (
-          <span className="opacity-60">{isUser ? "" : "…"}</span>
+        <ToolPills
+          tools={turn.tools}
+          phase={live ? turn.phase : null}
+          phaseSince={turn.phaseSince}
+          phaseLabel={live ? turn.phaseLabel : undefined}
+          now={now}
+          live={live}
+          className="mb-1.5"
+        />
+        {(turn.text || !livePill) && (
+          <span className="whitespace-pre-wrap">
+            {turn.text || (
+              <span className="opacity-60">{isUser ? "" : "…"}</span>
+            )}
+          </span>
         )}
       </div>
     </div>

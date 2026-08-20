@@ -11,8 +11,9 @@ the propose/read-only servers expose, the acting identity is bound into the serv
 confirm card the operator must click (ARCHITECTURE decision #10).
 
 It emits byte-for-byte the same SSE frames as ``assistant._run_claude``
-(``text`` / ``tool_use`` / ``tool_result`` / ``proposal`` / ``done`` /
-``error``), so the browser bubble does not know which backend answered.
+(``status`` / ``text`` / ``tool_use`` / ``tool_result`` / ``proposal`` /
+``done`` / ``error``), so the browser bubble does not know which backend
+answered.
 
 Configuration (all env):
 
@@ -65,6 +66,10 @@ OPENAI_CONTROL_MODEL = os.environ.get("ASSISTANT_OPENAI_CONTROL_MODEL", OPENAI_M
 # a runaway loop should die well before the wallclock cap does it for us.
 MAX_TOOL_ROUNDS = 12
 MCP_CALL_TIMEOUT_S = 30.0
+# How often a silent (reasoning-only) stretch re-announces the phase. Also
+# doubles as an SSE keep-alive: a proxy that sees no bytes for tens of
+# seconds may close the response out from under a slow turn.
+STATUS_HEARTBEAT_S = 1.0
 
 
 def api_key() -> str | None:
@@ -200,6 +205,7 @@ async def _stream_round(
 
     pending: dict[int, dict[str, Any]] = {}
     usage: dict[str, Any] | None = None
+    reasoning_seen = False
     async with client.stream("POST", "/chat/completions", json=payload) as resp:
         if resp.status_code != 200:
             body = (await resp.aread()).decode("utf-8", errors="replace")[:500]
@@ -223,11 +229,23 @@ async def _stream_round(
             text = delta.get("content")
             if text:
                 yield {"text": text}
+            # A reasoning model spends most of a slow turn HERE, emitting
+            # thinking tokens under a field this loop used to ignore
+            # (OpenRouter normalises it to ``reasoning``; DeepSeek's native
+            # API calls it ``reasoning_content``). Dropping it silently is
+            # what made a 40 s answer look like a hung connection: no frame
+            # reached the browser until the round was already over. We still
+            # do not forward the text — the bubble shows a pill, not the
+            # model's monologue — but the *fact* of progress is now a signal.
+            elif delta.get("reasoning") or delta.get("reasoning_content"):
+                reasoning_seen = True
+                yield {"reasoning": True}
             for tc in delta.get("tool_calls") or []:
                 _merge_tool_call_delta(pending, tc)
     yield {
         "tool_calls": [pending[i] for i in sorted(pending)],
         "usage": usage,
+        "reasoning_seen": reasoning_seen,
     }
 
 
@@ -272,6 +290,8 @@ async def run_openai_turn(
     deadline = started + DEFAULT_TIMEOUT_S
     rounds = 0
     tokens_out = 0
+    tokens_reasoning = 0
+    saw_reasoning = False
     cached_in: int | None = None
     terminal = "incomplete"
 
@@ -314,10 +334,39 @@ async def run_openai_turn(
                     rounds += 1
                     round_text = ""
                     tool_calls: list[dict[str, Any]] = []
+                    # Announce the phase BEFORE the request goes out. Every
+                    # round starts with a stretch that produces no visible
+                    # token — model queueing, then reasoning — and that
+                    # stretch is the whole of the "assistant feels slow"
+                    # complaint. One frame here turns an empty bubble into a
+                    # live pill for the entire wait. The label evolves as the
+                    # round develops so the operator can tell "still queuing"
+                    # from "reasoning" instead of staring at a static pill.
+                    yield _sse({"type": "status", "phase": "thinking", "label": "waiting…"})
+                    last_beat = time.monotonic()
                     async for item in _stream_round(client, payload):
                         if "text" in item:
                             round_text += item["text"]
                             yield _sse({"type": "text", "delta": item["text"]})
+                        elif "reasoning" in item:
+                            # Throttled: thinking tokens arrive far too fast
+                            # to forward one frame each, and the pill is
+                            # already up. Re-sending it keeps the connection
+                            # warm and the elapsed counter honest.
+                            now = time.monotonic()
+                            if now - last_beat >= STATUS_HEARTBEAT_S:
+                                last_beat = now
+                                # "reasoning" (not "waiting"): the request is
+                                # out and we are seeing live thinking tokens,
+                                # so this is genuinely a reasoning stretch,
+                                # not a stuck queue.
+                                yield _sse(
+                                    {
+                                        "type": "status",
+                                        "phase": "thinking",
+                                        "label": "reasoning…",
+                                    }
+                                )
                         else:
                             tool_calls = item["tool_calls"]
                             usage = item.get("usage") or {}
@@ -325,6 +374,12 @@ async def run_openai_turn(
                             details = usage.get("prompt_tokens_details") or {}
                             if isinstance(details.get("cached_tokens"), int):
                                 cached_in = (cached_in or 0) + details["cached_tokens"]
+                            out_details = usage.get("completion_tokens_details") or {}
+                            if isinstance(out_details.get("reasoning_tokens"), int):
+                                tokens_reasoning += out_details["reasoning_tokens"]
+                            saw_reasoning = saw_reasoning or bool(
+                                item.get("reasoning_seen")
+                            )
 
                     if not tool_calls:
                         terminal = "done"
@@ -388,14 +443,17 @@ async def run_openai_turn(
     finally:
         logger.info(
             "assistant turn done: user=%s mode=%s elapsed=%.1fs num_turns=%s "
-            "api_ms=%s tokens_out=%s cache_read=%s rc=%s timed_out=%s "
-            "rate_limit=%s backend=openai model=%s outcome=%s",
+            "api_ms=%s tokens_out=%s tokens_reasoning=%s cache_read=%s rc=%s "
+            "timed_out=%s rate_limit=%s backend=openai model=%s outcome=%s",
             actor or "unauthenticated(dev-open)",
             "control" if include_control else "ask",
             time.monotonic() - started,
             rounds,
             None,
             tokens_out,
+            tokens_reasoning
+            if tokens_reasoning
+            else ("unreported" if saw_reasoning else 0),
             cached_in,
             None,
             terminal == "timeout",

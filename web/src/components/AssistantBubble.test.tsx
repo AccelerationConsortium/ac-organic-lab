@@ -64,9 +64,27 @@ function sseBody(frames: string[]) {
   };
 }
 
+/** Like `sseBody`, but the stream never closes: the turn stays in flight,
+ *  so the live progress pills stay rendered long enough to assert on. */
+function sseBodyOpen(frames: string[]) {
+  const bytes = new TextEncoder().encode(frames.join(""));
+  let sent = false;
+  return {
+    getReader() {
+      return {
+        read() {
+          if (sent) return new Promise<never>(() => {});
+          sent = true;
+          return Promise.resolve({ value: bytes, done: false });
+        },
+      };
+    },
+  };
+}
+
 let mineEquipment: Record<string, string | null>;
 
-function installFetch(chatFrames: string[]) {
+function installFetch(chatFrames: string[], opts: { open?: boolean } = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/assistant/health")) {
@@ -80,7 +98,10 @@ function installFetch(chatFrames: string[]) {
     }
     if (url.includes("/api/assistant/chat")) {
       expect(init?.method).toBe("POST");
-      return Promise.resolve({ ok: true, body: sseBody(chatFrames) });
+      return Promise.resolve({
+        ok: true,
+        body: opts.open ? sseBodyOpen(chatFrames) : sseBody(chatFrames),
+      });
     }
     return Promise.resolve({ ok: false, text: async () => "unexpected", json: async () => ({}) });
   });
@@ -93,12 +114,23 @@ beforeEach(() => {
   auth.identity = { email: "alice@example.edu", role: "operator" };
   mineEquipment = { xarm: "user" };
   (authorizeAssistantAction as unknown as ReturnType<typeof vi.fn>).mockClear();
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    writable: true,
+    value: 1280,
+  });
+  Object.defineProperty(window, "innerHeight", {
+    configurable: true,
+    writable: true,
+    value: 800,
+  });
 });
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  sessionStorage.clear();
 });
 
 async function openPanel() {
@@ -369,7 +401,7 @@ describe("AssistantBubble control mode", () => {
     fireEvent.change(box, { target: { value: "what ran today?" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     const askBubble = await screen.findByText("what ran today?");
-    expect(askBubble.className).toContain("bg-emerald-600");
+    expect(askBubble.closest("div")?.className).toContain("bg-emerald-600");
 
     // Flip to Control and send another -> purple bubble, history untouched.
     const control = screen.getByRole("button", { name: "Control" });
@@ -379,9 +411,189 @@ describe("AssistantBubble control mode", () => {
     fireEvent.change(box2, { target: { value: "home the ot2" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     const controlBubble = await screen.findByText("home the ot2");
-    expect(controlBubble.className).toContain("bg-purple-600");
+    expect(controlBubble.closest("div")?.className).toContain("bg-purple-600");
     // The earlier Ask turn did NOT get repainted by the toggle.
-    expect(screen.getByText("what ran today?").className).toContain("bg-emerald-600");
+    expect(screen.getByText("what ran today?").closest("div")?.className).toContain(
+      "bg-emerald-600"
+    );
   });
 
+  it("renders finished tool calls as green pills", async () => {
+    sessionStorage.clear();
+    installFetch([
+      'data: {"type":"tool_use","name":"list_equipment_now"}\n\n',
+      'data: {"type":"tool_result","name":"list_equipment_now"}\n\n',
+      'data: {"type":"text","delta":"three devices are ready."}\n\n',
+      'data: {"type":"done"}\n\n',
+    ]);
+    await openPanel();
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what's running?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const pill = await screen.findByText(/list equipment now/);
+    expect(pill.className).toContain("rounded-full");
+    expect(pill.className).toContain("bg-emerald-50");
+    expect(pill.textContent).toMatch(/^✓/);
+  });
+
+  it("covers a silent reasoning stretch with a live thinking pill", async () => {
+    // The complaint this answers: a reasoning model can burn 30-40 s before
+    // its first visible token, and the bubble used to render nothing at all
+    // for that whole stretch.
+    sessionStorage.clear();
+    installFetch(['data: {"type":"status","phase":"thinking"}\n\n'], {
+      open: true,
+    });
+    await openPanel();
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what's running?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const pill = await screen.findByText(/thinking/);
+    expect(pill.className).toContain("rounded-full");
+    expect(pill.className).toContain("bg-purple-50");
+    expect(pill.className).toContain("animate-pulse");
+    expect(pill.textContent).toMatch(/^↻/);
+  });
+
+  it("hands the live pill off to the tool once one starts", async () => {
+    sessionStorage.clear();
+    installFetch(
+      [
+        'data: {"type":"status","phase":"thinking"}\n\n',
+        'data: {"type":"tool_use","name":"list_equipment_now"}\n\n',
+      ],
+      { open: true }
+    );
+    await openPanel();
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what's running?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const pill = await screen.findByText(/list equipment now/);
+    expect(pill.className).toContain("animate-pulse");
+    // One live pill at a time: naming the tool is strictly more informative
+    // than "thinking", so the phase pill retires.
+    expect(screen.queryByText(/thinking/)).toBeNull();
+  });
+
+  it("stops pulsing a tool pill once the turn ends without a result", async () => {
+    // An aborted or truncated turn must not leave a pill pulsing "running"
+    // forever — nothing is running.
+    sessionStorage.clear();
+    installFetch(['data: {"type":"tool_use","name":"list_equipment_now"}\n\n']);
+    await openPanel();
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what's running?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const pill = await screen.findByText(/list equipment now/);
+    await waitFor(() => expect(pill.className).not.toContain("animate-pulse"));
+    expect(pill.className).toContain("bg-slate-100");
+    expect(pill.textContent).toMatch(/^◦/);
+  });
+
+  it("does not resurrect a phase pill on a turn that is no longer streaming", async () => {
+    // A turn restored from sessionStorage mid-flight must not pulse forever.
+    sessionStorage.clear();
+    installFetch([
+      'data: {"type":"status","phase":"thinking"}\n\n',
+      'data: {"type":"text","delta":"three devices are ready."}\n\n',
+      'data: {"type":"done"}\n\n',
+    ]);
+    await openPanel();
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what's running?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("three devices are ready.");
+    expect(screen.queryByText(/thinking/)).toBeNull();
+  });
+
+  it("shows the live stage label on the thinking pill", async () => {
+    // A reasoning model spends tens of seconds thinking; the pill should say
+    // what stage it is at ("waiting…" then "reasoning…") rather than a static
+    // "thinking" that reads as hung.
+    sessionStorage.clear();
+    installFetch(
+      [
+        'data: {"type":"status","phase":"thinking","label":"waiting…"}\n\n',
+        'data: {"type":"status","phase":"thinking","label":"reasoning…"}\n\n',
+      ],
+      { open: true }
+    );
+    await openPanel();
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what's running?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    // The latest label wins.
+    const pill = await screen.findByText(/reasoning/);
+    expect(pill.textContent).toMatch(/reasoning/);
+  });
+
+  it("surfaces a connection-lost notice when the stream ends without a done frame", async () => {
+    // A turn cut mid-flight (proxy drop, server restart) ends the fetch stream
+    // with no "done"/"error" frame. This is the "assistant went quiet / non-
+    // responsive" case and must be surfaced, not left as a frozen pill.
+    // NOTE: deliberately NOT `open: true` — that stream never closes, so the
+    // connection-lost branch would never be reached. We want the stream to
+    // END normally but without a terminal frame.
+    sessionStorage.clear();
+    installFetch([
+      'data: {"type":"status","phase":"thinking","label":"reasoning…"}\n\n',
+      // No "done"/"error" frame follows: the stream just ends.
+    ]);
+    await openPanel();
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what's running?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText(/connection lost/i);
+  });
+
+  it("does not raise a connection-lost notice on a normal completed turn", async () => {
+    sessionStorage.clear();
+    installFetch(
+      [
+        'data: {"type":"status","phase":"thinking","label":"reasoning…"}\n\n',
+        'data: {"type":"text","delta":"all good."}\n\n',
+        'data: {"type":"done"}\n\n',
+      ],
+      { open: true }
+    );
+    await openPanel();
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what's running?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("all good.");
+    expect(screen.queryByText(/connection lost/i)).toBeNull();
+  });
+
+});
+
+describe("AssistantBubble resize", () => {
+  it("exposes corner handles and restores a saved size", async () => {
+    sessionStorage.setItem(
+      "ac-assistant-size-v1",
+      JSON.stringify({ w: 700, h: 640 })
+    );
+    installFetch([]);
+    await openPanel();
+    expect(screen.getByLabelText("Resize assistant panel from top left")).toBeTruthy();
+    expect(screen.getByLabelText("Resize assistant panel")).toBeTruthy();
+    const panel = screen.getByRole("dialog", { name: "Lab assistant" });
+    await waitFor(() => {
+      expect(panel.style.width).toBe("700px");
+      expect(panel.style.height).toBe("640px");
+    });
+  });
+
+  it("clamps a restored size below the minimum usable dimensions", async () => {
+    sessionStorage.setItem(
+      "ac-assistant-size-v1",
+      JSON.stringify({ w: 50, h: 50 })
+    );
+    installFetch([]);
+    await openPanel();
+    const panel = screen.getByRole("dialog", { name: "Lab assistant" });
+    await waitFor(() => {
+      expect(Number.parseInt(panel.style.width, 10)).toBeGreaterThanOrEqual(360);
+      expect(Number.parseInt(panel.style.height, 10)).toBeGreaterThanOrEqual(400);
+    });
+  });
 });

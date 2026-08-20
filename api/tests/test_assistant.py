@@ -250,7 +250,10 @@ def test_translate_event_history_tool_result_has_no_proposal() -> None:
         },
     }
     frames = assistant._translate_event(event)
-    assert [f["type"] for f in frames] == ["tool_result"]
+    # The trailing status frame keeps the bubble's pill alive across the gap
+    # where the model thinks about the result it just got back.
+    assert [f["type"] for f in frames] == ["tool_result", "status"]
+    assert frames[1]["phase"] == "thinking"
 
 
 # ---------------------------------------------------------------------------
