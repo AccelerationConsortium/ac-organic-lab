@@ -23,6 +23,18 @@ const BUILD_STAMP = `${process.env.GIT_COMMIT ?? "dev"}-${Date.now()}`;
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
+  experimental: {
+    // The rewrite proxy below is what carries the assistant's SSE stream from
+    // FastAPI to the browser, and http-proxy's default proxyTimeout is 30 s of
+    // socket INACTIVITY — not total duration. A Control turn that thinks (or
+    // waits on a device tool call) for 30 s without emitting a frame used to
+    // have its upstream connection aborted mid-answer, which the bubble
+    // reports as "Connection lost". The real fix is the API's keep-alive
+    // pulse (api/app/assistant_openai.py, IDLE_TICK_S); this is the backstop
+    // for it, set above the assistant's own 120 s wallclock cap so a genuinely
+    // stuck upstream still gets cut. Takes effect on the next `pnpm build`.
+    proxyTimeout: 130_000,
+  },
   generateBuildId: () => BUILD_STAMP,
   async redirects() {
     return [

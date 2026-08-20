@@ -33,6 +33,7 @@ Backend *selection* (which mode uses this module at all) lives in
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -75,10 +76,18 @@ OPENAI_CONTROL_REASONING_EFFORT = os.environ.get(
 # a runaway loop should die well before the wallclock cap does it for us.
 MAX_TOOL_ROUNDS = 12
 MCP_CALL_TIMEOUT_S = 30.0
-# How often a silent (reasoning-only) stretch re-announces the phase. Also
-# doubles as an SSE keep-alive: a proxy that sees no bytes for tens of
-# seconds may close the response out from under a slow turn.
+# How often a silent stretch may re-announce the phase: a throttle, so that
+# thinking tokens (which arrive far too fast to forward one frame each) cost
+# at most one status frame per second.
 STATUS_HEARTBEAT_S = 1.0
+# The hard ceiling on dead air, enforced whether or not the model is emitting
+# anything. This one is not cosmetic — it is the SSE keep-alive that holds the
+# connection open. Next.js proxies /api/* to this service with http-proxy's
+# `proxyTimeout`: 30 s of socket INACTIVITY, the framework default. A turn
+# that puts no bytes on the wire for 30 s therefore has its upstream
+# connection aborted mid-answer, and the bubble reports "connection lost"
+# while the model is still thinking. Stay well under it.
+IDLE_TICK_S = 5.0
 
 
 def api_key() -> str | None:
@@ -270,6 +279,83 @@ async def _stream_round(
     }
 
 
+async def _paced(
+    source: AsyncIterator[dict[str, Any]], interval: float
+) -> AsyncIterator[dict[str, Any]]:
+    """Re-yield ``source``'s items, inserting ``{"idle": True}`` whenever
+    ``interval`` passes with nothing to forward.
+
+    Reasoning deltas already covered part of a slow round, but only when the
+    provider streams them: the queue before the first token, and a round that
+    goes straight to a tool call, still leave the wire silent. Past 30 s of
+    silence the proxy aborts the connection (see ``IDLE_TICK_S``), so the
+    pulse has to be unconditional rather than tied to what the model happens
+    to emit.
+    """
+
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    end = object()
+
+    async def pump() -> None:
+        try:
+            async for item in source:
+                await queue.put(item)
+        except Exception as exc:  # noqa: BLE001 - re-raised in the consumer below
+            await queue.put(exc)
+        else:
+            await queue.put(end)
+
+    task = asyncio.ensure_future(pump())
+    # The getter deliberately outlives a tick. asyncio.wait() leaves it
+    # pending on timeout, where wait_for() would cancel it — and a get()
+    # cancelled in the same cycle it was handed an item drops that item on
+    # the floor. Losing a text delta to the keep-alive would be a poor trade.
+    getter: Any = None
+    try:
+        while True:
+            if getter is None:
+                getter = asyncio.ensure_future(queue.get())
+            done, _still = await asyncio.wait({getter}, timeout=interval)
+            if not done:
+                # A pump that ended without a sentinel was cancelled; re-raise
+                # rather than tick forever at a corpse.
+                if task.done() and queue.empty():
+                    task.result()
+                    return
+                yield {"idle": True}
+                continue
+            item = getter.result()
+            getter = None
+            if item is end:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+    finally:
+        if getter is not None:
+            getter.cancel()
+        task.cancel()
+        with contextlib.suppress(BaseException):
+            await task
+
+
+async def _call_tool(
+    call: "Callable[[str, dict[str, Any]], Awaitable[str]]", tc: dict[str, Any]
+) -> str:
+    """Parse one streamed tool call's arguments and invoke it, mapping both
+    failure modes to the error payload the model sees as the tool result."""
+
+    try:
+        args = json.loads(tc["arguments"] or "{}")
+        if not isinstance(args, dict):
+            raise ValueError("arguments must be an object")
+        return await call(tc["name"], args)
+    except KeyError:
+        return json.dumps({"error": f"unknown tool {tc['name']}"})
+    except (json.JSONDecodeError, ValueError) as exc:
+        return json.dumps({"error": f"invalid tool arguments: {exc}"})
+
+
 # ---------------------------------------------------------------------------
 # The turn driver (same contract as assistant._run_claude)
 # ---------------------------------------------------------------------------
@@ -315,6 +401,11 @@ async def run_openai_turn(
     saw_reasoning = False
     cached_in: int | None = None
     terminal = "incomplete"
+
+    # Before anything slow happens — MCP servers spawning, the model queueing
+    # — so the bubble shows a live pill from the moment the request lands
+    # rather than an empty box, and the first byte reaches the proxy at once.
+    yield _sse({"type": "status", "phase": "thinking", "label": "waiting…"})
 
     try:
         async with _mcp_sessions(include_control, actor) as (tool_defs, call):
@@ -372,27 +463,35 @@ async def run_openai_turn(
                     # from "reasoning" instead of staring at a static pill.
                     yield _sse({"type": "status", "phase": "thinking", "label": "waiting…"})
                     last_beat = time.monotonic()
-                    async for item in _stream_round(client, payload):
+                    # What the pill says while the round is quiet. It starts
+                    # honest about not knowing ("waiting…") and upgrades the
+                    # moment thinking tokens prove the request is live.
+                    phase_label = "waiting…"
+                    async for item in _paced(
+                        _stream_round(client, payload), IDLE_TICK_S
+                    ):
                         if "text" in item:
                             round_text += item["text"]
                             yield _sse({"type": "text", "delta": item["text"]})
-                        elif "reasoning" in item:
-                            # Throttled: thinking tokens arrive far too fast
-                            # to forward one frame each, and the pill is
-                            # already up. Re-sending it keeps the connection
-                            # warm and the elapsed counter honest.
+                        elif "reasoning" in item or "idle" in item:
+                            # Two kinds of silence, one pill. "reasoning" is
+                            # live thinking tokens (throttled: they arrive far
+                            # too fast to forward one frame each). "idle" is
+                            # _paced reporting that nothing at all arrived for
+                            # a tick — the queue-before-first-token stretch,
+                            # which streams no deltas of any kind. Either way
+                            # a frame goes out, which keeps the connection warm
+                            # and the elapsed counter honest.
+                            if "reasoning" in item:
+                                phase_label = "reasoning…"
                             now = time.monotonic()
                             if now - last_beat >= STATUS_HEARTBEAT_S:
                                 last_beat = now
-                                # "reasoning" (not "waiting"): the request is
-                                # out and we are seeing live thinking tokens,
-                                # so this is genuinely a reasoning stretch,
-                                # not a stuck queue.
                                 yield _sse(
                                     {
                                         "type": "status",
                                         "phase": "thinking",
-                                        "label": "reasoning…",
+                                        "label": phase_label,
                                     }
                                 )
                         elif "tool_name" in item:
@@ -446,19 +545,28 @@ async def run_openai_turn(
                         # its name early (provider didn't send name-too-early).
                         if tc["name"] not in announced_names:
                             yield _sse({"type": "tool_use", "name": pretty})
+                        # The other silent stretch: a Control tool call reaches
+                        # real devices over the tailnet and can sit for the full
+                        # MCP_CALL_TIMEOUT_S without a byte on the wire. Pulse
+                        # for its whole duration, same reason as _paced.
+                        running = asyncio.ensure_future(_call_tool(call, tc))
                         try:
-                            args = json.loads(tc["arguments"] or "{}")
-                            if not isinstance(args, dict):
-                                raise ValueError("arguments must be an object")
-                            result_text = await call(tc["name"], args)
-                        except KeyError:
-                            result_text = json.dumps(
-                                {"error": f"unknown tool {tc['name']}"}
-                            )
-                        except (json.JSONDecodeError, ValueError) as exc:
-                            result_text = json.dumps(
-                                {"error": f"invalid tool arguments: {exc}"}
-                            )
+                            while True:
+                                done, _still = await asyncio.wait(
+                                    {running}, timeout=IDLE_TICK_S
+                                )
+                                if done:
+                                    break
+                                yield _sse(
+                                    {
+                                        "type": "status",
+                                        "phase": "thinking",
+                                        "label": f"running {pretty}…",
+                                    }
+                                )
+                            result_text = running.result()
+                        finally:
+                            running.cancel()
                         yield _sse({"type": "tool_result", "name": pretty})
                         proposal = _proposal_from_tool_result({"content": result_text})
                         if proposal is not None:

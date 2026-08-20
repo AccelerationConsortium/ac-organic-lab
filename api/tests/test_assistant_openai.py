@@ -9,6 +9,7 @@ a fake sessions context so no server processes are spawned.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 
@@ -180,9 +181,11 @@ async def test_tool_round_then_text(monkeypatch) -> None:
             )
         ]
     )
-    # One status frame opens each round: the silent stretch before the round's
-    # first visible token is exactly what the pill covers.
+    # A status frame opens the turn (before the MCP servers even spawn) and
+    # another opens each round: every silent stretch before a round's first
+    # visible token is exactly what the pill covers.
     assert [f["type"] for f in frames] == [
+        "status",
         "status",
         "tool_use",
         "tool_result",
@@ -192,7 +195,7 @@ async def test_tool_round_then_text(monkeypatch) -> None:
         "done",
     ]
     assert frames[0]["phase"] == "thinking"
-    assert frames[1]["name"] == "query_runs"
+    assert frames[2]["name"] == "query_runs"
     assert calls == [("mcp__lab-history__query_runs", {"limit": 5})]
 
 
@@ -270,11 +273,10 @@ async def test_tool_use_announced_live_before_tool_executes(monkeypatch) -> None
         return out
 
     types = await collect()
-    # tool_use appears before tool_result — and after round-1's status frame —
-    # so the pill goes up the instant the tool is named.
+    # tool_use appears before tool_result — and immediately after the opening
+    # status frames — so the pill goes up the instant the tool is named.
     assert types.index("tool_use") < types.index("tool_result")
-    assert types[0] == "status"
-    assert types[1] == "tool_use"
+    assert set(types[: types.index("tool_use")]) == {"status"}
 
 
 @respx.mock
@@ -308,6 +310,7 @@ async def test_proposal_frame_and_audit_hook(monkeypatch) -> None:
     )
     assert [f["type"] for f in frames] == [
         "status",
+        "status",
         "tool_use",
         "tool_result",
         "proposal",
@@ -316,7 +319,7 @@ async def test_proposal_frame_and_audit_hook(monkeypatch) -> None:
         "text",
         "done",
     ]
-    assert frames[3]["proposal"] == proposal
+    assert frames[4]["proposal"] == proposal
     assert audited == [proposal]
 
 
@@ -410,20 +413,21 @@ async def test_reasoning_deltas_signal_progress_without_leaking_text(
     # The thinking text never becomes assistant text.
     assert [f["delta"] for f in frames if f["type"] == "text"] == ["Done."]
     assert not any("step " in json.dumps(f) for f in frames)
-    # ...and the wait is covered by pills, not by dead air: one status frame
-    # opening the round plus one per reasoning delta (heartbeat unthrottled
-    # here), all before the first visible token.
+    # ...and the wait is covered by pills, not by dead air: two status frames
+    # opening the turn and the round, plus one per reasoning delta (heartbeat
+    # unthrottled here), all before the first visible token.
     status_before_text = list(
         itertools.takewhile(lambda f: f["type"] != "text", frames)
     )
-    assert [f["type"] for f in status_before_text] == ["status"] * 4
+    assert [f["type"] for f in status_before_text] == ["status"] * 5
     assert all(f["phase"] == "thinking" for f in status_before_text)
 
 
 @respx.mock
 async def test_reasoning_heartbeat_is_throttled(monkeypatch) -> None:
     """Thinking tokens arrive far too fast to forward one frame each. At the
-    production interval a short round emits the opening status frame only."""
+    production interval a short round emits the two opening status frames
+    only — one for the turn, one for the round."""
 
     monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
     monkeypatch.setattr(
@@ -441,4 +445,86 @@ async def test_reasoning_heartbeat_is_throttled(monkeypatch) -> None:
             )
         ]
     )
-    assert [f["type"] for f in frames].count("status") == 1
+    assert [f["type"] for f in frames].count("status") == 2
+
+
+# ---------------------------------------------------------------------------
+# Dead air (the "Control mode is non-responsive" regression)
+# ---------------------------------------------------------------------------
+
+
+async def test_paced_ticks_while_the_source_is_silent() -> None:
+    """Next.js proxies /api/* with a 30 s socket-inactivity timeout, so a turn
+    that puts nothing on the wire gets aborted mid-answer. _paced is what
+    guarantees that never happens: it ticks on its own while the model is
+    quiet, whether or not the provider streams reasoning deltas."""
+
+    async def silent_then_answer():
+        await asyncio.sleep(0.12)
+        yield {"text": "hi"}
+
+    items = [i async for i in assistant_openai._paced(silent_then_answer(), 0.02)]
+
+    assert items.count({"idle": True}) >= 3
+    assert items[-1] == {"text": "hi"}
+
+
+async def test_paced_reraises_source_failures() -> None:
+    """Fail-fast: a failing round must still surface as an error frame, not be
+    swallowed by the pacing layer."""
+
+    async def boom():
+        raise RuntimeError("model returned HTTP 502")
+        yield  # pragma: no cover - generator marker
+
+    with pytest.raises(RuntimeError, match="502"):
+        [i async for i in assistant_openai._paced(boom(), 0.01)]
+
+
+@contextlib.asynccontextmanager
+async def _slow_sessions_factory(delay: float):
+    async def call(full_name: str, arguments: dict) -> str:
+        await asyncio.sleep(delay)
+        return json.dumps({"runs": []})
+
+    yield [
+        {
+            "type": "function",
+            "function": {
+                "name": "mcp__lab-history__query_runs",
+                "description": "",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ], call
+
+
+@respx.mock
+async def test_slow_tool_call_keeps_the_stream_alive(monkeypatch) -> None:
+    """The other half of the same regression: a Control tool call reaches real
+    devices over the tailnet and can sit for tens of seconds. Between tool_use
+    and tool_result the stream used to go completely silent."""
+
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    monkeypatch.setattr(assistant_openai, "IDLE_TICK_S", 0.02)
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _slow_sessions_factory(0.15),
+    )
+    _mock_two_rounds('{"limit": 5}')
+
+    frames = _frames(
+        [
+            f
+            async for f in assistant_openai.run_openai_turn(
+                [ChatMessage(role="user", content="recent runs?")]
+            )
+        ]
+    )
+
+    types = [f["type"] for f in frames]
+    during_tool = frames[types.index("tool_use") + 1 : types.index("tool_result")]
+    assert [f["type"] for f in during_tool] == ["status"] * len(during_tool)
+    assert len(during_tool) >= 3
+    assert during_tool[0]["label"] == "running query_runs…"
