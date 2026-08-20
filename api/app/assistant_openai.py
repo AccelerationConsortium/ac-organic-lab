@@ -215,6 +215,9 @@ async def _stream_round(
     pending: dict[int, dict[str, Any]] = {}
     usage: dict[str, Any] | None = None
     reasoning_seen = False
+    # Tool names streamed so far, so we can announce each tool_use the instant
+    # its name first appears — not after the whole round finishes streaming.
+    announced: set[int] = set()
     async with client.stream("POST", "/chat/completions", json=payload) as resp:
         if resp.status_code != 200:
             body = (await resp.aread()).decode("utf-8", errors="replace")[:500]
@@ -250,7 +253,16 @@ async def _stream_round(
                 reasoning_seen = True
                 yield {"reasoning": True}
             for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
                 _merge_tool_call_delta(pending, tc)
+                # The name almost always arrives in the first delta of a tool
+                # call. Announce the tool_use the moment it does, so the bubble
+                # shows the tool as "working" while the arguments still stream
+                # in — otherwise the call is a surprise that only appears once
+                # it has already finished.
+                if idx not in announced and pending[idx].get("name"):
+                    announced.add(idx)
+                    yield {"tool_name": pending[idx]["name"]}
     yield {
         "tool_calls": [pending[i] for i in sorted(pending)],
         "usage": usage,
@@ -347,6 +359,9 @@ async def run_openai_turn(
                     rounds += 1
                     round_text = ""
                     tool_calls: list[dict[str, Any]] = []
+                    # Tool names already surfaced live via `tool_name` frames,
+                    # so the post-round execution loop does not re-emit them.
+                    announced_names: set[str] = set()
                     # Announce the phase BEFORE the request goes out. Every
                     # round starts with a stretch that produces no visible
                     # token — model queueing, then reasoning — and that
@@ -380,6 +395,14 @@ async def run_openai_turn(
                                         "label": "reasoning…",
                                     }
                                 )
+                        elif "tool_name" in item:
+                            # Live tool_use: emitted the moment the model first
+                            # names a tool it will call, while its arguments are
+                            # still streaming. The bubble shows a "working" pill
+                            # immediately instead of only after the outcome.
+                            pretty = item["tool_name"].split("__")[-1]
+                            announced_names.add(item["tool_name"])
+                            yield _sse({"type": "tool_use", "name": pretty})
                         else:
                             tool_calls = item["tool_calls"]
                             usage = item.get("usage") or {}
@@ -418,7 +441,11 @@ async def run_openai_turn(
                     )
                     for i, tc in enumerate(tool_calls):
                         pretty = tc["name"].split("__")[-1]
-                        yield _sse({"type": "tool_use", "name": pretty})
+                        # Already shown live via a tool_name frame; only emit a
+                        # fresh tool_use now for any name that did not stream
+                        # its name early (provider didn't send name-too-early).
+                        if tc["name"] not in announced_names:
+                            yield _sse({"type": "tool_use", "name": pretty})
                         try:
                             args = json.loads(tc["arguments"] or "{}")
                             if not isinstance(args, dict):

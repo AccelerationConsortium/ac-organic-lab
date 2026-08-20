@@ -197,6 +197,87 @@ async def test_tool_round_then_text(monkeypatch) -> None:
 
 
 @respx.mock
+async def test_tool_use_announced_live_before_tool_executes(monkeypatch) -> None:
+    """The tool_use frame must appear as the name streams in, before the
+    argument delta and long before the tool actually runs — that is what makes
+    the pill show up 'right away' in Control mode."""
+
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _fake_sessions_factory([], json.dumps({"runs": []})),
+    )
+    # Send the tool name first, then the arguments, then the round end.
+    # The name arrives in its own delta, as DeepSeek/OpenRouter actually do.
+    round_one = _sse_body(
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_a",
+                                    "function": {
+                                        "name": "mcp__lab-history__query_runs",
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {"arguments": "{\"limit\": 5}"},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {"usage": {"completion_tokens": 7}, "choices": []},
+            "[DONE]",
+        ]
+    )
+    round_two = _sse_body(
+        [
+            {"choices": [{"delta": {"content": "All "}}]},
+            {"usage": {"completion_tokens": 3}, "choices": []},
+            "[DONE]",
+        ]
+    )
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions")
+    route.side_effect = [
+        Response(200, content=round_one, headers={"content-type": "text/event-stream"}),
+        Response(200, content=round_two, headers={"content-type": "text/event-stream"}),
+    ]
+
+    async def collect() -> list[str]:
+        out: list[str] = []
+        async for f in assistant_openai.run_openai_turn(
+            [ChatMessage(role="user", content="recent runs?")]
+        ):
+            data = json.loads(f.decode("utf-8")[len("data: "):].strip())
+            out.append(data["type"])
+        return out
+
+    types = await collect()
+    # tool_use appears before tool_result — and after round-1's status frame —
+    # so the pill goes up the instant the tool is named.
+    assert types.index("tool_use") < types.index("tool_result")
+    assert types[0] == "status"
+    assert types[1] == "tool_use"
+
+
+@respx.mock
 async def test_proposal_frame_and_audit_hook(monkeypatch) -> None:
     monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
     proposal = {"equipment_id": "xarm_translocation", "action": "graph.move_to"}
