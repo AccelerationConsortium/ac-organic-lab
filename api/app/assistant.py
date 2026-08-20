@@ -547,6 +547,11 @@ def _sse(payload: dict[str, Any]) -> bytes:
     return f"data: {json.dumps(payload, default=str)}\n\n".encode("utf-8")
 
 
+# Opening SSE comment (see the chat route's ``gen``): 2 KiB clears Caddy's
+# 512-byte encode threshold with room for other proxies' larger ones.
+SSE_PREAMBLE = b": " + b" " * 2048 + b"\n\n"
+
+
 def _format_prompt(messages: list[ChatMessage]) -> str:
     """Render the conversation as a single prompt string.
 
@@ -1036,6 +1041,12 @@ def build_assistant_router() -> APIRouter:
             )
 
         async def gen() -> AsyncIterator[bytes]:
+            # Comment frame, ignored by the bubble (no `data:` line), sized to
+            # push the response past any intermediary's "buffer until N bytes
+            # before deciding whether to compress" threshold — Caddy's encode
+            # holds the first 512 bytes and swallows flushes until then. The
+            # hold would otherwise eat the first several status pills.
+            yield SSE_PREAMBLE
             try:
                 async for frame in runner(
                     body.messages,
@@ -1054,7 +1065,17 @@ def build_assistant_router() -> APIRouter:
             gen(),
             media_type="text/event-stream",
             headers={
-                "Cache-Control": "no-cache",
+                # `no-transform` is load-bearing, not boilerplate. Next.js's
+                # rewrite proxy runs its default gzip `compression` over this
+                # response, and that middleware buffers text/event-stream in
+                # zlib until the stream ENDS when the browser sends
+                # Accept-Encoding: gzip (it always does). Every progress pill
+                # and text delta then arrives in one burst with `done` — the
+                # "no thinking progress shown" symptom. `compression` honours
+                # RFC 7234 no-transform and passes the stream through
+                # untouched; curl without Accept-Encoding never showed the
+                # problem, which is why it survived local testing.
+                "Cache-Control": "no-cache, no-transform",
                 "X-Accel-Buffering": "no",
             },
         )

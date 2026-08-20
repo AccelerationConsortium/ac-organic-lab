@@ -269,3 +269,52 @@ def test_chat_request_mode_defaults_to_ask() -> None:
 def test_chat_request_accepts_control_mode() -> None:
     req = ChatRequest(messages=[{"role": "user", "content": "hi"}], mode="control")
     assert req.mode == "control"
+
+
+# ---------------------------------------------------------------------------
+# The chat route's wire contract (what the proxies in front of it see)
+# ---------------------------------------------------------------------------
+
+
+def test_chat_route_is_proxy_safe(monkeypatch) -> None:
+    """The stream crosses Next.js's rewrite proxy and the Caddy edge before it
+    reaches the bubble, and each of those can hold SSE frames in a buffer:
+    Next's default gzip `compression` keeps text/event-stream in zlib until
+    the stream ends unless the response says `no-transform`, and Caddy's
+    encode holds the first 512 bytes. Both were live failures (2026-08-20 —
+    'no thinking progress shown'); the header and the preamble are the fix."""
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app import assistant_openai
+
+    async def fake_turn(messages, *, control=False, actor=None, on_proposal=None):
+        yield assistant._sse({"type": "text", "delta": "hi"})
+        yield assistant._sse({"type": "done"})
+
+    monkeypatch.setattr(assistant, "DEFAULT_BACKEND", "openai")
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    monkeypatch.setattr(assistant_openai, "run_openai_turn", fake_turn)
+
+    app = FastAPI()
+    app.include_router(assistant.build_assistant_router())
+    with TestClient(app) as client:
+        with client.stream(
+            "POST",
+            "/api/assistant/chat",
+            json={"mode": "ask", "messages": [{"role": "user", "content": "hi"}]},
+        ) as r:
+            body = b"".join(r.iter_bytes())
+
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    assert "no-transform" in r.headers["cache-control"]
+    assert body.startswith(assistant.SSE_PREAMBLE)
+    assert len(assistant.SSE_PREAMBLE) > 512
+    # The preamble is an SSE comment: a frame with no `data:` line, which the
+    # bubble's parser skips — the real frames follow untouched.
+    frames = body.split(b"\n\n")
+    assert frames[0].startswith(b": ")
+    assert frames[1] == b'data: {"type": "text", "delta": "hi"}'
+    assert frames[2] == b'data: {"type": "done"}'
