@@ -61,6 +61,15 @@ DEFAULT_BASE_URL = os.environ.get(
 )
 OPENAI_MODEL = os.environ.get("ASSISTANT_OPENAI_MODEL", "qwen/qwen3.8-2.4t-a95b")
 OPENAI_CONTROL_MODEL = os.environ.get("ASSISTANT_OPENAI_CONTROL_MODEL", OPENAI_MODEL)
+# Optional OpenRouter reasoning_effort, applied to CONTROL turns only. DeepSeek
+# reasoning models orbit far longer on "max"/unset (tens of seconds of silent
+# think before the first visible token, which reads as "not responding"). Ask
+# mode is flash and never set this. Mirror of bitacora's llm.py: a top-level
+# `reasoning_effort` in the request body ("" = leave unset, the OpenRouter
+# default).
+OPENAI_CONTROL_REASONING_EFFORT = os.environ.get(
+    "ASSISTANT_OPENAI_CONTROL_REASONING_EFFORT", ""
+).strip()
 
 # One round = one chat-completions request. Tool-using answers need several;
 # a runaway loop should die well before the wallclock cap does it for us.
@@ -331,6 +340,10 @@ async def run_openai_turn(
                         "stream": True,
                         "stream_options": {"include_usage": True},
                     }
+                    # Control turns are the slow ones; cap their reasoning orbit
+                    # when configured. Ask (flash) never sets it.
+                    if include_control and OPENAI_CONTROL_REASONING_EFFORT:
+                        payload["reasoning_effort"] = OPENAI_CONTROL_REASONING_EFFORT
                     rounds += 1
                     round_text = ""
                     tool_calls: list[dict[str, Any]] = []
