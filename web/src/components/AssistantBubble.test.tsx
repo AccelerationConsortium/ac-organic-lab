@@ -9,7 +9,11 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AssistantBubble } from "./AssistantBubble";
-import { authorizeAssistantAction } from "@/lib/api";
+import {
+  approveAssistantPlan,
+  authorizeAssistantAction,
+  finishAssistantPlan,
+} from "@/lib/api";
 
 // --- mocks ------------------------------------------------------------------
 
@@ -26,6 +30,8 @@ vi.mock("@/lib/user-auth", () => ({
 
 vi.mock("@/lib/api", () => ({
   authorizeAssistantAction: vi.fn(() => Promise.resolve({ ok: true })),
+  approveAssistantPlan: vi.fn(() => Promise.resolve({ approved: true })),
+  finishAssistantPlan: vi.fn(() => Promise.resolve({ ok: true })),
   ApiError: class ApiError extends Error {
     status = 400;
   },
@@ -43,6 +49,27 @@ const PROPOSAL = {
     reason: "stage the plate",
     actor: "alice@example.edu",
     expires_in_s: 120,
+    device_state: { equipment_status: "ready", activity: "idle", message: "ok" },
+  },
+};
+
+const PLAN_HASH = "h".repeat(64);
+const PLAN = {
+  type: "plan",
+  plan: {
+    plan_id: "p1",
+    equipment_id: "xarm",
+    equipment_name: "UFactory xArm5",
+    kind: "robot_arm",
+    steps: [
+      { action: "move.a", passthrough_action: "graph/move_to", args: { node_id: "a" } },
+      { action: "move.b", passthrough_action: "graph/move_to", args: { node_id: "b" } },
+      { action: "gripper.grip_120", passthrough_action: "graph/gripper", args: { state: "grip_120" } },
+    ],
+    step_hash: PLAN_HASH,
+    reason: "fetch the plate",
+    actor: "alice@example.edu",
+    expires_in_s: 600,
     device_state: { equipment_status: "ready", activity: "idle", message: "ok" },
   },
 };
@@ -114,6 +141,8 @@ beforeEach(() => {
   auth.identity = { email: "alice@example.edu", role: "operator" };
   mineEquipment = { xarm: "user" };
   (authorizeAssistantAction as unknown as ReturnType<typeof vi.fn>).mockClear();
+  (approveAssistantPlan as unknown as ReturnType<typeof vi.fn>).mockClear();
+  (finishAssistantPlan as unknown as ReturnType<typeof vi.fn>).mockClear();
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
     writable: true,
@@ -194,6 +223,78 @@ describe("AssistantBubble control mode", () => {
       )
     );
     await screen.findByText(/Authorized move\.uplc_draw_home/);
+  });
+
+  async function sendInControlMode(text: string) {
+    await openPanel();
+    const control = await screen.findByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const box = screen.getByPlaceholderText(/operate a device/i);
+    fireEvent.change(box, { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  }
+
+  it("renders a plan card, approves it by hash, then runs the steps in order (Step 1i)", async () => {
+    installFetch([
+      'data: {"type":"text","delta":"Proposing a route."}\n\n',
+      `data: ${JSON.stringify(PLAN)}\n\n`,
+      'data: {"type":"done"}\n\n',
+    ]);
+    await sendInControlMode("fetch the plate");
+
+    // The whole ordered list is on one card, nothing sent to the device yet.
+    await screen.findByText(/Authorize plan · 3 steps/);
+    expect(screen.getByText(/1\. move\.a/)).toBeTruthy();
+    expect(screen.getByText(/3\. gripper\.grip_120/)).toBeTruthy();
+    expect(authorizeAssistantAction).not.toHaveBeenCalled();
+
+    // Approve sends the hash of exactly what was rendered.
+    fireEvent.click(screen.getByRole("button", { name: "Approve these 3 steps" }));
+    await waitFor(() => expect(approveAssistantPlan).toHaveBeenCalledWith("p1", PLAN_HASH));
+    expect(authorizeAssistantAction).not.toHaveBeenCalled();
+
+    // Run: this browser sends each step through the passthrough, in order,
+    // stamped with the plan ref so the audit rows join back to the approval.
+    fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+    await screen.findByText(/All 3 steps ran/);
+    const calls = (authorizeAssistantAction as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.map((c) => c[1])).toEqual(["graph/move_to", "graph/move_to", "graph/gripper"]);
+    expect(calls[0][0]).toBe("xarm");
+    expect(calls[0][2]).toEqual({ node_id: "a" });
+    expect(calls.map((c) => c[3])).toEqual([{ plan: "p1#1" }, { plan: "p1#2" }, { plan: "p1#3" }]);
+    expect(finishAssistantPlan).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ status: "executed" })
+    );
+  });
+
+  it("halts a plan at the first refused step and skips the rest", async () => {
+    (authorizeAssistantAction as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ ok: true })
+      .mockRejectedValueOnce(new Error("412: not reachable from here"));
+    installFetch([`data: ${JSON.stringify(PLAN)}\n\n`, 'data: {"type":"done"}\n\n']);
+    await sendInControlMode("fetch the plate");
+
+    await screen.findByText(/Authorize plan · 3 steps/);
+    fireEvent.click(screen.getByRole("button", { name: "Approve these 3 steps" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+
+    // Fail-fast: step 3 is never sent.
+    await screen.findByText(/Plan halted/);
+    expect(authorizeAssistantAction).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(/Halted: step 2 \(move\.b\) failed: 412/)).toBeTruthy();
+    expect(finishAssistantPlan).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({
+        status: "failed",
+        results: [
+          { index: 1, outcome: "ok" },
+          expect.objectContaining({ index: 2, outcome: "failed" }),
+          { index: 3, outcome: "skipped" },
+        ],
+      })
+    );
   });
 
   it("shows a plate-reader measurement response without sending it back to the model", async () => {

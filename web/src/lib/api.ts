@@ -135,14 +135,60 @@ export async function authorizeAssistantAction(
   equipmentId: string,
   action: string,
   args: Record<string, unknown>,
+  opts: {
+    /** `<plan_id>#<step index>` when this call is one step of an approved
+     *  assistant plan (UI_DESIGN §5 Step 1i). Stamps `X-Control-Origin:
+     *  assistant-plan` + `X-Control-Plan` so the audit row joins back to the
+     *  `assistant_plan_approved` row that reviewed it. */
+    plan?: string;
+  } = {},
 ): Promise<Record<string, unknown>> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Control-Origin": opts.plan ? "assistant-plan" : "assistant",
+  };
+  if (opts.plan) headers["X-Control-Plan"] = opts.plan;
   return fetchJson<Record<string, unknown>>(controlUrl(equipmentId, action), {
     method: "POST",
     body: JSON.stringify(args ?? {}),
-    headers: {
-      "Content-Type": "application/json",
-      "X-Control-Origin": "assistant",
-    },
+    headers,
+  });
+}
+
+/** One step's outcome, as the bubble reports it back after running a plan. */
+export interface AssistantPlanStepResult {
+  index: number;
+  outcome: "ok" | "failed" | "skipped";
+  status_code?: number | null;
+  message?: string | null;
+}
+
+/** Record the operator's approval of an assistant plan — the hash of exactly
+ *  the steps the card rendered. 409 if the plan changed, 410 if it expired. */
+export async function approveAssistantPlan(
+  planId: string,
+  stepHash: string,
+): Promise<{ plan_id: string; step_hash: string; approved: boolean; expires_in_s: number }> {
+  return fetchJson(`/api/assistant/plans/${encodeURIComponent(planId)}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ step_hash: stepHash }),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** Report how an approved plan ended (best-effort audit; never blocks the UI). */
+export async function finishAssistantPlan(
+  planId: string,
+  body: {
+    status: "executed" | "failed" | "aborted";
+    results: AssistantPlanStepResult[];
+    halt_reason?: string | null;
+  },
+): Promise<{ ok: boolean }> {
+  return fetchJson(`/api/assistant/plans/${encodeURIComponent(planId)}/finish`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
   });
 }
 

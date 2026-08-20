@@ -1199,3 +1199,130 @@ async def test_list_available_actions_ot2_full_surface_and_stripped_schemas() ->
     assert by_action["move_to"]["operator_only_fields"] == ["force_direct"]
     # Actions with no risky fields carry no operator_only_fields key at all.
     assert "operator_only_fields" not in by_action["home"]
+
+
+# ---------------------------------------------------------------------------
+# Step 1i — multi-step plans on one device (propose_plan)
+# ---------------------------------------------------------------------------
+
+
+def test_plan_step_hash_is_canonical() -> None:
+    a = [{"action": "move.a", "args": {"node_id": "a", "speed": 1}}]
+    b = [{"action": "move.a", "args": {"speed": 1, "node_id": "a"}}]
+    c = [{"action": "move.a", "args": {"node_id": "a", "speed": 2}}]
+    assert ac.plan_step_hash(a) == ac.plan_step_hash(b)
+    assert ac.plan_step_hash(a) != ac.plan_step_hash(c)
+    assert ac.plan_step_hash([{"action": "home"}]) == ac.plan_step_hash(
+        [{"action": "home", "args": {}}]
+    )
+
+
+@respx.mock
+async def test_propose_plan_holds_only_the_first_step_to_live_allowed_actions() -> None:
+    """A route: hop 2 is only legal once hop 1 has run, so the live list cannot
+    vouch for it — the device re-checks each hop as it is sent."""
+
+    _mock_status(["stop", "move.uplc_draw_home"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_plan(
+            _registry(),
+            "xarm",
+            [{"action": "move.uplc_draw_home"}, {"action": "move.reader_in", "args": {}}],
+            "route to the reader",
+        )
+    )
+    plan = out["plan"]
+    assert plan["plan_id"]
+    assert plan["equipment_id"] == "xarm"
+    assert [s["action"] for s in plan["steps"]] == ["move.uplc_draw_home", "move.reader_in"]
+    assert all(s["passthrough_action"] == "graph/move_to" for s in plan["steps"])
+    assert plan["steps"][1]["args"] == {"node_id": "reader_in"}
+    assert plan["step_hash"] == ac.plan_step_hash(plan["steps"])
+    assert plan["actor"] == ACTOR
+    assert plan["reason"] == "route to the reader"
+    assert plan["expires_in_s"] == ac.PLAN_TTL_S
+    assert plan["device_state"]["equipment_status"] == "ready"
+
+
+@respx.mock
+async def test_propose_plan_refuses_when_step_one_cannot_start() -> None:
+    _mock_status(["stop", "move.uplc_draw_home"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_plan(
+            _registry(), "xarm", [{"action": "move.reader_in"}, {"action": "move.uplc_draw_home"}], ""
+        )
+    )
+    assert out["code"] == "not_allowed"
+    assert out["step"] == 1
+    assert "move.uplc_draw_home" in out["allowed_actions"]
+
+
+@respx.mock
+async def test_propose_plan_names_the_failing_later_step() -> None:
+    """Every step is resolved and schema-checked at proposal time, and a
+    refusal says which one — here a safety-floor verb smuggled in as step 2."""
+
+    _mock_status(["stop", "move.uplc_draw_home"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_plan(
+            _registry(), "xarm", [{"action": "move.uplc_draw_home"}, {"action": "stop"}], ""
+        )
+    )
+    assert out["code"] == "unmappable_action"
+    assert out["step"] == 2
+    assert out["error"].startswith("step 2 (stop)")
+
+
+@respx.mock
+async def test_propose_plan_refuses_forbidden_field_by_step() -> None:
+    _mock_ot2_status(_OT2_ADVERTISED)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_plan(
+            _ot2_registry(),
+            "ot2_hte",
+            [
+                {"action": "home"},
+                {"action": "pick_up_tip", "args": {"pipette": "p300", "force": 1.5}},
+            ],
+            "",
+        )
+    )
+    assert out["code"] == "forbidden_field"
+    assert out["step"] == 2
+
+
+@respx.mock
+async def test_propose_plan_shape_and_size_limits() -> None:
+    _mock_status(["stop", "move.uplc_draw_home"])
+    _mock_authz(True)
+    assert json.loads(await ac._propose_plan(_registry(), "xarm", [], ""))["code"] == "empty_plan"
+    assert json.loads(await ac._propose_plan(_registry(), "xarm", None, ""))["code"] == "empty_plan"
+    too_many = [{"action": "move.uplc_draw_home"}] * (ac.MAX_PLAN_STEPS + 1)
+    assert (
+        json.loads(await ac._propose_plan(_registry(), "xarm", too_many, ""))["code"]
+        == "too_many_steps"
+    )
+    out = json.loads(
+        await ac._propose_plan(_registry(), "xarm", [{"action": "move.uplc_draw_home"}, "stop"], "")
+    )
+    assert out["code"] == "invalid_step"
+    assert out["step"] == 2
+
+
+@respx.mock
+async def test_propose_plan_not_authorized_and_no_actor(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_status(["stop", "move.uplc_draw_home"])
+    _mock_authz(False)
+    out = json.loads(
+        await ac._propose_plan(_registry(), "xarm", [{"action": "move.uplc_draw_home"}], "")
+    )
+    assert out["code"] == "not_authorized"
+    monkeypatch.delenv("LAB_ACTOR")
+    out = json.loads(
+        await ac._propose_plan(_registry(), "xarm", [{"action": "move.uplc_draw_home"}], "")
+    )
+    assert out["code"] == "no_actor"

@@ -69,6 +69,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from .assistant_control import PLAN_TTL_S, plan_step_hash
+
 logger = logging.getLogger(__name__)
 
 
@@ -376,17 +378,29 @@ Be terse. Operators are glancing at a small chat panel, not reading prose.
 CONTROL_PROMPT_ADDENDUM = """
 
 CONTROL MODE IS ACTIVE.
-You may now PROPOSE a single equipment action for the operator to authorize,
-using the lab-control tools. You still cannot actuate hardware yourself: a
-proposal only renders a confirm card that a human must read and click.
+You may now PROPOSE equipment actions for the operator to authorize, using
+the lab-control tools: one action (propose_action) or an ORDERED multi-step
+plan on one device (propose_plan). You still cannot actuate hardware
+yourself: a proposal only renders a confirm card that a human must read and
+click.
 
 When the user asks you to make a device do something:
 1. Call list_available_actions(equipment_id) to see what the device currently
    allows and which actions are proposable (each with its argument schema).
    Use list_equipment_now first if you need the canonical equipment_id.
-2. Call propose_action(equipment_id, action, args, reason) for exactly ONE
-   action on ONE device. `action` must be a string from the device's live
-   allowed_actions; `reason` is a short human-facing justification.
+2. Call propose_action(equipment_id, action, args, reason) for ONE action
+   on ONE device, or propose_plan(equipment_id, steps, reason) for an
+   ORDERED sequence of steps on ONE device. When the user wants more than
+   one step on the same device, call propose_plan ONCE with every step in
+   order instead of a chain of single proposals. `action` must be a string
+   from the device's live allowed_actions — for a plan only the FIRST step
+   must be allowed right now; later steps are checked live by the device as
+   they run. `reason` is a short human-facing justification. The operator
+   approves a plan's step list as shown, then runs it; the browser sends the
+   steps in order and stops at the first one the device refuses (the rest
+   are skipped, never continued past an error). One device per plan — if
+   the work spans devices or exceeds the step cap, say so and recommend a
+   validated workflow plan.
 
 list_available_actions marks which advertised actions are proposable.
 Safety-floor actions must stay reachable without you and are never
@@ -415,8 +429,8 @@ hold_time even when the platen is already in that pose. If the user asks
 to press up or down and the action is advertised, call propose_action —
 do not skip because the status message already says UP or DOWN, and do
 not refuse a single named move as "out of cycle order". A full
-filtration cycle is plate.in → press.down → press.up → plate.out, one
-card per step, only when the user asks for a cycle. hold_time is 0–10 s;
+filtration cycle is plate.in → press.down → press.up → plate.out, proposed
+as ONE plan with those four steps, only when the user asks for a cycle. hold_time is 0–10 s;
 if the user does not name one, pass 2 for press.up and 5 for press.down
 (the tile defaults) so the confirm card shows the duration.
 
@@ -436,8 +450,10 @@ seal.start. A seal cycle is one complete act: the device times it
 stage is in, so the confirm card may carry the complete temperature_c
 and seconds values. If the action is not advertised, say so rather than
 proposing it anyway. Stage in → seal.start → stage out is a sequence:
-propose it one card at a time, in order, re-checking allowed_actions
-between cards. Never propose seal.stop; it is a safety-floor control.
+propose it as ONE plan (propose_plan) in that order — the device withholds
+seal.start until the stage is in and the heater is in band, and the run
+stops there if it is not. Never propose seal.stop; it is a safety-floor
+control.
 
 Cameras are convenience controls (cannot damage hardware or a sample), but a
 confirm card is still required for every PTZ nudge, preset, and privacy/
@@ -459,11 +475,13 @@ On the OT-2 the full control surface is proposable, under two disciplines:
   schemas you are shown; supplying one refuses the whole proposal. Never ask
   the user to paste a device credential into chat.
 - Liquid handling is sequence-bound (pick_up_tip -> aspirate -> dispense ->
-  drop_tip). Propose steps ONE at a time, in the correct order, and wait for
-  the operator to authorize (or dismiss) each card before proposing the next.
-  Re-check device state between steps rather than assuming the last step
-  landed. If the work is more than a handful of steps, say so and recommend a
-  validated workflow plan instead of a long chain of cards.
+  drop_tip). Propose the whole sequence as ONE plan with propose_plan, steps
+  in the correct order; the operator reviews and approves the list as shown,
+  then runs it, and the device re-checks each step live as it is sent — the
+  run stops at the first refusal and the remaining steps are skipped. Use a
+  single propose_action only when the user asks for one step. If the work
+  exceeds the step cap or spans devices, say so and recommend a validated
+  workflow plan.
 - deck.declare and setup are NOT interchangeable for custom labware — they do
   different things and only one of them makes a custom plate actually usable:
   * deck.declare is METADATA ONLY. It records intent for /status display and
@@ -501,17 +519,19 @@ single hops from the current node are advertised (move.<node_id>).
 list_available_actions also returns the device's read-only motion_graph
 snapshot: current_node, reachable_nodes (the single-hop targets), and
 travel_targets (nodes reachable in 2+ hops). Use it to plan and explain a
-route, then propose it one hop per confirm card, re-checking state between
-hops. If a target is in travel_targets but not reachable_nodes, name the
-intermediate hop to propose first rather than calling the move impossible.
+route, then propose the route as ONE plan of move.<node_id> hops in order
+(propose_plan); the device whitelists each hop live as it is sent, so a hop
+that is no longer reachable stops the run there. If a target is in
+travel_targets but not reachable_nodes, route through the intermediate hop
+rather than calling the move impossible.
 
 The arm's gripper works the same way: transitions are whitelisted per node and
 per current stroke, and each legal one is advertised as gripper.<state> (e.g.
 gripper.grip_120) — the same names as motion_graph.allowed_gripper_targets. The
 arm must be parked, so a gripper action is never advertised mid-move. Picking a
 plate up is therefore a sequence — move to the pick position, then the grip,
-then move away — so propose it one card at a time like the liquid verbs, and
-never describe the gripper as uncontrollable when a gripper.<state> action is
+then move away — so propose it as one plan (move, gripper, move), and never
+describe the gripper as uncontrollable when a gripper.<state> action is
 listed.
 
 Operator-only is a property of the action or field, never of who is asking:
@@ -528,6 +548,35 @@ proposal is refused, relay the reason plainly — never try to route around it."
 class ChatMessage(BaseModel):
     role: str = Field(pattern="^(user|assistant)$")
     content: str
+
+
+class PlanApproveRequest(BaseModel):
+    """``POST /api/assistant/plans/{id}/approve`` — the human gate (Step 1i).
+
+    ``step_hash`` is what the operator was *shown*. Requiring them to send it
+    back is what makes this a review rather than a rubber stamp: if the plan
+    changed (or the dashboard restarted and the id is meaningless), the
+    approval is refused instead of silently applying to different steps."""
+
+    step_hash: str = Field(min_length=16, max_length=128)
+
+
+class PlanStepResult(BaseModel):
+    index: int = Field(ge=1)
+    outcome: Literal["ok", "failed", "skipped"]
+    status_code: int | None = None
+    message: str | None = Field(default=None, max_length=500)
+
+
+class PlanFinishRequest(BaseModel):
+    """``POST /api/assistant/plans/{id}/finish`` — how the run ended, reported
+    by the browser that ran it. Audit only: the per-step ``control_action``
+    rows already exist (stamped with the plan ref); this row says who agreed
+    to what and how far it got."""
+
+    status: Literal["executed", "failed", "aborted"]
+    results: list[PlanStepResult] = Field(default_factory=list, max_length=64)
+    halt_reason: str | None = Field(default=None, max_length=500)
 
 
 class ChatRequest(BaseModel):
@@ -614,14 +663,14 @@ def _rate_limit_block_message(info: dict[str, Any] | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _proposal_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
-    """Extract a control proposal from a tool_result block, if present.
+def _json_payloads_from_tool_result(block: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every JSON object a tool_result block carries.
 
-    ``lab-control``'s ``propose_action`` returns a JSON string of the shape
-    ``{"proposal": {...}}``. Claude relays a tool result's content either as a
-    plain string or as a list of ``{"type":"text","text":...}`` blocks; handle
-    both. Returns the inner proposal dict, or None for any other tool result
-    (including refusals, which carry ``error``/``code`` instead)."""
+    Claude relays a tool result's content either as a plain string or as a
+    list of ``{"type":"text","text":...}`` blocks; handle both. Claude Code
+    also wraps MCP tool output as ``{"result": "<json string>"}`` while other
+    builds pass the tool's JSON through unchanged — the envelope is a CLI
+    implementation detail, not a contract, so both are accepted."""
 
     content = block.get("content")
     texts: list[str] = []
@@ -631,6 +680,7 @@ def _proposal_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
         for c in content:
             if isinstance(c, dict) and isinstance(c.get("text"), str):
                 texts.append(c["text"])
+    payloads: list[dict[str, Any]] = []
     for text in texts:
         try:
             data = json.loads(text)
@@ -645,8 +695,31 @@ def _proposal_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
                 data = json.loads(data["result"])
             except (json.JSONDecodeError, TypeError):
                 pass
-        if isinstance(data, dict) and isinstance(data.get("proposal"), dict):
+        if isinstance(data, dict):
+            payloads.append(data)
+    return payloads
+
+
+def _proposal_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
+    """The control proposal in a tool_result block, if any.
+
+    ``lab-control``'s ``propose_action`` returns ``{"proposal": {...}}``.
+    Returns the inner dict, or None for any other tool result (including
+    refusals, which carry ``error``/``code`` instead)."""
+
+    for data in _json_payloads_from_tool_result(block):
+        if isinstance(data.get("proposal"), dict):
             return data["proposal"]
+    return None
+
+
+def _plan_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
+    """Step 1i sibling of :func:`_proposal_from_tool_result`:
+    ``propose_plan`` returns ``{"plan": {...}}``."""
+
+    for data in _json_payloads_from_tool_result(block):
+        if isinstance(data.get("plan"), dict):
+            return data["plan"]
     return None
 
 
@@ -705,6 +778,9 @@ def _translate_event(event: dict[str, Any]) -> list[dict[str, Any]]:
                     proposal = _proposal_from_tool_result(block)
                     if proposal is not None:
                         out.append({"type": "proposal", "proposal": proposal})
+                    plan = _plan_from_tool_result(block)
+                    if plan is not None:
+                        out.append({"type": "plan", "plan": plan})
 
     elif etype == "result":
         # Final wrap-up. is_error=true means a hard failure that didn't
@@ -740,6 +816,7 @@ async def _run_claude(
     control: bool = False,
     actor: str | None = None,
     on_proposal: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
+    on_plan: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
 ) -> AsyncIterator[bytes]:
     binary = _claude_binary()
     if binary is None:
@@ -861,6 +938,13 @@ async def _run_claude(
                             await on_proposal(proposal)
                         except Exception:  # noqa: BLE001 - audit must not break the stream
                             logger.warning("assistant_proposal audit failed", exc_info=True)
+                if frame.get("type") == "plan" and on_plan is not None:
+                    plan = frame.get("plan")
+                    if isinstance(plan, dict):
+                        try:
+                            await on_plan(plan)
+                        except Exception:  # noqa: BLE001 - audit must not break the stream
+                            logger.warning("assistant_plan audit failed", exc_info=True)
                 yield _sse(frame)
     finally:
         if timeout_handle is not None:
@@ -938,6 +1022,43 @@ async def _run_claude(
 def build_assistant_router() -> APIRouter:
     router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
+    # Step 1i: plans the assistant proposed, keyed by plan_id, held only until
+    # their TTL runs out. In memory and gone on restart — deliberately: an
+    # approval is a review of one moment, and an id minted before a restart
+    # must not be approvable after it (mirrors opentrons-server's PlanStore).
+    # What the store buys is that the approve route can check the hash the
+    # operator sends against the plan the tool actually produced (409 on a
+    # mismatch), and that the audit rows name the same plan end to end.
+    plans: dict[str, dict[str, Any]] = {}
+
+    def _sweep_plans() -> None:
+        now = time.monotonic()
+        for pid in [pid for pid, rec in plans.items() if rec["expires_at"] <= now]:
+            plans.pop(pid, None)
+
+    def _plan_record(plan_id: str, actor: str | None) -> dict[str, Any]:
+        """The live record for ``plan_id``, or the right refusal. The acting
+        identity must be the one the plan was proposed to: X-Auth-User is set
+        by the middleware after verifying the session, never by the client."""
+
+        _sweep_plans()
+        if not actor:
+            raise HTTPException(status_code=401, detail="Sign in to approve a plan.")
+        rec = plans.get(plan_id)
+        if rec is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "unknown plan — it expired, was already finished, or the "
+                    "dashboard restarted since it was proposed; ask again for a fresh one"
+                ),
+            )
+        if rec["actor"] != actor:
+            raise HTTPException(
+                status_code=403, detail="this plan was proposed to a different operator"
+            )
+        return rec
+
     @router.get("/health")
     async def health() -> dict[str, Any]:
         from . import assistant_openai
@@ -1013,31 +1134,65 @@ def build_assistant_router() -> APIRouter:
             never blocks or breaks the stream. Paired with the ``origin`` field
             on the later ``control_action`` row (control.py)."""
 
-            if db is None:
-                return
             equipment_id = str(proposal.get("equipment_id") or "unknown")
-            payload = {
-                "actor": actor,
-                "action": proposal.get("action"),
-                "passthrough_action": proposal.get("passthrough_action"),
-                "args": proposal.get("args"),
-                "reason": proposal.get("reason"),
-                "device_state": proposal.get("device_state"),
-            }
-            message = (
-                f"assistant proposed {proposal.get('action')} on "
-                f"{equipment_id} to {actor}"
+            await _audit(
+                db,
+                equipment_id,
+                "assistant_proposal",
+                f"assistant proposed {proposal.get('action')} on {equipment_id} to {actor}",
+                {
+                    "actor": actor,
+                    "action": proposal.get("action"),
+                    "passthrough_action": proposal.get("passthrough_action"),
+                    "args": proposal.get("args"),
+                    "reason": proposal.get("reason"),
+                    "device_state": proposal.get("device_state"),
+                },
             )
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                functools.partial(
-                    db.record_equipment_event,
-                    equipment_id,
-                    "assistant_proposal",
-                    message=message,
-                    payload=payload,
-                ),
+
+        async def record_plan(plan: dict[str, Any]) -> None:
+            """Step 1i: cache the plan for the approve/finish routes and audit
+            it. Only a plan whose hash the dashboard can recompute from its
+            own steps, and that names this request's actor, is cached — a
+            tool result that fails either is logged and left un-approvable
+            (the card still renders, Approve then 404s)."""
+
+            plan_id = plan.get("plan_id")
+            steps = plan.get("steps")
+            if (
+                not isinstance(plan_id, str)
+                or not plan_id
+                or not isinstance(steps, list)
+                or not steps
+                or plan.get("actor") != actor
+                or plan.get("step_hash") != plan_step_hash(steps)
+            ):
+                logger.warning(
+                    "assistant_plan ignored: malformed or mis-attributed plan %r", plan_id
+                )
+                return
+            _sweep_plans()
+            ttl = float(plan.get("expires_in_s") or PLAN_TTL_S)
+            plans[plan_id] = {
+                "plan": plan,
+                "actor": actor,
+                "expires_at": time.monotonic() + ttl,
+                "approved_at": None,
+            }
+            equipment_id = str(plan.get("equipment_id") or "unknown")
+            await _audit(
+                db,
+                equipment_id,
+                "assistant_plan_proposed",
+                f"assistant proposed a {len(steps)}-step plan on {equipment_id} to {actor}",
+                {
+                    "actor": actor,
+                    "plan_id": plan_id,
+                    "step_hash": plan.get("step_hash"),
+                    "steps": steps,
+                    "reason": plan.get("reason"),
+                    "device_state": plan.get("device_state"),
+                },
             )
 
         async def gen() -> AsyncIterator[bytes]:
@@ -1053,6 +1208,7 @@ def build_assistant_router() -> APIRouter:
                     control=control,
                     actor=actor,
                     on_proposal=record_proposal if control else None,
+                    on_plan=record_plan if control else None,
                 ):
                     yield frame
             except asyncio.CancelledError:
@@ -1080,7 +1236,114 @@ def build_assistant_router() -> APIRouter:
             },
         )
 
+    @router.post("/plans/{plan_id}/approve")
+    async def approve_plan(
+        plan_id: str, request: Request, body: PlanApproveRequest
+    ) -> dict[str, Any]:
+        """Record the operator's approval of one exact step list (Step 1i).
+
+        The approval is a *review record*, not a permission grant: each step
+        the browser then sends is an ordinary passthrough call under the
+        operator's own per-equipment authorization, exactly like a tile
+        click. What this route adds is the refusal when the hash sent back is
+        not the hash of the plan the tool produced (409) — the property that
+        makes "a human approved this" mean "this, as shown".
+        """
+
+        actor = request.headers.get("x-auth-user")
+        rec = _plan_record(plan_id, actor)
+        plan = rec["plan"]
+        if rec["approved_at"] is not None:
+            raise HTTPException(status_code=409, detail="this plan is already approved")
+        if body.step_hash != plan["step_hash"]:
+            raise HTTPException(
+                status_code=409,
+                detail="the plan changed since it was displayed — re-read it and approve again",
+            )
+        rec["approved_at"] = time.time()
+        # Running a long plan and reporting back takes a while; keep the record
+        # for another TTL from the approval rather than from the proposal.
+        rec["expires_at"] = time.monotonic() + PLAN_TTL_S
+        equipment_id = str(plan.get("equipment_id") or "unknown")
+        await _audit(
+            getattr(request.app.state, "db", None),
+            equipment_id,
+            "assistant_plan_approved",
+            f"{actor} approved a {len(plan['steps'])}-step assistant plan on {equipment_id}",
+            {
+                "actor": actor,
+                "plan_id": plan_id,
+                "step_hash": plan["step_hash"],
+                "steps": plan["steps"],
+                "reason": plan.get("reason"),
+            },
+        )
+        return {
+            "plan_id": plan_id,
+            "step_hash": plan["step_hash"],
+            "approved": True,
+            "expires_in_s": PLAN_TTL_S,
+        }
+
+    @router.post("/plans/{plan_id}/finish")
+    async def finish_plan(
+        plan_id: str, request: Request, body: PlanFinishRequest
+    ) -> dict[str, Any]:
+        """Audit how an approved plan ended and retire its record. A draft may
+        only be reported ``aborted`` (dismissed); ``executed``/``failed``
+        require the approval that let it run."""
+
+        actor = request.headers.get("x-auth-user")
+        rec = _plan_record(plan_id, actor)
+        plan = rec["plan"]
+        if body.status != "aborted" and rec["approved_at"] is None:
+            raise HTTPException(status_code=409, detail="this plan was never approved")
+        plans.pop(plan_id, None)
+        equipment_id = str(plan.get("equipment_id") or "unknown")
+        ran = sum(1 for r in body.results if r.outcome == "ok")
+        await _audit(
+            getattr(request.app.state, "db", None),
+            equipment_id,
+            "assistant_plan_finished",
+            f"assistant plan on {equipment_id} {body.status} for {actor} "
+            f"({ran}/{len(plan['steps'])} steps ok)",
+            {
+                "actor": actor,
+                "plan_id": plan_id,
+                "step_hash": plan["step_hash"],
+                "status": body.status,
+                "results": [r.model_dump() for r in body.results],
+                "halt_reason": body.halt_reason,
+            },
+        )
+        return {"ok": True}
+
     return router
+
+
+async def _audit(
+    db: Any,
+    equipment_id: str,
+    event_type: str,
+    message: str,
+    payload: dict[str, Any],
+) -> None:
+    """Append one ``equipment_events`` row. Best-effort and off the event loop
+    (the sqlite write runs in a worker thread); a no-op without a DB."""
+
+    if db is None:
+        return
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        functools.partial(
+            db.record_equipment_event,
+            equipment_id,
+            event_type,
+            message=message,
+            payload=payload,
+        ),
+    )
 
 
 __all__ = ["build_assistant_router", "SYSTEM_PROMPT", "DEFAULT_MODEL"]

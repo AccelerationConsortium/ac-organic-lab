@@ -240,6 +240,27 @@ def test_translate_event_emits_proposal_frame() -> None:
     assert prop["equipment_id"] == "xarm"
 
 
+def test_translate_event_emits_plan_frame() -> None:
+    """Step 1i: a propose_plan result surfaces as its own frame, beside (not
+    instead of) the tool_result, so the bubble renders the plan card."""
+
+    payload = {"plan": {"plan_id": "p1", "equipment_id": "xarm", "steps": [{"action": "move.n1"}]}}
+    event = {
+        "type": "user",
+        "message": {
+            "content": [
+                {"type": "tool_result", "content": [{"type": "text", "text": json.dumps(payload)}]}
+            ]
+        },
+    }
+    frames = assistant._translate_event(event)
+    types = [f["type"] for f in frames]
+    assert "tool_result" in types
+    assert "plan" in types
+    assert "proposal" not in types
+    assert next(f for f in frames if f["type"] == "plan")["plan"]["plan_id"] == "p1"
+
+
 def test_translate_event_history_tool_result_has_no_proposal() -> None:
     event = {
         "type": "user",
@@ -289,7 +310,9 @@ def test_chat_route_is_proxy_safe(monkeypatch) -> None:
 
     from app import assistant_openai
 
-    async def fake_turn(messages, *, control=False, actor=None, on_proposal=None):
+    async def fake_turn(
+        messages, *, control=False, actor=None, on_proposal=None, on_plan=None
+    ):
         yield assistant._sse({"type": "text", "delta": "hi"})
         yield assistant._sse({"type": "done"})
 
@@ -318,3 +341,181 @@ def test_chat_route_is_proxy_safe(monkeypatch) -> None:
     assert frames[0].startswith(b": ")
     assert frames[1] == b'data: {"type": "text", "delta": "hi"}'
     assert frames[2] == b'data: {"type": "done"}'
+
+
+# ---------------------------------------------------------------------------
+# Step 1i — plans: frame extraction and the approve / finish routes
+# ---------------------------------------------------------------------------
+
+PLAN_STEPS = [
+    {"action": "move.a", "passthrough_action": "graph/move_to", "args": {"node_id": "a"}},
+    {"action": "move.b", "passthrough_action": "graph/move_to", "args": {"node_id": "b"}},
+]
+PLAN = {
+    "plan_id": "p-test-1",
+    "equipment_id": "xarm",
+    "equipment_name": "UFactory xArm5",
+    "kind": "robot_arm",
+    "steps": PLAN_STEPS,
+    "step_hash": assistant.plan_step_hash(PLAN_STEPS),
+    "reason": "route to the reader",
+    "actor": "alice@example.edu",
+    "expires_in_s": 600,
+    "device_state": {"equipment_status": "ready", "activity": "idle", "message": None},
+}
+
+
+def test_plan_from_tool_result_string_and_envelope() -> None:
+    raw = json.dumps({"plan": PLAN})
+    assert assistant._plan_from_tool_result({"content": raw}) == PLAN
+    # Claude Code's {"result": "<json>"} envelope, list-of-text-blocks form.
+    wrapped = json.dumps({"result": raw})
+    assert (
+        assistant._plan_from_tool_result({"content": [{"type": "text", "text": wrapped}]})
+        == PLAN
+    )
+    # A proposal is not a plan, and a refusal is neither.
+    assert assistant._plan_from_tool_result({"content": json.dumps({"proposal": {}})}) is None
+    assert assistant._plan_from_tool_result({"content": json.dumps({"error": "x"})}) is None
+    assert assistant._proposal_from_tool_result({"content": raw}) is None
+
+
+class _FakeDb:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, dict]] = []
+
+    def record_equipment_event(self, device_id, event_type, *, message=None, payload=None, **_):
+        self.events.append((device_id, event_type, payload or {}))
+
+
+def _plan_client(monkeypatch, plan: dict, *, actor: str = "alice@example.edu"):
+    """An app whose Control turn proposes ``plan`` (through the runner's on_plan
+    hook, as the real backends do) — returns (client, db)."""
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app import assistant_openai
+
+    async def fake_turn(
+        messages, *, control=False, actor=None, on_proposal=None, on_plan=None
+    ):
+        if control and on_plan is not None:
+            await on_plan(plan)
+        yield assistant._sse({"type": "plan", "plan": plan})
+        yield assistant._sse({"type": "done"})
+
+    monkeypatch.setattr(assistant, "DEFAULT_BACKEND", "openai")
+    monkeypatch.setattr(assistant, "CONTROL_BACKEND", "openai")
+    monkeypatch.delenv("DASHBOARD_CONTROL_OPEN", raising=False)
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    monkeypatch.setattr(assistant_openai, "run_openai_turn", fake_turn)
+
+    app = FastAPI()
+    app.include_router(assistant.build_assistant_router())
+    db = _FakeDb()
+    app.state.db = db
+    client = TestClient(app)
+    with client.stream(
+        "POST",
+        "/api/assistant/chat",
+        json={"mode": "control", "messages": [{"role": "user", "content": "go"}]},
+        headers={"X-Auth-User": actor},
+    ) as r:
+        body = b"".join(r.iter_bytes())
+    assert b'"type": "plan"' in body
+    return client, db
+
+
+def test_plan_approve_then_finish_audits_end_to_end(monkeypatch) -> None:
+    client, db = _plan_client(monkeypatch, PLAN)
+    hdr = {"X-Auth-User": "alice@example.edu"}
+
+    r = client.post(
+        "/api/assistant/plans/p-test-1/approve", json={"step_hash": PLAN["step_hash"]}, headers=hdr
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["approved"] is True
+    # Approval is a one-shot review record, not a toggle.
+    r = client.post(
+        "/api/assistant/plans/p-test-1/approve", json={"step_hash": PLAN["step_hash"]}, headers=hdr
+    )
+    assert r.status_code == 409
+
+    r = client.post(
+        "/api/assistant/plans/p-test-1/finish",
+        json={
+            "status": "failed",
+            "results": [
+                {"index": 1, "outcome": "ok"},
+                {"index": 2, "outcome": "failed", "status_code": 412, "message": "not reachable"},
+            ],
+            "halt_reason": "step 2 (move.b) failed: 412",
+        },
+        headers=hdr,
+    )
+    assert r.status_code == 200
+    # Retired: the record is gone, so a second report is an unknown plan.
+    r = client.post(
+        "/api/assistant/plans/p-test-1/finish", json={"status": "aborted"}, headers=hdr
+    )
+    assert r.status_code == 404
+
+    assert [e[1] for e in db.events] == [
+        "assistant_plan_proposed",
+        "assistant_plan_approved",
+        "assistant_plan_finished",
+    ]
+    assert all(e[0] == "xarm" for e in db.events)
+    assert db.events[1][2]["step_hash"] == PLAN["step_hash"]
+    assert db.events[2][2]["status"] == "failed"
+
+
+def test_plan_approve_refuses_wrong_hash_other_actor_and_unknown(monkeypatch) -> None:
+    client, _db = _plan_client(monkeypatch, PLAN)
+    hdr = {"X-Auth-User": "alice@example.edu"}
+
+    # The hash the operator sends must be the hash of what the tool produced.
+    r = client.post(
+        "/api/assistant/plans/p-test-1/approve", json={"step_hash": "0" * 64}, headers=hdr
+    )
+    assert r.status_code == 409
+    # Proposed to alice; bob cannot approve it, and nobody can unauthenticated.
+    r = client.post(
+        "/api/assistant/plans/p-test-1/approve",
+        json={"step_hash": PLAN["step_hash"]},
+        headers={"X-Auth-User": "bob@example.edu"},
+    )
+    assert r.status_code == 403
+    r = client.post(
+        "/api/assistant/plans/p-test-1/approve", json={"step_hash": PLAN["step_hash"]}
+    )
+    assert r.status_code == 401
+    r = client.post(
+        "/api/assistant/plans/nope/approve", json={"step_hash": PLAN["step_hash"]}, headers=hdr
+    )
+    assert r.status_code == 404
+    # An un-approved plan cannot be reported as run — only as dismissed.
+    r = client.post(
+        "/api/assistant/plans/p-test-1/finish", json={"status": "executed"}, headers=hdr
+    )
+    assert r.status_code == 409
+    r = client.post(
+        "/api/assistant/plans/p-test-1/finish", json={"status": "aborted"}, headers=hdr
+    )
+    assert r.status_code == 200
+
+
+def test_plan_with_wrong_hash_from_tool_is_not_approvable(monkeypatch) -> None:
+    """The dashboard recomputes the hash from the steps it was handed; a tool
+    result whose hash does not match is never cached, so Approve 404s."""
+
+    bad = {**PLAN, "plan_id": "p-bad", "step_hash": "f" * 64}
+    client, db = _plan_client(monkeypatch, bad)
+    r = client.post(
+        "/api/assistant/plans/p-bad/approve",
+        json={"step_hash": "f" * 64},
+        headers={"X-Auth-User": "alice@example.edu"},
+    )
+    assert r.status_code == 404
+    assert db.events == []

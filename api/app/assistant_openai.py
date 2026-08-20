@@ -51,6 +51,7 @@ from .assistant import (
     _control_server_env,
     _history_server_env,
     _mcp_server_command,
+    _plan_from_tool_result,
     _proposal_from_tool_result,
     _sse,
 )
@@ -367,6 +368,7 @@ async def run_openai_turn(
     control: bool = False,
     actor: str | None = None,
     on_proposal: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
+    on_plan: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
 ) -> AsyncIterator[bytes]:
     key = api_key()
     include_control = control and bool(actor)
@@ -578,6 +580,18 @@ async def run_openai_turn(
                                         "assistant_proposal audit failed", exc_info=True
                                     )
                             yield _sse({"type": "proposal", "proposal": proposal})
+                        # Step 1i: a propose_plan result is the multi-step
+                        # sibling of a proposal — one card, approved by hash.
+                        plan = _plan_from_tool_result({"content": result_text})
+                        if plan is not None:
+                            if on_plan is not None:
+                                try:
+                                    await on_plan(plan)
+                                except Exception:  # noqa: BLE001 - audit must not break the stream
+                                    logger.warning(
+                                        "assistant_plan audit failed", exc_info=True
+                                    )
+                            yield _sse({"type": "plan", "plan": plan})
                         convo.append(
                             {
                                 "role": "tool",

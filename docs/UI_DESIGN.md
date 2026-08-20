@@ -729,7 +729,7 @@ single-glyph surfaces; rendering pre-tracking time as zero usage.
 
 ---
 
-## 5. Assistant control mode [IMPLEMENTED — Steps 1, 1b, 1c, 1d, 1e, 1f]
+## 5. Assistant control mode [IMPLEMENTED — Steps 1, 1b–1i]
 
 **Drafted 2026-08-07** on branch `actionable-assistant`; **Step 1 implemented
 2026-08-11**. Extends the tier-2 dashboard assistant (§2) from a purely
@@ -744,8 +744,10 @@ the propose-only `lab-control` MCP server (`api/app/assistant_control.py`), a
 `AssistantBubble.tsx`, and the `X-Control-Origin`/`assistant_proposal` audit
 trail. **Step 1b (2026-08-12)** extends the resolver to the OT-2, and
 **Step 1c (same day)** to that device's full advertised surface behind a
-field-level guard — see §5.3b. Step 2 (autonomy) is sketched at the end and is
-**not** approved.
+field-level guard — see §5.3b. **Step 1i (2026-08-20)** lets one proposal
+carry an ordered multi-step *plan* on one device, approved as a whole and run
+step by step from the browser — see §5.3b. Step 2 (autonomy) is sketched at
+the end and is **not** approved.
 
 ### 5.1 The commitment: the assistant proposes, the browser executes
 
@@ -1103,6 +1105,67 @@ card per step, re-checking `allowed_actions` between cards. If
 uncleared recent-failure window), the assistant must say so rather than
 propose it anyway.
 
+#### Step 1i — multi-step plans on one device (2026-08-20, operator decision)
+
+Step 1c made the operator the sequencer: a sequence ran as consecutive
+confirm cards, one click binding one step. In practice that meant clicking
+through a four-card filtration cycle or a three-card pick, and the operator
+asked for what the OT-2 gateway already offers its own chat panel
+(`opentrons-server/docs/AGENT_PROPOSALS.md`): propose the **whole sequence
+once**, review it **once**, run it. Step 1i adopts that model, generalized
+to every kind Control mode can already propose for, with **no new
+actuating path**:
+
+- **`propose_plan(equipment_id, steps, reason)`** is the multi-step sibling
+  of `propose_action` in `lab-control`. Same gates, applied per step — the
+  actor binding, the per-kind allowlist, the resolver, the args schema, the
+  field guard, per-equipment authz — and the same refusal shape, now naming
+  the failing `step`. The one deliberate difference: only **step 1** is held
+  to the device's live `allowed_actions`. Later steps are legal only once
+  the earlier ones have run (`seal.start` after `stage.in`, `aspirate` after
+  `pick_up_tip`, the next hop after this one), so the live list cannot
+  vouch for them at proposal time; the device re-checks every step as it is
+  actually sent. One device per plan; at most `MAX_PLAN_STEPS` (40) steps —
+  a card nobody can read end to end is a rubber stamp.
+- **One card, approved by hash.** The card renders the ordered list with
+  arguments and device state. **Approve these N steps** sends the
+  `step_hash` of exactly what was rendered to
+  `POST /api/assistant/plans/{id}/approve`; the API compares it with the
+  hash it recomputed from the steps the tool actually produced (cached
+  in-process when the `plan` frame passed through, TTL 10 min, gone on
+  restart — an approval is a review of one moment) and refuses a mismatch
+  with 409, a different operator with 403, an unknown/expired id with 404.
+  The approval is a **review record** (`assistant_plan_approved`: who agreed
+  to which steps), not a permission grant.
+- **Run: the browser executes, step by step.** §5.1's commitment holds
+  verbatim: no model-driven code path POSTs to a device. The browser sends
+  each step through the same `/api/equipment/{id}/control/{action}`
+  passthrough a tile click uses — per-equipment authz, the per-request
+  claim dance, the device's own 412/423, and the `control_action` audit row
+  all apply per step. Each row carries `origin: assistant-plan` and
+  `plan: <plan_id>#<step>` so it joins back to the approval. The first
+  refusal **halts** the plan and marks the rest skipped — never
+  continue-past-error, because later steps assume earlier ones happened.
+  The browser then reports the outcome (`assistant_plan_finished`), best
+  effort. Two clicks per plan (Approve, then Run), not one: approving
+  records what was reviewed, and it keeps the last action before hardware
+  moves from being a single click on a screen nobody read.
+- **What it deliberately does not do.** No claim is held across the plan
+  (the passthrough is per-request by design, ARCHITECTURE §"dashboard
+  writer"); another session can take the device between steps, and the
+  device's 423 then halts the plan — same as clicking through cards. No
+  layer-4 interlocks run (unchanged from Step 1; single-device is the case
+  where that is acceptable). Closing the tab mid-run stops sending steps —
+  the human is supposed to be present. Cross-device work is still a
+  workflow plan (§5.5).
+
+Binding-rules note: Part I rule 3 ("no ad-hoc command sequences") was
+already carved by Step 1c's operator-sequenced cards; Step 1i changes only
+the *granularity* of the human approval (one review per sequence instead of
+per step), never the existence of the hardware gate — the loosening Part II
+§"trust ladder" names as the intended direction. The human still authorizes
+every hardware action and the audit names them.
+
 ### 5.4 What control mode does *not* change
 
 - **The tier-2 trust level (§2.2).** No tool in either mode actuates, so the
@@ -1111,9 +1174,9 @@ propose it anyway.
 - **Interlocks.** The passthrough deliberately runs no skill preconditions and
   no project interlocks (ARCHITECTURE decision #1); the device's 412/423 is
   the only backstop. Single-equipment actions are exactly the case where that
-  is acceptable — which is *why* Step 1 is capped at one device per proposal.
-  Cross-device sequencing is what layer-4 interlocks exist for, and it belongs
-  in a plan, not a chat turn.
+  is acceptable — which is *why* Step 1 is capped at one device per proposal,
+  and Step 1i at one device per plan. Cross-device sequencing is what layer-4
+  interlocks exist for, and it belongs in a workflow plan, not a chat turn.
 - **Binding rules (AGENTIC_LAB_DESIGN.md Part I).** A human still authorizes
   every hardware action, and the audit names them.
 

@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError, authorizeAssistantAction } from "@/lib/api";
+import {
+  ApiError,
+  approveAssistantPlan,
+  authorizeAssistantAction,
+  finishAssistantPlan,
+  type AssistantPlanStepResult,
+} from "@/lib/api";
 import { useUserAuth } from "@/lib/user-auth";
 
 /**
@@ -80,6 +86,46 @@ interface Proposal {
     activity: string;
     message: string | null;
   };
+}
+
+/** One step of a plan: the same shape as a Proposal's action triple. */
+interface PlanStep {
+  action: string;
+  passthrough_action: string;
+  args: Record<string, unknown>;
+}
+
+/** A validated, ordered multi-step plan on ONE device from lab-control's
+ *  `propose_plan` (UI_DESIGN §5 Step 1i). Approved as a whole — by the hash
+ *  of exactly these steps — then run by this browser one step at a time. */
+interface Plan {
+  plan_id: string;
+  equipment_id: string;
+  equipment_name: string;
+  kind: string;
+  steps: PlanStep[];
+  step_hash: string;
+  reason: string;
+  actor: string;
+  expires_in_s: number;
+  device_state: {
+    equipment_status: string;
+    activity: string;
+    message: string | null;
+  };
+}
+
+type PlanPhase = "draft" | "approving" | "approved" | "running" | "executed" | "failed";
+type StepOutcome = "pending" | "running" | "ok" | "failed" | "skipped";
+
+/** Where a plan card is in its life, kept beside the immutable Plan. */
+interface PlanRun {
+  phase: PlanPhase;
+  outcomes: StepOutcome[];
+  messages: (string | null)[];
+  haltReason: string | null;
+  error: string | null;
+  expired: boolean;
 }
 
 type Mode = "ask" | "control";
@@ -178,6 +224,11 @@ function AssistantBubbleInner() {
     unknown
   > | null>(null);
   const [authorizeError, setAuthorizeError] = useState<string | null>(null);
+  // Step 1i: the plan card. `plan` is what the tool produced (never edited
+  // here — the hash Approve sends must be the hash of exactly this), `planRun`
+  // is its review/run state.
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [planRun, setPlanRun] = useState<PlanRun | null>(null);
   // null = still checking; once resolved, we know whether to render at all.
   // The bubble only renders if the backend's health endpoint reports it can
   // spawn `claude` (the Claude Code CLI subprocess backend). If the CLI
@@ -204,6 +255,12 @@ function AssistantBubbleInner() {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const expiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const planExpiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True while runPlan's step loop is in flight. A running plan is never
+  // cleared out from under its loop — not by a new turn, not by closing the
+  // panel — because the device calls keep going regardless and the operator
+  // must be able to see how far they got.
+  const planRunningRef = useRef(false);
   // True once a run has reached a terminal SSE frame ("done" or "error").
   // A stream that ends without one was cut mid-turn, not completed — that is
   // the "went quiet / non-responsive" case, and it must be surfaced instead
@@ -480,6 +537,16 @@ function AssistantBubbleInner() {
     setAuthorizeError(null);
   }, []);
 
+  const clearPlan = useCallback(() => {
+    if (planRunningRef.current) return;
+    if (planExpiryRef.current) {
+      clearTimeout(planExpiryRef.current);
+      planExpiryRef.current = null;
+    }
+    setPlan(null);
+    setPlanRun(null);
+  }, []);
+
   // Cancel any in-flight stream when the panel closes or the component
   // unmounts, and reset control mode + drop any outstanding proposal.
   useEffect(() => {
@@ -491,12 +558,14 @@ function AssistantBubbleInner() {
     if (!open) {
       setMode("ask");
       clearProposal();
+      clearPlan();
     }
-  }, [open, clearProposal]);
+  }, [open, clearProposal, clearPlan]);
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
       if (expiryRef.current) clearTimeout(expiryRef.current);
+      if (planExpiryRef.current) clearTimeout(planExpiryRef.current);
     };
   }, []);
 
@@ -505,8 +574,10 @@ function AssistantBubbleInner() {
       const trimmed = text.trim();
       if (!trimmed || sending) return;
       setError(null);
-      // A new turn supersedes any pending proposal / result banner.
+      // A new turn supersedes any pending proposal / result banner — and an
+      // un-run plan card (a running one stays; see planRunningRef).
       clearProposal();
+      clearPlan();
       setAuthorizeResult(null);
       setAuthorizeResponse(null);
 
@@ -588,7 +659,7 @@ function AssistantBubbleInner() {
         setSending(false);
       }
     },
-    [turns, sending, mode, clearProposal]
+    [turns, sending, mode, clearProposal, clearPlan]
   );
 
   const applyEvent = useCallback(
@@ -605,6 +676,30 @@ function AssistantBubbleInner() {
         if (expiryRef.current) clearTimeout(expiryRef.current);
         const ttlMs = Math.max(5, Number(p.expires_in_s) || 120) * 1000;
         expiryRef.current = setTimeout(() => setProposalExpired(true), ttlMs);
+        return;
+      }
+      // Step 1i: a plan is a proposal's multi-step sibling — one card, the
+      // whole ordered list, approved by hash and then run from here.
+      if (event.type === "plan" && event.plan && typeof event.plan === "object") {
+        const p = event.plan as Plan;
+        if (!Array.isArray(p.steps) || p.steps.length === 0) return;
+        if (planRunningRef.current) return; // never displace a plan mid-run
+        setPlan(p);
+        setPlanRun({
+          phase: "draft",
+          outcomes: p.steps.map(() => "pending"),
+          messages: p.steps.map(() => null),
+          haltReason: null,
+          error: null,
+          expired: false,
+        });
+        if (planExpiryRef.current) clearTimeout(planExpiryRef.current);
+        const ttlMs = Math.max(5, Number(p.expires_in_s) || 600) * 1000;
+        planExpiryRef.current = setTimeout(
+          () =>
+            setPlanRun((r) => (r && r.phase === "draft" ? { ...r, expired: true } : r)),
+          ttlMs
+        );
         return;
       }
       setTurns((prev) => {
@@ -705,14 +800,110 @@ function AssistantBubbleInner() {
     }
   }, [proposal, authorizing, proposalExpired, clearProposal]);
 
+  // ---- Plan card: approve (by hash) → run (this browser, step by step) ----
+
+  const approvePlan = useCallback(async () => {
+    if (!plan || !planRun || planRun.phase !== "draft" || planRun.expired) return;
+    setPlanRun((r) => r && { ...r, phase: "approving", error: null });
+    try {
+      // The hash of exactly the steps this card rendered — a plan that
+      // changed, or a dashboard that restarted, is refused (409/404), never
+      // silently re-approved.
+      await approveAssistantPlan(plan.plan_id, plan.step_hash);
+      setPlanRun((r) => r && { ...r, phase: "approved" });
+    } catch (e) {
+      const msg =
+        e instanceof ApiError ? `${e.status}: ${e.message}` : (e as Error).message;
+      setPlanRun((r) => r && { ...r, phase: "draft", error: msg });
+    }
+  }, [plan, planRun]);
+
+  const runPlan = useCallback(async () => {
+    if (!plan || !planRun || planRun.phase !== "approved") return;
+    planRunningRef.current = true;
+    const outcomes: StepOutcome[] = plan.steps.map(() => "pending");
+    const messages: (string | null)[] = plan.steps.map(() => null);
+    const results: AssistantPlanStepResult[] = [];
+    let haltReason: string | null = null;
+    setPlanRun(
+      (r) =>
+        r && {
+          ...r,
+          phase: "running",
+          outcomes: [...outcomes],
+          messages: [...messages],
+          haltReason: null,
+          error: null,
+        }
+    );
+    for (let i = 0; i < plan.steps.length; i++) {
+      const step = plan.steps[i];
+      outcomes[i] = "running";
+      setPlanRun((r) => r && { ...r, outcomes: [...outcomes] });
+      try {
+        // The same passthrough a tile click or a single Authorize uses —
+        // per-equipment authz, the device's own 412/423, and the audit row
+        // all apply per step; the plan ref joins the row to the approval.
+        await authorizeAssistantAction(
+          plan.equipment_id,
+          step.passthrough_action,
+          step.args,
+          { plan: `${plan.plan_id}#${i + 1}` }
+        );
+        outcomes[i] = "ok";
+        results.push({ index: i + 1, outcome: "ok" });
+      } catch (e) {
+        const status = e instanceof ApiError ? e.status : null;
+        const msg =
+          e instanceof ApiError ? `${e.status}: ${e.message}` : (e as Error).message;
+        outcomes[i] = "failed";
+        messages[i] = msg;
+        results.push({ index: i + 1, outcome: "failed", status_code: status, message: msg });
+        // Fail-fast, never continue-past-error: the later steps of a
+        // sequence assume the earlier ones happened.
+        for (let j = i + 1; j < plan.steps.length; j++) {
+          outcomes[j] = "skipped";
+          results.push({ index: j + 1, outcome: "skipped" });
+        }
+        haltReason = `step ${i + 1} (${step.action}) failed: ${msg}`;
+      }
+      setPlanRun((r) => r && { ...r, outcomes: [...outcomes], messages: [...messages] });
+      if (haltReason) break;
+    }
+    const phase: PlanPhase = haltReason ? "failed" : "executed";
+    setPlanRun((r) => r && { ...r, phase, haltReason });
+    planRunningRef.current = false;
+    try {
+      await finishAssistantPlan(plan.plan_id, {
+        status: phase,
+        results,
+        halt_reason: haltReason,
+      });
+    } catch {
+      // Audit is best-effort here: the per-step control_action rows already
+      // exist, stamped with the plan ref.
+    }
+  }, [plan, planRun]);
+
+  const dismissPlan = useCallback(() => {
+    if (!plan || !planRun || planRun.phase === "running") return;
+    if (planRun.phase === "draft" || planRun.phase === "approved") {
+      void finishAssistantPlan(plan.plan_id, { status: "aborted", results: [] }).catch(
+        () => undefined
+      );
+    }
+    clearPlan();
+  }, [plan, planRun, clearPlan]);
+
   const clearHistory = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
     setTurns([]);
     setError(null);
     clearProposal();
+    clearPlan();
     setAuthorizeResult(null);
-  }, [clearProposal]);
+  }, [clearProposal, clearPlan]);
 
   // Suppress the launcher entirely if the dashboard host has no API key.
   // The MCP path (Claude Code) is the supported alternative; see the deploy
@@ -892,6 +1083,15 @@ function AssistantBubbleInner() {
                 error={authorizeError}
                 onAuthorize={() => void authorizeProposal()}
                 onDismiss={clearProposal}
+              />
+            )}
+            {plan && planRun && (
+              <PlanCard
+                plan={plan}
+                run={planRun}
+                onApprove={() => void approvePlan()}
+                onRun={() => void runPlan()}
+                onDismiss={dismissPlan}
               />
             )}
             {authorizeResult && (
@@ -1189,6 +1389,159 @@ function ProposalCard({
           className="rounded px-2 py-1 text-[11px] text-ink-subtle hover:bg-purple-100 disabled:opacity-60 dark:text-slate-400 dark:hover:bg-purple-900/40"
         >
           Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const STEP_GLYPH: Record<StepOutcome, string> = {
+  pending: "◦",
+  running: "↻",
+  ok: "✓",
+  failed: "×",
+  skipped: "–",
+};
+
+const STEP_TONE: Record<StepOutcome, string> = {
+  pending: "text-ink dark:text-slate-200",
+  running: "text-purple-800 dark:text-purple-300 animate-pulse",
+  ok: "text-emerald-700 dark:text-emerald-400",
+  failed: "text-rose-700 dark:text-rose-400",
+  skipped: "text-slate-400 line-through dark:text-slate-500",
+};
+
+/** The multi-step sibling of ProposalCard (UI_DESIGN §5 Step 1i). Same
+ *  authoritative-fields-first layout; the whole ordered list is reviewed at
+ *  once and approved by hash, then run step by step from this browser. Two
+ *  clicks — Approve, then Run — not one: approving records *what was
+ *  reviewed*, which is what makes the audit row meaningful, and it keeps the
+ *  last action before hardware moves from being a single click on a screen
+ *  nobody read (same reasoning as the OT-2 gateway's plan panel). */
+function PlanCard({
+  plan,
+  run,
+  onApprove,
+  onRun,
+  onDismiss,
+}: {
+  plan: Plan;
+  run: PlanRun;
+  onApprove: () => void;
+  onRun: () => void;
+  onDismiss: () => void;
+}) {
+  const busy = run.phase === "approving" || run.phase === "running";
+  const settled = run.phase === "executed" || run.phase === "failed";
+  const okCount = run.outcomes.filter((o) => o === "ok").length;
+  const title =
+    run.phase === "executed"
+      ? "Plan finished"
+      : run.phase === "failed"
+        ? "Plan halted"
+        : run.phase === "running"
+          ? "Running plan"
+          : run.phase === "approved"
+            ? "Plan approved"
+            : "Authorize plan";
+  return (
+    <div className="rounded-lg border border-purple-300 bg-purple-50 p-2 text-[12px] dark:border-purple-700 dark:bg-purple-950/40">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-semibold text-purple-900 dark:text-purple-100">
+          {title} · {plan.steps.length} steps
+        </span>
+        <span className="text-[10px] text-purple-700 dark:text-purple-300">
+          proposed to {plan.actor}
+        </span>
+      </div>
+      <dl className="space-y-0.5 text-ink dark:text-slate-100">
+        <Row label="Device" value={`${plan.equipment_name} (${plan.equipment_id})`} />
+        <Row
+          label="Device state"
+          value={`${plan.device_state.equipment_status} · ${plan.device_state.activity}`}
+        />
+      </dl>
+      <ol className="mt-1 flex flex-col gap-0.5" aria-label="plan steps">
+        {plan.steps.map((s, i) => {
+          const outcome = run.outcomes[i] ?? "pending";
+          const entries = Object.entries(s.args ?? {});
+          const block = entries.length > 0 && argsNeedBlock(s.args ?? {});
+          return (
+            <li key={i} className={`font-mono text-[11px] ${STEP_TONE[outcome]}`}>
+              {STEP_GLYPH[outcome]} {i + 1}. {s.action}
+              {entries.length > 0 && !block && (
+                <span className="text-ink-subtle dark:text-slate-400">
+                  {" "}
+                  {entries.map(([k, v]) => `${k}=${formatArg(v)}`).join(", ")}
+                </span>
+              )}
+              {block && (
+                <pre className="mt-0.5 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-purple-100/60 p-1.5 font-mono text-[10px] leading-snug dark:bg-purple-900/30">
+                  {JSON.stringify(s.args, null, 2)}
+                </pre>
+              )}
+              {run.messages[i] && (
+                <span className="ml-1 font-sans text-rose-700 dark:text-rose-400">
+                  {run.messages[i]}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      {plan.reason && (
+        <p className="mt-1 text-[11px] italic text-purple-800 dark:text-purple-300">
+          {plan.reason}
+        </p>
+      )}
+      {run.error && (
+        <p className="mt-1 text-[11px] text-rose-700 dark:text-rose-300">{run.error}</p>
+      )}
+      {run.haltReason && (
+        <p className="mt-1 text-[11px] text-rose-700 dark:text-rose-300">
+          Halted: {run.haltReason}. Remaining steps were not sent.
+        </p>
+      )}
+      {run.phase === "executed" && (
+        <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300">
+          All {okCount} steps ran.
+        </p>
+      )}
+      {run.expired && run.phase === "draft" && !run.error && (
+        <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+          This plan expired. Ask again to get a fresh one.
+        </p>
+      )}
+      <div className="mt-2 flex items-center gap-2">
+        {run.phase === "draft" || run.phase === "approving" ? (
+          <button
+            type="button"
+            onClick={onApprove}
+            disabled={busy || run.expired}
+            className="rounded bg-purple-600 px-3 py-1 text-[11px] font-medium text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
+          >
+            {run.phase === "approving"
+              ? "Approving…"
+              : `Approve these ${plan.steps.length} steps`}
+          </button>
+        ) : null}
+        {run.phase === "approved" || run.phase === "running" ? (
+          <button
+            type="button"
+            onClick={onRun}
+            disabled={busy}
+            className="rounded bg-emerald-600 px-3 py-1 text-[11px] font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
+          >
+            {run.phase === "running" ? `Running ${okCount + 1}/${plan.steps.length}…` : "Run"}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={onDismiss}
+          disabled={busy}
+          className="rounded px-2 py-1 text-[11px] text-ink-subtle hover:bg-purple-100 disabled:opacity-60 dark:text-slate-400 dark:hover:bg-purple-900/40"
+        >
+          {settled ? "Close" : "Dismiss"}
         </button>
       </div>
     </div>

@@ -685,6 +685,12 @@ async def _record_control_event(
     origin = request.headers.get("x-control-origin")
     if origin:
         payload["origin"] = origin[:40]
+    # Step 1i: a step of an assistant-proposed plan also names the plan it
+    # belongs to (`<plan_id>#<step index>`), so the per-step rows can be
+    # joined back to the `assistant_plan_approved` row that reviewed them.
+    plan_ref = request.headers.get("x-control-plan")
+    if plan_ref:
+        payload["plan"] = plan_ref[:80]
     message = f"{owner} {method} {action} → {outcome} ({status_code})"
     try:
         loop = asyncio.get_event_loop()

@@ -31,11 +31,16 @@ before a proposal is returned; the check fails closed.
 
 Scope
 -----
-A proposal is exactly one action on one device. In scope:
+A proposal is one action on one device (``propose_action``), or — since Step
+1i (2026-08-20, operator decision) — one ORDERED sequence of such actions on
+one device (``propose_plan``): the same per-step validation, one card, one
+approval of the step list's hash, and the browser runs the steps in order,
+halting at the first the device refuses. Cross-device work is still out of
+scope for both (UI_DESIGN §5.4). In scope:
 
 * ``robot_arm`` move targets (``move.<node_id>`` -> the ``graph.move_to``
-  skill -> ``POST /control/graph/move_to``) — the Step 1 surface. Moves are
-  proposed one graph hop at a time; for route *reasoning*,
+  skill -> ``POST /control/graph/move_to``) — the Step 1 surface. Each hop
+  is one action; a route is a plan of hops. For route *reasoning*,
   ``list_available_actions`` forwards the device's read-only
   ``details.motion_graph`` snapshot (see :func:`_list_available_actions`).
 * the per-kind allowlist in :data:`_PROPOSABLE` — the ``liquid_handler``
@@ -65,9 +70,11 @@ without it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import secrets
 import sys
 from typing import Any
 
@@ -89,6 +96,14 @@ logger = logging.getLogger(__name__)
 # must be re-proposed. The device's 412/423 at click time remains the real
 # backstop; this only bounds how stale the confirm card may be (UI_DESIGN §5.3).
 PROPOSAL_TTL_S = 120
+# A plan card takes longer to read than a single action's — N steps with
+# arguments — and the operator approves it, then runs it, then watches it
+# finish; the dashboard keeps the plan record for this long from proposal
+# (extended by the same amount on approval) before dropping it.
+PLAN_TTL_S = 600
+# Review-ability bound. A card nobody can read end to end is a rubber stamp;
+# past this the model is told to split the work or recommend a workflow plan.
+MAX_PLAN_STEPS = 40
 
 
 # ---------------------------------------------------------------------------
@@ -559,9 +574,9 @@ async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
     context (``current_node``, single-hop ``reachable_nodes``, multi-hop
     ``travel_targets``) so the model can reason about routes instead of seeing
     only the current node's outgoing hops. This widens what the model can
-    *see*, never what it can *propose*: multi-hop travel is not proposable,
-    and every hop of a route is its own ``move.<node_id>`` proposal with its
-    own confirm card."""
+    *see*, never what it can *propose*: multi-hop travel is not a single
+    action. A route is a plan of ``move.<node_id>`` hops (``propose_plan``),
+    each hop whitelisted live by the device as it is sent."""
 
     entry = registry.by_id(equipment_id)
     if entry is None:
@@ -690,6 +705,132 @@ async def _propose_action(
     return _dumps({"proposal": proposal})
 
 
+def plan_step_hash(steps: list[dict[str, Any]]) -> str:
+    """Stable digest of a plan's ``(action, args)`` list.
+
+    Canonical JSON (sorted keys, no incidental whitespace) so a re-ordered dict
+    or reformatting cannot change it while any change to an action or an
+    argument value does. The operator approves THIS value, and the dashboard
+    refuses an approval whose hash differs from the plan it cached (409) —
+    which is what makes the approval a review of exactly what was shown rather
+    than a rubber stamp. Same construction as opentrons-server's
+    ``compute_step_hash``, so the two review surfaces agree on what "the same
+    plan" means.
+    """
+
+    payload = json.dumps(
+        [{"action": s["action"], "args": s.get("args") or {}} for s in steps],
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+async def _propose_plan(
+    registry: Registry,
+    equipment_id: str,
+    steps: list[dict[str, Any]] | None,
+    reason: str,
+) -> str:
+    """Validate an ordered multi-step sequence on ONE device and return a
+    normalized plan proposal (Step 1i).
+
+    Every gate :func:`_propose_action` applies, applied per step: a verified
+    actor is bound; the equipment exists, is enabled and reachable; each step
+    resolves to a proposable action with schema-valid args and no operator-only
+    field; the actor holds ``operator``+ on the equipment. The one deliberate
+    difference is *which* steps are held to the device's live
+    ``allowed_actions``: only the first. Later steps are legal only once the
+    earlier ones have run (``seal.start`` after ``stage.in``, ``aspirate``
+    after ``pick_up_tip``, the xArm's next hop after this one), so the live
+    list cannot vouch for them at proposal time. The device re-checks every
+    step when it is actually sent and refuses (412/423) anything its state
+    does not allow; the browser halts the plan at the first refusal and marks
+    the rest skipped — never continue-past-error.
+    """
+
+    actor = _actor()
+    if actor is None:
+        return _err(
+            "no_actor",
+            "no verified actor is bound to this session (LAB_ACTOR unset); "
+            "control proposals require a signed-in operator",
+        )
+    if not isinstance(steps, list) or not steps:
+        return _err("empty_plan", "a plan needs at least one step ({action, args})")
+    if len(steps) > MAX_PLAN_STEPS:
+        return _err(
+            "too_many_steps",
+            f"a plan may carry at most {MAX_PLAN_STEPS} steps (got {len(steps)}); "
+            "split the work, or recommend a validated workflow plan",
+        )
+
+    entry = registry.by_id(equipment_id)
+    if entry is None:
+        return _err("unknown_equipment", f"no equipment with id {equipment_id!r}")
+    if not entry.enabled or entry.maintenance is not None:
+        return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
+
+    try:
+        status = await _read_status(registry, equipment_id)
+    except EquipmentInMaintenance:
+        return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
+    except (EquipmentUnreachable, LabError) as exc:
+        return _err("unreachable", f"could not read /status for {equipment_id!r}: {exc}")
+
+    resolved_steps: list[dict[str, Any]] = []
+    for index, raw in enumerate(steps, start=1):
+        if not isinstance(raw, dict) or not isinstance(raw.get("action"), str):
+            return _err(
+                "invalid_step",
+                f"step {index} must be an object with a string 'action' and optional 'args'",
+                step=index,
+            )
+        args = raw.get("args") or {}
+        if not isinstance(args, dict):
+            return _err("invalid_step", f"step {index}: args must be an object", step=index)
+        action = _canonical_action(entry.kind, raw["action"])
+        if index == 1 and action not in (status.allowed_actions or []):
+            return _err(
+                "not_allowed",
+                f"step 1 {action!r} is not in {equipment_id!r}'s current "
+                "allowed_actions, so the plan cannot start",
+                step=1,
+                allowed_actions=list(status.allowed_actions or []),
+            )
+        try:
+            sd, passthrough, resolved_args = _resolve(entry, action, args)
+            _validate_args(sd, resolved_args)
+        except ProposalRefused as exc:
+            return _err(exc.code, f"step {index} ({action}): {exc.message}", step=index)
+        resolved_steps.append(
+            {"action": action, "passthrough_action": passthrough, "args": resolved_args}
+        )
+
+    ok, why = await _check_authz(actor, equipment_id)
+    if not ok:
+        return _err("not_authorized", why or "not authorized")
+
+    plan = {
+        "plan_id": secrets.token_urlsafe(9),
+        "equipment_id": entry.id,
+        "equipment_name": entry.name,
+        "kind": entry.kind,
+        "steps": resolved_steps,
+        "step_hash": plan_step_hash(resolved_steps),
+        "reason": reason,
+        "actor": actor,
+        "expires_in_s": PLAN_TTL_S,
+        "device_state": {
+            "equipment_status": status.equipment_status,
+            "activity": status.activity,
+            "message": status.message,
+        },
+    }
+    return _dumps({"plan": plan})
+
+
 # ---------------------------------------------------------------------------
 # FastMCP server
 # ---------------------------------------------------------------------------
@@ -713,8 +854,8 @@ def _build_server(registry: Registry):
         fields (listed under ``operator_only_fields``) — never supply those.
         Graph-constrained arms also return a read-only ``motion_graph``
         snapshot (current_node, single-hop reachable_nodes, multi-hop
-        travel_targets) for planning and explaining routes; a route is still
-        proposed one ``move.<node_id>`` hop at a time."""
+        travel_targets) for planning and explaining routes; propose a route
+        as one plan of ``move.<node_id>`` hops (propose_plan)."""
 
         return await _list_available_actions(registry, equipment_id)
 
@@ -750,6 +891,31 @@ def _build_server(registry: Registry):
 
         return await _propose_action(registry, equipment_id, action, args, reason)
 
+    @server.tool()
+    async def propose_plan(
+        equipment_id: str,
+        steps: list[dict[str, Any]],
+        reason: str = "",
+    ) -> str:
+        """Propose an ORDERED multi-step sequence on ONE device that the
+        operator approves and runs as a whole. Use this instead of several
+        propose_action calls whenever the user wants more than one step on
+        the same device (stage.in -> seal.start -> stage.out; pick_up_tip ->
+        aspirate -> dispense -> drop_tip; a route of move.<node_id> hops).
+        Does NOT actuate hardware: it returns a validated plan that renders
+        as one card; the operator approves the step list as shown and then
+        runs it, and the browser sends the steps in order, stopping at the
+        first one the device refuses. ``steps`` is a list of
+        {"action": <name from list_available_actions>, "args": {...}} in
+        execution order. Later steps may depend on earlier ones — only the
+        first step must be in the device's current allowed_actions. One
+        device per plan, at most MAX_PLAN_STEPS steps; safety-floor actions
+        (stop verbs, the xArm's connect/clear_errors) are never proposable.
+        Returns an ``error`` + ``code`` object (with the failing ``step``
+        number) when refused."""
+
+        return await _propose_plan(registry, equipment_id, steps, reason)
+
     return server
 
 
@@ -775,4 +941,4 @@ if __name__ == "__main__":  # pragma: no cover
     run()
 
 
-__all__ = ["run", "PROPOSAL_TTL_S"]
+__all__ = ["run", "PROPOSAL_TTL_S", "PLAN_TTL_S", "MAX_PLAN_STEPS", "plan_step_hash"]
