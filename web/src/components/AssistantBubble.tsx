@@ -207,6 +207,14 @@ function AssistantBubbleInner() {
     return () => clearInterval(id);
   }, [sending]);
   const [error, setError] = useState<string | null>(null);
+  // True when the last turn was cut mid-run (watchdog fired / stream ended
+  // without a terminal frame) — i.e. the case where a resend of the last user
+  // message is a sensible recovery. Real server-side errors and explicit
+  // user aborts are not retryable from here.
+  const [retryable, setRetryable] = useState(false);
+  // The text of the last user message sent, so a Retry can re-submit it
+  // without the user retyping.
+  const lastInputRef = useRef("");
   // Ask (read-only) vs Control (propose-only). Deliberately NOT persisted:
   // resets to Ask on reload / panel close (UI_DESIGN §5.2). The server decides
   // the real toolset from the verified identity regardless of this value.
@@ -574,6 +582,8 @@ function AssistantBubbleInner() {
       const trimmed = text.trim();
       if (!trimmed || sending) return;
       setError(null);
+      setRetryable(false);
+      lastInputRef.current = trimmed;
       // A new turn supersedes any pending proposal / result banner — and an
       // un-run plan card (a running one stays; see planRunningRef).
       clearProposal();
@@ -647,6 +657,7 @@ function AssistantBubbleInner() {
         // instead of leaving a frozen pill. Deliberate user aborts throw
         // AbortError and return earlier, so they never hit this.
         if (!terminatedRef.current) {
+          setRetryable(true);
           setError(
             "Connection lost — the assistant stopped responding before it finished. Check the service, then try again."
           );
@@ -928,7 +939,7 @@ function AssistantBubbleInner() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={open ? "Close lab assistant" : "Open lab assistant"}
+        aria-label={open ? "Close SDL Assistant" : "Open SDL Assistant"}
         className={`fixed bottom-5 right-5 z-50 flex h-12 w-12 items-center justify-center rounded-full text-white shadow-lg transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${launcherClass}`}
       >
         {open ? (
@@ -965,7 +976,7 @@ function AssistantBubbleInner() {
       {open && (
         <div
           role="dialog"
-          aria-label="Lab assistant"
+          aria-label="SDL Assistant"
           style={{
             left: panelPos.x,
             top: panelPos.y,
@@ -993,10 +1004,10 @@ function AssistantBubbleInner() {
             title="Drag to move · corners resize"
           >
             <div className="flex flex-col pl-3">
-              <span className="text-sm font-semibold text-ink dark:text-slate-100">
-                Lab Assistant
+              <span className="text-base font-semibold leading-tight text-ink dark:text-slate-100">
+                SDL Assistant
               </span>
-              <span className="text-[10px] text-ink-subtle dark:text-slate-500">
+              <span className="text-xs text-ink-subtle dark:text-slate-500">
                 {controlMode
                   ? "Control · proposes actions you authorize"
                   : "Read-only · history + journald"}
@@ -1016,7 +1027,7 @@ function AssistantBubbleInner() {
                 onClick={clearHistory}
                 disabled={turns.length === 0}
                 title="Clear the conversation (proposals and authorized actions stay in the audit trail)"
-                className="rounded border border-slate-300 px-2 py-1 text-[11px] font-medium text-ink-subtle transition hover:bg-slate-100 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-ink-subtle transition hover:bg-slate-100 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
                 Clear
               </button>
@@ -1025,7 +1036,7 @@ function AssistantBubbleInner() {
                 onClick={() => setOpen(false)}
                 aria-label="Minimize to bubble"
                 title="Minimize"
-                className="rounded px-2 py-1 text-[14px] leading-none text-ink-subtle hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                className="rounded px-2 py-1 text-xs leading-none text-ink-subtle hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
               >
                 {/* Minus glyph -- intentionally not ✕, since the conversation
                     persists when the panel collapses back to the bubble. */}
@@ -1102,14 +1113,24 @@ function AssistantBubbleInner() {
             {authorizeResponse && (
               <div className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200">
                 <div className="mb-1 font-medium">Device response</div>
-                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-emerald-100/70 p-1.5 font-mono text-[10px] leading-snug dark:bg-emerald-900/30">
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-emerald-100/70 p-1.5 font-mono text-xs leading-snug dark:bg-emerald-900/30">
                   {JSON.stringify(authorizeResponse, null, 2)}
                 </pre>
               </div>
             )}
             {error && (
-              <div className="rounded border border-rose-300 bg-rose-50 px-2 py-1 text-xs text-rose-800 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-200">
-                {error}
+              <div className="flex items-center gap-2 rounded border border-rose-300 bg-rose-50 px-2 py-1 text-xs text-rose-800 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-200">
+                <span className="flex-1">{error}</span>
+                {retryable && lastInputRef.current && (
+                  <button
+                    type="button"
+                    disabled={sending}
+                    onClick={() => void sendMessage(lastInputRef.current)}
+                    className="shrink-0 rounded border border-rose-400 bg-white px-2 py-0.5 font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-600 dark:bg-rose-900/60 dark:text-rose-200 dark:hover:bg-rose-800"
+                  >
+                    Retry
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1144,7 +1165,7 @@ function AssistantBubbleInner() {
                 }
                 rows={2}
                 disabled={sending}
-                className={`flex-1 resize-none rounded border border-slate-300 bg-white px-2 py-1 text-base text-ink shadow-inner focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${focusClass}`}
+                className={`flex-1 resize-none rounded border border-slate-300 bg-white px-2 py-1 text-[13px] text-ink shadow-inner focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${focusClass}`}
               />
               <button
                 type="submit"
@@ -1155,8 +1176,8 @@ function AssistantBubbleInner() {
               </button>
             </div>
             {backendInfo?.model && (
-              <p className="mt-1 text-center text-sm text-ink-subtle dark:text-slate-500">
-                model: {backendInfo.model} · Hermes agents
+              <p className="mt-1 text-center text-xs text-ink-subtle dark:text-slate-500">
+                Hermes agents: {backendInfo.model}
               </p>
             )}
           </form>
@@ -1225,9 +1246,9 @@ function ModeToggle({
   const disabled = !eligible;
   return (
     <div
-      // Sized to match the Clear chip beside it (text-[11px], py-1) so the
+      // Sized to match the Clear chip beside it (text-xs, py-1) so the
       // header buttons read as one control family at equal height.
-      className="mr-1 flex overflow-hidden rounded border border-slate-300 text-[11px] font-medium dark:border-slate-600"
+      className="mr-1 flex overflow-hidden rounded border border-slate-300 text-xs font-medium dark:border-slate-600"
       title={
         disabled
           ? "Control mode requires an operator role on at least one device"
@@ -1319,17 +1340,17 @@ function ProposalCard({
   const blockArgs = argEntries.length > 0 && argsNeedBlock(proposal.args ?? {});
   const clearsDeck = isDeckClear(proposal);
   return (
-    <div className="rounded-lg border border-purple-300 bg-purple-50 p-2 text-[12px] dark:border-purple-700 dark:bg-purple-950/40">
+    <div className="rounded-lg border border-purple-300 bg-purple-50 p-2 text-[13px] dark:border-purple-700 dark:bg-purple-950/40">
       <div className="mb-1 flex items-center justify-between">
-        <span className="font-semibold text-purple-900 dark:text-purple-100">
+        <span className="text-[13px] font-semibold text-purple-900 dark:text-purple-100">
           Authorize action
         </span>
-        <span className="text-[10px] text-purple-700 dark:text-purple-300">
+        <span className="text-xs text-purple-700 dark:text-purple-300">
           proposed to {proposal.actor}
         </span>
       </div>
       {/* Authoritative fields first; the model's reason is subordinate. */}
-      <dl className="space-y-0.5 text-ink dark:text-slate-100">
+      <dl className="space-y-1 text-[13px] text-ink dark:text-slate-100">
         <Row label="Device" value={`${proposal.equipment_name} (${proposal.equipment_id})`} />
         <Row label="Action" value={proposal.action} />
         {argEntries.length > 0 && !blockArgs && (
@@ -1340,11 +1361,11 @@ function ProposalCard({
         )}
         {blockArgs && (
           <div className="flex gap-2">
-            <dt className="w-20 shrink-0 text-[10px] uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+            <dt className="w-20 shrink-0 text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-500">
               Args
             </dt>
             <dd className="min-w-0 flex-1">
-              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-purple-100/60 p-1.5 font-mono text-[10px] leading-snug dark:bg-purple-900/30">
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-purple-100/60 p-1.5 font-mono text-xs leading-snug dark:bg-purple-900/30">
                 {JSON.stringify(proposal.args, null, 2)}
               </pre>
             </dd>
@@ -1356,20 +1377,20 @@ function ProposalCard({
         />
       </dl>
       {clearsDeck && (
-        <p className="mt-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+        <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
           Clears the entire deck declaration — every slot is unset.
         </p>
       )}
       {proposal.reason && (
-        <p className="mt-1 text-[11px] italic text-purple-800 dark:text-purple-300">
+        <p className="mt-1 text-xs italic text-purple-800 dark:text-purple-300">
           {proposal.reason}
         </p>
       )}
       {error && (
-        <p className="mt-1 text-[11px] text-rose-700 dark:text-rose-300">{error}</p>
+        <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">{error}</p>
       )}
       {expired && !error && (
-        <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+        <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
           This proposal expired. Ask again to get a fresh one.
         </p>
       )}
@@ -1378,7 +1399,7 @@ function ProposalCard({
           type="button"
           onClick={onAuthorize}
           disabled={authorizing || expired}
-          className="rounded bg-purple-600 px-3 py-1 text-[11px] font-medium text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
+          className="rounded bg-purple-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
         >
           {authorizing ? "Authorizing…" : "Authorize"}
         </button>
@@ -1386,7 +1407,7 @@ function ProposalCard({
           type="button"
           onClick={onDismiss}
           disabled={authorizing}
-          className="rounded px-2 py-1 text-[11px] text-ink-subtle hover:bg-purple-100 disabled:opacity-60 dark:text-slate-400 dark:hover:bg-purple-900/40"
+          className="rounded px-2 py-1 text-xs text-ink-subtle hover:bg-purple-100 disabled:opacity-60 dark:text-slate-400 dark:hover:bg-purple-900/40"
         >
           Dismiss
         </button>
@@ -1445,29 +1466,29 @@ function PlanCard({
             ? "Plan approved"
             : "Authorize plan";
   return (
-    <div className="rounded-lg border border-purple-300 bg-purple-50 p-2 text-[12px] dark:border-purple-700 dark:bg-purple-950/40">
+    <div className="rounded-lg border border-purple-300 bg-purple-50 p-2 text-[13px] dark:border-purple-700 dark:bg-purple-950/40">
       <div className="mb-1 flex items-center justify-between">
-        <span className="font-semibold text-purple-900 dark:text-purple-100">
+        <span className="text-[13px] font-semibold text-purple-900 dark:text-purple-100">
           {title} · {plan.steps.length} steps
         </span>
-        <span className="text-[10px] text-purple-700 dark:text-purple-300">
+        <span className="text-xs text-purple-700 dark:text-purple-300">
           proposed to {plan.actor}
         </span>
       </div>
-      <dl className="space-y-0.5 text-ink dark:text-slate-100">
+      <dl className="space-y-1 text-[13px] text-ink dark:text-slate-100">
         <Row label="Device" value={`${plan.equipment_name} (${plan.equipment_id})`} />
         <Row
           label="Device state"
           value={`${plan.device_state.equipment_status} · ${plan.device_state.activity}`}
         />
       </dl>
-      <ol className="mt-1 flex flex-col gap-0.5" aria-label="plan steps">
+      <ol className="mt-1 flex flex-col gap-1" aria-label="plan steps">
         {plan.steps.map((s, i) => {
           const outcome = run.outcomes[i] ?? "pending";
           const entries = Object.entries(s.args ?? {});
           const block = entries.length > 0 && argsNeedBlock(s.args ?? {});
           return (
-            <li key={i} className={`font-mono text-[11px] ${STEP_TONE[outcome]}`}>
+            <li key={i} className={`text-[13px] leading-snug ${STEP_TONE[outcome]}`}>
               {STEP_GLYPH[outcome]} {i + 1}. {s.action}
               {entries.length > 0 && !block && (
                 <span className="text-ink-subtle dark:text-slate-400">
@@ -1476,12 +1497,12 @@ function PlanCard({
                 </span>
               )}
               {block && (
-                <pre className="mt-0.5 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-purple-100/60 p-1.5 font-mono text-[10px] leading-snug dark:bg-purple-900/30">
+                <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-purple-100/60 p-1.5 font-mono text-xs leading-snug dark:bg-purple-900/30">
                   {JSON.stringify(s.args, null, 2)}
                 </pre>
               )}
               {run.messages[i] && (
-                <span className="ml-1 font-sans text-rose-700 dark:text-rose-400">
+                <span className="ml-1 text-rose-700 dark:text-rose-400">
                   {run.messages[i]}
                 </span>
               )}
@@ -1490,25 +1511,25 @@ function PlanCard({
         })}
       </ol>
       {plan.reason && (
-        <p className="mt-1 text-[11px] italic text-purple-800 dark:text-purple-300">
+        <p className="mt-1 text-xs italic text-purple-800 dark:text-purple-300">
           {plan.reason}
         </p>
       )}
       {run.error && (
-        <p className="mt-1 text-[11px] text-rose-700 dark:text-rose-300">{run.error}</p>
+        <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">{run.error}</p>
       )}
       {run.haltReason && (
-        <p className="mt-1 text-[11px] text-rose-700 dark:text-rose-300">
+        <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">
           Halted: {run.haltReason}. Remaining steps were not sent.
         </p>
       )}
       {run.phase === "executed" && (
-        <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300">
+        <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">
           All {okCount} steps ran.
         </p>
       )}
       {run.expired && run.phase === "draft" && !run.error && (
-        <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+        <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
           This plan expired. Ask again to get a fresh one.
         </p>
       )}
@@ -1518,7 +1539,7 @@ function PlanCard({
             type="button"
             onClick={onApprove}
             disabled={busy || run.expired}
-            className="rounded bg-purple-600 px-3 py-1 text-[11px] font-medium text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
+            className="rounded bg-purple-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
           >
             {run.phase === "approving"
               ? "Approving…"
@@ -1530,7 +1551,7 @@ function PlanCard({
             type="button"
             onClick={onRun}
             disabled={busy}
-            className="rounded bg-emerald-600 px-3 py-1 text-[11px] font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
+            className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
           >
             {run.phase === "running" ? `Running ${okCount + 1}/${plan.steps.length}…` : "Run"}
           </button>
@@ -1539,7 +1560,7 @@ function PlanCard({
           type="button"
           onClick={onDismiss}
           disabled={busy}
-          className="rounded px-2 py-1 text-[11px] text-ink-subtle hover:bg-purple-100 disabled:opacity-60 dark:text-slate-400 dark:hover:bg-purple-900/40"
+          className="rounded px-2 py-1 text-xs text-ink-subtle hover:bg-purple-100 disabled:opacity-60 dark:text-slate-400 dark:hover:bg-purple-900/40"
         >
           {settled ? "Close" : "Dismiss"}
         </button>
@@ -1551,10 +1572,10 @@ function PlanCard({
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex gap-2">
-      <dt className="w-20 shrink-0 text-[10px] uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+      <dt className="w-20 shrink-0 text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-500">
         {label}
       </dt>
-      <dd className="break-words font-mono text-[11px]">{value}</dd>
+      <dd className="break-words text-[13px]">{value}</dd>
     </div>
   );
 }
@@ -1653,7 +1674,7 @@ function ToolPills({
                   ? "Working…"
                   : "Did not finish — the turn ended first"
             }
-            className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${tone} ${
+            className={`rounded-full border px-2 py-0.5 text-xs font-medium ${tone} ${
               running ? "animate-pulse" : ""
             }`}
           >

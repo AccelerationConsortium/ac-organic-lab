@@ -165,7 +165,7 @@ afterEach(() => {
 async function openPanel() {
   render(<AssistantBubble />);
   // Launcher only appears once the health check resolves configured:true.
-  const launcher = await screen.findByLabelText("Open lab assistant");
+  const launcher = await screen.findByLabelText("Open SDL Assistant");
   fireEvent.click(launcher);
 }
 
@@ -344,7 +344,7 @@ describe("AssistantBubble control mode", () => {
     ]);
     render(<AssistantBubble />);
     const launcher = await vi.waitFor(() =>
-      screen.getByLabelText("Open lab assistant")
+      screen.getByLabelText("Open SDL Assistant")
     );
     fireEvent.click(launcher);
     const control = await vi.waitFor(() =>
@@ -483,7 +483,7 @@ describe("AssistantBubble control mode", () => {
     await openPanel();
     // Model attribution comes from /api/assistant/health; the caption names the
     // agent layer rather than the transport, so the backend id is not shown.
-    expect((await screen.findByText(/model: sonnet/)).textContent).toContain(
+    expect((await screen.findByText(/Hermes agents: sonnet/)).textContent).toContain(
       "Hermes agents"
     );
     // Clear is always rendered for discoverability; disabled until there are turns.
@@ -677,7 +677,7 @@ describe("AssistantBubble resize", () => {
     await openPanel();
     expect(screen.getByLabelText("Resize assistant panel from top left")).toBeTruthy();
     expect(screen.getByLabelText("Resize assistant panel")).toBeTruthy();
-    const panel = screen.getByRole("dialog", { name: "Lab assistant" });
+    const panel = screen.getByRole("dialog", { name: "SDL Assistant" });
     await waitFor(() => {
       expect(panel.style.width).toBe("700px");
       expect(panel.style.height).toBe("640px");
@@ -691,7 +691,7 @@ describe("AssistantBubble resize", () => {
     );
     installFetch([]);
     await openPanel();
-    const panel = screen.getByRole("dialog", { name: "Lab assistant" });
+    const panel = screen.getByRole("dialog", { name: "SDL Assistant" });
     await waitFor(() => {
       expect(Number.parseInt(panel.style.width, 10)).toBeGreaterThanOrEqual(360);
       expect(Number.parseInt(panel.style.height, 10)).toBeGreaterThanOrEqual(400);
