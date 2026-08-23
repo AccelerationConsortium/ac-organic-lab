@@ -743,14 +743,21 @@ def create_app(
 
     @app.get("/admin/sessions")
     async def admin_sessions(request: Request) -> dict:
-        """Live (unexpired) sessions — who holds a signed-in browser right now."""
+        """Live (unexpired) sessions — who holds a signed-in browser right now —
+        plus ``total_time_s``, the all-time signed-in seconds reconstructed
+        from auth_events (see Db.total_session_time_s for the model)."""
         await _require_admin(request)
-        rows = await asyncio.to_thread(_db(request).list_active_sessions)
+        db = _db(request)
+        rows = await asyncio.to_thread(db.list_active_sessions)
+        total_time_s = await asyncio.to_thread(
+            db.total_session_time_s, request.app.state.settings.session_ttl_s
+        )
         return {
             "sessions": [
                 {"email": s.email, "created_at": s.created_at, "expires_at": s.expires_at}
                 for s in rows
-            ]
+            ],
+            "total_time_s": round(total_time_s, 1),
         }
 
     @app.get("/admin/api-keys")

@@ -29,6 +29,14 @@ export interface SessionRow {
   expires_at: number;
 }
 
+export interface SessionsResponse {
+  sessions: SessionRow[];
+  /** All-time signed-in seconds, reconstructed sidecar-side from auth_events
+   *  (union of session windows; see Db.total_session_time_s). Absent from a
+   *  sidecar that predates the field. */
+  total_time_s?: number | null;
+}
+
 export interface ControlAction {
   ts: string;
   device_id: string;
@@ -119,13 +127,14 @@ export function fmtIsoShort(ts: string | null | undefined): string {
   return isNaN(d.getTime()) ? ts : d.toLocaleString(undefined, SHORT_STAMP);
 }
 
-/** "2 d 4 h" / "3 h 12 m" / "45 m" / "30 s" — coarse on purpose (headline use). */
+/** "1,641 h" / "3 h 12 m" / "45 m" / "30 s" — hours are the largest unit
+ *  (never days, per operator preference); minutes are dropped once the figure
+ *  is large enough that they are noise. Coarse on purpose (headline use). */
 export function fmtDuration(seconds: number): string {
   const s = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
-  const d = Math.floor(s / 86400);
-  const h = Math.floor((s % 86400) / 3600);
+  const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
-  if (d > 0) return h > 0 ? `${d} d ${h} h` : `${d} d`;
+  if (h >= 100) return `${h.toLocaleString()} h`;
   if (h > 0) return m > 0 ? `${h} h ${m} m` : `${h} h`;
   if (m > 0) return `${m} m`;
   return `${Math.floor(s)} s`;

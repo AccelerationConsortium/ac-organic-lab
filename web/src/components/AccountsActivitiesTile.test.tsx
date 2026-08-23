@@ -30,7 +30,7 @@ const bodies: Record<string, unknown> = {
     pending_automation: [],
     expiring_soon: [],
   },
-  "/api/admin/sessions": { sessions: [] },
+  "/api/admin/sessions": { sessions: [], total_time_s: 7200 },
   "/api/history/control-actions": { actions: [], total: 42 },
 };
 
@@ -71,13 +71,23 @@ describe("AccountsActivitiesTile", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("shows the headline numbers, with a GO link when asked", async () => {
-    renderTile({ wide: true, adminLink: true });
+  it("shows the headline pairs, with a GO link when asked", async () => {
+    renderTile({ adminLink: true });
     await screen.findByText("42"); // lifetime total, not window length
     expect(screen.getByText("Accounts & Activities")).toBeTruthy();
-    expect(screen.getByText("Devices claimed").closest("div")!.textContent).toContain("1");
+    expect(screen.getByText("Equipment claimed").closest("div.flex")!.textContent).toContain("2");
+    // all-time signed-in figure from the sidecar (7200 s → "2 h")
+    expect(screen.getByText("Total session time").closest("div")!.textContent).toContain("2 h");
     const go = screen.getByRole("link", { name: "GO →" });
     expect(go.getAttribute("href")).toBe("/admin");
+  });
+
+  it("shows an em dash for total session time until the sidecar serves it", async () => {
+    bodies["/api/admin/sessions"] = { sessions: [] };
+    renderTile();
+    await screen.findByText("42");
+    expect(screen.getByText("Total session time").closest("div")!.textContent).toContain("—");
+    bodies["/api/admin/sessions"] = { sessions: [], total_time_s: 7200 };
   });
 
   it("omits the GO link on the admin console itself", async () => {

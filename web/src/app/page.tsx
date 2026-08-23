@@ -8,6 +8,7 @@ import { PlatformCard } from "@/components/PlatformCard";
 import { useEquipmentList } from "@/lib/use-equipment";
 import { HEALTH_DOT, pillClass, platformHealth, stickyPillRow } from "@/lib/pill";
 import { usePlatforms } from "@/lib/use-platforms";
+import { useUserAuth } from "@/lib/user-auth";
 import type { EquipmentSnapshot, PlatformSection } from "@/types/api";
 
 const HIDDEN_SECTIONS_KEY = "overview-hidden-sections";
@@ -58,6 +59,8 @@ export default function OverviewPage() {
     useEquipmentList();
   const { data: platforms, error: platformsError, isPending: platformsPending } =
     usePlatforms();
+  const { authenticated, identity } = useUserAuth();
+  const isAdmin = authenticated && identity?.role === "admin";
 
   // Section-visibility toggles (same All / None + per-section pill pattern as
   // the Platforms tab). Restored from sessionStorage after mount — not in the
@@ -172,17 +175,21 @@ export default function OverviewPage() {
           );
         })}
       </div>
-      {/* Admin headline (renders only for an admin session): the same
-          "Accounts & Activities" KPI tile that leads the admin console, laid
-          out as one wide row with a GO → link into /admin. */}
-      <AccountsActivitiesTile wide adminLink />
-
       {/* CSS multi-column masonry: every card sits at its own content height
           and packs tightly into the columns (no stretching to match a taller
           neighbour, no gaps below a short one). `break-inside-avoid` keeps a
           card from splitting across the column boundary; `mb-4` is the vertical
           gap between stacked cards (multicol uses margins, not `gap`). */}
       <div className="columns-1 gap-4 lg:columns-2">
+        {/* Admin headline: the same half-width "Accounts & Activities" tile
+            that leads the admin console, as the masonry's first card with a
+            GO → link into /admin. The wrapper is admin-gated (not just the
+            tile) so non-admins get no empty spacer in the first column. */}
+        {isAdmin && (
+          <div className="mb-4 break-inside-avoid">
+            <AccountsActivitiesTile adminLink />
+          </div>
+        )}
         {visibleSections.map((section) => {
           let card;
           if (section.kind === "environmental_map") {

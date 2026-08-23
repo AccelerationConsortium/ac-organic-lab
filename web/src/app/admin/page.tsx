@@ -29,7 +29,7 @@ import { useUserAuth } from "@/lib/user-auth";
 // page's card vocabulary (AdminTile = PlatformCard chrome), paired by topic —
 // every row is two tiles, none spans the grid:
 //
-//   Accounts & Activities (headline) |  Roster health (reload / approvals / expiry)
+//   Accounts & Activities (headline) |  Roster health
 //   Accounts                         |  Automation & API keys
 //   Live sessions                    |  Live claims
 //   Sign-in activity                 |  Control actions
@@ -370,7 +370,7 @@ export default function AdminPage() {
     // height like the Overview's masonry cards, with pairs preserved.
     <div className="grid items-start gap-4 pt-3 lg:grid-cols-2">
       {/* ================================================================== */}
-      {/* Row 1 — Accounts & Activities | Roster health                       */}
+      {/* Row 1 — Accounts & Activities | Roster health                        */}
       {/* ================================================================== */}
 
       <AccountsActivitiesTile />

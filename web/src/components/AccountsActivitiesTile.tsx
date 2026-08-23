@@ -9,39 +9,43 @@ import {
   type AdminState,
   type ClaimedBy,
   type ControlActionsResponse,
-  type SessionRow,
+  type SessionsResponse,
 } from "@/lib/admin-api";
 import { useEquipmentList } from "@/lib/use-equipment";
 import { useUserAuth } from "@/lib/user-auth";
 import { AdminTile, ErrorNote, Stat } from "./AdminTile";
 
 /**
- * "Accounts & Activities" — the admin headline numbers as one KPI tile:
- * active accounts, projects, live sessions, devices claimed, lifetime control
- * actions, and signed-in time. Leads the admin console, and the Overview page
- * mounts it at the top for admins (`wide`, with a GO → link into /admin).
+ * "Accounts & Activities" — the admin headline numbers as one half-width,
+ * double-column KPI tile: two columns of stats, each cell a stacked pair, so
+ * the eight figures read as
+ *
+ *   Active accounts   | Equipment
+ *   Live sessions     | Equipment claimed
+ *   Projects          | Control actions
+ *   Session time      | Total session time
+ *
+ * It leads the admin console (paired with Roster health, same footprint as
+ * every other panel) and the Overview page mounts the same tile as the first
+ * card of its masonry with a GO → link into /admin.
  *
  * Renders nothing for a non-admin viewer: the roster/session figures come from
  * the sidecar's admin-only endpoints, and the Admin tab is hidden for them too.
  */
 export function AccountsActivitiesTile({
-  wide = false,
   adminLink = false,
+  className,
 }: {
-  /** Lay the six stats out in one row on wide screens (Overview banner). */
-  wide?: boolean;
   /** Show a GO → link to the admin console in the header. */
   adminLink?: boolean;
+  /** Extra classes on the card. */
+  className?: string;
 }) {
   const { authenticated, identity } = useUserAuth();
   const isAdmin = authenticated && identity?.role === "admin";
 
   const state = useAdminQuery<AdminState>("/api/admin/state", 60_000, isAdmin);
-  const sessions = useAdminQuery<{ sessions: SessionRow[] }>(
-    "/api/admin/sessions",
-    30_000,
-    isAdmin,
-  );
+  const sessions = useAdminQuery<SessionsResponse>("/api/admin/sessions", 30_000, isAdmin);
   // Only the lifetime `total` is needed here; the audit table on the admin
   // page fetches its own window.
   const controlActions = useAdminQuery<ControlActionsResponse>(
@@ -72,11 +76,93 @@ export function AccountsActivitiesTile({
   const sessionSeconds = liveSessions.reduce((acc, r) => acc + Math.max(0, nowS - r.created_at), 0);
   const sessionAccounts = new Set(liveSessions.map((r) => r.email)).size;
 
+  const totalTime = sessions.data?.total_time_s;
+
+  // Four stacked pairs laid out two-across ("double column"): pair 1 | pair 2
+  // on the first band, pair 3 | pair 4 below. Each pair is its own flex stack
+  // so the above/below relation survives every breakpoint.
+  const pairs: [React.ReactNode, React.ReactNode][] = [
+    [
+      <Stat
+        key="accounts"
+        label="Active accounts"
+        value={s ? String(s.roster.active_accounts) : "…"}
+        detail={s ? `of ${rosterTotal} on the roster` : undefined}
+        title="Roster principals that are enabled, unexpired and (for automation) approved"
+      />,
+      <Stat
+        key="sessions"
+        label="Live sessions"
+        value={sessions.data ? String(liveSessions.length) : "…"}
+        detail={
+          sessions.data
+            ? `${sessionAccounts} ${sessionAccounts === 1 ? "account" : "accounts"} signed in`
+            : undefined
+        }
+        title="Unexpired session cookies (~12 h TTL)"
+      />,
+    ],
+    [
+      <Stat
+        key="equipment"
+        label="Equipment"
+        value={equipment.data ? String(equipment.data.equipment.length) : "…"}
+        detail="registered & polled"
+        title="Entries in equipment.yaml the aggregator polls"
+      />,
+      <Stat
+        key="claimed"
+        label="Equipment claimed"
+        value={equipment.data ? String(claimed) : "…"}
+        detail="live, holding a claim"
+        title="Devices whose live /status carries details.claimed_by"
+      />,
+    ],
+    [
+      <Stat
+        key="projects"
+        label="Projects"
+        value={s ? String(s.roster.projects) : "…"}
+        detail="declared in roster.yaml"
+      />,
+      <Stat
+        key="session-time"
+        label="Session time"
+        value={sessions.data ? fmtDuration(sessionSeconds) : "…"}
+        detail="live sessions, summed"
+        title="Σ (now − signed in) across unexpired sessions"
+      />,
+    ],
+    [
+      <Stat
+        key="control"
+        label="Control actions"
+        value={
+          controlActions.data
+            ? controlActions.data.total.toLocaleString()
+            : controlActions.error
+              ? "—"
+              : "…"
+        }
+        detail="all time, via the dashboard"
+        title="Lifetime count of control_action audit rows in lab.db"
+      />,
+      <Stat
+        key="total-time"
+        label="Total session time"
+        value={sessions.data ? (totalTime != null ? fmtDuration(totalTime) : "—") : "…"}
+        detail="all time, all accounts"
+        title="Signed-in time reconstructed from the auth_events log — union of session windows per account (concurrent sessions counted once, logins assumed to run their TTL unless logged out). '—' until the auth sidecar serves total_time_s."
+      />,
+    ],
+  ];
+
   return (
     <AdminTile
       title="Accounts & Activities"
       sub="Headline numbers — the roster, who is signed in, what is claimed, how much has been done."
       frame={false}
+      className={className}
       controls={
         adminLink ? (
           <Link
@@ -91,54 +177,12 @@ export function AccountsActivitiesTile({
       {state.error ? (
         <ErrorNote error={state.error} />
       ) : (
-        <dl
-          className={`grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 ${wide ? "lg:grid-cols-6" : ""}`}
-        >
-          <Stat
-            label="Active accounts"
-            value={s ? String(s.roster.active_accounts) : "…"}
-            detail={s ? `of ${rosterTotal} on the roster` : undefined}
-            title="Roster principals that are enabled, unexpired and (for automation) approved"
-          />
-          <Stat
-            label="Projects"
-            value={s ? String(s.roster.projects) : "…"}
-            detail="declared in roster.yaml"
-          />
-          <Stat
-            label="Live sessions"
-            value={sessions.data ? String(liveSessions.length) : "…"}
-            detail={
-              sessions.data
-                ? `${sessionAccounts} ${sessionAccounts === 1 ? "account" : "accounts"} signed in`
-                : undefined
-            }
-            title="Unexpired session cookies (~12 h TTL)"
-          />
-          <Stat
-            label="Devices claimed"
-            value={equipment.data ? String(claimed) : "…"}
-            detail={equipment.data ? `live · of ${equipment.data.equipment.length} polled` : undefined}
-            title="Devices whose live /status carries details.claimed_by"
-          />
-          <Stat
-            label="Control actions"
-            value={
-              controlActions.data
-                ? controlActions.data.total.toLocaleString()
-                : controlActions.error
-                  ? "—"
-                  : "…"
-            }
-            detail="all time, via the dashboard"
-            title="Lifetime count of control_action audit rows in lab.db"
-          />
-          <Stat
-            label="Session time"
-            value={sessions.data ? fmtDuration(sessionSeconds) : "…"}
-            detail="live sessions, summed"
-            title="Σ (now − signed in) across unexpired sessions; ended sessions keep no duration record"
-          />
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-5">
+          {pairs.map((pair, i) => (
+            <div key={i} className="flex flex-col gap-4">
+              {pair}
+            </div>
+          ))}
         </dl>
       )}
     </AdminTile>

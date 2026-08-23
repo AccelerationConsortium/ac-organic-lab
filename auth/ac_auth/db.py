@@ -610,6 +610,55 @@ class Db:
             for r in rows
         ]
 
+    def total_session_time_s(self, ttl_s: float, now: Optional[float] = None) -> float:
+        """All-time signed-in seconds, summed over accounts, reconstructed from
+        the durable ``auth_events`` log (session rows are deleted on logout and
+        purged after expiry, so they cannot carry history).
+
+        Model, per account: each ``login_success`` opens a session window of at
+        most ``ttl_s``; a ``logout`` ends the *oldest* open window early;
+        overlapping windows of the same account count once (interval union),
+        so two concurrent browser sessions do not double the figure; a window
+        still open is counted up to ``now``. This is an estimate by
+        construction — the current TTL is applied to historical logins, and a
+        logout cannot be attributed to a specific session — but it is
+        deterministic, and exact in the common no-logout, no-overlap case.
+        O(events); the table is small (hundreds of rows after a year)."""
+        t_now = now if now is not None else _now()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ts, email, event FROM auth_events"
+                " WHERE event IN ('login_success', 'logout') ORDER BY ts",
+            ).fetchall()
+        by_email: dict[str, list[tuple[float, str]]] = {}
+        for r in rows:
+            by_email.setdefault(r["email"], []).append((r["ts"], r["event"]))
+        total = 0.0
+        for events in by_email.values():
+            open_exp: list[float] = []  # expiries of open windows, ascending
+            start = 0.0  # start of the current ≥1-open interval
+            for ts, event in events:
+                if open_exp:
+                    if open_exp[-1] <= ts:
+                        # every window expired before this event — close the
+                        # interval at the last expiry
+                        total += open_exp[-1] - start
+                        open_exp = []
+                    else:
+                        # some may have expired; later ones keep it open
+                        open_exp = [e for e in open_exp if e > ts]
+                if event == "login_success":
+                    if not open_exp:
+                        start = ts
+                    open_exp.append(ts + ttl_s)
+                elif event == "logout" and open_exp:
+                    open_exp.pop(0)
+                    if not open_exp:
+                        total += ts - start
+            if open_exp:
+                total += min(t_now, open_exp[-1]) - start
+        return total
+
     def list_active_sessions(self) -> list[SessionInfo]:
         """Live (unexpired) sessions, newest first — "who is signed in right now"."""
         with self._lock:

@@ -64,6 +64,7 @@ const bodies: Record<string, unknown> = {
       { email: "yang@lab.ca", created_at: NOW_S - 3600, expires_at: NOW_S + 8 * 3600 },
       { email: "yang@lab.ca", created_at: NOW_S - 7200, expires_at: NOW_S + 4 * 3600 },
     ],
+    total_time_s: 25 * 3600,
   },
   "/api/admin/accounts": {
     users: [
@@ -200,7 +201,7 @@ describe("AdminPage", () => {
     expect(screen.queryByText("Accounts & Activities")).toBeNull();
   });
 
-  it("lays out eight paired tiles, none spanning the grid", async () => {
+  it("lays out eight half-width tiles in pairs, none spanning the grid", async () => {
     renderPage();
     await screen.findByText("Accounts & Activities");
     const titles = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
@@ -214,9 +215,10 @@ describe("AdminPage", () => {
       "Sign-in activity",
       "Control actions",
     ]);
-    // Two-column grid; no banner tiles.
+    // Two-column grid; every tile is half-width (the headline is a
+    // double-column tile: two columns of stats INSIDE a half-width card).
     expect(document.querySelector(".lg\\:grid-cols-2")).toBeTruthy();
-    expect(document.querySelector(".lg\\:col-span-2")).toBeNull();
+    expect(document.querySelector("section.lg\\:col-span-2")).toBeNull();
   });
 
   it("combines the headline numbers into the Accounts & Activities tile", async () => {
@@ -227,14 +229,21 @@ describe("AdminPage", () => {
     expect(within(overview).getByText("Active accounts")).toBeTruthy();
     expect(within(overview).getByText("Projects")).toBeTruthy();
     expect(within(overview).getByText("Live sessions")).toBeTruthy();
-    expect(within(overview).getByText("Devices claimed")).toBeTruthy();
+    expect(within(overview).getByText("Equipment claimed")).toBeTruthy();
     expect(within(overview).getByText("Control actions")).toBeTruthy();
     expect(within(overview).getByText("Session time")).toBeTruthy();
-    // Live claims: one of three polled devices carries claimed_by.
-    expect(within(overview).getByText("live · of 3 polled")).toBeTruthy();
-    // Two live sessions, 1 h + 2 h signed in → 3 h total.
+    expect(within(overview).getByText("Equipment")).toBeTruthy();
+    expect(within(overview).getByText("Equipment claimed")).toBeTruthy();
+    expect(within(overview).getByText("Total session time")).toBeTruthy();
+    // Two live sessions, 1 h + 2 h signed in → 3 h; all-time 25 h stays in
+    // hours (never days).
     await within(overview).findByText("3 h");
+    expect(within(overview).getByText("25 h")).toBeTruthy();
     expect(within(overview).getByText("1 account signed in")).toBeTruthy();
+    // Each column stacks its pair: Equipment sits directly above Equipment
+    // claimed in the same column div.
+    const equipmentCol = within(overview).getByText("Equipment").closest("div.flex")!;
+    expect(equipmentCol.textContent).toContain("Equipment claimed");
   });
 
   it("folds roster alerts into the Roster health tile", async () => {

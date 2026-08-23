@@ -291,3 +291,54 @@ def test_purge_expired_keeps_live_state_and_history(tmp_path):
     # the audit log is untouched — it is the durable record
     assert db.last_login_at("stale@x.com") is not None
     db.close()
+
+
+def _event_at(db, ts: float, email: str, event: str) -> None:
+    """Insert an auth event at a controlled timestamp (record_auth_event
+    stamps now, which these reconstruction tests can't use)."""
+    with db._lock:
+        db._conn.execute(
+            "INSERT INTO auth_events (ts, email, event, detail, ip, user_agent)"
+            " VALUES (?, ?, ?, '', '', '')",
+            (ts, email, event),
+        )
+        db._conn.commit()
+
+
+def test_total_session_time_reconstruction(tmp_path):
+    from ac_auth.db import Db
+
+    db = Db(str(tmp_path / "a.db"))
+    ttl = 100.0
+    # a@x: login at t=0, logout at t=30 → 30 s.
+    _event_at(db, 0, "a@x", "login_success")
+    _event_at(db, 30, "a@x", "logout")
+    # b@x: login at t=0, never logs out → full TTL (100 s).
+    _event_at(db, 0, "b@x", "login_success")
+    # c@x: overlapping logins at t=0 and t=50, no logout → union [0, 150],
+    # not 200 — concurrency must not double-count.
+    _event_at(db, 0, "c@x", "login_success")
+    _event_at(db, 50, "c@x", "login_success")
+    # d@x: still live at now → counted up to now (t=1000 → min(now, expiry)).
+    _event_at(db, 990, "d@x", "login_success")
+
+    total = db.total_session_time_s(ttl, now=1000.0)
+    assert total == 30 + 100 + 150 + 10
+    # non-login/logout events are ignored
+    _event_at(db, 5, "a@x", "code_requested")
+    assert db.total_session_time_s(ttl, now=1000.0) == total
+    db.close()
+
+
+def test_total_session_time_logout_ends_oldest(tmp_path):
+    from ac_auth.db import Db
+
+    db = Db(str(tmp_path / "b.db"))
+    ttl = 100.0
+    # Two overlapping sessions; one logout at t=60 ends the OLDER one, so the
+    # t=50 session keeps the account signed in until its expiry at t=150.
+    _event_at(db, 0, "a@x", "login_success")
+    _event_at(db, 50, "a@x", "login_success")
+    _event_at(db, 60, "a@x", "logout")
+    assert db.total_session_time_s(ttl, now=1000.0) == 150.0
+    db.close()
