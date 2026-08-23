@@ -55,6 +55,13 @@ class PillConfig(BaseModel):
     can't use. Presentation-only — the click was already blocked client-side
     and the edge enforces server-side regardless.
 
+    ``admin_only: true`` is the stricter form for panels whose edge site
+    403s everyone but global admins (Uptime Kuma, the Hermes Agent
+    dashboard): the link renders only for ``role: admin``. Needed because a
+    flat operator holds an implicit global grant — ``authorized_only`` alone
+    still shows such links to every operator, who would then hit the edge's
+    403. Presentation-only, same as above; the edge remains the gate.
+
     ``internal: true`` marks ``link_href`` as a dashboard route. Internal
     monitoring links use normal same-tab navigation and do not require an
     equipment control role.
@@ -66,6 +73,7 @@ class PillConfig(BaseModel):
     link_label: str | None = None
     link_href: str | None = None
     authorized_only: bool = False
+    admin_only: bool = False
     internal: bool = False
 
 

@@ -356,6 +356,12 @@ http://100.64.254.6 {
 	}
 	redir /hermes /hermes/ 308
 	handle_path /hermes/* {
+		# Admins only (same pattern as the Kuma edge site): forward_auth above
+		# authenticated the session and stamped X-Auth-Role from the verify
+		# response — a client-supplied copy is overwritten — so this matcher
+		# is trustworthy. Before 2026-08-23 any signed-in account passed.
+		@nonadmin not header X-Auth-Role admin
+		respond @nonadmin "The Hermes Agent dashboard is admins-only." 403
 		reverse_proxy 127.0.0.1:9119 {
 			header_up Host 127.0.0.1
 			header_up X-Forwarded-Prefix /hermes

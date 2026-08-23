@@ -510,6 +510,7 @@ equipment:
     pills:
       link_label: "Open"
       link_href: http://100.64.254.6:8005/
+      admin_only: true
       # Kuma's admin UI has its own login and sits outside the SSO edge
       # (Kuma can't be served under a sub-path) — only show the link to
       # accounts holding a role on this equipment (admin, per roster).
@@ -519,10 +520,10 @@ equipment:
   # fronted by the single auth edge at /hermes/ (Caddyfile.single-edge:
   # forward_auth + handle_path). It serves no STATUS_SPEC /status, so like
   # Analitica Chat this is a link-out tile (adapter: mock, not health-polled).
-  # No roster grants exist for this id and the pill is authorized_only, so the
-  # Open link renders for org admins only (same pattern as uptime_kuma); the
-  # edge's forward_auth remains the real gate — hiding the pill is UX, not
-  # security.
+  # The Open link is admin_only (a flat operator's implicit global grant
+  # would pass authorized_only, so the stricter flag is what actually keeps
+  # it admin-only); the edge's forward_auth + admin 403 remain the real gate
+  # — hiding the pill is UX, not security.
   - id: hermes_web
     name: Hermes Agent
     kind: other
@@ -535,6 +536,7 @@ equipment:
       link_label: "Open"
       link_href: http://100.64.254.6/hermes/
       authorized_only: true
+      admin_only: true
 
   # LaAgenteAnalitica — the agent chat UI (React/Vite) on a separate PC,
   # fronted by the edge at /agente/ (the built Vite base) so it shows the shared

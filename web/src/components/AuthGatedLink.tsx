@@ -33,6 +33,7 @@ export function AuthGatedLink({
   equipmentId,
   external = false,
   hideUnauthorized = false,
+  adminOnly = false,
   className,
   title,
   children,
@@ -44,12 +45,16 @@ export function AuthGatedLink({
   external?: boolean;
   /** Render nothing (instead of a click-blocked link) when unauthorized. */
   hideUnauthorized?: boolean;
+  /** Authorize only a global admin (pill `admin_only` — panels whose edge
+   *  site 403s everyone else). Composes with the equipment-role check. */
+  adminOnly?: boolean;
   className?: string;
   title?: string;
   children: ReactNode;
 }) {
-  const { authenticated, canControl, requestLogin } = useUserAuth();
-  const authorized = equipmentId ? canControl(equipmentId) : authenticated;
+  const { authenticated, canControl, requestLogin, identity } = useUserAuth();
+  const roleOk = equipmentId ? canControl(equipmentId) : authenticated;
+  const authorized = roleOk && (!adminOnly || identity?.role === "admin");
   const [bubble, setBubble] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 

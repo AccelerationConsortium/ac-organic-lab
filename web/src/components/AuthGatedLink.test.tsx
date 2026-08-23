@@ -10,6 +10,7 @@ const auth = {
   authenticated: false,
   canControl: vi.fn(() => false),
   requestLogin: vi.fn(),
+  identity: null as { role: string } | null,
 };
 vi.mock("@/lib/user-auth", () => ({
   useUserAuth: () => auth,
@@ -21,6 +22,7 @@ afterEach(() => {
   auth.authenticated = false;
   auth.canControl = vi.fn(() => false);
   auth.requestLogin = vi.fn();
+  auth.identity = null;
 });
 
 function renderLink() {
@@ -104,5 +106,31 @@ describe("AuthGatedLink", () => {
     );
     const link = screen.getByText("Open ↗");
     expect(fireEvent.click(link)).toBe(true);
+  });
+
+  it("adminOnly + hideUnauthorized hides the link from a non-admin with a device role", () => {
+    auth.authenticated = true;
+    auth.canControl = vi.fn(() => true); // flat operator: implicit global grant
+    auth.identity = { role: "operator" };
+    render(
+      <AuthGatedLink href="http://edge/hermes/" equipmentId="hermes_web" external adminOnly hideUnauthorized>
+        Open ↗
+      </AuthGatedLink>,
+    );
+    expect(screen.queryByText("Open ↗")).toBeNull();
+  });
+
+  it("adminOnly renders normally for a global admin", () => {
+    auth.authenticated = true;
+    auth.canControl = vi.fn(() => true);
+    auth.identity = { role: "admin" };
+    render(
+      <AuthGatedLink href="http://edge/hermes/" equipmentId="hermes_web" external adminOnly hideUnauthorized>
+        Open ↗
+      </AuthGatedLink>,
+    );
+    const link = screen.getByText("Open ↗");
+    expect(fireEvent.click(link)).toBe(true);
+    expect(link.getAttribute("aria-disabled")).toBeNull();
   });
 });

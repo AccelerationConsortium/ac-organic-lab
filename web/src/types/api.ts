@@ -125,6 +125,9 @@ export interface PillConfig {
   /** Hide the pill links entirely from users without a role on this
    *  equipment (instead of showing a click-blocked link). */
   authorized_only?: boolean;
+  /** Stricter form: render the pill links only for a global admin — for
+   *  panels whose edge site 403s everyone else (Kuma, Hermes). */
+  admin_only?: boolean;
   /** Navigate within the dashboard without requiring an equipment control role. */
   internal?: boolean;
 }
