@@ -17,7 +17,7 @@ import { SolidDoserTile } from "./SolidDoserTile";
  * Renders equipment cards on a 4-column CSS grid driven by `tile.{w,h}` in
  * `equipment.yaml`.
  *
- *   - lg+  : 4 columns, each row is a fixed 220px so `tile.h` translates to
+ *   - lg+  : 4 columns, each row is a fixed 232px so `tile.h` translates to
  *            visible height (a 2×2 is exactly twice as tall as a 2×1 plus the
  *            gap between rows). Cards `overflow-hidden` to keep the tile look.
  *            Camera tiles want more vertical room than the standard 220 px
@@ -32,7 +32,7 @@ import { SolidDoserTile } from "./SolidDoserTile";
  * else uses the generic `EquipmentStatusCard`. Adding a new specialised
  * tile type in the future is a matter of growing this dispatch.
  */
-const ROW_HEIGHT_PX = 220;
+const ROW_HEIGHT_PX = 232;
 
 export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
   if (snapshots.length === 0) {
@@ -44,10 +44,12 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
   }
   return (
     <div
-      // lg+ caps each column at 262px so a standard 2-wide tile maxes at 540px
-      // (2×262 + one 16px gap); columns still compress below that on narrower
-      // screens. Grid left-aligns and stops growing on very wide monitors.
-      className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:[grid-template-columns:repeat(4,minmax(0,262px))]"
+      // lg+: four equal stretchy columns filling the content container, so a
+      // standard 2-wide tile is exactly half the container — the same width
+      // (and left/right alignment) as an Overview platform card, edge-to-edge
+      // with the page heading. (Columns were previously capped at 262px,
+      // which left the grid ~120px short of the container's right edge.)
+      className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
       // Rows snap to the 220px module but grow to fit content, so a tile
       // whose content is taller than its yaml h never clips — its height
       // snaps up and the grid reflows.
