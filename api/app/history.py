@@ -258,7 +258,9 @@ def build_history_router() -> APIRouter:
     ):
         """Operator control-write audit feed across all devices — one row per
         dashboard-mediated `/control/*` call (actor, action, outcome). Backs
-        the admin page's audit panel."""
+        the admin page's audit panel. ``total`` is the lifetime row count
+        (under the same device filter) so a headline figure is not capped by
+        ``limit``."""
         import asyncio
         loop = asyncio.get_event_loop()
         db = _db(request)
@@ -266,7 +268,10 @@ def build_history_router() -> APIRouter:
             None,
             lambda: db.get_control_actions(limit=min(limit, 500), device_id=device_id),
         )
-        return {"actions": rows}
+        total = await loop.run_in_executor(
+            None, lambda: db.count_control_actions(device_id=device_id)
+        )
+        return {"actions": rows, "total": total}
 
     # ------------------------------------------------------------------ sensors
 

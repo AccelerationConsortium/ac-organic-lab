@@ -68,6 +68,24 @@ def test_get_control_actions_flattens_payload(tmp_path):
     db.close()
 
 
+def test_count_control_actions_is_lifetime_not_windowed(tmp_path):
+    db = _db(tmp_path)
+    for i in range(5):
+        db.record_equipment_event(
+            "plateloc" if i % 2 else "xarm",
+            "control_action",
+            message=f"act{i}",
+            payload={"action": f"act{i}", "owner": "a", "outcome": "ok"},
+        )
+    db.record_equipment_event("plateloc", "state_transition", from_state="ready", to_state="busy")
+    # the row window is capped, the count is not
+    assert len(db.get_control_actions(limit=2)) == 2
+    assert db.count_control_actions() == 5
+    assert db.count_control_actions(device_id="plateloc") == 2
+    assert db.count_control_actions(device_id="nope") == 0
+    db.close()
+
+
 def test_get_control_actions_tolerates_missing_payload(tmp_path):
     db = _db(tmp_path)
     db.record_equipment_event("plateloc", "control_action", message="startup")

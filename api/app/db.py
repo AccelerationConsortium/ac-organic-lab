@@ -582,6 +582,18 @@ class LabDatabase:
             )
         return result
 
+    def count_control_actions(self, *, device_id: Optional[str] = None) -> int:
+        """Lifetime number of operator control-write audit rows (optionally
+        for one device). Backs the admin console's headline figure, which
+        must not be capped by the row window ``get_control_actions`` returns."""
+        sql = "SELECT COUNT(*) AS n FROM equipment_events WHERE event_type = ?"
+        params: tuple = (CONTROL_ACTION,)
+        if device_id:
+            sql += " AND device_id = ?"
+            params += (device_id,)
+        row = self._fetchone(sql, params)
+        return int(row["n"]) if row else 0
+
     def get_sensor_readings(
         self,
         sensor_id: str,

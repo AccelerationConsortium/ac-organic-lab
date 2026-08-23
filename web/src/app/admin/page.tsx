@@ -12,8 +12,18 @@ import { useUserAuth } from "@/lib/user-auth";
 // is UX only. Read-only by design: roster edits stay in roster.yaml
 // (edit → validate → commit → SIGHUP), never in a web form.
 //
-// Layout mirrors the platform pages: a grid of fixed-height tiles whose
-// bodies scroll independently under a sticky table header.
+// Layout: a strict two-column ("double panel") grid of equal tiles, paired by
+// topic — every row is two tiles, none spans the grid:
+//
+//   Overview (headline numbers)  |  Roster health (reload / approvals / expiry)
+//   Accounts                     |  Automation & API keys
+//   Live sessions                |  Live claims
+//   Sign-in activity             |  Control actions
+//
+// To fit the wider tables into half-width tiles, related fields share one
+// cell (name over email, role + grants as chips, status over expiry, device
+// over action, outcome over duration). Tile bodies are fixed-height and scroll
+// independently under a sticky table header, like the platform pages.
 // ---------------------------------------------------------------------------
 
 interface AdminGrant {
@@ -104,6 +114,13 @@ interface ControlAction {
   origin: string | null;
 }
 
+interface ControlActionsResponse {
+  /** Newest-first window (the `limit` we asked for). */
+  actions: ControlAction[];
+  /** Lifetime row count — the headline figure; not capped by `limit`. */
+  total: number;
+}
+
 interface ClaimedBy {
   session_id: string;
   owner: string;
@@ -136,17 +153,52 @@ function useAdmin<T>(path: string, refetchMs: number, enabled: boolean) {
 // Formatting
 // ---------------------------------------------------------------------------
 
-/** ac_auth timestamps are epoch seconds (REAL). */
+const SHORT_STAMP: Intl.DateTimeFormatOptions = {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+};
+
+/** ac_auth timestamps are epoch seconds (REAL). Full form, for tooltips. */
 function fmtEpoch(t: number | null | undefined): string {
   if (t == null) return "—";
   return new Date(t * 1000).toLocaleString();
 }
 
-/** lab.db timestamps are ISO-8601 UTC strings. */
+/** Compact "Aug 23, 14:15" form for table cells; pair with a full `title`. */
+function fmtEpochShort(t: number | null | undefined): string {
+  if (t == null) return "—";
+  return new Date(t * 1000).toLocaleString(undefined, SHORT_STAMP);
+}
+
+function parseIso(ts: string): Date {
+  return new Date(ts.endsWith("Z") || ts.includes("+") ? ts : ts + "Z");
+}
+
+/** lab.db timestamps are ISO-8601 UTC strings. Full form, for tooltips. */
 function fmtIso(ts: string | null | undefined): string {
   if (!ts) return "—";
-  const d = new Date(ts.endsWith("Z") || ts.includes("+") ? ts : ts + "Z");
+  const d = parseIso(ts);
   return isNaN(d.getTime()) ? ts : d.toLocaleString();
+}
+
+function fmtIsoShort(ts: string | null | undefined): string {
+  if (!ts) return "—";
+  const d = parseIso(ts);
+  return isNaN(d.getTime()) ? ts : d.toLocaleString(undefined, SHORT_STAMP);
+}
+
+/** "2 d 4 h" / "3 h 12 m" / "45 m" / "30 s" — coarse on purpose (headline use). */
+function fmtDuration(seconds: number): string {
+  const s = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return h > 0 ? `${d} d ${h} h` : `${d} d`;
+  if (h > 0) return m > 0 ? `${h} h ${m} m` : `${h} h`;
+  if (m > 0) return `${m} m`;
+  return `${Math.floor(s)} s`;
 }
 
 const EVENT_BADGE: Record<string, string> = {
@@ -166,24 +218,17 @@ const EVENT_BADGE: Record<string, string> = {
 function Tile({
   title,
   sub,
-  wide,
   controls,
   children,
 }: {
   title: string;
   sub?: string;
-  /** Span both columns of the lg grid (banner tile). */
-  wide?: boolean;
   /** Optional header widgets (filter dropdowns etc.). */
   controls?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <section
-      className={`flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950/40 ${
-        wide ? "lg:col-span-2" : ""
-      }`}
-    >
+    <section className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950/40">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-ink dark:text-slate-100">{title}</h2>
@@ -242,6 +287,15 @@ function Table({ head, children }: { head: string[]; children: React.ReactNode }
   );
 }
 
+/** Section caption inside a tile that stacks two tables. */
+function Caption({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="border-t border-slate-100 px-4 pb-1 pt-3 text-xs font-medium uppercase tracking-wide text-ink-subtle first:border-t-0 dark:border-slate-800 dark:text-slate-500">
+      {children}
+    </p>
+  );
+}
+
 function Empty({ message }: { message: string }) {
   return (
     <p className="px-4 py-6 text-center text-sm text-ink-muted dark:text-slate-400">{message}</p>
@@ -253,6 +307,31 @@ function ErrorNote({ error }: { error: unknown }) {
     <p className="px-4 py-6 text-center text-sm text-rose-600 dark:text-rose-400">
       {error instanceof Error ? error.message : "Failed to load."}
     </p>
+  );
+}
+
+/** Two-line cell: a primary line over a muted secondary line. */
+function Stacked({
+  primary,
+  secondary,
+  mono,
+}: {
+  primary: React.ReactNode;
+  secondary?: React.ReactNode;
+  /** Render the secondary line in monospace (ids, actions). */
+  mono?: boolean;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="truncate">{primary}</div>
+      {secondary != null && secondary !== "" && (
+        <div
+          className={`truncate text-xs text-ink-subtle dark:text-slate-500 ${mono ? "font-mono" : ""}`}
+        >
+          {secondary}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -300,17 +379,72 @@ function GrantChips({ role, grants }: { role: string; grants: AdminGrant[] }) {
   return <div className="flex max-w-xs flex-wrap gap-1">{chips}</div>;
 }
 
-function StatCard({ label, value, tone }: { label: string; value: string; tone?: "warn" | "bad" }) {
-  const toneCls =
-    tone === "bad"
-      ? "text-rose-600 dark:text-rose-400"
-      : tone === "warn"
-        ? "text-amber-600 dark:text-amber-400"
-        : "text-ink dark:text-slate-100";
+/** The "agent" marker on machine principals listed among users. */
+function AgentChip() {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950/40">
-      <p className="text-xs text-ink-subtle dark:text-slate-500">{label}</p>
-      <p className={`mt-1 text-lg font-semibold ${toneCls}`}>{value}</p>
+    <span
+      className="ml-1.5 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+      title="Machine principal: exists so devices can resolve this claim-owner string to a role. Cannot sign in."
+    >
+      agent
+    </span>
+  );
+}
+
+/**
+ * One cell of the Overview KPI row: sentence-case label, a semibold value in
+ * the page sans (proportional figures — these are not a column), and a short
+ * muted detail line that says what the number is over.
+ */
+function Stat({
+  label,
+  value,
+  detail,
+  title,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  title?: string;
+}) {
+  return (
+    <div className="min-w-0" title={title}>
+      <dt className="truncate text-xs text-ink-subtle dark:text-slate-500">{label}</dt>
+      <dd className="mt-0.5 truncate text-2xl font-semibold leading-tight text-ink dark:text-slate-100">
+        {value}
+      </dd>
+      {detail && (
+        <dd className="mt-0.5 text-[11px] leading-snug text-ink-muted dark:text-slate-400">{detail}</dd>
+      )}
+    </div>
+  );
+}
+
+/** One row of the Roster health list: label on the left, content on the right. */
+function HealthRow({
+  label,
+  tone,
+  children,
+}: {
+  label: string;
+  tone?: "ok" | "warn" | "bad";
+  children: React.ReactNode;
+}) {
+  const dot =
+    tone === "bad"
+      ? "bg-rose-500"
+      : tone === "warn"
+        ? "bg-amber-500"
+        : tone === "ok"
+          ? "bg-emerald-500"
+          : "bg-slate-300 dark:bg-slate-600";
+  return (
+    <div className="grid grid-cols-[9rem_1fr] gap-x-3 px-4 py-2.5 text-sm">
+      <dt className="flex items-start gap-2 text-xs text-ink-subtle dark:text-slate-500">
+        <span className={`mt-1 inline-block h-2 w-2 shrink-0 rounded-full ${dot}`} aria-hidden />
+        <span className="leading-5">{label}</span>
+      </dt>
+      <dd className="min-w-0 text-ink dark:text-slate-200">{children}</dd>
     </div>
   );
 }
@@ -340,7 +474,7 @@ export default function AdminPage() {
     30_000,
     isAdmin,
   );
-  const controlActions = useAdmin<{ actions: ControlAction[] }>(
+  const controlActions = useAdmin<ControlActionsResponse>(
     "/api/history/control-actions?limit=200",
     30_000,
     isAdmin,
@@ -385,6 +519,19 @@ export default function AdminPage() {
     [controlActions.data, actionOwner, actionDevice],
   );
 
+  // Headline "session time": signed-in time summed over the *live* sessions
+  // (now − created_at). Ended sessions leave no duration record — logout
+  // deletes the row and expiry purges it — so a lifetime figure would be a
+  // guess; this one is exact for what is on screen. `now` is taken per render;
+  // the sessions query refetches every 30 s, which re-renders.
+  const nowS = Date.now() / 1000;
+  const liveSessions = sessions.data?.sessions ?? [];
+  const sessionSeconds = liveSessions.reduce(
+    (acc, r) => acc + Math.max(0, nowS - r.created_at),
+    0,
+  );
+  const sessionAccounts = new Set(liveSessions.map((r) => r.email)).size;
+
   if (loading) {
     return <div className="mt-6 h-24 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />;
   }
@@ -402,336 +549,526 @@ export default function AdminPage() {
 
   const s = state.data;
   const lastReload = s?.last_reload;
+  const rosterTotal = s ? s.roster.users + s.roster.automation : null;
 
   return (
-    <div className="mt-6 space-y-6">
-      {/* ---- summary strip ------------------------------------------------ */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <StatCard
-          label="Active accounts"
-          value={s ? `${s.roster.active_accounts} / ${s.roster.users + s.roster.automation}` : "…"}
-        />
-        <StatCard label="Projects" value={s ? String(s.roster.projects) : "…"} />
-        <StatCard
-          label="Live sessions"
-          value={sessions.data ? String(sessions.data.sessions.length) : "…"}
-        />
-        <StatCard
-          label="Devices claimed"
-          value={equipment.data ? String(claims.length) : "…"}
-        />
-        <StatCard
-          label="Pending automation"
-          value={s ? String(s.pending_automation.length) : "…"}
-          tone={s && s.pending_automation.length > 0 ? "warn" : undefined}
-        />
-        <StatCard
-          label="Roster reload"
-          value={
-            lastReload == null
-              ? "none since start"
-              : lastReload.applied
-                ? "applied"
-                : "REJECTED"
-          }
-          tone={lastReload && !lastReload.applied ? "bad" : undefined}
-        />
-      </div>
+    <div className="mt-6 grid gap-6 lg:grid-cols-2">
+      {/* ================================================================== */}
+      {/* Row 1 — Overview | Roster health                                     */}
+      {/* ================================================================== */}
 
-      {lastReload && !lastReload.applied && (
-        <div className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300">
-          <p className="font-medium">
-            Last roster reload was rejected ({fmtEpoch(lastReload.ts)}) — the previous
-            allow-list is still in effect.
-          </p>
-          <ul className="mt-1 list-inside list-disc text-xs">
-            {lastReload.errors.map((e) => (
-              <li key={e}>{e}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {s && s.expiring_soon.length > 0 && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-          <span className="font-medium">Expiring within 30 days: </span>
-          {s.expiring_soon.map((e) => `${e.email} (${fmtEpoch(e.expires_at)})`).join(", ")}
-        </div>
-      )}
-
-      {/* ---- tile grid ----------------------------------------------------- */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* ---- sign-in activity ------------------------------------------- */}
-        <Tile
-          title="Sign-in activity"
-          sub="auth_events audit log — codes, logins, failures, logouts."
-          controls={
-            <Select
-              value={eventEmail}
-              onChange={setEventEmail}
-              options={emails}
-              allLabel="All accounts"
+      <Tile
+        title="Overview"
+        sub="Headline numbers — the roster, who is signed in, what is claimed, how much has been done."
+      >
+        {state.error ? (
+          <ErrorNote error={state.error} />
+        ) : (
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-5 px-4 py-4 sm:grid-cols-3">
+            <Stat
+              label="Active accounts"
+              value={s ? String(s.roster.active_accounts) : "…"}
+              detail={s ? `of ${rosterTotal} on the roster` : undefined}
+              title="Roster principals that are enabled, unexpired and (for automation) approved"
             />
-          }
-        >
-          {events.error ? (
-            <ErrorNote error={events.error} />
-          ) : !events.data ? (
-            <Empty message="Loading…" />
-          ) : events.data.events.length === 0 ? (
-            <Empty message="No events recorded yet." />
-          ) : (
-            <Table head={["Time", "Event", "Account", "From"]}>
-              {events.data.events.map((e, i) => (
-                <tr key={`${e.ts}-${i}`}>
-                  <td className="whitespace-nowrap px-4 py-2 text-xs">{fmtEpoch(e.ts)}</td>
-                  <td className="px-4 py-2">
-                    <span
-                      className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${
-                        EVENT_BADGE[e.event] ??
-                        "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                      }`}
-                      title={e.detail || undefined}
-                    >
-                      {e.event}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-xs">{e.email || "—"}</td>
-                  <td className="px-4 py-2 font-mono text-xs" title={e.user_agent}>
-                    {e.ip || "—"}
-                  </td>
-                </tr>
-              ))}
-            </Table>
-          )}
-        </Tile>
+            <Stat
+              label="Projects"
+              value={s ? String(s.roster.projects) : "…"}
+              detail="declared in roster.yaml"
+            />
+            <Stat
+              label="Live sessions"
+              value={sessions.data ? String(liveSessions.length) : "…"}
+              detail={
+                sessions.data
+                  ? `${sessionAccounts} ${sessionAccounts === 1 ? "account" : "accounts"} signed in`
+                  : undefined
+              }
+              title="Unexpired session cookies (~12 h TTL)"
+            />
+            <Stat
+              label="Devices claimed"
+              value={equipment.data ? String(claims.length) : "…"}
+              detail={
+                equipment.data ? `live · of ${equipment.data.equipment.length} polled` : undefined
+              }
+              title="Devices whose live /status carries details.claimed_by"
+            />
+            <Stat
+              label="Control actions"
+              value={
+                controlActions.data
+                  ? controlActions.data.total.toLocaleString()
+                  : controlActions.error
+                    ? "—"
+                    : "…"
+              }
+              detail="all time, via the dashboard"
+              title="Lifetime count of control_action audit rows in lab.db"
+            />
+            <Stat
+              label="Session time"
+              value={sessions.data ? fmtDuration(sessionSeconds) : "…"}
+              detail="live sessions, summed"
+              title="Σ (now − signed in) across unexpired sessions; ended sessions keep no duration record"
+            />
+          </dl>
+        )}
+      </Tile>
 
-        {/* ---- control-action audit ---------------------------------------- */}
-        <Tile
-          title="Control actions"
-          sub="Dashboard-mediated device writes — who did what, how the device answered."
-          controls={
-            <>
-              <Select
-                value={actionOwner}
-                onChange={setActionOwner}
-                options={actionOwners}
-                allLabel="All operators"
-              />
-              <Select
-                value={actionDevice}
-                onChange={setActionDevice}
-                options={actionDevices}
-                allLabel="All devices"
-              />
-            </>
-          }
-        >
-          {controlActions.error ? (
-            <ErrorNote error={controlActions.error} />
-          ) : !controlActions.data ? (
-            <Empty message="Loading…" />
-          ) : filteredActions.length === 0 ? (
-            <Empty message="No operator control writes recorded." />
-          ) : (
-            <Table head={["Time", "Device", "Action", "Operator", "Origin", "Outcome", "Duration"]}>
-              {filteredActions.map((a, i) => (
-                <tr key={`${a.ts}-${i}`}>
-                  <td className="whitespace-nowrap px-4 py-2 text-xs">{fmtIso(a.ts)}</td>
-                  <td className="px-4 py-2 text-xs font-medium text-ink dark:text-slate-100">
-                    {a.device_id}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs">
-                    {a.method ? `${a.method} ` : ""}
-                    {a.action ?? a.message ?? "—"}
-                  </td>
-                  <td className="px-4 py-2 text-xs">{a.owner ?? "—"}</td>
-                  <td className="px-4 py-2 text-xs">
-                    {a.origin === "assistant" ? (
-                      <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-800 dark:bg-purple-950/50 dark:text-purple-200">
-                        assistant
+      <Tile
+        title="Roster health"
+        sub="roster.yaml as loaded by the auth sidecar — reloads, approvals waiting on an admin, accounts about to lapse."
+      >
+        {state.error ? (
+          <ErrorNote error={state.error} />
+        ) : !s ? (
+          <Empty message="Loading…" />
+        ) : (
+          <dl className="divide-y divide-slate-100 dark:divide-slate-800">
+            <HealthRow label="Roster loaded" tone="ok">
+              <span title={fmtEpoch(s.roster_loaded_at)}>{fmtEpochShort(s.roster_loaded_at)}</span>
+              <span className="ml-2 text-xs text-ink-subtle dark:text-slate-500">
+                {s.roster.users} users · {s.roster.automation} automation · {s.roster.projects}{" "}
+                projects
+              </span>
+            </HealthRow>
+
+            <HealthRow
+              label="Last reload"
+              tone={lastReload == null ? undefined : lastReload.applied ? "ok" : "bad"}
+            >
+              {lastReload == null ? (
+                <span className="text-ink-muted dark:text-slate-400">none since start</span>
+              ) : lastReload.applied ? (
+                <span>
+                  applied{" "}
+                  <span className="text-xs text-ink-subtle dark:text-slate-500" title={fmtEpoch(lastReload.ts)}>
+                    {fmtEpochShort(lastReload.ts)}
+                  </span>
+                </span>
+              ) : (
+                <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300">
+                  <p className="font-medium">
+                    REJECTED {fmtEpochShort(lastReload.ts)} — the previous allow-list is still in
+                    effect.
+                  </p>
+                  <ul className="mt-1 list-inside list-disc text-xs">
+                    {lastReload.errors.map((e) => (
+                      <li key={e}>{e}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </HealthRow>
+
+            <HealthRow
+              label="Pending automation"
+              tone={s.pending_automation.length > 0 ? "warn" : "ok"}
+            >
+              {s.pending_automation.length === 0 ? (
+                <span className="text-ink-muted dark:text-slate-400">none awaiting approval</span>
+              ) : (
+                <ul className="space-y-0.5 text-amber-700 dark:text-amber-400">
+                  {s.pending_automation.map((e) => (
+                    <li key={e} className="truncate font-medium">
+                      {e}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </HealthRow>
+
+            <HealthRow
+              label="Expiring ≤ 30 days"
+              tone={s.expiring_soon.length > 0 ? "warn" : "ok"}
+            >
+              {s.expiring_soon.length === 0 ? (
+                <span className="text-ink-muted dark:text-slate-400">nothing lapsing soon</span>
+              ) : (
+                <ul className="space-y-0.5">
+                  {s.expiring_soon.map((e) => (
+                    <li key={e.email} className="flex justify-between gap-3">
+                      <span className="truncate text-amber-700 dark:text-amber-400">{e.email}</span>
+                      <span
+                        className="shrink-0 text-xs text-ink-subtle dark:text-slate-500"
+                        title={fmtEpoch(e.expires_at)}
+                      >
+                        {fmtEpochShort(e.expires_at)}
                       </span>
-                    ) : (
-                      <span className="text-ink-subtle dark:text-slate-500">tile</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-xs">
-                    <span
-                      className={
-                        a.outcome === "ok" || (a.status_code != null && a.status_code < 300)
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-rose-600 dark:text-rose-400"
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </HealthRow>
+          </dl>
+        )}
+      </Tile>
+
+      {/* ================================================================== */}
+      {/* Row 2 — Accounts | Automation & API keys                            */}
+      {/* ================================================================== */}
+
+      <Tile
+        title="Accounts"
+        sub="The full roster.yaml allow-list, incl. disabled/expired. Access = what each account may use. Edits go through roster.yaml, not this page."
+      >
+        {accounts.error ? (
+          <ErrorNote error={accounts.error} />
+        ) : !accounts.data ? (
+          <Empty message="Loading…" />
+        ) : accounts.data.users.length === 0 ? (
+          <Empty message="No human accounts on the roster." />
+        ) : (
+          <Table head={["Account", "Access", "Status", "Last login"]}>
+            {accounts.data.users.map((u) => {
+              const inactive = u.status !== "active" || u.is_expired;
+              const isAgent = u.email.startsWith("agent:");
+              return (
+                <tr key={u.email} className={inactive ? "opacity-50" : ""}>
+                  <td className="max-w-[14rem] px-4 py-2">
+                    <Stacked
+                      primary={
+                        <span className="font-medium text-ink dark:text-slate-100">
+                          {u.name || u.email}
+                          {isAgent && <AgentChip />}
+                        </span>
                       }
-                    >
-                      {a.outcome ?? "—"}
-                      {a.status_code != null ? ` (${a.status_code})` : ""}
-                    </span>
+                      secondary={
+                        u.name
+                          ? `${u.email}${u.lab_account ? ` · ${u.lab_account}` : ""}`
+                          : u.lab_account || undefined
+                      }
+                    />
                   </td>
-                  <td
-                    className="whitespace-nowrap px-4 py-2 text-right text-xs tabular-nums text-ink-muted dark:text-slate-400"
-                    title="Wall-clock of the device interaction (claim → action → release) as seen from the dashboard"
-                  >
-                    {a.duration_s != null ? `${a.duration_s.toFixed(1)} s` : "—"}
+                  <td className="px-4 py-2">
+                    <GrantChips role={u.role} grants={u.grants ?? []} />
+                  </td>
+                  <td className="px-4 py-2">
+                    <Stacked
+                      primary={
+                        <>
+                          {u.is_expired ? "expired" : u.status}
+                          {u.disabled_reason && (
+                            <span className="ml-1 text-xs text-ink-subtle dark:text-slate-500">
+                              ({u.disabled_reason})
+                            </span>
+                          )}
+                        </>
+                      }
+                      secondary={
+                        u.expires_at != null ? (
+                          <span title={fmtEpoch(u.expires_at)}>
+                            {u.is_expired ? "expired" : "expires"} {fmtEpochShort(u.expires_at)}
+                          </span>
+                        ) : undefined
+                      }
+                    />
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2">
+                    <Stacked
+                      primary={
+                        <span title={fmtEpoch(u.last_login_at)}>{fmtEpochShort(u.last_login_at)}</span>
+                      }
+                      secondary={
+                        u.active_sessions
+                          ? `${u.active_sessions} live ${u.active_sessions === 1 ? "session" : "sessions"}`
+                          : undefined
+                      }
+                    />
                   </td>
                 </tr>
-              ))}
-            </Table>
-          )}
-        </Tile>
+              );
+            })}
+          </Table>
+        )}
+      </Tile>
 
-        {/* ---- live claims -------------------------------------------------- */}
-        <Tile
-          title="Live claims"
-          sub="Devices under a cooperative claim (details.claimed_by, live poll)."
-        >
-          {claims.length === 0 ? (
-            <Empty message="No device is currently claimed." />
-          ) : (
-            <Table head={["Device", "Held by", "Session", "Claim expires"]}>
-              {claims.map((c) => (
-                <tr key={c.id}>
-                  <td className="px-4 py-2 font-medium text-ink dark:text-slate-100">{c.name}</td>
-                  <td className="px-4 py-2">{c.claimed.owner}</td>
-                  <td className="px-4 py-2 font-mono text-xs">
-                    {c.claimed.session_id.slice(0, 12)}…
-                  </td>
-                  <td className="px-4 py-2">{fmtIso(c.claimed.expires_at)}</td>
-                </tr>
-              ))}
-            </Table>
-          )}
-        </Tile>
-
-        {/* ---- live sessions ------------------------------------------------ */}
-        <Tile title="Live sessions" sub="Unexpired session cookies (~12 h TTL).">
-          {sessions.error ? (
-            <ErrorNote error={sessions.error} />
-          ) : !sessions.data ? (
-            <Empty message="Loading…" />
-          ) : sessions.data.sessions.length === 0 ? (
-            <Empty message="Nobody is signed in." />
-          ) : (
-            <Table head={["Account", "Signed in", "Expires"]}>
-              {sessions.data.sessions.map((r, i) => (
-                <tr key={`${r.email}-${i}`}>
-                  <td className="px-4 py-2">{r.email}</td>
-                  <td className="px-4 py-2">{fmtEpoch(r.created_at)}</td>
-                  <td className="px-4 py-2">{fmtEpoch(r.expires_at)}</td>
-                </tr>
-              ))}
-            </Table>
-          )}
-        </Tile>
-
-        {/* ---- accounts (banner tile) --------------------------------------- */}
-        <Tile
-          wide
-          title="Accounts"
-          sub="Who exists (the full roster.yaml allow-list, incl. disabled/expired). Grants = what each account may use. Edits go through roster.yaml, not this page."
-        >
-          {accounts.error ? (
-            <ErrorNote error={accounts.error} />
-          ) : !accounts.data ? (
-            <Empty message="Loading…" />
-          ) : (
-            <>
-              <Table head={["Name", "Email", "Role", "Grants", "Status", "Group", "Last login", "Sessions", "Expires"]}>
-                {accounts.data.users.map((u) => (
-                  <tr
-                    key={u.email}
-                    className={u.status !== "active" || u.is_expired ? "opacity-50" : ""}
-                  >
-                    <td className="px-4 py-2 font-medium text-ink dark:text-slate-100">
-                      {u.name || "—"}
+      <Tile
+        title="Automation & API keys"
+        sub="Machine principals and how they authenticate (X-Api-Key; humans use sessions). last_used_at separates dead keys from load-bearing ones."
+      >
+        {accounts.error || apiKeys.error ? (
+          <ErrorNote error={accounts.error ?? apiKeys.error} />
+        ) : !accounts.data || !apiKeys.data ? (
+          <Empty message="Loading…" />
+        ) : (
+          <>
+            <Caption>Automation accounts</Caption>
+            {accounts.data.automation.length === 0 ? (
+              <Empty message="No automation accounts on the roster." />
+            ) : (
+              <Table head={["Account", "Approved", "Platform", "Keys", "Expires"]}>
+                {accounts.data.automation.map((a) => (
+                  <tr key={a.email} className={a.is_expired ? "opacity-50" : ""}>
+                    <td className="max-w-[14rem] px-4 py-2">
+                      <Stacked
+                        primary={
+                          <span className="font-medium text-ink dark:text-slate-100">
+                            {a.name || a.email}
+                          </span>
+                        }
+                        secondary={a.name ? a.email : undefined}
+                      />
                     </td>
                     <td className="px-4 py-2">
-                      {u.email}
-                      {u.email.startsWith("agent:") && (
-                        <span
-                          className="ml-1.5 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
-                          title="Machine principal: exists so devices can resolve this claim-owner string to a role. Cannot sign in."
-                        >
-                          agent
+                      {a.approved ? (
+                        "yes"
+                      ) : (
+                        <span className="font-medium text-amber-600 dark:text-amber-400">
+                          pending
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-2">{u.role}</td>
-                    <td className="px-4 py-2">
-                      <GrantChips role={u.role} grants={u.grants ?? []} />
+                    <td className="px-4 py-2">{a.platform ?? "—"}</td>
+                    <td className="px-4 py-2 tabular-nums">{a.api_keys}</td>
+                    <td className="whitespace-nowrap px-4 py-2" title={fmtEpoch(a.expires_at)}>
+                      {fmtEpochShort(a.expires_at)}
                     </td>
-                    <td className="px-4 py-2">
-                      {u.is_expired ? "expired" : u.status}
-                      {u.disabled_reason && (
-                        <span className="ml-1 text-xs text-ink-subtle dark:text-slate-500">
-                          ({u.disabled_reason})
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2">{u.lab_account || "—"}</td>
-                    <td className="px-4 py-2">{fmtEpoch(u.last_login_at)}</td>
-                    <td className="px-4 py-2">{u.active_sessions || "—"}</td>
-                    <td className="px-4 py-2">{fmtEpoch(u.expires_at)}</td>
                   </tr>
                 ))}
               </Table>
-              {accounts.data.automation.length > 0 && (
-                <>
-                  <p className="border-t border-slate-100 px-4 pb-1 pt-3 text-xs font-medium uppercase tracking-wide text-ink-subtle dark:border-slate-800 dark:text-slate-500">
-                    Automation (machine principals)
-                  </p>
-                  <Table head={["Email", "Name", "Approved", "Platform", "Active keys", "Expires"]}>
-                    {accounts.data.automation.map((a) => (
-                      <tr key={a.email} className={a.is_expired ? "opacity-50" : ""}>
-                        <td className="px-4 py-2">{a.email}</td>
-                        <td className="px-4 py-2">{a.name || "—"}</td>
-                        <td className="px-4 py-2">
-                          {a.approved ? (
-                            "yes"
-                          ) : (
-                            <span className="font-medium text-amber-600 dark:text-amber-400">
-                              pending
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2">{a.platform ?? "—"}</td>
-                        <td className="px-4 py-2">{a.api_keys}</td>
-                        <td className="px-4 py-2">{fmtEpoch(a.expires_at)}</td>
-                      </tr>
-                    ))}
-                  </Table>
-                </>
-              )}
-            </>
-          )}
-        </Tile>
+            )}
 
-        {/* ---- API keys ------------------------------------------------------ */}
-        <Tile
-          wide
-          title="API keys"
-          sub="How automation accounts authenticate (X-Api-Key; humans use sessions instead). last_used_at separates dead keys from load-bearing ones."
-        >
-          {apiKeys.error ? (
-            <ErrorNote error={apiKeys.error} />
-          ) : !apiKeys.data ? (
-            <Empty message="Loading…" />
-          ) : apiKeys.data.keys.length === 0 ? (
-            <Empty message="No API keys issued." />
-          ) : (
-            <Table head={["Account", "Label", "Last used", "Expires", "Status"]}>
-              {apiKeys.data.keys.map((k) => (
-                <tr key={k.id} className={k.revoked ? "opacity-50" : ""}>
-                  <td className="px-4 py-2">{k.email}</td>
-                  <td className="px-4 py-2">{k.label || `#${k.id}`}</td>
-                  <td className="px-4 py-2">{fmtEpoch(k.last_used_at)}</td>
-                  <td className="px-4 py-2">{fmtEpoch(k.expires_at)}</td>
-                  <td className="px-4 py-2">{k.revoked ? "revoked" : "active"}</td>
+            <Caption>API keys</Caption>
+            {apiKeys.data.keys.length === 0 ? (
+              <Empty message="No API keys issued." />
+            ) : (
+              <Table head={["Account", "Label", "Last used", "Expires", "Status"]}>
+                {apiKeys.data.keys.map((k) => (
+                  <tr key={k.id} className={k.revoked ? "opacity-50" : ""}>
+                    <td className="max-w-[14rem] truncate px-4 py-2" title={k.email}>
+                      {k.email}
+                    </td>
+                    <td className="px-4 py-2">{k.label || `#${k.id}`}</td>
+                    <td className="whitespace-nowrap px-4 py-2" title={fmtEpoch(k.last_used_at)}>
+                      {fmtEpochShort(k.last_used_at)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2" title={fmtEpoch(k.expires_at)}>
+                      {fmtEpochShort(k.expires_at)}
+                    </td>
+                    <td className="px-4 py-2">{k.revoked ? "revoked" : "active"}</td>
+                  </tr>
+                ))}
+              </Table>
+            )}
+          </>
+        )}
+      </Tile>
+
+      {/* ================================================================== */}
+      {/* Row 3 — Live sessions | Live claims                                  */}
+      {/* ================================================================== */}
+
+      <Tile title="Live sessions" sub="Unexpired session cookies (~12 h TTL).">
+        {sessions.error ? (
+          <ErrorNote error={sessions.error} />
+        ) : !sessions.data ? (
+          <Empty message="Loading…" />
+        ) : liveSessions.length === 0 ? (
+          <Empty message="Nobody is signed in." />
+        ) : (
+          <Table head={["Account", "Signed in", "Elapsed", "Expires"]}>
+            {liveSessions.map((r, i) => (
+              <tr key={`${r.email}-${i}`}>
+                <td className="max-w-[14rem] truncate px-4 py-2" title={r.email}>
+                  {r.email}
+                </td>
+                <td className="whitespace-nowrap px-4 py-2" title={fmtEpoch(r.created_at)}>
+                  {fmtEpochShort(r.created_at)}
+                </td>
+                <td className="whitespace-nowrap px-4 py-2 tabular-nums text-ink-muted dark:text-slate-400">
+                  {fmtDuration(nowS - r.created_at)}
+                </td>
+                <td className="whitespace-nowrap px-4 py-2" title={fmtEpoch(r.expires_at)}>
+                  {fmtEpochShort(r.expires_at)}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Tile>
+
+      <Tile
+        title="Live claims"
+        sub="Devices under a cooperative claim (details.claimed_by, live poll)."
+      >
+        {claims.length === 0 ? (
+          <Empty message="No device is currently claimed." />
+        ) : (
+          <Table head={["Device", "Held by", "Session", "Claim expires"]}>
+            {claims.map((c) => (
+              <tr key={c.id}>
+                <td className="px-4 py-2">
+                  <Stacked
+                    primary={
+                      <span className="font-medium text-ink dark:text-slate-100">{c.name}</span>
+                    }
+                    secondary={c.id}
+                    mono
+                  />
+                </td>
+                <td className="px-4 py-2">{c.claimed.owner}</td>
+                <td className="px-4 py-2 font-mono text-xs" title={c.claimed.session_id}>
+                  {c.claimed.session_id.slice(0, 12)}…
+                </td>
+                <td className="whitespace-nowrap px-4 py-2" title={fmtIso(c.claimed.expires_at)}>
+                  {fmtIsoShort(c.claimed.expires_at)}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Tile>
+
+      {/* ================================================================== */}
+      {/* Row 4 — Sign-in activity | Control actions                          */}
+      {/* ================================================================== */}
+
+      <Tile
+        title="Sign-in activity"
+        sub="auth_events audit log — codes, logins, failures, logouts."
+        controls={
+          <Select
+            value={eventEmail}
+            onChange={setEventEmail}
+            options={emails}
+            allLabel="All accounts"
+          />
+        }
+      >
+        {events.error ? (
+          <ErrorNote error={events.error} />
+        ) : !events.data ? (
+          <Empty message="Loading…" />
+        ) : events.data.events.length === 0 ? (
+          <Empty message="No events recorded yet." />
+        ) : (
+          <Table head={["Time", "Event", "Account", "From"]}>
+            {events.data.events.map((e, i) => (
+              <tr key={`${e.ts}-${i}`}>
+                <td className="whitespace-nowrap px-4 py-2 text-xs" title={fmtEpoch(e.ts)}>
+                  {fmtEpochShort(e.ts)}
+                </td>
+                <td className="px-4 py-2">
+                  <span
+                    className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${
+                      EVENT_BADGE[e.event] ??
+                      "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    }`}
+                    title={e.detail || undefined}
+                  >
+                    {e.event}
+                  </span>
+                </td>
+                <td className="max-w-[12rem] truncate px-4 py-2 text-xs" title={e.email || undefined}>
+                  {e.email || "—"}
+                </td>
+                <td className="px-4 py-2 font-mono text-xs" title={e.user_agent}>
+                  {e.ip || "—"}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Tile>
+
+      <Tile
+        title="Control actions"
+        sub={
+          controlActions.data
+            ? `Dashboard-mediated device writes — who, what, how the device answered. Latest ${controlActions.data.actions.length} of ${controlActions.data.total.toLocaleString()}.`
+            : "Dashboard-mediated device writes — who, what, how the device answered."
+        }
+        controls={
+          <>
+            <Select
+              value={actionOwner}
+              onChange={setActionOwner}
+              options={actionOwners}
+              allLabel="All operators"
+            />
+            <Select
+              value={actionDevice}
+              onChange={setActionDevice}
+              options={actionDevices}
+              allLabel="All devices"
+            />
+          </>
+        }
+      >
+        {controlActions.error ? (
+          <ErrorNote error={controlActions.error} />
+        ) : !controlActions.data ? (
+          <Empty message="Loading…" />
+        ) : filteredActions.length === 0 ? (
+          <Empty message="No operator control writes recorded." />
+        ) : (
+          <Table head={["Time", "Device · action", "Operator", "Outcome"]}>
+            {filteredActions.map((a, i) => {
+              const ok = a.outcome === "ok" || (a.status_code != null && a.status_code < 300);
+              return (
+                <tr key={`${a.ts}-${i}`}>
+                  <td className="whitespace-nowrap px-4 py-2 text-xs" title={fmtIso(a.ts)}>
+                    {fmtIsoShort(a.ts)}
+                  </td>
+                  <td className="max-w-[14rem] px-4 py-2">
+                    <Stacked
+                      primary={
+                        <span className="text-xs font-medium text-ink dark:text-slate-100">
+                          {a.device_id}
+                        </span>
+                      }
+                      secondary={`${a.method ? `${a.method} ` : ""}${a.action ?? a.message ?? "—"}`}
+                      mono
+                    />
+                  </td>
+                  <td className="max-w-[12rem] px-4 py-2 text-xs">
+                    <Stacked
+                      primary={<span title={a.owner ?? undefined}>{a.owner ?? "—"}</span>}
+                      secondary={
+                        a.origin === "assistant" || a.origin === "assistant-plan" ? (
+                          <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-800 dark:bg-purple-950/50 dark:text-purple-200">
+                            {a.origin}
+                          </span>
+                        ) : (
+                          "tile"
+                        )
+                      }
+                    />
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2 text-xs">
+                    <Stacked
+                      primary={
+                        <span
+                          className={
+                            ok
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-rose-600 dark:text-rose-400"
+                          }
+                        >
+                          {a.outcome ?? "—"}
+                          {a.status_code != null ? ` (${a.status_code})` : ""}
+                        </span>
+                      }
+                      secondary={
+                        a.duration_s != null ? (
+                          <span
+                            className="tabular-nums"
+                            title="Wall-clock of the device interaction (claim → action → release) as seen from the dashboard"
+                          >
+                            {a.duration_s.toFixed(1)} s
+                          </span>
+                        ) : undefined
+                      }
+                    />
+                  </td>
                 </tr>
-              ))}
-            </Table>
-          )}
-        </Tile>
-      </div>
+              );
+            })}
+          </Table>
+        )}
+      </Tile>
     </div>
   );
 }
