@@ -4,19 +4,21 @@ import { useEffect, useState } from "react";
 
 import { EquipmentGrid } from "@/components/EquipmentGrid";
 import { useEquipmentList } from "@/lib/use-equipment";
-import { HEALTH_DOT, pillClass, platformHealth, stickyPillRowBase } from "@/lib/pill";
+import { HEALTH_DOT, equipmentPillClass, pillClass, platformHealth, stickyPillRowBase } from "@/lib/pill";
 import { usePlatforms } from "@/lib/use-platforms";
 import type { EquipmentSnapshot, PlatformSection } from "@/types/api";
 
 /**
  * The Platforms tab: every platform section with a detail page as a pill
- * (plus None, which shows nothing); under it, per-equipment pills toggle
+ * (plus None, which shows nothing). Under the platform pills, a collapsed
+ * "Equipment filters" disclosure expands to per-equipment pills that toggle
  * individual tiles on/off (All / None shortcuts). The selected platform's
  * equipment renders in the same full-width EquipmentGrid the per-platform
  * pages use.
  */
 
 const SELECTED_PLATFORM_KEY = "platforms-selected";
+const EQUIPMENT_OPEN_KEY = "platforms-equipment-open";
 const NONE = "__none__";
 
 export default function PlatformsPage() {
@@ -34,6 +36,15 @@ export default function PlatformsPage() {
 
   // Per-platform hidden-equipment sets (equipment pills toggle visibility).
   const [hiddenByPlatform, setHiddenByPlatform] = useState<Record<string, string[]>>({});
+
+  // Equipment-pill row is collapsed/auto-hidden by default so only the
+  // platform pills stay visible; expand it to toggle individual tiles.
+  // Restored from/saved to sessionStorage like the selected platform.
+  const [equipmentOpen, setEquipmentOpen] = useState(false);
+  useEffect(() => {
+    const saved = window.sessionStorage.getItem(EQUIPMENT_OPEN_KEY);
+    if (saved != null) setEquipmentOpen(saved === "1");
+  }, []);
 
   if (platformsPending) {
     return <p className="text-sm text-ink-muted dark:text-slate-400">Loading…</p>;
@@ -142,46 +153,75 @@ export default function PlatformsPage() {
         </div>
       </div>
 
-      {/* Equipment pills for the selected platform: toggle single tiles,
-          All / None shortcuts. Inside the sticky block above. */}
+      {/* Equipment pills for the selected platform, collapsed by default so
+          only the platform pills stay visible. Expand to toggle single tiles
+          or use the All / None shortcuts. Inside the sticky block above. */}
       {selected && (
-        <div
-          className="flex flex-wrap items-center gap-1.5"
-          role="group"
-          aria-label="Toggle equipment tiles"
-        >
+        <div className="flex flex-col gap-2">
           <button
             type="button"
-            onClick={() => setHidden(new Set())}
-            className={pillClass(hidden.size === 0, "green")}
-            title="Show every tile"
+            onClick={() => {
+              setEquipmentOpen((o) => {
+                const next = !o;
+                window.sessionStorage.setItem(EQUIPMENT_OPEN_KEY, next ? "1" : "0");
+                return next;
+              });
+            }}
+            aria-expanded={equipmentOpen}
+            aria-controls="equipment-pills"
+            className={pillClass(equipmentOpen, "green")}
+            title={equipmentOpen ? "Hide equipment filters" : "Show equipment filters"}
           >
-            All
+            <span
+              aria-hidden
+              className={`inline-block transition-transform ${equipmentOpen ? "rotate-90" : ""}`}
+            >
+              ▸
+            </span>
+            Equipment filters
           </button>
-          <button
-            type="button"
-            onClick={() => setHidden(new Set(selected.equipment))}
-            className={pillClass(hidden.size >= selected.equipment.length, "green")}
-            title="Hide every tile"
-          >
-            None
-          </button>
-          {selected.equipment.map((id) => {
-            const snap = snapshotById.get(id);
-            const visible = !hidden.has(id);
-            return (
+          {equipmentOpen && (
+            <div
+              id="equipment-pills"
+              className="flex flex-wrap items-center gap-1.5"
+              role="group"
+              aria-label="Toggle equipment tiles"
+            >
               <button
-                key={id}
                 type="button"
-                aria-pressed={visible}
-                onClick={() => toggleEquipment(id)}
-                className={pillClass(visible, "green")}
-                title={visible ? "Click to hide this tile" : "Click to show this tile"}
+                onClick={() => setHidden(new Set())}
+                className={pillClass(hidden.size === 0, "green")}
+                title="Show every tile"
               >
-                {snap?.name ?? id}
+                All
               </button>
-            );
-          })}
+              <button
+                type="button"
+                onClick={() => setHidden(new Set(selected.equipment))}
+                className={pillClass(hidden.size >= selected.equipment.length, "green")}
+                title="Hide every tile"
+              >
+                None
+              </button>
+              {selected.equipment.map((id) => {
+                const snap = snapshotById.get(id);
+                const state = snap?.status?.equipment_status ?? "unknown";
+                const visible = !hidden.has(id);
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    aria-pressed={visible}
+                    onClick={() => toggleEquipment(id)}
+                    className={equipmentPillClass(state, visible)}
+                    title={visible ? "Click to hide this tile" : "Click to show this tile"}
+                  >
+                    {snap?.name ?? id}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
       </div>
