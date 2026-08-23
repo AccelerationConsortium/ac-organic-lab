@@ -28,3 +28,17 @@ html.dark body {
   background-color: #0b1120;
   color: #e2e8f0;
 }
+
+/* Heading collapse (ChromeToggle): the title + logo row is hidden while
+   <html> carries `chrome-collapsed`; the class is restored before first paint
+   by layout.tsx's init script, so there is no flash either way. Printing
+   always shows the heading. */
+html.chrome-collapsed .chrome-heading {
+  display: none;
+}
+
+@media print {
+  html.chrome-collapsed .chrome-heading {
+    display: flex;
+  }
+}

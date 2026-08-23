@@ -9,13 +9,16 @@ import { StateReferencePanel } from "@/components/StateReferencePanel";
 import { Logo } from "@/components/Logo";
 
 // Sets the `dark` class before first paint (localStorage, else OS
-// preference) so there's no flash of the wrong theme on load.
+// preference) so there's no flash of the wrong theme on load. The same pass
+// restores the heading collapse (`chrome-collapsed`, see ChromeToggle) so a
+// user who tucked the title + logo away doesn't see them flash back in.
 const THEME_INIT_SCRIPT = `
 (function () {
   try {
     var stored = localStorage.getItem("theme");
     var dark = stored ? stored === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
     document.documentElement.classList.toggle("dark", dark);
+    document.documentElement.classList.toggle("chrome-collapsed", localStorage.getItem("chrome") === "collapsed");
   } catch (e) {}
 })();
 `;
@@ -57,10 +60,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Script src="/auth/banner.js" strategy="afterInteractive" />
         <QueryProvider>
          <UserAuthProvider>
-          {/* Pinned chrome: title, logo, then the nav tabs beneath them. */}
+          {/* Pinned chrome: title, logo, then the nav tabs beneath them. The
+              title + logo row (`.chrome-heading`) hides under
+              `html.chrome-collapsed` — toggled by the chevron at the end of
+              the nav row (ChromeToggle) — so the page gets the room back while
+              the tabs stay put. */}
           <div className="shrink-0">
             <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 pt-3 sm:px-6 lg:px-8">
-              <div className="flex items-center justify-between gap-4">
+              <div className="chrome-heading flex items-center justify-between gap-4">
                 <div className="min-w-0">
                   <h1 className="text-2xl font-semibold tracking-tight text-ink dark:text-slate-100 md:text-3xl">
                     Organic Self-driving Lab

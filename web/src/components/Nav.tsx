@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { usePlatforms } from "@/lib/use-platforms";
 import { useUserAuth } from "@/lib/user-auth";
+import { ChromeToggle } from "./ChromeToggle";
 
 const STATIC_BEFORE = [{ href: "/", label: "Overview" }];
 const STATIC_AFTER = [
@@ -77,6 +78,10 @@ export function Nav() {
           <Link key={tab.href} href={tab.href} className={cls}>{tab.label}</Link>
         );
       })}
+      {/* Right end of the row: hide / show the title + logo above. Lives in
+          the tab row (not the heading) so it is still reachable once the
+          heading is collapsed. */}
+      <ChromeToggle />
     </nav>
   );
 }
