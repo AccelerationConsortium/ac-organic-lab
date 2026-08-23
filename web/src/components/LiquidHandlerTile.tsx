@@ -153,7 +153,7 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
                 }`}
                 aria-hidden
               />
-              <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+              <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
                 {key === "ssh" ? "SSH" : "Protocol"}
               </span>
             </span>

@@ -19,7 +19,7 @@ export function StalenessIndicator({ fetchedAt, staleAfterSeconds = 8 }: Props) 
   }, []);
 
   if (!now) {
-    return <span className="text-xs text-ink-subtle dark:text-slate-500">…</span>;
+    return <span className="text-xs text-ink-subtle dark:text-slate-400">…</span>;
   }
 
   const stale = isStale(fetchedAt, staleAfterSeconds, now);
@@ -28,7 +28,7 @@ export function StalenessIndicator({ fetchedAt, staleAfterSeconds = 8 }: Props) 
       className={`text-xs ${
         stale
           ? "text-amber-700 dark:text-amber-400"
-          : "text-ink-subtle dark:text-slate-400"
+          : "text-ink-subtle dark:text-slate-300"
       }`}
       title={fetchedAt}
     >

@@ -123,7 +123,7 @@ export function LoginBar() {
         </span>
         <span className="text-ink dark:text-slate-200">
           {identity.email}
-          <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-ink-muted dark:bg-slate-800 dark:text-slate-400">
+          <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-ink-muted dark:bg-slate-800 dark:text-slate-300">
             {identity.role}
           </span>
         </span>
@@ -144,7 +144,7 @@ export function LoginBar() {
   // ---- Logged out (view-only) --------------------------------------------
   return (
     <div ref={barRef} className={baseClasses}>
-      <span className="font-medium text-ink-muted dark:text-slate-400">
+      <span className="font-medium text-ink-muted dark:text-slate-300">
         View-only · sign in to control equipment
       </span>
 
@@ -228,7 +228,7 @@ export function LoginBar() {
           <button
             type="button"
             onClick={resetFlow}
-            className="text-xs font-medium text-ink-subtle underline hover:text-ink-muted dark:text-slate-500 dark:hover:text-slate-300"
+            className="text-xs font-medium text-ink-subtle underline hover:text-ink-muted dark:text-slate-400 dark:hover:text-slate-200"
           >
             Use a different account
           </button>

@@ -320,7 +320,7 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       {/* Gantry state (read-only, from /status) — styled to match the other
           caption/value rows (10px uppercase caption + xs value). */}
       <div className="flex items-center gap-1.5">
-        <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+        <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
           Gantry
         </span>
         <span className="text-xs font-semibold text-ink dark:text-slate-100">
@@ -339,7 +339,7 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
               picker below (placeholder until a plate is chosen). */}
           <div className="flex min-h-0 flex-1 items-stretch gap-2">
             <div className="flex w-[140px] shrink-0 flex-col gap-1.5 rounded-md border border-slate-200 bg-slate-100 p-2 dark:border-slate-700 dark:bg-slate-800/60">
-              <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+              <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
                 Plate Type
               </span>
               <TileButton
@@ -375,7 +375,7 @@ export function SolidDoserTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           </div>
 
           <div className="mt-auto flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-1 text-[10px] text-ink-subtle dark:text-slate-500">
+            <label className="flex items-center gap-1 text-[10px] text-ink-subtle dark:text-slate-400">
               <input
                 type="number"
                 min="0.1"
@@ -450,7 +450,7 @@ function WellGrid({
   const topVCls = a1TopLeft ? "top-0" : "bottom-0";
   const bottomVCls = a1TopLeft ? "bottom-0" : "top-0";
   const cornerLabelCls =
-    "pointer-events-none absolute font-mono text-[11px] leading-none text-ink-subtle dark:text-slate-500";
+    "pointer-events-none absolute font-mono text-[11px] leading-none text-ink-subtle dark:text-slate-400";
 
   return (
     <div className="flex-1 overflow-auto">

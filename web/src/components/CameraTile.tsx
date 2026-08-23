@@ -267,7 +267,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
                     className={`shrink-0 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
                       isActive
                         ? "border-sky-500 bg-sky-50 text-sky-900 dark:border-sky-400 dark:bg-sky-900/40 dark:text-sky-100"
-                        : "border-slate-200 text-ink-muted hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+                        : "border-slate-200 text-ink-muted hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                     }`}
                   >
                     {lens.label}
@@ -307,7 +307,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         width regardless of how cramped the preset row gets.
       */}
       {!authorized && (
-        <p className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-ink-muted dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
+        <p className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-ink-muted dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300">
           {authenticated
             ? "View-only — no access to this camera."
             : "View-only — sign in to control this camera."}
@@ -417,7 +417,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           )}
           <Link
             href={`/platforms/${snapshot.platform}/media/${snapshot.id}`}
-            className="text-right text-[11px] text-ink-subtle underline-offset-2 hover:underline dark:text-slate-500"
+            className="text-right text-[11px] text-ink-subtle underline-offset-2 hover:underline dark:text-slate-400"
           >
             Recent captures →
           </Link>
@@ -476,7 +476,7 @@ function Toggle({
         disabled ? "cursor-not-allowed opacity-50" : ""
       }`}
     >
-      <span className="text-ink-muted dark:text-slate-400">{label}</span>
+      <span className="text-ink-muted dark:text-slate-300">{label}</span>
       <span
         className={`relative inline-block h-4 w-7 rounded-full transition-colors ${
           checked ? "bg-sky-500" : "bg-slate-300 dark:bg-slate-700"
@@ -525,7 +525,7 @@ function PresetModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
       <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-surface-raised p-4 shadow-xl dark:border-slate-800 dark:bg-slate-900">
         <h4 className="text-sm font-semibold text-ink dark:text-slate-100">Save preset</h4>
-        <p className="mt-1 text-xs text-ink-muted dark:text-slate-400">
+        <p className="mt-1 text-xs text-ink-muted dark:text-slate-300">
           Captures the camera&apos;s current pan/tilt/zoom under the given name.
         </p>
         <input

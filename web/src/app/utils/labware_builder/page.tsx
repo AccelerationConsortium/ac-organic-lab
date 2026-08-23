@@ -46,7 +46,7 @@ function Field({
 }) {
   return (
     <label className="flex flex-col gap-0.5 text-xs">
-      <span className="text-ink-subtle dark:text-slate-400">{label}</span>
+      <span className="text-ink-subtle dark:text-slate-300">{label}</span>
       {children}
       {issue && <span className="text-rose-600 dark:text-rose-400">{issue.message}</span>}
     </label>
@@ -341,7 +341,7 @@ export default function LabwareBuilderPage() {
         <h2 className="text-lg font-semibold text-ink dark:text-slate-100">
           Custom labware builder
         </h2>
-        <p className="text-xs text-ink-subtle dark:text-slate-500">
+        <p className="text-xs text-ink-subtle dark:text-slate-400">
           Builds an Opentrons <span className="font-mono">schema-2</span> definition JSON.
           Anyone can download the file; saving to the shared lab store requires{" "}
           <span className="font-semibold">signing in</span>, and repo-committed definitions
@@ -583,30 +583,30 @@ export default function LabwareBuilderPage() {
         {/* Preview + library */}
         <div className="flex flex-col gap-4">
           <section className="rounded-xl border border-slate-200 bg-surface-raised p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-300">
               Preview (top-down, to scale)
             </h3>
             <Preview spec={spec} />
-            <p className="mt-1 text-[10px] text-ink-subtle dark:text-slate-500">
+            <p className="mt-1 text-[10px] text-ink-subtle dark:text-slate-400">
               Row A is at the top (the deck&apos;s back edge). {spec.rows} × {spec.columns} ={" "}
               {spec.rows * spec.columns} wells.
             </p>
-            <h3 className="mb-2 mt-3 text-[11px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+            <h3 className="mb-2 mt-3 text-[11px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-300">
               Side view (front elevation, to scale)
             </h3>
             <SideView spec={spec} />
-            <p className="mt-1 text-[10px] text-ink-subtle dark:text-slate-500">
+            <p className="mt-1 text-[10px] text-ink-subtle dark:text-slate-400">
               Height {spec.footprintZ} mm, wells {spec.wellDepth} mm deep ({spec.wellBottomShape}{" "}
               bottom).
             </p>
           </section>
 
           <section className="rounded-xl border border-slate-200 bg-surface-raised p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-300">
               Definition library
             </h3>
             {!library?.definitions?.length ? (
-              <p className="text-xs text-ink-subtle dark:text-slate-500">
+              <p className="text-xs text-ink-subtle dark:text-slate-400">
                 No custom definitions in the lab store yet — build one here, or start from a
                 standard template below.
               </p>
@@ -621,11 +621,11 @@ export default function LabwareBuilderPage() {
                       <p className="truncate text-xs text-ink dark:text-slate-200">
                         {d.display_name}
                       </p>
-                      <p className="truncate font-mono text-[10px] text-ink-subtle dark:text-slate-500">
+                      <p className="truncate font-mono text-[10px] text-ink-subtle dark:text-slate-400">
                         {d.load_name} · {d.rows}×{d.columns}
                       </p>
                       {(d.vendor || d.product_numbers.length > 0) && (
-                        <p className="truncate text-[10px] text-ink-subtle dark:text-slate-500">
+                        <p className="truncate text-[10px] text-ink-subtle dark:text-slate-400">
                           {[d.vendor, ...d.product_numbers].filter(Boolean).join(" · ")}
                           {d.product_links[0] && (
                             <>
@@ -644,7 +644,7 @@ export default function LabwareBuilderPage() {
                       )}
                       {d.created_by && (
                         <p
-                          className="truncate text-[10px] text-ink-subtle dark:text-slate-500"
+                          className="truncate text-[10px] text-ink-subtle dark:text-slate-400"
                           title={
                             d.updated_by && d.updated_by !== d.created_by
                               ? `Created by ${d.created_by}${d.created_at ? ` · ${d.created_at}` : ""}; last edited by ${d.updated_by}${d.updated_at ? ` · ${d.updated_at}` : ""}`
@@ -696,7 +696,7 @@ export default function LabwareBuilderPage() {
               </ul>
             )}
 
-            <h4 className="mb-1.5 mt-4 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+            <h4 className="mb-1.5 mt-4 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">
               Standard Opentrons library
               {standardLibrary ? ` (${standardLibrary.definitions.length})` : " (loading…)"}
             </h4>
@@ -718,18 +718,18 @@ export default function LabwareBuilderPage() {
                     <p className="truncate text-xs text-ink dark:text-slate-200">
                       {d.display_name}
                     </p>
-                    <p className="truncate font-mono text-[10px] text-ink-subtle dark:text-slate-500">
+                    <p className="truncate font-mono text-[10px] text-ink-subtle dark:text-slate-400">
                       {d.load_name} · {d.rows}×{d.columns}
                     </p>
                     {(d.vendor || d.product_numbers.length > 0) && (
-                      <p className="truncate text-[10px] text-ink-subtle dark:text-slate-500">
+                      <p className="truncate text-[10px] text-ink-subtle dark:text-slate-400">
                         {[d.vendor, ...d.product_numbers].filter(Boolean).join(" · ")}
                       </p>
                     )}
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
                     <span
-                      className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                      className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300"
                       title="Official Opentrons definition (opentrons-shared-data) — exact geometry"
                     >
                       standard
@@ -747,12 +747,12 @@ export default function LabwareBuilderPage() {
               ))}
             </ul>
             {standardMatches.length > STANDARD_LIST_CAP && (
-              <p className="mt-1 text-[10px] text-ink-subtle dark:text-slate-500">
+              <p className="mt-1 text-[10px] text-ink-subtle dark:text-slate-400">
                 +{standardMatches.length - STANDARD_LIST_CAP} more — refine the search.
               </p>
             )}
             {standardLibrary && standardMatches.length === 0 && (
-              <p className="text-[10px] text-ink-subtle dark:text-slate-500">
+              <p className="text-[10px] text-ink-subtle dark:text-slate-400">
                 No official definition matches “{standardQuery}”.
               </p>
             )}

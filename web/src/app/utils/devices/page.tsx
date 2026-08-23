@@ -16,7 +16,7 @@ export default function DevicesPage() {
   const { data, error, isPending } = useEquipmentList();
 
   if (isPending) {
-    return <p className="text-sm text-ink-muted dark:text-slate-400">Loading devices…</p>;
+    return <p className="text-sm text-ink-muted dark:text-slate-300">Loading devices…</p>;
   }
   if (error) {
     return (

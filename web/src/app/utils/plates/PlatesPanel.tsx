@@ -83,7 +83,7 @@ export function PlatesPanel() {
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-ink dark:text-slate-100">Plates</h2>
-            <p className="text-xs text-ink-muted dark:text-slate-400">
+            <p className="text-xs text-ink-muted dark:text-slate-300">
               Where every registered plate is, per the record layer&apos;s custody ledger. Robot moves are
               recorded by the run executor; bench-top moves are recorded here, by you.
             </p>
@@ -97,14 +97,14 @@ export function PlatesPanel() {
           />
         </div>
 
-        {plates.isPending && <p className="mt-3 text-sm text-ink-muted dark:text-slate-400">Loading plates…</p>}
+        {plates.isPending && <p className="mt-3 text-sm text-ink-muted dark:text-slate-300">Loading plates…</p>}
         {plates.error && (
           <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
             Could not read the custody ledger: {errorText(plates.error)}. This is not the same as “no plates”.
           </p>
         )}
         {plates.data && rows.length === 0 && (
-          <p className="mt-3 text-sm text-ink-muted dark:text-slate-400">
+          <p className="mt-3 text-sm text-ink-muted dark:text-slate-300">
             {filter ? "No plate matches the filter." : "No plates are registered yet — register one from bitácora (register_plate) or POST /containers."}
           </p>
         )}
@@ -112,7 +112,7 @@ export function PlatesPanel() {
           <div className="mt-3 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-400">
+                <tr className="text-left text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-300">
                   <th className="py-1 pr-3">Place</th>
                   <th className="py-1 pr-3">Plate (hid)</th>
                   <th className="py-1 pr-3">Model</th>
@@ -127,7 +127,7 @@ export function PlatesPanel() {
                       key={p.hid}
                       className={`border-t border-slate-100 dark:border-slate-800 ${selected === p.hid ? "bg-slate-50 dark:bg-slate-800/60" : ""}`}
                     >
-                      <td className="py-1 pr-3 font-mono text-xs text-ink-muted dark:text-slate-400">
+                      <td className="py-1 pr-3 font-mono text-xs text-ink-muted dark:text-slate-300">
                         {i === 0 ? place : ""}
                       </td>
                       <td className="py-1 pr-3">
@@ -179,19 +179,19 @@ function PlateHistory({ hid }: { hid: string }) {
       <h3 className="text-sm font-semibold text-ink dark:text-slate-100">
         History — <span className="font-mono">{hid}</span>
       </h3>
-      {q.isPending && <p className="mt-2 text-sm text-ink-muted dark:text-slate-400">Loading…</p>}
+      {q.isPending && <p className="mt-2 text-sm text-ink-muted dark:text-slate-300">Loading…</p>}
       {q.error && <p className="mt-2 text-sm text-rose-700 dark:text-rose-300">Could not load history: {errorText(q.error)}</p>}
       {q.data && (
         <ul className="mt-2 space-y-1 text-sm">
-          {q.data.history.length === 0 && <li className="text-ink-muted dark:text-slate-400">No ledger rows yet.</li>}
+          {q.data.history.length === 0 && <li className="text-ink-muted dark:text-slate-300">No ledger rows yet.</li>}
           {[...q.data.history].reverse().map((h) => (
             <li key={h.action_id} className="flex flex-wrap gap-x-3 font-mono text-xs">
-              <span className="text-ink-muted dark:text-slate-400">{new Date(h.performed_at).toLocaleString()}</span>
+              <span className="text-ink-muted dark:text-slate-300">{new Date(h.performed_at).toLocaleString()}</span>
               <span>{h.action_type}</span>
               {h.to_location_id && <span>→ {h.to_location_id.slice(0, 8)}…</span>}
-              <span className="text-ink-muted dark:text-slate-400">by {h.performed_by}</span>
-              {h.step_id && <span className="text-ink-muted dark:text-slate-400">step {h.step_id}</span>}
-              {typeof h.params?.reason === "string" && <span className="text-ink-muted dark:text-slate-400">({String(h.params.reason)})</span>}
+              <span className="text-ink-muted dark:text-slate-300">by {h.performed_by}</span>
+              {h.step_id && <span className="text-ink-muted dark:text-slate-300">step {h.step_id}</span>}
+              {typeof h.params?.reason === "string" && <span className="text-ink-muted dark:text-slate-300">({String(h.params.reason)})</span>}
             </li>
           ))}
         </ul>
@@ -236,7 +236,7 @@ export function MoveForm({
   return (
     <section className={cardCls}>
       <h3 className="text-sm font-semibold text-ink dark:text-slate-100">Record a bench-top move</h3>
-      <p className="mt-1 text-xs text-ink-muted dark:text-slate-400">
+      <p className="mt-1 text-xs text-ink-muted dark:text-slate-300">
         You moved a plate by hand — say where it is now. This writes one append-only <code>move</code> row in
         the custody ledger, attributed to you; the robot&apos;s moves are recorded by the run executor the
         same way. Only registered places (the lab&apos;s <code>locations.yaml</code>) are offered.
@@ -253,7 +253,7 @@ export function MoveForm({
         }}
       >
         <label className="flex flex-col gap-0.5 text-xs">
-          <span className="text-ink-subtle dark:text-slate-400">Plate (hid)</span>
+          <span className="text-ink-subtle dark:text-slate-300">Plate (hid)</span>
           <input
             className={`${inputCls} w-44 font-mono`}
             list="custody-hids"
@@ -269,7 +269,7 @@ export function MoveForm({
           </datalist>
         </label>
         <label className="flex flex-col gap-0.5 text-xs">
-          <span className="text-ink-subtle dark:text-slate-400">Now at</span>
+          <span className="text-ink-subtle dark:text-slate-300">Now at</span>
           <select className={`${inputCls} w-64`} value={to} onChange={(e) => setTo(e.target.value)} aria-label="Destination place">
             <option value="">— choose a place —</option>
             {places.map((l) => (
@@ -281,7 +281,7 @@ export function MoveForm({
           </select>
         </label>
         <label className="flex flex-col gap-0.5 text-xs">
-          <span className="text-ink-subtle dark:text-slate-400">Note (optional)</span>
+          <span className="text-ink-subtle dark:text-slate-300">Note (optional)</span>
           <input className={`${inputCls} w-56`} value={note} onChange={(e) => setNote(e.target.value)} aria-label="Note" />
         </label>
         <button type="submit" className={btnCls} disabled={!ready || move.isPending}>

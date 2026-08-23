@@ -28,21 +28,21 @@ export default function CameraMediaPage({
       <header className="flex flex-col gap-1">
         <Link
           href={`/platforms/${platform}`}
-          className="text-xs text-ink-subtle hover:underline dark:text-slate-500"
+          className="text-xs text-ink-subtle hover:underline dark:text-slate-400"
         >
           ← Back to {platform.toUpperCase()} platform
         </Link>
         <h2 className="text-lg font-semibold text-ink dark:text-slate-100">
           {cameraId} · captures
         </h2>
-        <p className="text-sm text-ink-muted dark:text-slate-400">
+        <p className="text-sm text-ink-muted dark:text-slate-300">
           Snapshots and recordings stored on the gateway server. Links open
           the file inline; right-click to download.
         </p>
       </header>
 
       {isPending && (
-        <p className="text-sm text-ink-muted dark:text-slate-400">Loading…</p>
+        <p className="text-sm text-ink-muted dark:text-slate-300">Loading…</p>
       )}
       {error && (
         <p className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
@@ -86,7 +86,7 @@ function Section({
         {title}
       </h3>
       {files.length === 0 ? (
-        <p className="text-xs text-ink-subtle dark:text-slate-500">
+        <p className="text-xs text-ink-subtle dark:text-slate-400">
           {emptyMessage}
         </p>
       ) : (
@@ -104,10 +104,10 @@ function Section({
               >
                 {file.lens}/{file.name}
               </a>
-              <span className="shrink-0 tabular-nums text-ink-subtle dark:text-slate-500">
+              <span className="shrink-0 tabular-nums text-ink-subtle dark:text-slate-400">
                 {humanBytes(file.bytes)}
               </span>
-              <span className="shrink-0 text-ink-subtle dark:text-slate-500">
+              <span className="shrink-0 text-ink-subtle dark:text-slate-400">
                 {formatTimestamp(file.mtime)}
               </span>
             </li>

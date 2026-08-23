@@ -100,7 +100,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </main>
           {/* Pinned. */}
           <footer className="shrink-0 border-t border-slate-200 dark:border-slate-800 print:hidden">
-            <div className="mx-auto w-full max-w-7xl px-4 py-2 text-xs text-ink-subtle dark:text-slate-500 sm:px-6 lg:px-8">
+            <div className="mx-auto w-full max-w-7xl px-4 py-2 text-xs text-ink-subtle dark:text-slate-400 sm:px-6 lg:px-8">
               Live dashboard · sign in to control · v2
             </div>
           </footer>

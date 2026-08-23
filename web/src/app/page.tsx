@@ -26,7 +26,7 @@ function LabEnvironmentCard({
         <h2 className="text-base font-semibold text-ink dark:text-slate-100">
           {section.title}
         </h2>
-        <p className="text-xs text-ink-subtle dark:text-slate-400">
+        <p className="text-xs text-ink-subtle dark:text-slate-300">
           {pending
             ? "Loading sensors…"
             : sensors.length === 0
@@ -39,7 +39,7 @@ function LabEnvironmentCard({
       {pending ? (
         <div className="aspect-[2/1] w-full animate-pulse rounded-xl bg-slate-200 dark:bg-slate-800" />
       ) : sensors.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-ink-subtle dark:border-slate-700 dark:text-slate-500">
+        <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-ink-subtle dark:border-slate-700 dark:text-slate-400">
           Add entries with
           <span className="mx-1 font-mono">kind: environmental_sensor</span>
           and a <span className="font-mono">location</span> in
@@ -84,7 +84,7 @@ export default function OverviewPage() {
   // "Loading…" gate. See docs/ARCHITECTURE.md: the aggregator now serves a
   // warm cache, so in steady state this second arrival is near-instant.
   if (platformsPending) {
-    return <p className="text-sm text-ink-muted dark:text-slate-400">Loading…</p>;
+    return <p className="text-sm text-ink-muted dark:text-slate-300">Loading…</p>;
   }
   if (platformsError) {
     return (
@@ -164,7 +164,7 @@ export default function OverviewPage() {
                 aria-hidden
               />
               {section.title}
-              <span className={visible ? "text-sky-600 dark:text-sky-300" : "text-ink-subtle dark:text-slate-500"}>
+              <span className={visible ? "text-sky-600 dark:text-sky-300" : "text-ink-subtle dark:text-slate-400"}>
                 {section.equipment.length}
               </span>
             </button>

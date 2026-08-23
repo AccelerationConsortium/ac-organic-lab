@@ -195,7 +195,7 @@ export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) 
       {/* Status rows: plate staged + handoff position. */}
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
-          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
             Plate
           </span>
           <StateChip
@@ -206,7 +206,7 @@ export function PlateStackerTile({ snapshot }: { snapshot: EquipmentSnapshot }) 
           />
         </div>
         <div className="flex items-center gap-2">
-          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
             Handoff
           </span>
           <span
@@ -261,8 +261,8 @@ function StateChip({
         on
           ? "border-emerald-400 bg-emerald-100 text-emerald-900 dark:border-emerald-600 dark:bg-emerald-900/60 dark:text-emerald-100"
           : off
-            ? "border-slate-200 bg-slate-50 text-ink-muted dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400"
-            : "border-slate-200 bg-transparent text-ink-subtle dark:border-slate-700 dark:text-slate-500",
+            ? "border-slate-200 bg-slate-50 text-ink-muted dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300"
+            : "border-slate-200 bg-transparent text-ink-subtle dark:border-slate-700 dark:text-slate-400",
       ].join(" ")}
     >
       {label}

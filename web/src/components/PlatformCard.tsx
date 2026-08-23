@@ -185,7 +185,7 @@ export function PlatformCard({
             {title}
           </h3>
           {description && (
-            <p className="text-xs text-ink-subtle dark:text-slate-500">
+            <p className="text-xs text-ink-subtle dark:text-slate-400">
               {description}
             </p>
           )}
@@ -195,7 +195,7 @@ export function PlatformCard({
             <button
               onClick={() => setStreamVisible((v) => !v)}
               title={streamVisible ? "Hide camera stream" : "Show camera stream"}
-              className="rounded-md border border-slate-200 bg-white/60 px-2 py-0.5 text-[10px] font-medium text-ink-subtle hover:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+              className="rounded-md border border-slate-200 bg-white/60 px-2 py-0.5 text-[10px] font-medium text-ink-subtle hover:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
             >
               {streamVisible ? "Hide stream" : "Show stream"}
             </button>
@@ -219,7 +219,7 @@ export function PlatformCard({
         ))}
 
       <div>
-        <h4 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+        <h4 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">
           Equipment ({count})
         </h4>
         {showSkeleton ? (
@@ -229,7 +229,7 @@ export function PlatformCard({
             ))}
           </ul>
         ) : snapshots.length === 0 ? (
-          <p className="text-sm text-ink-subtle dark:text-slate-500">
+          <p className="text-sm text-ink-subtle dark:text-slate-400">
             No equipment registered for this platform.
           </p>
         ) : (

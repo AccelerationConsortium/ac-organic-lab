@@ -272,7 +272,7 @@ function MetricPill({
       className={`flex h-7 items-center gap-1 rounded-md border px-2 ${TONE_CLASSES[tone]}`}
       title={title}
     >
-      <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+      <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
         {caption}
       </span>
       <span className="ml-auto text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">
@@ -339,7 +339,7 @@ function EditablePill({
       className={`flex h-7 items-center gap-1 rounded-md border px-2 ${TONE_CLASSES[tone]}`}
       title={title}
     >
-      <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+      <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
         {caption}
       </span>
       {actual !== undefined && (
@@ -358,7 +358,7 @@ function EditablePill({
         onChange={(e) => setDraft(e.target.value)}
         className="ml-auto w-12 min-w-0 rounded border border-slate-200 bg-white px-1 py-0 text-right text-xs tabular-nums text-ink outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-300 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
       />
-      <span className="shrink-0 text-[10px] text-ink-subtle dark:text-slate-500">
+      <span className="shrink-0 text-[10px] text-ink-subtle dark:text-slate-400">
         {unit}
       </span>
       <TileButton type="submit" size="small" variant="primary" disabled={disabled}>

@@ -94,7 +94,7 @@ function Section({
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between border-b border-slate-100 pb-0.5 dark:border-slate-800">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">
           {title}
         </span>
         {right}
@@ -120,7 +120,7 @@ function MetricPill({
       className={`flex h-8 items-center gap-1 rounded-md border px-2 ${TONE_CLASSES[tone]}`}
       title={title}
     >
-      <span className="shrink-0 text-[11px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+      <span className="shrink-0 text-[11px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
         {caption}
       </span>
       <span className="ml-auto truncate text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">
@@ -144,7 +144,7 @@ function StatusDot({ label, ok }: { label: string; ok: boolean | null }) {
       title={ok === null ? `${label}: unknown` : `${label}: ${ok ? "OK" : "fault"}`}
     >
       <span className={`h-2 w-2 shrink-0 rounded-full ${tone}`} />
-      <span className="text-[11px] text-ink-subtle dark:text-slate-400">{label}</span>
+      <span className="text-[11px] text-ink-subtle dark:text-slate-300">{label}</span>
     </div>
   );
 }
@@ -178,7 +178,7 @@ function FluidBar({
       : "bg-emerald-500";
   return (
     <div className="flex items-center gap-2">
-      <span className="w-20 shrink-0 text-[11px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+      <span className="w-20 shrink-0 text-[11px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
         {label}
       </span>
       <div className="relative h-3 flex-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
@@ -189,7 +189,7 @@ function FluidBar({
           />
         )}
       </div>
-      <span className="w-28 shrink-0 text-right text-xs tabular-nums text-ink-muted dark:text-slate-400">
+      <span className="w-28 shrink-0 text-right text-xs tabular-nums text-ink-muted dark:text-slate-300">
         {value !== null && capacity
           ? `${value.toFixed(0)}/${capacity.toFixed(0)} mL`
           : "— mL"}
@@ -216,7 +216,7 @@ function CompPill({ label, state }: { label?: string; state: string | null }) {
       className={`flex h-6 items-center gap-1 rounded-md border px-2 ${TONE_CLASSES[tone]}`}
     >
       {label && (
-        <span className="text-[11px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+        <span className="text-[11px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
           {label}
         </span>
       )}
@@ -278,7 +278,7 @@ export function HplcTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const footerLeft =
     typeof olss === "string" && olss ? (
       <div className="truncate">
-        OLSS: <span className="font-medium text-ink-muted dark:text-slate-400">{olss}</span>
+        OLSS: <span className="font-medium text-ink-muted dark:text-slate-300">{olss}</span>
       </div>
     ) : undefined;
 
@@ -395,13 +395,13 @@ export function HplcTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         right={<CompPill label="OpenLab" state={h.compState("openlab_acquisition")} />}
       >
         <div className="flex items-center justify-between text-xs">
-          <span className="text-ink-subtle dark:text-slate-500">Pending</span>
+          <span className="text-ink-subtle dark:text-slate-400">Pending</span>
           <span className="tabular-nums text-ink dark:text-slate-100">
             {pending !== null ? pending : "—"}
           </span>
         </div>
         <div className="flex items-baseline gap-1.5 text-xs">
-          <span className="shrink-0 text-ink-subtle dark:text-slate-500">Current:</span>
+          <span className="shrink-0 text-ink-subtle dark:text-slate-400">Current:</span>
           <span
             className="truncate font-mono text-ink dark:text-slate-100"
             title={currentRun ?? undefined}
@@ -411,9 +411,9 @@ export function HplcTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </div>
         {lastRun && (
           <div className="flex items-baseline gap-1.5 text-xs">
-            <span className="shrink-0 text-ink-subtle dark:text-slate-500">Last:</span>
+            <span className="shrink-0 text-ink-subtle dark:text-slate-400">Last:</span>
             <span
-              className="truncate font-mono text-ink-muted dark:text-slate-400"
+              className="truncate font-mono text-ink-muted dark:text-slate-300"
               title={lastRun}
             >
               {lastRun}

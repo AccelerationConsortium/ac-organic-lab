@@ -232,7 +232,7 @@ function Tile({
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-ink dark:text-slate-100">{title}</h2>
-          {sub && <p className="mt-0.5 text-xs text-ink-subtle dark:text-slate-500">{sub}</p>}
+          {sub && <p className="mt-0.5 text-xs text-ink-subtle dark:text-slate-400">{sub}</p>}
         </div>
         {controls && <div className="flex shrink-0 items-center gap-2">{controls}</div>}
       </header>
@@ -274,7 +274,7 @@ function Table({ head, children }: { head: string[]; children: React.ReactNode }
     <table className="w-full text-left text-sm">
       {/* Sticky under the tile header while the body scrolls. Needs a solid bg. */}
       <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
-        <tr className="text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+        <tr className="text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-400">
           {head.map((h) => (
             <th key={h} className="px-4 py-2 font-medium">
               {h}
@@ -290,7 +290,7 @@ function Table({ head, children }: { head: string[]; children: React.ReactNode }
 /** Section caption inside a tile that stacks two tables. */
 function Caption({ children }: { children: React.ReactNode }) {
   return (
-    <p className="border-t border-slate-100 px-4 pb-1 pt-3 text-xs font-medium uppercase tracking-wide text-ink-subtle first:border-t-0 dark:border-slate-800 dark:text-slate-500">
+    <p className="border-t border-slate-100 px-4 pb-1 pt-3 text-xs font-medium uppercase tracking-wide text-ink-subtle first:border-t-0 dark:border-slate-800 dark:text-slate-400">
       {children}
     </p>
   );
@@ -298,7 +298,7 @@ function Caption({ children }: { children: React.ReactNode }) {
 
 function Empty({ message }: { message: string }) {
   return (
-    <p className="px-4 py-6 text-center text-sm text-ink-muted dark:text-slate-400">{message}</p>
+    <p className="px-4 py-6 text-center text-sm text-ink-muted dark:text-slate-300">{message}</p>
   );
 }
 
@@ -326,7 +326,7 @@ function Stacked({
       <div className="truncate">{primary}</div>
       {secondary != null && secondary !== "" && (
         <div
-          className={`truncate text-xs text-ink-subtle dark:text-slate-500 ${mono ? "font-mono" : ""}`}
+          className={`truncate text-xs text-ink-subtle dark:text-slate-400 ${mono ? "font-mono" : ""}`}
         >
           {secondary}
         </div>
@@ -371,7 +371,7 @@ function GrantChips({ role, grants }: { role: string; grants: AdminGrant[] }) {
   }
   if (chips.length === 0) {
     return (
-      <span className="text-xs text-ink-subtle dark:text-slate-500" title="Sign-in only: public reads, no device control">
+      <span className="text-xs text-ink-subtle dark:text-slate-400" title="Sign-in only: public reads, no device control">
         login only
       </span>
     );
@@ -409,12 +409,12 @@ function Stat({
 }) {
   return (
     <div className="min-w-0" title={title}>
-      <dt className="truncate text-xs text-ink-subtle dark:text-slate-500">{label}</dt>
+      <dt className="truncate text-xs text-ink-subtle dark:text-slate-400">{label}</dt>
       <dd className="mt-0.5 truncate text-2xl font-semibold leading-tight text-ink dark:text-slate-100">
         {value}
       </dd>
       {detail && (
-        <dd className="mt-0.5 text-[11px] leading-snug text-ink-muted dark:text-slate-400">{detail}</dd>
+        <dd className="mt-0.5 text-[11px] leading-snug text-ink-muted dark:text-slate-300">{detail}</dd>
       )}
     </div>
   );
@@ -440,7 +440,7 @@ function HealthRow({
           : "bg-slate-300 dark:bg-slate-600";
   return (
     <div className="grid grid-cols-[9rem_1fr] gap-x-3 px-4 py-2.5 text-sm">
-      <dt className="flex items-start gap-2 text-xs text-ink-subtle dark:text-slate-500">
+      <dt className="flex items-start gap-2 text-xs text-ink-subtle dark:text-slate-400">
         <span className={`mt-1 inline-block h-2 w-2 shrink-0 rounded-full ${dot}`} aria-hidden />
         <span className="leading-5">{label}</span>
       </dt>
@@ -540,7 +540,7 @@ export default function AdminPage() {
     // navigations and sessions that expire while the page is open.
     return (
       <div className="mt-8 rounded-xl border border-dashed border-slate-300 p-10 text-center dark:border-slate-700">
-        <p className="text-sm font-medium text-ink-muted dark:text-slate-400">
+        <p className="text-sm font-medium text-ink-muted dark:text-slate-300">
           Admin console — sign in with an admin account to view this page.
         </p>
       </div>
@@ -628,7 +628,7 @@ export default function AdminPage() {
           <dl className="divide-y divide-slate-100 dark:divide-slate-800">
             <HealthRow label="Roster loaded" tone="ok">
               <span title={fmtEpoch(s.roster_loaded_at)}>{fmtEpochShort(s.roster_loaded_at)}</span>
-              <span className="ml-2 text-xs text-ink-subtle dark:text-slate-500">
+              <span className="ml-2 text-xs text-ink-subtle dark:text-slate-400">
                 {s.roster.users} users · {s.roster.automation} automation · {s.roster.projects}{" "}
                 projects
               </span>
@@ -639,11 +639,11 @@ export default function AdminPage() {
               tone={lastReload == null ? undefined : lastReload.applied ? "ok" : "bad"}
             >
               {lastReload == null ? (
-                <span className="text-ink-muted dark:text-slate-400">none since start</span>
+                <span className="text-ink-muted dark:text-slate-300">none since start</span>
               ) : lastReload.applied ? (
                 <span>
                   applied{" "}
-                  <span className="text-xs text-ink-subtle dark:text-slate-500" title={fmtEpoch(lastReload.ts)}>
+                  <span className="text-xs text-ink-subtle dark:text-slate-400" title={fmtEpoch(lastReload.ts)}>
                     {fmtEpochShort(lastReload.ts)}
                   </span>
                 </span>
@@ -667,7 +667,7 @@ export default function AdminPage() {
               tone={s.pending_automation.length > 0 ? "warn" : "ok"}
             >
               {s.pending_automation.length === 0 ? (
-                <span className="text-ink-muted dark:text-slate-400">none awaiting approval</span>
+                <span className="text-ink-muted dark:text-slate-300">none awaiting approval</span>
               ) : (
                 <ul className="space-y-0.5 text-amber-700 dark:text-amber-400">
                   {s.pending_automation.map((e) => (
@@ -684,14 +684,14 @@ export default function AdminPage() {
               tone={s.expiring_soon.length > 0 ? "warn" : "ok"}
             >
               {s.expiring_soon.length === 0 ? (
-                <span className="text-ink-muted dark:text-slate-400">nothing lapsing soon</span>
+                <span className="text-ink-muted dark:text-slate-300">nothing lapsing soon</span>
               ) : (
                 <ul className="space-y-0.5">
                   {s.expiring_soon.map((e) => (
                     <li key={e.email} className="flex justify-between gap-3">
                       <span className="truncate text-amber-700 dark:text-amber-400">{e.email}</span>
                       <span
-                        className="shrink-0 text-xs text-ink-subtle dark:text-slate-500"
+                        className="shrink-0 text-xs text-ink-subtle dark:text-slate-400"
                         title={fmtEpoch(e.expires_at)}
                       >
                         {fmtEpochShort(e.expires_at)}
@@ -750,7 +750,7 @@ export default function AdminPage() {
                         <>
                           {u.is_expired ? "expired" : u.status}
                           {u.disabled_reason && (
-                            <span className="ml-1 text-xs text-ink-subtle dark:text-slate-500">
+                            <span className="ml-1 text-xs text-ink-subtle dark:text-slate-400">
                               ({u.disabled_reason})
                             </span>
                           )}
@@ -877,7 +877,7 @@ export default function AdminPage() {
                 <td className="whitespace-nowrap px-4 py-2" title={fmtEpoch(r.created_at)}>
                   {fmtEpochShort(r.created_at)}
                 </td>
-                <td className="whitespace-nowrap px-4 py-2 tabular-nums text-ink-muted dark:text-slate-400">
+                <td className="whitespace-nowrap px-4 py-2 tabular-nums text-ink-muted dark:text-slate-300">
                   {fmtDuration(nowS - r.created_at)}
                 </td>
                 <td className="whitespace-nowrap px-4 py-2" title={fmtEpoch(r.expires_at)}>

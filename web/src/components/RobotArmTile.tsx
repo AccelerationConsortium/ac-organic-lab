@@ -55,7 +55,7 @@ function Pill({
       title={title}
     >
       {caption ? (
-        <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+        <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
           {caption}
         </span>
       ) : null}
@@ -292,7 +292,7 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       <div className="flex flex-col gap-1.5">
         {/* ARM: state · TCP speed · angular speed */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
             Arm
           </span>
           <Pill
@@ -306,7 +306,7 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
 
         {/* GRIPPER: state · position · force */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
             Gripper
           </span>
           <Pill
@@ -352,7 +352,7 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
 
         {/* TRACK: position · preset (only when parked at a named location) */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
             Track
           </span>
           <Pill

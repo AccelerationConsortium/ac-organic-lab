@@ -23,7 +23,7 @@ export function MetricList({ metrics }: { metrics: Record<string, MetricValue> }
     <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
       {entries.map(([key, metric]) => (
         <div key={key} className="flex flex-col">
-          <dt className="text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+          <dt className="text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-400">
             {humanKey(key)}
           </dt>
           <dd className="text-xs text-ink dark:text-slate-100">{formatValue(metric)}</dd>

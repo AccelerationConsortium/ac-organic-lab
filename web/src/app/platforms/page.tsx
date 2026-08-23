@@ -47,7 +47,7 @@ export default function PlatformsPage() {
   }, []);
 
   if (platformsPending) {
-    return <p className="text-sm text-ink-muted dark:text-slate-400">Loading…</p>;
+    return <p className="text-sm text-ink-muted dark:text-slate-300">Loading…</p>;
   }
   if (platformsError) {
     return (
@@ -138,7 +138,7 @@ export default function PlatformsPage() {
                   aria-hidden
                 />
                 {section.title}
-                <span className={active ? "text-sky-600 dark:text-sky-300" : "text-ink-subtle dark:text-slate-500"}>
+                <span className={active ? "text-sky-600 dark:text-sky-300" : "text-ink-subtle dark:text-slate-400"}>
                   {section.equipment.length}
                 </span>
               </button>

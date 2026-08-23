@@ -105,7 +105,7 @@ function OutletPill({ outlet, optimisticOn, disabled, onToggle }: OutletPillProp
       </span>
 
       {/* Metrics — shrink-0 so they never get squeezed off */}
-      <span className="shrink-0 tabular-nums text-[11px] leading-none text-ink-subtle dark:text-slate-400">
+      <span className="shrink-0 tabular-nums text-[11px] leading-none text-ink-subtle dark:text-slate-300">
         {fmt(outlet.powerW, "W", 1)}
         <span className="mx-0.5 opacity-40">·</span>
         {fmt(outlet.currentA, "A", 2)}

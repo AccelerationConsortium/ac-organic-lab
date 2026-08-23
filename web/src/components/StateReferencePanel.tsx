@@ -59,7 +59,7 @@ export function StateReferencePanel() {
           State Reference
         </button>
 
-        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">
           Health
         </p>
         <ul className="flex flex-col gap-1.5">
@@ -87,7 +87,7 @@ export function StateReferencePanel() {
 
         {/* Activity (spec v1.2) — orthogonal to health: "is it working right
             now", independent of "is it healthy". */}
-        <p className="mb-1 mt-3 border-t border-slate-100 pt-2 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:border-slate-800 dark:text-slate-500">
+        <p className="mb-1 mt-3 border-t border-slate-100 pt-2 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:border-slate-800 dark:text-slate-400">
           Activity
         </p>
         <ul className="flex flex-col gap-1.5">
@@ -111,7 +111,7 @@ export function StateReferencePanel() {
             ),
           )}
         </ul>
-        <p className="mt-3 text-[10px] leading-relaxed text-ink-subtle dark:text-slate-500">
+        <p className="mt-3 text-[10px] leading-relaxed text-ink-subtle dark:text-slate-400">
           Health and activity are independent — a Degraded device can still be
           Running. Hover a label for details.
         </p>

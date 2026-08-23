@@ -181,7 +181,7 @@ export function TileShell({
           <h3 className="truncate text-sm font-semibold text-ink dark:text-slate-100">
             {snapshot.name}
           </h3>
-          <p className="truncate text-xs text-ink-subtle dark:text-slate-500">
+          <p className="truncate text-xs text-ink-subtle dark:text-slate-400">
             <span className="uppercase">{kindLabel(snapshot.kind)}</span> ·{" "}
             <span className="font-mono">{snapshot.id}</span>
             {address && (
@@ -193,7 +193,7 @@ export function TileShell({
             {subtitleExtra && (
               <>
                 {" "}
-                · <span className="font-medium text-ink-muted dark:text-slate-400">{subtitleExtra}</span>
+                · <span className="font-medium text-ink-muted dark:text-slate-300">{subtitleExtra}</span>
               </>
             )}
           </p>
@@ -298,7 +298,7 @@ export function TileShell({
       {/* Footer — text-xs + neutral subtle color matches StalenessIndicator.
           Latency goes amber above the slow threshold, same color scheme
           as a "stale" timestamp. */}
-      <footer className="mt-auto flex items-end justify-between gap-2 border-t border-slate-100 pt-1 text-xs text-ink-subtle dark:border-slate-800 dark:text-slate-400">
+      <footer className="mt-auto flex items-end justify-between gap-2 border-t border-slate-100 pt-1 text-xs text-ink-subtle dark:border-slate-800 dark:text-slate-300">
         <div className="min-w-0 flex-1 space-y-0.5">
           {footerLeft ??
             (hasMessage || hasActions ? (

@@ -43,8 +43,8 @@ function SectionPill({
 function EmptyState({ message, sub }: { message: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center dark:border-slate-700">
-      <p className="text-sm font-medium text-ink-muted dark:text-slate-400">{message}</p>
-      {sub && <p className="mt-1 text-xs text-ink-subtle dark:text-slate-500">{sub}</p>}
+      <p className="text-sm font-medium text-ink-muted dark:text-slate-300">{message}</p>
+      {sub && <p className="mt-1 text-xs text-ink-subtle dark:text-slate-400">{sub}</p>}
     </div>
   );
 }
@@ -208,7 +208,7 @@ function ActivityTimelineBar({
       {cycles != null && (
         <span
           title={`${cycles} completed cycles in window — exact count from the device's cycles_total counter, which sees cycles shorter than the 60 s poll`}
-          className="shrink-0 text-[10px] tabular-nums text-ink-subtle dark:text-slate-500"
+          className="shrink-0 text-[10px] tabular-nums text-ink-subtle dark:text-slate-400"
         >
           {cycles}×
         </span>
@@ -234,7 +234,7 @@ function Sparkline({
    *  viewBox still uses w/h, so the polyline scales rather than clipping. */
   className?: string;
 }) {
-  if (points.length < 2) return <span className="text-xs text-ink-subtle">—</span>;
+  if (points.length < 2) return <span className="text-xs text-ink-subtle dark:text-slate-400">—</span>;
   const values = points.map((p) => p.value);
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -294,7 +294,7 @@ function UptimeWindowPicker({
           className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
             days === w.days
               ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
-              : "text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
+              : "text-ink-muted hover:text-ink dark:text-slate-300 dark:hover:text-slate-200"
           }`}
         >
           {w.label}
@@ -321,7 +321,7 @@ function DeviceUptimeRow({
   const summary = uptimeData?.[snap.id];
   const pct = summary?.uptime_pct ?? null;
   const pctColour =
-    pct === null ? "text-ink-subtle dark:text-slate-500"
+    pct === null ? "text-ink-subtle dark:text-slate-400"
     : pct >= 95  ? "text-emerald-600 dark:text-emerald-400"
     : pct >= 80  ? "text-amber-600 dark:text-amber-400"
     :              "text-rose-600 dark:text-rose-400";
@@ -362,7 +362,7 @@ function DeviceUptimeRow({
         </div>
 
         {/* Chevron */}
-        <span className="ml-1 text-xs text-ink-subtle dark:text-slate-500">
+        <span className="ml-1 text-xs text-ink-subtle dark:text-slate-400">
           {expanded ? "▲" : "▼"}
         </span>
       </button>
@@ -395,11 +395,11 @@ function PlatformGroup({
     <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
       {/* Platform header */}
       <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/60">
-        <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+        <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-300">
           {platformLabel(platform)}
         </h4>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-ink-subtle dark:text-slate-500">
+          <span className="text-xs text-ink-subtle dark:text-slate-400">
             {snaps.length} module{snaps.length !== 1 ? "s" : ""}
           </span>
           <UptimeWindowPicker days={days} onChange={onDaysChange} />
@@ -408,10 +408,10 @@ function PlatformGroup({
 
       {/* Column header */}
       <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-1.5 dark:border-slate-800">
-        <span className="w-44 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Module</span>
-        <span className="w-10 shrink-0 text-center text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">State</span>
-        <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Health · Activity</span>
-        <span className="w-14 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">%</span>
+        <span className="w-44 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">Module</span>
+        <span className="w-10 shrink-0 text-center text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">State</span>
+        <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">Health · Activity</span>
+        <span className="w-14 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">%</span>
         <span className="ml-1 w-3" />
       </div>
 
@@ -476,17 +476,17 @@ function DeviceEventsList({ deviceId }: { deviceId: string }) {
 
   return (
     <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/50">
-      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">
         Recent events
       </p>
       {isPending && <LoadingRow />}
       {data?.events.length === 0 && (
-        <p className="text-xs text-ink-subtle dark:text-slate-500">No events recorded yet.</p>
+        <p className="text-xs text-ink-subtle dark:text-slate-400">No events recorded yet.</p>
       )}
       <ul className="flex flex-col gap-1">
         {data?.events.slice(0, 10).map((ev, i) => (
           <li key={i} className="flex items-start gap-3 text-xs">
-            <span className="w-36 shrink-0 tabular-nums text-ink-subtle dark:text-slate-500">
+            <span className="w-36 shrink-0 tabular-nums text-ink-subtle dark:text-slate-400">
               {new Date(ev.ts).toLocaleString()}
             </span>
             <span
@@ -503,12 +503,12 @@ function DeviceEventsList({ deviceId }: { deviceId: string }) {
               {ev.event_type}
             </span>
             {ev.from_state && ev.to_state && (
-              <span className="text-ink-muted dark:text-slate-400">
+              <span className="text-ink-muted dark:text-slate-300">
                 {ev.from_state} → {ev.to_state}
               </span>
             )}
             {ev.message && (
-              <span className="truncate text-ink-muted dark:text-slate-400">{ev.message}</span>
+              <span className="truncate text-ink-muted dark:text-slate-300">{ev.message}</span>
             )}
           </li>
         ))}
@@ -569,14 +569,14 @@ function SensorCard({ sensor }: { sensor: EquipmentSnapshot }) {
       {/* Tile header — mirrors PlatformGroup */}
       <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/60">
         <div className="min-w-0">
-          <h4 className="truncate text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+          <h4 className="truncate text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-300">
             {sensor.name}
           </h4>
-          <p className="font-mono text-[10px] text-ink-subtle dark:text-slate-500">{sensor.id}</p>
+          <p className="font-mono text-[10px] text-ink-subtle dark:text-slate-400">{sensor.id}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {isMock && (
-            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-ink-muted dark:bg-slate-700 dark:text-slate-400">
+            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-ink-muted dark:bg-slate-700 dark:text-slate-300">
               mock
             </span>
           )}
@@ -589,7 +589,7 @@ function SensorCard({ sensor }: { sensor: EquipmentSnapshot }) {
                 className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
                   hours === w.hours
                     ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
-                    : "text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
+                    : "text-ink-muted hover:text-ink dark:text-slate-300 dark:hover:text-slate-200"
                 }`}
               >
                 {w.label}
@@ -636,7 +636,7 @@ function SensorMetricChart({
 
   return (
     <div className="flex flex-col gap-0.5 rounded-lg bg-slate-50 px-2.5 py-2 dark:bg-slate-800/50">
-      <p className="text-[11px] font-medium leading-none text-ink-muted dark:text-slate-400">
+      <p className="text-[11px] font-medium leading-none text-ink-muted dark:text-slate-300">
         {label}
       </p>
       {isPending ? (
@@ -645,7 +645,7 @@ function SensorMetricChart({
         <>
           <p className="text-base font-semibold leading-tight tabular-nums text-ink dark:text-slate-100">
             {latest?.value.toFixed(1)}
-            <span className="ml-0.5 text-[11px] font-normal text-ink-muted dark:text-slate-400">
+            <span className="ml-0.5 text-[11px] font-normal text-ink-muted dark:text-slate-300">
               {unit}
             </span>
           </p>
@@ -654,7 +654,7 @@ function SensorMetricChart({
           <Sparkline points={readings} h={24} className="h-6 w-full" />
         </>
       ) : (
-        <p className="text-xs text-ink-subtle dark:text-slate-500">No data</p>
+        <p className="text-xs text-ink-subtle dark:text-slate-400">No data</p>
       )}
     </div>
   );
@@ -733,19 +733,19 @@ function OutletPowerRow({
         ) : readings.length >= 2 ? (
           <Sparkline points={readings} h={24} className="h-6 w-full" />
         ) : (
-          <span className="text-xs text-ink-subtle dark:text-slate-500">No data yet</span>
+          <span className="text-xs text-ink-subtle dark:text-slate-400">No data yet</span>
         )}
       </div>
 
       {/* Latest W */}
       <div className="w-20 shrink-0 text-right tabular-nums text-sm font-semibold text-ink dark:text-slate-100">
         {pPending ? "…" : latestW !== null ? (
-          <>{latestW.toFixed(1)}<span className="ml-0.5 text-xs font-normal text-ink-subtle dark:text-slate-400">W</span></>
+          <>{latestW.toFixed(1)}<span className="ml-0.5 text-xs font-normal text-ink-subtle dark:text-slate-300">W</span></>
         ) : "—"}
       </div>
 
       {/* kWh today */}
-      <div className="w-20 shrink-0 text-right tabular-nums text-xs text-ink-subtle dark:text-slate-400">
+      <div className="w-20 shrink-0 text-right tabular-nums text-xs text-ink-subtle dark:text-slate-300">
         {tPending ? "…" : latestToday !== null ? (
           <>{latestToday.toFixed(3)}<span className="ml-0.5">kWh</span></>
         ) : "—"}
@@ -754,9 +754,9 @@ function OutletPowerRow({
       {/* kWh total (cumulative across days) */}
       <div className="w-20 shrink-0 text-right tabular-nums text-xs font-medium text-sky-700 dark:text-sky-400">
         {cPending ? "…" : latestCumul !== null ? (
-          <>{latestCumul.toFixed(2)}<span className="ml-0.5 font-normal text-ink-subtle dark:text-slate-400">kWh ∑</span></>
+          <>{latestCumul.toFixed(2)}<span className="ml-0.5 font-normal text-ink-subtle dark:text-slate-300">kWh ∑</span></>
         ) : (
-          <span className="font-normal text-ink-subtle dark:text-slate-500">—</span>
+          <span className="font-normal text-ink-subtle dark:text-slate-400">—</span>
         )}
       </div>
     </div>
@@ -785,10 +785,10 @@ function SwitchTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       {/* Tile header — same style as PlatformGroup / SensorCard */}
       <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/60">
         <div className="min-w-0">
-          <h4 className="truncate text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+          <h4 className="truncate text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-300">
             {snapshot.name}
           </h4>
-          <p className="font-mono text-[10px] text-ink-subtle dark:text-slate-500">{snapshot.id}</p>
+          <p className="font-mono text-[10px] text-ink-subtle dark:text-slate-400">{snapshot.id}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-950/40">
@@ -799,7 +799,7 @@ function SwitchTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
                 className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
                   hours === w.hours
                     ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
-                    : "text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
+                    : "text-ink-muted hover:text-ink dark:text-slate-300 dark:hover:text-slate-200"
                 }`}
               >
                 {w.label}
@@ -811,17 +811,17 @@ function SwitchTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
 
       {/* Column header */}
       <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-1 dark:border-slate-800">
-        <span className="w-36 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Outlet</span>
-        <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Power trend</span>
-        <span className="w-20 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Now</span>
-        <span className="w-20 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">Today</span>
+        <span className="w-36 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">Outlet</span>
+        <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">Power trend</span>
+        <span className="w-20 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">Now</span>
+        <span className="w-20 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">Today</span>
         <span className="w-20 text-right text-[10px] font-medium uppercase tracking-wide text-sky-600 dark:text-sky-500">Total ∑</span>
       </div>
 
       {/* Outlet rows */}
       <div>
         {outlets.length === 0 ? (
-          <p className="px-3 py-2 text-xs text-ink-subtle dark:text-slate-500">No outlets detected yet.</p>
+          <p className="px-3 py-2 text-xs text-ink-subtle dark:text-slate-400">No outlets detected yet.</p>
         ) : (
           outlets.map((o) => (
             <OutletPowerRow
@@ -870,7 +870,7 @@ export default function HistoryPage() {
   const { data: equipmentData, isPending } = useEquipmentList(0); // no refetch on this page
 
   if (isPending) {
-    return <p className="text-sm text-ink-muted dark:text-slate-400">Loading…</p>;
+    return <p className="text-sm text-ink-muted dark:text-slate-300">Loading…</p>;
   }
 
   const all = equipmentData?.equipment ?? [];

@@ -44,7 +44,7 @@ export const STATE_META: Record<StateName, {
   dry_run:       { label: "Dry Run",      dot: "bg-violet-500",   badge: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300",     desc: "Simulating operations without physical actuation." },
   error:         { label: "Error",        dot: "bg-rose-500",     badge: "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",             desc: "Device reported an internal error — check device logs." },
   e_stop:        { label: "E-Stop",       dot: "bg-red-700",      badge: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",                 desc: "Emergency stop active — physical inspection required." },
-  unknown:       { label: "Unknown",      dot: "bg-slate-400",    badge: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",            desc: "State genuinely undetermined — cold start before the first successful poll, or unobserved time before the aggregator began monitoring. NOT a failure on its own; counted as up for uptime %. (A device known to be offline shows as Unreachable instead.)" },
+  unknown:       { label: "Unknown",      dot: "bg-slate-400",    badge: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",            desc: "State genuinely undetermined — cold start before the first successful poll, or unobserved time before the aggregator began monitoring. NOT a failure on its own; counted as up for uptime %. (A device known to be offline shows as Unreachable instead.)" },
   unreachable:   { label: "Unreachable",  dot: "bg-rose-400",     badge: "bg-rose-50 text-rose-600 dark:bg-rose-900/20 dark:text-rose-400",             desc: "Device is offline — either the aggregator's /status poll failed at the transport layer (timeout / connection refused), or a gateway reports it cannot reach the backing hardware (camera / plug). This is what 'offline' means here, not Unknown. Counted as down." },
 };
 
@@ -66,8 +66,8 @@ export const ACTIVITY_META: Record<ActivityName, {
   desc: string;
 }> = {
   running: { label: "Running", badge: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300",        desc: "Primary operation in progress (shaker: motor turning; sealer: seal cycle; …). Independent of health — a Degraded device can still be Running." },
-  idle:    { label: "Idle",    badge: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",   desc: "Not performing its primary operation right now. Says nothing about health." },
-  unknown: { label: "Unknown", badge: "bg-slate-100 text-slate-500 dark:bg-slate-800/50 dark:text-slate-500", desc: "Activity undetermined — the device predates spec v1.2 (doesn't report activity), is unreachable, or its components don't reveal it. Never assumed Idle. Surfaces wanting a compact glyph render a dash themselves; the label must read as a word in tooltips and legends." },
+  idle:    { label: "Idle",    badge: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",   desc: "Not performing its primary operation right now. Says nothing about health." },
+  unknown: { label: "Unknown", badge: "bg-slate-100 text-slate-500 dark:bg-slate-800/50 dark:text-slate-400", desc: "Activity undetermined — the device predates spec v1.2 (doesn't report activity), is unreachable, or its components don't reveal it. Never assumed Idle. Surfaces wanting a compact glyph render a dash themselves; the label must read as a word in tooltips and legends." },
 };
 
 // ---------------------------------------------------------------------------

@@ -74,10 +74,10 @@ const TILE_CARD =
 function FactRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="text-xs">
-      <span className="font-medium uppercase text-ink-muted dark:text-slate-500">
+      <span className="font-medium uppercase text-ink-muted dark:text-slate-400">
         {label}
       </span>{" "}
-      <span className="text-ink-subtle dark:text-slate-400">{value}</span>
+      <span className="text-ink-subtle dark:text-slate-300">{value}</span>
     </div>
   );
 }
@@ -96,7 +96,7 @@ function HostTile({
           <h3 className="truncate text-sm font-semibold text-ink dark:text-slate-100">
             {host.name}
           </h3>
-          <p className="truncate text-xs text-ink-subtle dark:text-slate-500">
+          <p className="truncate text-xs text-ink-subtle dark:text-slate-400">
             <span className="uppercase">{host.kind}</span> ·{" "}
             <span className="font-mono">{host.hostname}</span>
           </p>
@@ -112,7 +112,7 @@ function HostTile({
                 {STATE_META[effectiveState(snapshot)].label}
               </span>
             ) : (
-              <span className="text-[10px] text-ink-subtle dark:text-slate-500">
+              <span className="text-[10px] text-ink-subtle dark:text-slate-400">
                 no data
               </span>
             ))}
@@ -124,7 +124,7 @@ function HostTile({
         <FactRow label="Lab-ops API" value={host.opsApi ?? "none — no ops agent on this host"} />
       </div>
       {snapshot && (
-        <div className="mt-auto flex items-center justify-end gap-2 text-[10px] text-ink-subtle dark:text-slate-500">
+        <div className="mt-auto flex items-center justify-end gap-2 text-[10px] text-ink-subtle dark:text-slate-400">
           {typeof snapshot.latency_ms === "number" && <span>{snapshot.latency_ms} ms</span>}
           <StalenessIndicator fetchedAt={snapshot.fetched_at} />
         </div>
@@ -141,7 +141,7 @@ export function HostsPanel({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
         <h1 className="text-lg font-semibold text-ink dark:text-slate-100">
           PCs &amp; Servers
         </h1>
-        <p className="text-sm text-ink-subtle dark:text-slate-400">
+        <p className="text-sm text-ink-subtle dark:text-slate-300">
           The machines the lab&apos;s services run on. Hosts running the
           sdl-lab-hostops agent carry its live status pill.
         </p>

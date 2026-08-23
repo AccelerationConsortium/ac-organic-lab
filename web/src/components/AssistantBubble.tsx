@@ -1007,7 +1007,7 @@ function AssistantBubbleInner() {
               <span className="text-base font-semibold leading-tight text-ink dark:text-slate-100">
                 SDL Assistant
               </span>
-              <span className="text-xs text-ink-subtle dark:text-slate-500">
+              <span className="text-xs text-ink-subtle dark:text-slate-400">
                 {controlMode
                   ? "Control · proposes actions you authorize"
                   : "Read-only · history + journald"}
@@ -1027,7 +1027,7 @@ function AssistantBubbleInner() {
                 onClick={clearHistory}
                 disabled={turns.length === 0}
                 title="Clear the conversation (proposals and authorized actions stay in the audit trail)"
-                className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-ink-subtle transition hover:bg-slate-100 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-ink-subtle transition hover:bg-slate-100 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
                 Clear
               </button>
@@ -1036,7 +1036,7 @@ function AssistantBubbleInner() {
                 onClick={() => setOpen(false)}
                 aria-label="Minimize to bubble"
                 title="Minimize"
-                className="rounded px-2 py-1 text-xs leading-none text-ink-subtle hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                className="rounded px-2 py-1 text-xs leading-none text-ink-subtle hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
               >
                 {/* Minus glyph -- intentionally not ✕, since the conversation
                     persists when the panel collapses back to the bubble. */}
@@ -1050,7 +1050,7 @@ function AssistantBubbleInner() {
             className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3 text-base"
           >
             {turns.length === 0 && (
-              <div className="text-xs text-ink-subtle dark:text-slate-500">
+              <div className="text-xs text-ink-subtle dark:text-slate-400">
                 {controlMode ? (
                   <>
                     Control mode. Ask me to operate a device — I&apos;ll propose
@@ -1176,7 +1176,7 @@ function AssistantBubbleInner() {
               </button>
             </div>
             {backendInfo?.model && (
-              <p className="mt-1 text-center text-xs text-ink-subtle dark:text-slate-500">
+              <p className="mt-1 text-center text-xs text-ink-subtle dark:text-slate-400">
                 Hermes agents: {backendInfo.model}
               </p>
             )}
@@ -1261,7 +1261,7 @@ function ModeToggle({
         className={`px-2 py-1 ${
           mode === "ask"
             ? "bg-emerald-600 text-white"
-            : "text-ink-subtle hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+            : "text-ink-subtle hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
         }`}
       >
         Ask
@@ -1276,7 +1276,7 @@ function ModeToggle({
             ? "bg-purple-600 text-white"
             : disabled
               ? "cursor-not-allowed text-slate-300 dark:text-slate-600"
-              : "text-ink-subtle hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+              : "text-ink-subtle hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
         }`}
       >
         Control
@@ -1361,7 +1361,7 @@ function ProposalCard({
         )}
         {blockArgs && (
           <div className="flex gap-2">
-            <dt className="w-20 shrink-0 text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+            <dt className="w-20 shrink-0 text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-400">
               Args
             </dt>
             <dd className="min-w-0 flex-1">
@@ -1407,7 +1407,7 @@ function ProposalCard({
           type="button"
           onClick={onDismiss}
           disabled={authorizing}
-          className="rounded px-2 py-1 text-xs text-ink-subtle hover:bg-purple-100 disabled:opacity-60 dark:text-slate-400 dark:hover:bg-purple-900/40"
+          className="rounded px-2 py-1 text-xs text-ink-subtle hover:bg-purple-100 disabled:opacity-60 dark:text-slate-300 dark:hover:bg-purple-900/40"
         >
           Dismiss
         </button>
@@ -1429,7 +1429,7 @@ const STEP_TONE: Record<StepOutcome, string> = {
   running: "text-purple-800 dark:text-purple-300 animate-pulse",
   ok: "text-emerald-700 dark:text-emerald-400",
   failed: "text-rose-700 dark:text-rose-400",
-  skipped: "text-slate-400 line-through dark:text-slate-500",
+  skipped: "text-slate-400 line-through dark:text-slate-400",
 };
 
 /** The multi-step sibling of ProposalCard (UI_DESIGN §5 Step 1i). Same
@@ -1491,7 +1491,7 @@ function PlanCard({
             <li key={i} className={`text-[13px] leading-snug ${STEP_TONE[outcome]}`}>
               {STEP_GLYPH[outcome]} {i + 1}. {s.action}
               {entries.length > 0 && !block && (
-                <span className="text-ink-subtle dark:text-slate-400">
+                <span className="text-ink-subtle dark:text-slate-300">
                   {" "}
                   {entries.map(([k, v]) => `${k}=${formatArg(v)}`).join(", ")}
                 </span>
@@ -1560,7 +1560,7 @@ function PlanCard({
           type="button"
           onClick={onDismiss}
           disabled={busy}
-          className="rounded px-2 py-1 text-xs text-ink-subtle hover:bg-purple-100 disabled:opacity-60 dark:text-slate-400 dark:hover:bg-purple-900/40"
+          className="rounded px-2 py-1 text-xs text-ink-subtle hover:bg-purple-100 disabled:opacity-60 dark:text-slate-300 dark:hover:bg-purple-900/40"
         >
           {settled ? "Close" : "Dismiss"}
         </button>
@@ -1572,7 +1572,7 @@ function PlanCard({
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex gap-2">
-      <dt className="w-20 shrink-0 text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+      <dt className="w-20 shrink-0 text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-400">
         {label}
       </dt>
       <dd className="break-words text-[13px]">{value}</dd>
@@ -1592,7 +1592,7 @@ const TOOL_PILL_TONE = {
   // a reload mid-flight). It is NOT running, so it must not keep pulsing as
   // though it were.
   stopped:
-    "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400",
+    "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300",
 } as const;
 
 function toolLabel(name: string): string {

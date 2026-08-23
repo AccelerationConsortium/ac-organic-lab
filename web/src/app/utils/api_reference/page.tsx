@@ -136,7 +136,7 @@ const METHOD_BADGE: Record<string, string> = {
 const ADAPTER_BADGE: Record<string, string> = {
   http:        "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
   legacy_http: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
-  mock:        "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",
+  mock:        "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
 };
 
 function methodBadge(method: string) {
@@ -144,7 +144,7 @@ function methodBadge(method: string) {
 }
 
 function adapterBadge(adapter: string) {
-  return ADAPTER_BADGE[adapter] ?? "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400";
+  return ADAPTER_BADGE[adapter] ?? "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300";
 }
 
 function typeLabel(prop: JsonSchemaProperty): string {
@@ -168,7 +168,7 @@ function SchemaTable({ schema, actionName }: { schema: JsonSchema; actionName: s
 
   if (entries.length === 0) {
     return (
-      <p className="text-xs italic text-ink-subtle dark:text-slate-500">No parameters.</p>
+      <p className="text-xs italic text-ink-subtle dark:text-slate-400">No parameters.</p>
     );
   }
 
@@ -176,13 +176,13 @@ function SchemaTable({ schema, actionName }: { schema: JsonSchema; actionName: s
     <table className="w-full text-xs">
       <thead>
         <tr className="border-b border-slate-100 dark:border-slate-800">
-          <th className="pb-1 pr-3 text-left font-medium text-ink-subtle dark:text-slate-500">
+          <th className="pb-1 pr-3 text-left font-medium text-ink-subtle dark:text-slate-400">
             Field
           </th>
-          <th className="pb-1 pr-3 text-left font-medium text-ink-subtle dark:text-slate-500">
+          <th className="pb-1 pr-3 text-left font-medium text-ink-subtle dark:text-slate-400">
             Type
           </th>
-          <th className="pb-1 text-left font-medium text-ink-subtle dark:text-slate-500">
+          <th className="pb-1 text-left font-medium text-ink-subtle dark:text-slate-400">
             Notes
           </th>
         </tr>
@@ -193,7 +193,7 @@ function SchemaTable({ schema, actionName }: { schema: JsonSchema; actionName: s
             <td className="py-1 pr-3 font-mono font-medium text-ink dark:text-slate-200">
               {field}
               {!required.has(field) && (
-                <span className="ml-1 font-sans font-normal text-ink-subtle dark:text-slate-500">
+                <span className="ml-1 font-sans font-normal text-ink-subtle dark:text-slate-400">
                   ?
                 </span>
               )}
@@ -201,10 +201,10 @@ function SchemaTable({ schema, actionName }: { schema: JsonSchema; actionName: s
             <td className="py-1 pr-3 font-mono text-sky-700 dark:text-sky-400">
               {typeLabel(prop)}
             </td>
-            <td className="py-1 text-ink-muted dark:text-slate-400">
+            <td className="py-1 text-ink-muted dark:text-slate-300">
               {prop.description ?? ""}
               {prop.default !== undefined && (
-                <span className="ml-1 text-ink-subtle dark:text-slate-500">
+                <span className="ml-1 text-ink-subtle dark:text-slate-400">
                   default: <span className="font-mono">{String(prop.default)}</span>
                 </span>
               )}
@@ -242,19 +242,19 @@ function ActionRow({ action }: { action: ActionDef }) {
         </span>
 
         {/* Description */}
-        <span className="flex-1 truncate text-xs text-ink-muted dark:text-slate-400">
+        <span className="flex-1 truncate text-xs text-ink-muted dark:text-slate-300">
           {action.description}
         </span>
 
         {/* Duration */}
         {action.estimated_duration_s !== null && (
-          <span className="hidden shrink-0 text-xs tabular-nums text-ink-subtle dark:text-slate-500 sm:block">
+          <span className="hidden shrink-0 text-xs tabular-nums text-ink-subtle dark:text-slate-400 sm:block">
             ~{action.estimated_duration_s}s
           </span>
         )}
 
         {/* Chevron */}
-        <span className="ml-1 text-xs text-ink-subtle dark:text-slate-500">
+        <span className="ml-1 text-xs text-ink-subtle dark:text-slate-400">
           {open ? "▲" : "▼"}
         </span>
       </button>
@@ -264,7 +264,7 @@ function ActionRow({ action }: { action: ActionDef }) {
           {/* States that allow this action */}
           {action.requires_states.length > 0 && (
             <div className="mb-3 flex items-center gap-2 flex-wrap">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-subtle dark:text-slate-400">
                 Allowed in
               </span>
               {action.requires_states.map((s) => (
@@ -278,7 +278,7 @@ function ActionRow({ action }: { action: ActionDef }) {
             </div>
           )}
 
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-ink-subtle dark:text-slate-400">
             Request body
           </p>
           <SchemaTable schema={action.args_schema} actionName={action.name} />
@@ -313,7 +313,7 @@ function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
               {instrument.adapter}
             </span>
           </div>
-          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-ink-subtle dark:text-slate-500">
+          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-ink-subtle dark:text-slate-400">
             <span className="font-mono">{instrument.id}</span>
             <span>·</span>
             <span className="font-mono">{instrument.kind}</span>
@@ -326,10 +326,10 @@ function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <span className="text-xs text-ink-subtle dark:text-slate-500">
+          <span className="text-xs text-ink-subtle dark:text-slate-400">
             {instrument.actions.length} action{instrument.actions.length !== 1 ? "s" : ""}
           </span>
-          <span className="text-xs text-ink-subtle dark:text-slate-500">
+          <span className="text-xs text-ink-subtle dark:text-slate-400">
             {open ? "▲" : "▼"}
           </span>
         </div>
@@ -339,16 +339,16 @@ function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
         <>
           {/* Column header */}
           <div className="flex items-center gap-3 border-b border-slate-100 bg-white px-4 py-1.5 dark:border-slate-800 dark:bg-slate-950/30">
-            <span className="w-12 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+            <span className="w-12 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">
               Method
             </span>
-            <span className="w-44 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+            <span className="w-44 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">
               Endpoint
             </span>
-            <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+            <span className="flex-1 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">
               Description
             </span>
-            <span className="hidden w-10 shrink-0 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-500 sm:block">
+            <span className="hidden w-10 shrink-0 text-right text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400 sm:block">
               ~s
             </span>
             <span className="ml-1 w-3 shrink-0" />
@@ -356,7 +356,7 @@ function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
 
           <div className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-950/20">
             {instrument.actions.length === 0 ? (
-              <p className="px-4 py-3 text-xs italic text-ink-subtle dark:text-slate-500">
+              <p className="px-4 py-3 text-xs italic text-ink-subtle dark:text-slate-400">
                 No registered actions for this kind yet.
               </p>
             ) : (
@@ -386,10 +386,10 @@ function PlatformTile({
     <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
       {/* Platform header */}
       <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/60">
-        <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+        <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-300">
           {catalog.label}
         </h4>
-        <span className="text-xs text-ink-subtle dark:text-slate-500">
+        <span className="text-xs text-ink-subtle dark:text-slate-400">
           {catalog.instruments.length} instrument{catalog.instruments.length !== 1 ? "s" : ""}
         </span>
       </div>
@@ -450,13 +450,13 @@ function ParamTable({ params }: { params: OpenApiParameter[] }) {
     <table className="w-full text-xs">
       <thead>
         <tr className="border-b border-slate-100 dark:border-slate-800">
-          <th className="pb-1 pr-3 text-left font-medium text-ink-subtle dark:text-slate-500">
+          <th className="pb-1 pr-3 text-left font-medium text-ink-subtle dark:text-slate-400">
             Parameter
           </th>
-          <th className="pb-1 pr-3 text-left font-medium text-ink-subtle dark:text-slate-500">
+          <th className="pb-1 pr-3 text-left font-medium text-ink-subtle dark:text-slate-400">
             In
           </th>
-          <th className="pb-1 text-left font-medium text-ink-subtle dark:text-slate-500">
+          <th className="pb-1 text-left font-medium text-ink-subtle dark:text-slate-400">
             Notes
           </th>
         </tr>
@@ -467,13 +467,13 @@ function ParamTable({ params }: { params: OpenApiParameter[] }) {
             <td className="py-1 pr-3 font-mono font-medium text-ink dark:text-slate-200">
               {param.name}
               {!param.required && (
-                <span className="ml-1 font-sans font-normal text-ink-subtle dark:text-slate-500">
+                <span className="ml-1 font-sans font-normal text-ink-subtle dark:text-slate-400">
                   ?
                 </span>
               )}
             </td>
             <td className="py-1 pr-3 font-mono text-sky-700 dark:text-sky-400">{param.in}</td>
-            <td className="py-1 text-ink-muted dark:text-slate-400">{param.description ?? ""}</td>
+            <td className="py-1 text-ink-muted dark:text-slate-300">{param.description ?? ""}</td>
           </tr>
         ))}
       </tbody>
@@ -508,10 +508,10 @@ function EndpointRow({ endpoint, doc }: { endpoint: Endpoint; doc: OpenApiDoc })
           {method}
         </span>
         <span className="shrink-0 font-mono text-xs text-ink dark:text-slate-200">{path}</span>
-        <span className="truncate text-xs text-ink-muted dark:text-slate-400">
+        <span className="truncate text-xs text-ink-muted dark:text-slate-300">
           {op.summary ?? ""}
         </span>
-        <span className="ml-auto w-3 shrink-0 text-xs text-ink-subtle dark:text-slate-500">
+        <span className="ml-auto w-3 shrink-0 text-xs text-ink-subtle dark:text-slate-400">
           {hasDetail ? (open ? "−" : "+") : ""}
         </span>
       </button>
@@ -519,7 +519,7 @@ function EndpointRow({ endpoint, doc }: { endpoint: Endpoint; doc: OpenApiDoc })
       {open && (
         <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/60 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/30">
           {op.description && (
-            <p className="whitespace-pre-line text-xs text-ink-muted dark:text-slate-400">
+            <p className="whitespace-pre-line text-xs text-ink-muted dark:text-slate-300">
               {op.description}
             </p>
           )}
@@ -544,15 +544,15 @@ function TagGroup({
     <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
       <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/60">
         <div className="flex items-center justify-between">
-          <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+          <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-300">
             {tag}
           </h4>
-          <span className="text-xs text-ink-subtle dark:text-slate-500">
+          <span className="text-xs text-ink-subtle dark:text-slate-400">
             {endpoints.length} endpoint{endpoints.length !== 1 ? "s" : ""}
           </span>
         </div>
         {TAG_BLURB[tag] && (
-          <p className="mt-1 text-xs text-ink-subtle dark:text-slate-500">{TAG_BLURB[tag]}</p>
+          <p className="mt-1 text-xs text-ink-subtle dark:text-slate-400">{TAG_BLURB[tag]}</p>
         )}
       </div>
       <div className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-950/20">
@@ -590,7 +590,7 @@ function DashboardApiSection() {
   const { data, isPending, error } = useOpenApi();
 
   if (isPending) {
-    return <p className="text-sm text-ink-muted dark:text-slate-400">Loading dashboard API…</p>;
+    return <p className="text-sm text-ink-muted dark:text-slate-300">Loading dashboard API…</p>;
   }
   if (error || !data) {
     return (
@@ -605,7 +605,7 @@ function DashboardApiSection() {
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-sm text-ink-muted dark:text-slate-400">
+      <p className="text-sm text-ink-muted dark:text-slate-300">
         {total} endpoints on this server, read live from its own OpenAPI document — so this
         list cannot drift from what the server actually serves. Click an endpoint for
         parameters and request body.
@@ -628,10 +628,10 @@ export default function ApiReferencePage() {
     <div className="flex flex-col gap-10">
       <section className="flex flex-col gap-4">
         <header>
-          <h3 className="text-sm font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+          <h3 className="text-sm font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-300">
             Dashboard API
           </h3>
-          <p className="mt-1 text-sm text-ink-muted dark:text-slate-400">
+          <p className="mt-1 text-sm text-ink-muted dark:text-slate-300">
             What this server exposes: the aggregated equipment view, the operator control
             passthrough, the history DB, workflow runs, and the assistant.
           </p>
@@ -641,10 +641,10 @@ export default function ApiReferencePage() {
 
       <section className="flex flex-col gap-4">
         <header>
-          <h3 className="text-sm font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-400">
+          <h3 className="text-sm font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-300">
             Device actions
           </h3>
-          <p className="mt-1 text-sm text-ink-muted dark:text-slate-400">
+          <p className="mt-1 text-sm text-ink-muted dark:text-slate-300">
             What the <em>instruments</em> expose, from the static skill catalog, grouped by
             platform. Reach these through the control passthrough above rather than calling a
             device directly — that is what claims the device and writes the audit row.
@@ -660,7 +660,7 @@ function DeviceCatalogSection() {
   const { data, isPending, error } = useCatalog();
 
   if (isPending) {
-    return <p className="text-sm text-ink-muted dark:text-slate-400">Loading catalog…</p>;
+    return <p className="text-sm text-ink-muted dark:text-slate-300">Loading catalog…</p>;
   }
 
   if (error) {
@@ -676,10 +676,10 @@ function DeviceCatalogSection() {
   if (platforms.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center dark:border-slate-700">
-        <p className="text-sm font-medium text-ink-muted dark:text-slate-400">
+        <p className="text-sm font-medium text-ink-muted dark:text-slate-300">
           No platforms in catalog.
         </p>
-        <p className="mt-1 text-xs text-ink-subtle dark:text-slate-500">
+        <p className="mt-1 text-xs text-ink-subtle dark:text-slate-400">
           Add equipment entries in <span className="font-mono">equipment.yaml</span>.
         </p>
       </div>

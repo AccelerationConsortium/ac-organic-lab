@@ -131,7 +131,7 @@ function SensorMarker({ snapshot }: { snapshot: EquipmentSnapshot }) {
             (key) => metrics[key] !== undefined || ALWAYS_SHOWN.has(key),
           ).map((key) => (
             <div key={key} className="flex items-baseline gap-1">
-              <dt className="text-ink-subtle dark:text-slate-500">
+              <dt className="text-ink-subtle dark:text-slate-400">
                 {METRIC_LABEL[key]}
               </dt>
               <dd className="font-mono text-ink dark:text-slate-200">
@@ -239,7 +239,7 @@ function FloorPlan() {
 
 function ZoneLabels() {
   const labelClass =
-    "absolute text-[10px] font-medium uppercase tracking-wider text-ink-subtle dark:text-slate-500 pointer-events-none select-none";
+    "absolute text-[10px] font-medium uppercase tracking-wider text-ink-subtle dark:text-slate-400 pointer-events-none select-none";
   return (
     <>
       <span
@@ -264,7 +264,7 @@ function ZoneLabels() {
 function CompassRose() {
   return (
     <div
-      className="pointer-events-none absolute right-2 top-2 z-10 flex flex-col items-center rounded border border-slate-200 bg-white/85 px-1.5 py-0.5 text-[10px] font-semibold text-ink-subtle shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/85 dark:text-slate-400"
+      className="pointer-events-none absolute right-2 top-2 z-10 flex flex-col items-center rounded border border-slate-200 bg-white/85 px-1.5 py-0.5 text-[10px] font-semibold text-ink-subtle shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/85 dark:text-slate-300"
       aria-label="North is up"
     >
       <span aria-hidden>↑</span>

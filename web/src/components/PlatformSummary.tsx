@@ -30,7 +30,7 @@ const stateAccent: Record<EquipmentState, string> = {
   dry_run: "text-violet-700 dark:text-violet-400",
   error: "text-rose-700 dark:text-rose-400",
   e_stop: "text-red-700 dark:text-red-400",
-  unknown: "text-slate-600 dark:text-slate-400",
+  unknown: "text-slate-600 dark:text-slate-300",
 };
 
 export function PlatformSummary({
@@ -65,19 +65,19 @@ export function PlatformSummary({
           </a>
         )}
       </header>
-      <p className="mt-1 text-sm text-ink-subtle dark:text-slate-400">
+      <p className="mt-1 text-sm text-ink-subtle dark:text-slate-300">
         {snapshots.length} equipment
       </p>
       <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm">
         {summary.length === 0 && (
-          <span className="text-ink-subtle dark:text-slate-500">—</span>
+          <span className="text-ink-subtle dark:text-slate-400">—</span>
         )}
         {summary.map(({ state, count }) => (
           <div key={state} className="flex items-baseline gap-1.5">
             <span className={`font-mono text-base font-semibold ${stateAccent[state]}`}>
               {count}
             </span>
-            <span className="text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-500">
+            <span className="text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-400">
               {stateLabels[state]}
             </span>
           </div>

@@ -41,7 +41,7 @@ export function ChromeToggle() {
       aria-label={label}
       aria-expanded={!collapsed}
       title={label}
-      className="ml-auto self-center rounded-md p-1.5 text-ink-subtle transition-colors hover:bg-slate-100 hover:text-ink dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+      className="ml-auto self-center rounded-md p-1.5 text-ink-subtle transition-colors hover:bg-slate-100 hover:text-ink dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
     >
       {/* Chevron: up = "tuck the heading away", down = "bring it back". */}
       <svg

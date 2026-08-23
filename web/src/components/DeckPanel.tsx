@@ -33,7 +33,7 @@ export function ModuleReadout({ live, compact }: { live: RobotModule | null; com
         className={[
           compact ? "text-sm" : "text-xl",
           "font-semibold tabular-nums",
-          cur == null ? "text-slate-400 dark:text-slate-500" : "text-ink dark:text-slate-100",
+          cur == null ? "text-slate-400 dark:text-slate-400" : "text-ink dark:text-slate-100",
         ].join(" ")}
       >
         {formatTemp(cur)} °C
@@ -44,7 +44,7 @@ export function ModuleReadout({ live, compact }: { live: RobotModule | null; com
       <span
         className={[
           "text-[9px] uppercase tracking-wider",
-          active ? "text-amber-600 dark:text-amber-400" : "text-ink-subtle dark:text-slate-400",
+          active ? "text-amber-600 dark:text-amber-400" : "text-ink-subtle dark:text-slate-300",
         ].join(" ")}
       >
         {status}
@@ -250,14 +250,14 @@ export function DeckPanel({
           <>
             {overhang ? (
               <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-1">
-                <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+                <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-300">
                   {moduleShortLabel(overhang.name)} · slot {overhang.moduleSlot}
                 </span>
                 <ModuleReadout live={overhang.live} />
               </div>
             ) : v.isTrash ? (
               <div className="flex h-full w-full items-center justify-center bg-slate-300/70 dark:bg-slate-700/60">
-                <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+                <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-300">
                   waste
                 </span>
               </div>
@@ -266,7 +266,7 @@ export function DeckPanel({
             ) : v.state !== "empty" ? (
               // Occupied by something without a grid (module, unknown kind).
               <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-1 text-center">
-                <span className="text-[10px] font-medium text-ink-subtle dark:text-slate-400">
+                <span className="text-[10px] font-medium text-ink-subtle dark:text-slate-300">
                   {v.label || v.kind}
                 </span>
                 {inlineReadout && <ModuleReadout live={paired?.live ?? null} compact />}
@@ -296,7 +296,7 @@ export function DeckPanel({
                 className={[
                   "pointer-events-none absolute left-1 top-0.5 text-[10px] font-semibold leading-none",
                   moduleAccent ? "top-[5px]" : "",
-                  "text-ink-subtle dark:text-slate-400",
+                  "text-ink-subtle dark:text-slate-300",
                 ].join(" ")}
                 aria-hidden
               >
@@ -368,7 +368,7 @@ export function DeckPanel({
   if (!page) return grid;
   return (
     <div className="flex w-full flex-col gap-1.5">
-      <p className="flex items-center gap-1.5 px-0.5 text-[10px] leading-tight text-ink-subtle dark:text-slate-400">
+      <p className="flex items-center gap-1.5 px-0.5 text-[10px] leading-tight text-ink-subtle dark:text-slate-300">
         <span
           className="inline-block h-3 w-4 shrink-0 rounded-[2px] border border-orange-400 dark:border-orange-500/80"
           aria-hidden

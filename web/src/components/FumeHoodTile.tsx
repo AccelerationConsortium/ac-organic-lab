@@ -102,7 +102,7 @@ export function FumeHoodTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             />
           ))}
         </div>
-        <div className="flex items-center justify-between px-1 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+        <div className="flex items-center justify-between px-1 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
           <span>Low</span>
           <span>High</span>
         </div>

@@ -37,7 +37,7 @@ const ROW_HEIGHT_PX = 220;
 export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
   if (snapshots.length === 0) {
     return (
-      <p className="rounded-md border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-ink-subtle dark:border-slate-700 dark:text-slate-400">
+      <p className="rounded-md border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-ink-subtle dark:border-slate-700 dark:text-slate-300">
         No equipment registered.
       </p>
     );

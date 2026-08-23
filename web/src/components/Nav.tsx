@@ -61,7 +61,7 @@ export function Nav() {
         const cls = `-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
           active
             ? "border-sky-600 text-ink dark:border-sky-400 dark:text-slate-100"
-            : "border-transparent text-ink-muted hover:text-ink dark:text-slate-400 dark:hover:text-slate-200"
+            : "border-transparent text-ink-muted hover:text-ink dark:text-slate-300 dark:hover:text-slate-200"
         }`;
         // External tabs (Notebooks → Bitácora) open in a new browser tab.
         return tab.external ? (

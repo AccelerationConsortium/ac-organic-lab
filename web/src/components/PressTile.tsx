@@ -107,7 +107,7 @@ export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       {/* Press + Plate rows: caption + two toggle pills each */}
       <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="w-12 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+          <span className="w-12 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
             Press
           </span>
           <PositionPill
@@ -117,7 +117,7 @@ export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             disabled={movementDisabled || press.pressState === "up"}
             onClick={() => exec(() => postPressUp(snapshot.id, upHold))}
           />
-          <label className="flex items-center gap-1 text-[10px] text-ink-subtle dark:text-slate-500">
+          <label className="flex items-center gap-1 text-[10px] text-ink-subtle dark:text-slate-400">
             <input
               type="number"
               min={HOLD_MIN}
@@ -138,7 +138,7 @@ export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             disabled={movementDisabled || press.pressState === "down"}
             onClick={() => exec(() => postPressDown(snapshot.id, downHold))}
           />
-          <label className="flex items-center gap-1 text-[10px] text-ink-subtle dark:text-slate-500">
+          <label className="flex items-center gap-1 text-[10px] text-ink-subtle dark:text-slate-400">
             <input
               type="number"
               min={HOLD_MIN}
@@ -154,7 +154,7 @@ export function PressTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           </label>
         </div>
         <div className="flex items-center gap-2">
-          <span className="w-12 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+          <span className="w-12 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
             Plate
           </span>
           <PositionPill

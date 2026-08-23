@@ -51,7 +51,7 @@ function ComponentPill({
       className={`flex h-7 items-center gap-1 rounded-md border px-2 ${TONE_CLASSES[componentTone(state)]}`}
       title={title}
     >
-      <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+      <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
         {caption}
       </span>
       <span className="ml-auto truncate text-xs font-semibold text-ink dark:text-slate-100">
@@ -141,7 +141,7 @@ export function PlateReaderTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
 
       {/* Read counter — one line. */}
       <div className="flex items-center gap-1.5">
-        <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-500">
+        <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
           Read Count
         </span>
         <span className="text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">

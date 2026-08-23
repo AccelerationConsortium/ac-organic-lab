@@ -34,7 +34,7 @@ export default function PlatformWorkflowPlaceholder() {
       <h2 className="text-lg font-semibold text-ink dark:text-slate-100">
         {title} — workflow UI under construction
       </h2>
-      <p className="max-w-md text-sm text-ink-muted dark:text-slate-400">
+      <p className="max-w-md text-sm text-ink-muted dark:text-slate-300">
         This page will host the {title} workflow interface (plan, run, and
         monitor experiments). Until then, experiments are planned and run in the
         Notebooks tab (Bitácora), and live equipment tiles and controls are on
@@ -61,7 +61,7 @@ export default function PlatformWorkflowPlaceholder() {
         </Link>
       </div>
       {!loading && !authenticated && (
-        <p className="text-xs text-ink-subtle dark:text-slate-500">
+        <p className="text-xs text-ink-subtle dark:text-slate-400">
           Sign in to open the lab notebook.
         </p>
       )}
