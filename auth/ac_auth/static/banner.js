@@ -111,7 +111,24 @@
     ".bar.dark select,.bar.dark input{background:#0f172a;color:#e2e8f0;border-color:#334155}" +
     ".bar.dark input.code::placeholder{color:#64748b}" +
     ".bar.dark .msg{color:#60a5fa}.bar.dark .msg.err{color:#f87171}" +
-    ".theme-toggle{padding:.3rem .5rem;line-height:1;font-size:14px}";
+    // Theme toggle: an inline line icon (sun = "switch to light", moon =
+    // "switch to dark") drawn in currentColor, so it follows the ghost-button
+    // colour in both themes. Sized like the text beside it.
+    ".theme-toggle{padding:.3rem .45rem;line-height:0;display:inline-flex;align-items:center}" +
+    ".theme-toggle svg{width:16px;height:16px;display:block}";
+
+  // Icons for the theme toggle (24-unit viewBox, 2px round strokes).
+  var ICON_SUN =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="4"/>' +
+    '<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>' +
+    '</svg>';
+  var ICON_MOON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>' +
+    '</svg>';
 
   function el(tag, props, kids) {
     var e = document.createElement(tag);
@@ -222,8 +239,10 @@
     function applyTheme(dark) {
       isDark = dark;
       bar.classList.toggle("dark", dark);
-      themeBtn.textContent = dark ? "☀️" : "🌙";
+      // Static markup, no user data — safe to set as HTML.
+      themeBtn.innerHTML = dark ? ICON_SUN : ICON_MOON;
       themeBtn.title = dark ? "Switch to light theme" : "Switch to dark theme";
+      themeBtn.setAttribute("aria-label", themeBtn.title);
       try { document.documentElement.classList.toggle("dark", dark); } catch (e) { /* no-op */ }
     }
     applyTheme(isDark);
