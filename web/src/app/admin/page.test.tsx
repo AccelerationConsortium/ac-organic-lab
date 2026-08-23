@@ -197,15 +197,15 @@ describe("AdminPage", () => {
     auth.identity = { role: "operator", email: "op@lab.ca" };
     renderPage();
     expect(await screen.findByText(/sign in with an admin account/)).toBeTruthy();
-    expect(screen.queryByText("Overview")).toBeNull();
+    expect(screen.queryByText("Accounts & Activities")).toBeNull();
   });
 
   it("lays out eight paired tiles, none spanning the grid", async () => {
     renderPage();
-    await screen.findByText("Overview");
+    await screen.findByText("Accounts & Activities");
     const titles = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
     expect(titles).toEqual([
-      "Overview",
+      "Accounts & Activities",
       "Roster health",
       "Accounts",
       "Automation & API keys",
@@ -219,9 +219,9 @@ describe("AdminPage", () => {
     expect(document.querySelector(".lg\\:col-span-2")).toBeNull();
   });
 
-  it("combines the headline numbers into the Overview tile", async () => {
+  it("combines the headline numbers into the Accounts & Activities tile", async () => {
     renderPage();
-    const overview = (await screen.findByText("Overview")).closest("section")!;
+    const overview = (await screen.findByText("Accounts & Activities")).closest("section")!;
     // Lifetime total from the API, not the length of the fetched window.
     await within(overview).findByText("2,758");
     expect(within(overview).getByText("Active accounts")).toBeTruthy();

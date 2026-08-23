@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { AccountsActivitiesTile } from "@/components/AccountsActivitiesTile";
 import { LabMap } from "@/components/LabMap";
 import { PlatformCard } from "@/components/PlatformCard";
 import { useEquipmentList } from "@/lib/use-equipment";
@@ -171,6 +172,11 @@ export default function OverviewPage() {
           );
         })}
       </div>
+      {/* Admin headline (renders only for an admin session): the same
+          "Accounts & Activities" KPI tile that leads the admin console, laid
+          out as one wide row with a GO → link into /admin. */}
+      <AccountsActivitiesTile wide adminLink />
+
       {/* CSS multi-column masonry: every card sits at its own content height
           and packs tightly into the columns (no stretching to match a taller
           neighbour, no gaps below a short one). `break-inside-avoid` keeps a

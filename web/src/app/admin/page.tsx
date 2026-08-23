@@ -1,7 +1,20 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { AccountsActivitiesTile } from "@/components/AccountsActivitiesTile";
+import { AdminTile, Empty, ErrorNote } from "@/components/AdminTile";
+import {
+  fmtDuration,
+  fmtEpoch,
+  fmtEpochShort,
+  fmtIso,
+  fmtIsoShort,
+  useAdminQuery,
+  type AdminState,
+  type ClaimedBy,
+  type ControlActionsResponse,
+  type SessionRow,
+} from "@/lib/admin-api";
 import { useEquipmentList } from "@/lib/use-equipment";
 import { useUserAuth } from "@/lib/user-auth";
 
@@ -12,14 +25,16 @@ import { useUserAuth } from "@/lib/user-auth";
 // is UX only. Read-only by design: roster edits stay in roster.yaml
 // (edit → validate → commit → SIGHUP), never in a web form.
 //
-// Layout: a strict two-column ("double panel") grid of equal tiles, paired by
-// topic — every row is two tiles, none spans the grid:
+// Layout: a strict two-column ("double panel") grid of tiles in the Overview
+// page's card vocabulary (AdminTile = PlatformCard chrome), paired by topic —
+// every row is two tiles, none spans the grid:
 //
-//   Overview (headline numbers)  |  Roster health (reload / approvals / expiry)
-//   Accounts                     |  Automation & API keys
-//   Live sessions                |  Live claims
-//   Sign-in activity             |  Control actions
+//   Accounts & Activities (headline) |  Roster health (reload / approvals / expiry)
+//   Accounts                         |  Automation & API keys
+//   Live sessions                    |  Live claims
+//   Sign-in activity                 |  Control actions
 //
+// The headline tile is shared with the Overview page (AccountsActivitiesTile).
 // To fit the wider tables into half-width tiles, related fields share one
 // cell (name over email, role + grants as chips, status over expiry, device
 // over action, outcome over duration). Tile bodies are fixed-height and scroll
@@ -67,12 +82,6 @@ interface AuthEventRow {
   user_agent: string;
 }
 
-interface SessionRow {
-  email: string;
-  created_at: number;
-  expires_at: number;
-}
-
 interface ApiKeyRow {
   id: number;
   email: string;
@@ -81,124 +90,6 @@ interface ApiKeyRow {
   expires_at: number | null;
   revoked: boolean;
   last_used_at: number | null;
-}
-
-interface AdminState {
-  roster: {
-    users: number;
-    automation: number;
-    projects: number;
-    active_accounts: number;
-  };
-  roster_loaded_at: number | null;
-  last_reload: { ts: number; applied: boolean; errors: string[] } | null;
-  pending_automation: string[];
-  expiring_soon: { email: string; expires_at: number }[];
-}
-
-interface ControlAction {
-  ts: string;
-  device_id: string;
-  message: string | null;
-  action: string | null;
-  method: string | null;
-  status_code: number | null;
-  outcome: string | null;
-  owner: string | null;
-  /** Wall-clock of the device interaction (claim → action → release), seconds.
-   *  Null on rows written before 2026-07-24 and on refusals that never
-   *  reached the device. */
-  duration_s: number | null;
-  /** Provenance of the click (X-Control-Origin). "assistant" when authorized
-   *  from the lab assistant's confirm card; null for direct tile clicks. */
-  origin: string | null;
-}
-
-interface ControlActionsResponse {
-  /** Newest-first window (the `limit` we asked for). */
-  actions: ControlAction[];
-  /** Lifetime row count — the headline figure; not capped by `limit`. */
-  total: number;
-}
-
-interface ClaimedBy {
-  session_id: string;
-  owner: string;
-  expires_at: string;
-}
-
-// ---------------------------------------------------------------------------
-// Data hooks
-// ---------------------------------------------------------------------------
-
-async function getJson<T>(path: string): Promise<T> {
-  const r = await fetch(path, { cache: "no-store" });
-  if (!r.ok) {
-    const body = (await r.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail ?? `${r.status} from ${path}`);
-  }
-  return (await r.json()) as T;
-}
-
-function useAdmin<T>(path: string, refetchMs: number, enabled: boolean) {
-  return useQuery({
-    queryKey: ["admin", path],
-    queryFn: () => getJson<T>(path),
-    refetchInterval: refetchMs,
-    enabled,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Formatting
-// ---------------------------------------------------------------------------
-
-const SHORT_STAMP: Intl.DateTimeFormatOptions = {
-  month: "short",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-};
-
-/** ac_auth timestamps are epoch seconds (REAL). Full form, for tooltips. */
-function fmtEpoch(t: number | null | undefined): string {
-  if (t == null) return "—";
-  return new Date(t * 1000).toLocaleString();
-}
-
-/** Compact "Aug 23, 14:15" form for table cells; pair with a full `title`. */
-function fmtEpochShort(t: number | null | undefined): string {
-  if (t == null) return "—";
-  return new Date(t * 1000).toLocaleString(undefined, SHORT_STAMP);
-}
-
-function parseIso(ts: string): Date {
-  return new Date(ts.endsWith("Z") || ts.includes("+") ? ts : ts + "Z");
-}
-
-/** lab.db timestamps are ISO-8601 UTC strings. Full form, for tooltips. */
-function fmtIso(ts: string | null | undefined): string {
-  if (!ts) return "—";
-  const d = parseIso(ts);
-  return isNaN(d.getTime()) ? ts : d.toLocaleString();
-}
-
-function fmtIsoShort(ts: string | null | undefined): string {
-  if (!ts) return "—";
-  const d = parseIso(ts);
-  return isNaN(d.getTime()) ? ts : d.toLocaleString(undefined, SHORT_STAMP);
-}
-
-/** "2 d 4 h" / "3 h 12 m" / "45 m" / "30 s" — coarse on purpose (headline use). */
-function fmtDuration(seconds: number): string {
-  const s = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
-  const d = Math.floor(s / 86400);
-  const h = Math.floor((s % 86400) / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  if (d > 0) return h > 0 ? `${d} d ${h} h` : `${d} d`;
-  if (h > 0) return m > 0 ? `${h} h ${m} m` : `${h} h`;
-  if (m > 0) return `${m} m`;
-  return `${Math.floor(s)} s`;
 }
 
 const EVENT_BADGE: Record<string, string> = {
@@ -212,35 +103,8 @@ const EVENT_BADGE: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// Tile primitives (mirrors the equipment-tile look: header row + scroll body)
+// Table primitives (inside an AdminTile's framed scroll panel)
 // ---------------------------------------------------------------------------
-
-function Tile({
-  title,
-  sub,
-  controls,
-  children,
-}: {
-  title: string;
-  sub?: string;
-  /** Optional header widgets (filter dropdowns etc.). */
-  controls?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950/40">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-ink dark:text-slate-100">{title}</h2>
-          {sub && <p className="mt-0.5 text-xs text-ink-subtle dark:text-slate-400">{sub}</p>}
-        </div>
-        {controls && <div className="flex shrink-0 items-center gap-2">{controls}</div>}
-      </header>
-      {/* Fixed-height scroll body — the tile keeps its footprint, content scrolls. */}
-      <div className="max-h-80 overflow-y-auto overflow-x-auto">{children}</div>
-    </section>
-  );
-}
 
 function Select({
   value,
@@ -257,7 +121,7 @@ function Select({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="max-w-48 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-ink dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+      className="max-w-48 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-ink dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
     >
       <option value="">{allLabel}</option>
       {options.map((o) => (
@@ -272,11 +136,12 @@ function Select({
 function Table({ head, children }: { head: string[]; children: React.ReactNode }) {
   return (
     <table className="w-full text-left text-sm">
-      {/* Sticky under the tile header while the body scrolls. Needs a solid bg. */}
-      <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
-        <tr className="text-xs uppercase tracking-wide text-ink-subtle dark:text-slate-400">
+      {/* Sticky under the tile header while the body scrolls. Needs a solid bg.
+          Head typography = PlatformCard's "Equipment (n)" caption. */}
+      <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900">
+        <tr className="text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">
           {head.map((h) => (
-            <th key={h} className="px-4 py-2 font-medium">
+            <th key={h} className="px-3 py-1.5 font-semibold">
               {h}
             </th>
           ))}
@@ -290,22 +155,8 @@ function Table({ head, children }: { head: string[]; children: React.ReactNode }
 /** Section caption inside a tile that stacks two tables. */
 function Caption({ children }: { children: React.ReactNode }) {
   return (
-    <p className="border-t border-slate-100 px-4 pb-1 pt-3 text-xs font-medium uppercase tracking-wide text-ink-subtle first:border-t-0 dark:border-slate-800 dark:text-slate-400">
+    <p className="border-t border-slate-100 px-3 pb-1 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle first:border-t-0 dark:border-slate-800 dark:text-slate-400">
       {children}
-    </p>
-  );
-}
-
-function Empty({ message }: { message: string }) {
-  return (
-    <p className="px-4 py-6 text-center text-sm text-ink-muted dark:text-slate-300">{message}</p>
-  );
-}
-
-function ErrorNote({ error }: { error: unknown }) {
-  return (
-    <p className="px-4 py-6 text-center text-sm text-rose-600 dark:text-rose-400">
-      {error instanceof Error ? error.message : "Failed to load."}
     </p>
   );
 }
@@ -391,35 +242,6 @@ function AgentChip() {
   );
 }
 
-/**
- * One cell of the Overview KPI row: sentence-case label, a semibold value in
- * the page sans (proportional figures — these are not a column), and a short
- * muted detail line that says what the number is over.
- */
-function Stat({
-  label,
-  value,
-  detail,
-  title,
-}: {
-  label: string;
-  value: string;
-  detail?: string;
-  title?: string;
-}) {
-  return (
-    <div className="min-w-0" title={title}>
-      <dt className="truncate text-xs text-ink-subtle dark:text-slate-400">{label}</dt>
-      <dd className="mt-0.5 truncate text-2xl font-semibold leading-tight text-ink dark:text-slate-100">
-        {value}
-      </dd>
-      {detail && (
-        <dd className="mt-0.5 text-[11px] leading-snug text-ink-muted dark:text-slate-300">{detail}</dd>
-      )}
-    </div>
-  );
-}
-
 /** One row of the Roster health list: label on the left, content on the right. */
 function HealthRow({
   label,
@@ -439,7 +261,7 @@ function HealthRow({
           ? "bg-emerald-500"
           : "bg-slate-300 dark:bg-slate-600";
   return (
-    <div className="grid grid-cols-[9rem_1fr] gap-x-3 px-4 py-2.5 text-sm">
+    <div className="grid grid-cols-[9rem_1fr] gap-x-3 px-3 py-2 text-sm">
       <dt className="flex items-start gap-2 text-xs text-ink-subtle dark:text-slate-400">
         <span className={`mt-1 inline-block h-2 w-2 shrink-0 rounded-full ${dot}`} aria-hidden />
         <span className="leading-5">{label}</span>
@@ -461,20 +283,20 @@ export default function AdminPage() {
   const [actionOwner, setActionOwner] = useState("");
   const [actionDevice, setActionDevice] = useState("");
 
-  const accounts = useAdmin<{ users: AdminAccount[]; automation: AdminAutomation[] }>(
+  const accounts = useAdminQuery<{ users: AdminAccount[]; automation: AdminAutomation[] }>(
     "/api/admin/accounts",
     60_000,
     isAdmin,
   );
-  const state = useAdmin<AdminState>("/api/admin/state", 60_000, isAdmin);
-  const sessions = useAdmin<{ sessions: SessionRow[] }>("/api/admin/sessions", 30_000, isAdmin);
-  const apiKeys = useAdmin<{ keys: ApiKeyRow[] }>("/api/admin/api-keys", 60_000, isAdmin);
-  const events = useAdmin<{ events: AuthEventRow[] }>(
+  const state = useAdminQuery<AdminState>("/api/admin/state", 60_000, isAdmin);
+  const sessions = useAdminQuery<{ sessions: SessionRow[] }>("/api/admin/sessions", 30_000, isAdmin);
+  const apiKeys = useAdminQuery<{ keys: ApiKeyRow[] }>("/api/admin/api-keys", 60_000, isAdmin);
+  const events = useAdminQuery<{ events: AuthEventRow[] }>(
     `/api/admin/auth-events?limit=200${eventEmail ? `&email=${encodeURIComponent(eventEmail)}` : ""}`,
     30_000,
     isAdmin,
   );
-  const controlActions = useAdmin<ControlActionsResponse>(
+  const controlActions = useAdminQuery<ControlActionsResponse>(
     "/api/history/control-actions?limit=200",
     30_000,
     isAdmin,
@@ -519,21 +341,13 @@ export default function AdminPage() {
     [controlActions.data, actionOwner, actionDevice],
   );
 
-  // Headline "session time": signed-in time summed over the *live* sessions
-  // (now − created_at). Ended sessions leave no duration record — logout
-  // deletes the row and expiry purges it — so a lifetime figure would be a
-  // guess; this one is exact for what is on screen. `now` is taken per render;
-  // the sessions query refetches every 30 s, which re-renders.
+  // `now` per render (the sessions query refetches every 30 s) for the
+  // Live sessions tile's elapsed column.
   const nowS = Date.now() / 1000;
   const liveSessions = sessions.data?.sessions ?? [];
-  const sessionSeconds = liveSessions.reduce(
-    (acc, r) => acc + Math.max(0, nowS - r.created_at),
-    0,
-  );
-  const sessionAccounts = new Set(liveSessions.map((r) => r.email)).size;
 
   if (loading) {
-    return <div className="mt-6 h-24 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />;
+    return <div className="mt-3 h-24 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />;
   }
   if (!isAdmin) {
     // The middleware redirects non-admins server-side; this covers client-side
@@ -549,74 +363,19 @@ export default function AdminPage() {
 
   const s = state.data;
   const lastReload = s?.last_reload;
-  const rosterTotal = s ? s.roster.users + s.roster.automation : null;
 
   return (
-    <div className="mt-6 grid gap-6 lg:grid-cols-2">
+    // Same vertical rhythm as the Overview (its pill row carries py-3); the
+    // two-column grid uses items-start so each tile sits at its own content
+    // height like the Overview's masonry cards, with pairs preserved.
+    <div className="grid items-start gap-4 pt-3 lg:grid-cols-2">
       {/* ================================================================== */}
-      {/* Row 1 — Overview | Roster health                                     */}
+      {/* Row 1 — Accounts & Activities | Roster health                       */}
       {/* ================================================================== */}
 
-      <Tile
-        title="Overview"
-        sub="Headline numbers — the roster, who is signed in, what is claimed, how much has been done."
-      >
-        {state.error ? (
-          <ErrorNote error={state.error} />
-        ) : (
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-5 px-4 py-4 sm:grid-cols-3">
-            <Stat
-              label="Active accounts"
-              value={s ? String(s.roster.active_accounts) : "…"}
-              detail={s ? `of ${rosterTotal} on the roster` : undefined}
-              title="Roster principals that are enabled, unexpired and (for automation) approved"
-            />
-            <Stat
-              label="Projects"
-              value={s ? String(s.roster.projects) : "…"}
-              detail="declared in roster.yaml"
-            />
-            <Stat
-              label="Live sessions"
-              value={sessions.data ? String(liveSessions.length) : "…"}
-              detail={
-                sessions.data
-                  ? `${sessionAccounts} ${sessionAccounts === 1 ? "account" : "accounts"} signed in`
-                  : undefined
-              }
-              title="Unexpired session cookies (~12 h TTL)"
-            />
-            <Stat
-              label="Devices claimed"
-              value={equipment.data ? String(claims.length) : "…"}
-              detail={
-                equipment.data ? `live · of ${equipment.data.equipment.length} polled` : undefined
-              }
-              title="Devices whose live /status carries details.claimed_by"
-            />
-            <Stat
-              label="Control actions"
-              value={
-                controlActions.data
-                  ? controlActions.data.total.toLocaleString()
-                  : controlActions.error
-                    ? "—"
-                    : "…"
-              }
-              detail="all time, via the dashboard"
-              title="Lifetime count of control_action audit rows in lab.db"
-            />
-            <Stat
-              label="Session time"
-              value={sessions.data ? fmtDuration(sessionSeconds) : "…"}
-              detail="live sessions, summed"
-              title="Σ (now − signed in) across unexpired sessions; ended sessions keep no duration record"
-            />
-          </dl>
-        )}
-      </Tile>
+      <AccountsActivitiesTile />
 
-      <Tile
+      <AdminTile
         title="Roster health"
         sub="roster.yaml as loaded by the auth sidecar — reloads, approvals waiting on an admin, accounts about to lapse."
       >
@@ -648,7 +407,7 @@ export default function AdminPage() {
                   </span>
                 </span>
               ) : (
-                <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300">
+                <div className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300">
                   <p className="font-medium">
                     REJECTED {fmtEpochShort(lastReload.ts)} — the previous allow-list is still in
                     effect.
@@ -703,13 +462,13 @@ export default function AdminPage() {
             </HealthRow>
           </dl>
         )}
-      </Tile>
+      </AdminTile>
 
       {/* ================================================================== */}
       {/* Row 2 — Accounts | Automation & API keys                            */}
       {/* ================================================================== */}
 
-      <Tile
+      <AdminTile
         title="Accounts"
         sub="The full roster.yaml allow-list, incl. disabled/expired. Access = what each account may use. Edits go through roster.yaml, not this page."
       >
@@ -726,7 +485,7 @@ export default function AdminPage() {
               const isAgent = u.email.startsWith("agent:");
               return (
                 <tr key={u.email} className={inactive ? "opacity-50" : ""}>
-                  <td className="max-w-[14rem] px-4 py-2">
+                  <td className="max-w-[14rem] px-3 py-1.5">
                     <Stacked
                       primary={
                         <span className="font-medium text-ink dark:text-slate-100">
@@ -741,10 +500,10 @@ export default function AdminPage() {
                       }
                     />
                   </td>
-                  <td className="px-4 py-2">
+                  <td className="px-3 py-1.5">
                     <GrantChips role={u.role} grants={u.grants ?? []} />
                   </td>
-                  <td className="px-4 py-2">
+                  <td className="px-3 py-1.5">
                     <Stacked
                       primary={
                         <>
@@ -765,7 +524,7 @@ export default function AdminPage() {
                       }
                     />
                   </td>
-                  <td className="whitespace-nowrap px-4 py-2">
+                  <td className="whitespace-nowrap px-3 py-1.5">
                     <Stacked
                       primary={
                         <span title={fmtEpoch(u.last_login_at)}>{fmtEpochShort(u.last_login_at)}</span>
@@ -782,9 +541,9 @@ export default function AdminPage() {
             })}
           </Table>
         )}
-      </Tile>
+      </AdminTile>
 
-      <Tile
+      <AdminTile
         title="Automation & API keys"
         sub="Machine principals and how they authenticate (X-Api-Key; humans use sessions). last_used_at separates dead keys from load-bearing ones."
       >
@@ -801,7 +560,7 @@ export default function AdminPage() {
               <Table head={["Account", "Approved", "Platform", "Keys", "Expires"]}>
                 {accounts.data.automation.map((a) => (
                   <tr key={a.email} className={a.is_expired ? "opacity-50" : ""}>
-                    <td className="max-w-[14rem] px-4 py-2">
+                    <td className="max-w-[14rem] px-3 py-1.5">
                       <Stacked
                         primary={
                           <span className="font-medium text-ink dark:text-slate-100">
@@ -811,7 +570,7 @@ export default function AdminPage() {
                         secondary={a.name ? a.email : undefined}
                       />
                     </td>
-                    <td className="px-4 py-2">
+                    <td className="px-3 py-1.5">
                       {a.approved ? (
                         "yes"
                       ) : (
@@ -820,9 +579,9 @@ export default function AdminPage() {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-2">{a.platform ?? "—"}</td>
-                    <td className="px-4 py-2 tabular-nums">{a.api_keys}</td>
-                    <td className="whitespace-nowrap px-4 py-2" title={fmtEpoch(a.expires_at)}>
+                    <td className="px-3 py-1.5">{a.platform ?? "—"}</td>
+                    <td className="px-3 py-1.5 tabular-nums">{a.api_keys}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5" title={fmtEpoch(a.expires_at)}>
                       {fmtEpochShort(a.expires_at)}
                     </td>
                   </tr>
@@ -837,30 +596,30 @@ export default function AdminPage() {
               <Table head={["Account", "Label", "Last used", "Expires", "Status"]}>
                 {apiKeys.data.keys.map((k) => (
                   <tr key={k.id} className={k.revoked ? "opacity-50" : ""}>
-                    <td className="max-w-[14rem] truncate px-4 py-2" title={k.email}>
+                    <td className="max-w-[14rem] truncate px-3 py-1.5" title={k.email}>
                       {k.email}
                     </td>
-                    <td className="px-4 py-2">{k.label || `#${k.id}`}</td>
-                    <td className="whitespace-nowrap px-4 py-2" title={fmtEpoch(k.last_used_at)}>
+                    <td className="px-3 py-1.5">{k.label || `#${k.id}`}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5" title={fmtEpoch(k.last_used_at)}>
                       {fmtEpochShort(k.last_used_at)}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-2" title={fmtEpoch(k.expires_at)}>
+                    <td className="whitespace-nowrap px-3 py-1.5" title={fmtEpoch(k.expires_at)}>
                       {fmtEpochShort(k.expires_at)}
                     </td>
-                    <td className="px-4 py-2">{k.revoked ? "revoked" : "active"}</td>
+                    <td className="px-3 py-1.5">{k.revoked ? "revoked" : "active"}</td>
                   </tr>
                 ))}
               </Table>
             )}
           </>
         )}
-      </Tile>
+      </AdminTile>
 
       {/* ================================================================== */}
       {/* Row 3 — Live sessions | Live claims                                  */}
       {/* ================================================================== */}
 
-      <Tile title="Live sessions" sub="Unexpired session cookies (~12 h TTL).">
+      <AdminTile title="Live sessions" sub="Unexpired session cookies (~12 h TTL).">
         {sessions.error ? (
           <ErrorNote error={sessions.error} />
         ) : !sessions.data ? (
@@ -871,25 +630,25 @@ export default function AdminPage() {
           <Table head={["Account", "Signed in", "Elapsed", "Expires"]}>
             {liveSessions.map((r, i) => (
               <tr key={`${r.email}-${i}`}>
-                <td className="max-w-[14rem] truncate px-4 py-2" title={r.email}>
+                <td className="max-w-[14rem] truncate px-3 py-1.5" title={r.email}>
                   {r.email}
                 </td>
-                <td className="whitespace-nowrap px-4 py-2" title={fmtEpoch(r.created_at)}>
+                <td className="whitespace-nowrap px-3 py-1.5" title={fmtEpoch(r.created_at)}>
                   {fmtEpochShort(r.created_at)}
                 </td>
-                <td className="whitespace-nowrap px-4 py-2 tabular-nums text-ink-muted dark:text-slate-300">
+                <td className="whitespace-nowrap px-3 py-1.5 tabular-nums text-ink-muted dark:text-slate-300">
                   {fmtDuration(nowS - r.created_at)}
                 </td>
-                <td className="whitespace-nowrap px-4 py-2" title={fmtEpoch(r.expires_at)}>
+                <td className="whitespace-nowrap px-3 py-1.5" title={fmtEpoch(r.expires_at)}>
                   {fmtEpochShort(r.expires_at)}
                 </td>
               </tr>
             ))}
           </Table>
         )}
-      </Tile>
+      </AdminTile>
 
-      <Tile
+      <AdminTile
         title="Live claims"
         sub="Devices under a cooperative claim (details.claimed_by, live poll)."
       >
@@ -899,7 +658,7 @@ export default function AdminPage() {
           <Table head={["Device", "Held by", "Session", "Claim expires"]}>
             {claims.map((c) => (
               <tr key={c.id}>
-                <td className="px-4 py-2">
+                <td className="px-3 py-1.5">
                   <Stacked
                     primary={
                       <span className="font-medium text-ink dark:text-slate-100">{c.name}</span>
@@ -908,24 +667,24 @@ export default function AdminPage() {
                     mono
                   />
                 </td>
-                <td className="px-4 py-2">{c.claimed.owner}</td>
-                <td className="px-4 py-2 font-mono text-xs" title={c.claimed.session_id}>
+                <td className="px-3 py-1.5">{c.claimed.owner}</td>
+                <td className="px-3 py-1.5 font-mono text-xs" title={c.claimed.session_id}>
                   {c.claimed.session_id.slice(0, 12)}…
                 </td>
-                <td className="whitespace-nowrap px-4 py-2" title={fmtIso(c.claimed.expires_at)}>
+                <td className="whitespace-nowrap px-3 py-1.5" title={fmtIso(c.claimed.expires_at)}>
                   {fmtIsoShort(c.claimed.expires_at)}
                 </td>
               </tr>
             ))}
           </Table>
         )}
-      </Tile>
+      </AdminTile>
 
       {/* ================================================================== */}
       {/* Row 4 — Sign-in activity | Control actions                          */}
       {/* ================================================================== */}
 
-      <Tile
+      <AdminTile
         title="Sign-in activity"
         sub="auth_events audit log — codes, logins, failures, logouts."
         controls={
@@ -947,10 +706,10 @@ export default function AdminPage() {
           <Table head={["Time", "Event", "Account", "From"]}>
             {events.data.events.map((e, i) => (
               <tr key={`${e.ts}-${i}`}>
-                <td className="whitespace-nowrap px-4 py-2 text-xs" title={fmtEpoch(e.ts)}>
+                <td className="whitespace-nowrap px-3 py-1.5 text-xs" title={fmtEpoch(e.ts)}>
                   {fmtEpochShort(e.ts)}
                 </td>
-                <td className="px-4 py-2">
+                <td className="px-3 py-1.5">
                   <span
                     className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${
                       EVENT_BADGE[e.event] ??
@@ -961,19 +720,19 @@ export default function AdminPage() {
                     {e.event}
                   </span>
                 </td>
-                <td className="max-w-[12rem] truncate px-4 py-2 text-xs" title={e.email || undefined}>
+                <td className="max-w-[12rem] truncate px-3 py-1.5 text-xs" title={e.email || undefined}>
                   {e.email || "—"}
                 </td>
-                <td className="px-4 py-2 font-mono text-xs" title={e.user_agent}>
+                <td className="px-3 py-1.5 font-mono text-xs" title={e.user_agent}>
                   {e.ip || "—"}
                 </td>
               </tr>
             ))}
           </Table>
         )}
-      </Tile>
+      </AdminTile>
 
-      <Tile
+      <AdminTile
         title="Control actions"
         sub={
           controlActions.data
@@ -1009,10 +768,10 @@ export default function AdminPage() {
               const ok = a.outcome === "ok" || (a.status_code != null && a.status_code < 300);
               return (
                 <tr key={`${a.ts}-${i}`}>
-                  <td className="whitespace-nowrap px-4 py-2 text-xs" title={fmtIso(a.ts)}>
+                  <td className="whitespace-nowrap px-3 py-1.5 text-xs" title={fmtIso(a.ts)}>
                     {fmtIsoShort(a.ts)}
                   </td>
-                  <td className="max-w-[14rem] px-4 py-2">
+                  <td className="max-w-[14rem] px-3 py-1.5">
                     <Stacked
                       primary={
                         <span className="text-xs font-medium text-ink dark:text-slate-100">
@@ -1023,7 +782,7 @@ export default function AdminPage() {
                       mono
                     />
                   </td>
-                  <td className="max-w-[12rem] px-4 py-2 text-xs">
+                  <td className="max-w-[12rem] px-3 py-1.5 text-xs">
                     <Stacked
                       primary={<span title={a.owner ?? undefined}>{a.owner ?? "—"}</span>}
                       secondary={
@@ -1037,7 +796,7 @@ export default function AdminPage() {
                       }
                     />
                   </td>
-                  <td className="whitespace-nowrap px-4 py-2 text-xs">
+                  <td className="whitespace-nowrap px-3 py-1.5 text-xs">
                     <Stacked
                       primary={
                         <span
@@ -1068,7 +827,7 @@ export default function AdminPage() {
             })}
           </Table>
         )}
-      </Tile>
+      </AdminTile>
     </div>
   );
 }
