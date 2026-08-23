@@ -485,8 +485,9 @@ export async function postHplcAbort(equipmentId: string): Promise<ControlAck> {
 
 // -- Plate reader (BioTek Cytation 5 / agilent-cytation-server) -------------
 //
-// Lifecycle only for now (the ON toggle on the tile). The read/imaging verbs
-// need typed arg shapes and land with the protocol-execution work.
+// Lifecycle + incubator setpoint. Body field is `celsius` (the device's
+// name), not `temperature_c`. Read/imaging verbs stay off the tile — they
+// need richer arg UI and land with protocol-execution work.
 
 export async function postPlateReaderStartup(
   equipmentId: string,
@@ -498,6 +499,19 @@ export async function postPlateReaderShutdown(
   equipmentId: string,
 ): Promise<ControlAck> {
   return controlPost(equipmentId, "shutdown", {});
+}
+
+export async function postPlateReaderSetTemperature(
+  equipmentId: string,
+  celsius: number,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "incubator/set_temperature", { celsius });
+}
+
+export async function postPlateReaderStopTemperature(
+  equipmentId: string,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "incubator/stop", {});
 }
 
 // -- Sash (fume hood) control ----------------------------------------------

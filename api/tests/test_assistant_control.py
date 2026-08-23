@@ -989,9 +989,10 @@ async def test_list_available_actions_camera_full_surface() -> None:
 # plate-reader proposals (UI_DESIGN §5 Step 1g)
 # ---------------------------------------------------------------------------
 
-# Finite, card-evaluable Cytation actions. Temperature control and shaking are
-# intentionally absent: both outlive the POST and require a later stop, so they
-# belong in a validated workflow rather than a standalone confirm card.
+# Finite, card-evaluable Cytation actions. incubator.set_temperature is a
+# setpoint change (same class as shake.set_temperature). incubator.stop and
+# Cytation shake.start/stop stay operator/workflow-only: stop verbs are the
+# safety floor, and Cytation shaking has no duration timer.
 _PLATE_READER_SURFACE = {
     "startup": "startup",
     "shutdown": "shutdown",
@@ -1004,9 +1005,9 @@ _PLATE_READER_SURFACE = {
     "read.fluorescence": "read/fluorescence",
     "read.luminescence": "read/luminescence",
     "imaging.capture": "imaging/capture",
+    "incubator.set_temperature": "incubator/set_temperature",
 }
 _PLATE_READER_WORKFLOW_ONLY = {
-    "incubator.set_temperature",
     "incubator.stop",
     "shake.start",
     "shake.stop",
@@ -1058,6 +1059,40 @@ async def test_propose_plate_reader_absorbance_read() -> None:
     assert prop["passthrough_action"] == "read/absorbance"
     assert prop["args"] == {"wells": ["A1", "B2"], "wavelength_nm": 600.0}
     assert prop["kind"] == "plate_reader"
+
+
+@respx.mock
+async def test_propose_plate_reader_incubator_set_temperature() -> None:
+    _mock_bench_status("plate_reader", ["incubator.set_temperature"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("plate_reader"),
+            "plate_reader_test",
+            "incubator.set_temperature",
+            {"celsius": 37.0},
+            "warm the plate to 37 C",
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "incubator.set_temperature"
+    assert prop["passthrough_action"] == "incubator/set_temperature"
+    assert prop["args"] == {"celsius": 37.0}
+
+
+@respx.mock
+async def test_propose_plate_reader_incubator_rejects_out_of_range() -> None:
+    _mock_bench_status("plate_reader", ["incubator.set_temperature"])
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("plate_reader"),
+            "plate_reader_test",
+            "incubator.set_temperature",
+            {"celsius": 90.0},
+            "",
+        )
+    )
+    assert out["code"] == "invalid_args"
 
 
 @respx.mock

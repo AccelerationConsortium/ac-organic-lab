@@ -361,11 +361,13 @@ _PROPOSABLE: dict[str, frozenset[str]] = {
     # visible on the confirm card; drawer and plate-record changes follow the
     # same one-card/operator-sequenced rule already used for the OT-2.
     #
-    # The incubator and shaker are deliberately absent despite being in the
-    # catalog. `incubator.set_temperature` and `shake.start` outlive the POST
-    # and need a later stop, so neither is a correct standalone act. Their stop
-    # verbs remain part of the operator safety floor. Use an authorized
-    # workflow that contains the full start/use/stop sequence instead.
+    # `incubator.set_temperature` (2026-08-21) is the same class of act as
+    # `shake.set_temperature` / `seal.set_temperature`: one setpoint change
+    # whose complete `celsius` body fits on the card. Holding temperature is
+    # not an operation in progress on this device. `incubator.stop` stays
+    # operator-only (stop verbs are never proposable). Cytation `shake.start`
+    # is still absent: unlike the Torrey Pines cycle it has no duration timer
+    # and needs a later `shake.stop`, so it is not a standalone act.
     "plate_reader": frozenset(
         {
             "startup",
@@ -379,6 +381,7 @@ _PROPOSABLE: dict[str, frozenset[str]] = {
             "read.fluorescence",
             "read.luminescence",
             "imaging.capture",
+            "incubator.set_temperature",
         }
     ),
 }

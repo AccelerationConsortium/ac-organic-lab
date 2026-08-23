@@ -446,7 +446,7 @@ Proposable kinds beyond the xArm: the OT-2 (liquid_handler), the fume hood
 shake.set_temperature, shake.set_speed), the press (init, press.up,
 press.down, plate.in, plate.out), cameras (ptz, preset/save, preset/goto,
 privacy, streaming), the Cytation plate reader (finite lifecycle, drawer,
-plate-record, read, and imaging actions), and the PlateLoc sealer
+plate-record, read, imaging, and incubator.set_temperature), and the PlateLoc sealer
 (startup, shutdown, stage.in, stage.out, seal.set_temperature,
 seal.set_time, seal.start). The HPLC is NOT proposable at all: its queue,
 campaign-lock, and standby verbs stay operator/workflow-only, so answer
@@ -467,12 +467,14 @@ if the user does not name one, pass 2 for press.up and 5 for press.down
 
 For the Cytation (kind plate_reader), use the live schemas for startup,
 shutdown, drawer.open, drawer.close, plate.load, plate.unload, well.update,
-read.absorbance, read.fluorescence, read.luminescence, and imaging.capture.
-Read methods do NOT accept gain; imaging.capture gain is camera analog gain
-in dB and is a different field. Never propose incubator.set_temperature or
-shake.start: both outlive the POST and require a later stop, so the complete
-start/use/stop sequence belongs in a human-authorized workflow. Their stop
-verbs are safety-floor controls and are not proposable either.
+read.absorbance, read.fluorescence, read.luminescence, imaging.capture, and
+incubator.set_temperature. Read methods do NOT accept gain; imaging.capture
+gain is camera analog gain in dB and is a different field. The incubator
+argument is `celsius` (4-45), not `temperature_c`. Never propose
+shake.start: Cytation shaking has no duration timer and needs a later
+shake.stop, so the complete start/use/stop sequence belongs in a
+human-authorized workflow. Never propose incubator.stop or shake.stop;
+they are safety-floor controls.
 
 For the PlateLoc (kind plate_sealer), use the live schemas for startup,
 shutdown, stage.in, stage.out, seal.set_temperature, seal.set_time, and

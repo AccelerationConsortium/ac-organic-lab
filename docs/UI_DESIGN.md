@@ -1059,14 +1059,18 @@ passthrough performs the request.
 
 | Proposable finite actions | Workflow/operator-only |
 |---|---|
-| `startup`, `shutdown`, `drawer.open`, `drawer.close`, `plate.load`, `plate.unload`, `well.update`, `read.absorbance`, `read.fluorescence`, `read.luminescence`, `imaging.capture` | `incubator.set_temperature`, `incubator.stop`, `shake.start`, `shake.stop` |
+| `startup`, `shutdown`, `drawer.open`, `drawer.close`, `plate.load`, `plate.unload`, `well.update`, `read.absorbance`, `read.fluorescence`, `read.luminescence`, `imaging.capture`, `incubator.set_temperature` | `incubator.stop`, `shake.start`, `shake.stop` |
 
 The split follows §5.3b's standalone-act test, not a device-kind exception.
 Each admitted action terminates in one request and its complete
-wells/wavelength/exposure body fits on the confirm card. Temperature control
-and shaking do not: both starts outlive the POST and require a later stop.
-Those complete start/use/stop sequences belong in a human-authorized workflow;
-the stop verbs remain safety-floor controls.
+wells/wavelength/exposure/`celsius` body fits on the confirm card.
+`incubator.set_temperature` (admitted 2026-08-21) is a setpoint change of
+the same class as `shake.set_temperature` / `seal.set_temperature`; holding
+a temperature is not an operation in progress on this device.
+`incubator.stop` remains a safety-floor control. Cytation `shake.start` is
+still excluded: unlike the Torrey Pines cycle it has no duration timer and
+needs a later `shake.stop`, so that start/use/stop sequence belongs in a
+human-authorized workflow.
 
 Because Cytation reads and autofocus imaging can exceed the dashboard's normal
 15-second device timeout, plate-reader passthroughs use a 90-second action
