@@ -310,9 +310,11 @@ equipment:
   # The `tiles.complexation` values drive tile sizes on /platforms/complexation.
   # ---------------------------------------------------------------------
 
-  # The Echem camera is the platform's hero tile — a second Tapo C245D
-  # (device alias "Tapo for MG400"), hosted by the same `kasa-tapo-services`
-  # gateway as the HTE camera.
+  # Second Tapo C245D (device alias "Tapo for MG400"), hosted by the same
+  # `kasa-tapo-services` gateway as the HTE camera. Registered + polled, but
+  # since 2026-08-23 NOT listed in platforms.yaml — it is hidden from the
+  # Complexation platform (Overview card, Platforms tab, /platforms/
+  # complexation). Add it back to that section's equipment list to show it.
   - id: cam_echem_tapo_c245
     name: Echem Platform Camera
     kind: camera
@@ -338,10 +340,10 @@ equipment:
         - { id: wide, label: Wide, rtsp_path: stream1, ptz_capable: false }
         - { id: tele, label: Tele, rtsp_path: stream6 }
 
-  # Second Echem camera: a single-lens Tapo C100 watching the OT-2. Listed
-  # AFTER cam_echem_tapo_c245 in platforms.yaml on purpose — the Overview
-  # card streams only the first camera of a section, so this one appears
-  # there as a status row only (full tile on /platforms/complexation).
+  # Echem camera: a single-lens Tapo C100 watching the OT-2. With
+  # cam_echem_tapo_c245 hidden it is the only camera the complexation
+  # section lists, so it is the one the Overview card streams (and the
+  # camera tile on /platforms/complexation).
   - id: cam_echem_tapo_c100
     name: Echem OT2 Camera
     kind: camera

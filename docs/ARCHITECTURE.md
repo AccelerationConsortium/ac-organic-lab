@@ -355,6 +355,7 @@ sections:
 Key behaviours:
 
 - **Section order** determines render order on the Overview page and tab order in the Nav.
+- **`default: true`** (optional, at most one section; the loader rejects two) marks the platform the **Platforms tab opens on** before the visitor picks one. It does *not* reorder anything — Overview cards and pills still follow section order — so the primary bench can lead the tab without moving to the top of the Overview. With no flag the tab falls back to the first section that has an `href`.
 - **Equipment order** within a section determines tile order on the platform's detail page and pill order in the Overview card.
 - **Shared equipment** — an equipment id may appear in more than one section. The resolved `EquipmentSnapshot.platform` for that id is the **first** section listing it (sections are in display order, so this is deterministic).
 - **Missing file** raises immediately on startup; there is no fallback to defaults.

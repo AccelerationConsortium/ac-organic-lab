@@ -19,18 +19,22 @@ sections:
     href: /platforms/complexation
     kind: platform
     equipment:
-      # The Overview card streams only the FIRST camera in this list;
-      # cam_echem_tapo_c100 stays below cam_echem_tapo_c245 so it shows on
-      # the Overview as a status row only (no stream toggle).
-      - cam_echem_tapo_c245
-      - ot2_complexation
+      # cam_echem_tapo_c245 ("Echem Platform Camera") is deliberately NOT
+      # listed (hidden from this platform since 2026-08-23). It stays
+      # registered + polled in equipment.yaml; re-add it here to show it.
+      # The Overview card streams only the FIRST camera in this list, so the
+      # OT-2 camera is now the one that streams.
       - cam_echem_tapo_c100
+      - ot2_complexation
 
   - id: hte
     title: HTE Platform
     description: High-throughput platform for chemistry
     href: /platforms/hte
     kind: platform
+    # The Platforms tab opens here on a first visit (at most one section may
+    # set this). Overview order is unaffected — that is still section order.
+    default: true
     equipment:
       - cam_hte_tapo_c245
       - xarm_translocation

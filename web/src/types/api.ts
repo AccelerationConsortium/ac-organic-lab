@@ -136,6 +136,9 @@ export interface PlatformSection {
   href?: string | null;
   kind: "platform" | "environmental_map";
   equipment: string[];
+  /** The platform the Platforms tab opens on before the visitor picks one
+   *  (at most one section; falls back to the first section with an href). */
+  default?: boolean;
 }
 
 export interface PlatformsConfig {

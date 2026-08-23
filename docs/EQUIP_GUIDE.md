@@ -206,6 +206,7 @@ Each section has:
 - `id` — stable identifier, used as the tile-sizing key in `equipment.yaml`
 - `title` — display name (Overview card header, Nav tab)
 - `href` (optional) — if present, a Nav tab is auto-injected for this section
+- `default: true` (optional, at most one section) — the platform the Platforms tab shows first; display order is unaffected
 - `kind: platform | environmental_map` — `platform` renders a `PlatformCard`; `environmental_map` renders the `LabMap`
 - `equipment:` — ordered list of equipment ids; this order is the render order everywhere
 

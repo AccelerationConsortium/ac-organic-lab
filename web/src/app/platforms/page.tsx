@@ -73,10 +73,14 @@ export default function PlatformsPage() {
     (s) => s.kind === "platform" && s.href != null,
   );
 
+  // First visit (nothing saved): the section flagged `default: true` in
+  // platforms.yaml, else the first platform with a detail page.
+  const defaultSection =
+    platformSections.find((s) => s.default) ?? platformSections[0] ?? null;
   const showNone = selectedId === NONE;
   const selected = showNone
     ? null
-    : platformSections.find((s) => s.id === selectedId) ?? platformSections[0] ?? null;
+    : platformSections.find((s) => s.id === selectedId) ?? defaultSection;
 
   function selectPlatform(id: string) {
     setSelectedId(id);

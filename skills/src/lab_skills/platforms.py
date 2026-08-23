@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, model_validator
 
 
 class PlatformSection(BaseModel):
@@ -26,12 +26,28 @@ class PlatformSection(BaseModel):
     href: str | None = None
     kind: Literal["platform", "environmental_map"]
     equipment: list[str]
+    # The platform the Platforms tab opens on when the visitor has not picked
+    # one yet. At most one section may set it; with none set the UI falls
+    # back to the first section that has a detail page (``href``). Display
+    # *order* (Overview cards, pills) stays section order — this flag only
+    # chooses the initial selection, so the primary bench can lead the tab
+    # without being moved to the top of the Overview.
+    default: bool = False
 
 
 class PlatformsConfig(BaseModel):
     """Parsed ``platforms.yaml``."""
 
     sections: list[PlatformSection]
+
+    @model_validator(mode="after")
+    def _at_most_one_default(self) -> "PlatformsConfig":
+        defaults = [s.id for s in self.sections if s.default]
+        if len(defaults) > 1:
+            raise ValueError(
+                f"platforms.yaml: only one section may set default: true, got {defaults}"
+            )
+        return self
 
     def equipment_to_section_id(self) -> dict[str, str]:
         """Return a mapping from equipment id to section id.
