@@ -229,12 +229,11 @@ describe("AdminPage", () => {
     expect(within(overview).getByText("Active accounts")).toBeTruthy();
     expect(within(overview).getByText("Projects")).toBeTruthy();
     expect(within(overview).getByText("Live sessions")).toBeTruthy();
-    expect(within(overview).getByText("Equipment claimed")).toBeTruthy();
     expect(within(overview).getByText("Control actions")).toBeTruthy();
-    expect(within(overview).getByText("Session time")).toBeTruthy();
     expect(within(overview).getByText("Equipment")).toBeTruthy();
     expect(within(overview).getByText("Equipment claimed")).toBeTruthy();
-    expect(within(overview).getByText("Total session time")).toBeTruthy();
+    expect(within(overview).getByText("Total session")).toBeTruthy();
+    expect(within(overview).getByText("Current session")).toBeTruthy();
     // Two live sessions, 1 h + 2 h signed in → 3 h; all-time 25 h stays in
     // hours (never days).
     await within(overview).findByText("3 h");

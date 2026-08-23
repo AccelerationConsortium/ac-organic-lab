@@ -16,14 +16,11 @@ import { useUserAuth } from "@/lib/user-auth";
 import { AdminTile, ErrorNote, Stat } from "./AdminTile";
 
 /**
- * "Accounts & Activities" — the admin headline numbers as one half-width,
- * double-column KPI tile: two columns of stats, each cell a stacked pair, so
- * the eight figures read as
+ * "Accounts & Activities" — the admin headline numbers in two lines of four
+ * stats (four columns, each a stacked pair, so the vertical pairing holds):
  *
- *   Active accounts   | Equipment
- *   Live sessions     | Equipment claimed
- *   Projects          | Control actions
- *   Session time      | Total session time
+ *   Active accounts | Equipment         | Projects        | Control actions
+ *   Live sessions   | Equipment claimed | Current session | Total session
  *
  * It leads the admin console (paired with Roster health, same footprint as
  * every other panel) and the Overview page mounts the same tile as the first
@@ -78,9 +75,9 @@ export function AccountsActivitiesTile({
 
   const totalTime = sessions.data?.total_time_s;
 
-  // Four stacked pairs laid out two-across ("double column"): pair 1 | pair 2
-  // on the first band, pair 3 | pair 4 below. Each pair is its own flex stack
-  // so the above/below relation survives every breakpoint.
+  // Four stacked pairs laid out four-across — two lines of four stats. Each
+  // pair is its own flex stack so the above/below relation survives every
+  // breakpoint (narrow screens fall back to two pairs per band).
   const pairs: [React.ReactNode, React.ReactNode][] = [
     [
       <Stat
@@ -127,7 +124,7 @@ export function AccountsActivitiesTile({
       />,
       <Stat
         key="session-time"
-        label="Session time"
+        label="Current session"
         value={sessions.data ? fmtDuration(sessionSeconds) : "…"}
         detail="live sessions, summed"
         title="Σ (now − signed in) across unexpired sessions"
@@ -144,12 +141,12 @@ export function AccountsActivitiesTile({
               ? "—"
               : "…"
         }
-        detail="all time, via the dashboard"
+        detail="all time, dashboard"
         title="Lifetime count of control_action audit rows in lab.db"
       />,
       <Stat
         key="total-time"
-        label="Total session time"
+        label="Total session"
         value={sessions.data ? (totalTime != null ? fmtDuration(totalTime) : "—") : "…"}
         detail="all time, all accounts"
         title="Signed-in time reconstructed from the auth_events log — union of session windows per account (concurrent sessions counted once, logins assumed to run their TTL unless logged out). '—' until the auth sidecar serves total_time_s."
@@ -177,7 +174,7 @@ export function AccountsActivitiesTile({
       {state.error ? (
         <ErrorNote error={state.error} />
       ) : (
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-5">
+        <dl className="grid grid-cols-2 gap-x-5 gap-y-5 sm:grid-cols-4">
           {pairs.map((pair, i) => (
             <div key={i} className="flex flex-col gap-4">
               {pair}

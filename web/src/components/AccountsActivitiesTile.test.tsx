@@ -77,7 +77,7 @@ describe("AccountsActivitiesTile", () => {
     expect(screen.getByText("Accounts & Activities")).toBeTruthy();
     expect(screen.getByText("Equipment claimed").closest("div.flex")!.textContent).toContain("2");
     // all-time signed-in figure from the sidecar (7200 s → "2 h")
-    expect(screen.getByText("Total session time").closest("div")!.textContent).toContain("2 h");
+    expect(screen.getByText("Total session").closest("div")!.textContent).toContain("2 h");
     const go = screen.getByRole("link", { name: "GO →" });
     expect(go.getAttribute("href")).toBe("/admin");
   });
@@ -86,7 +86,7 @@ describe("AccountsActivitiesTile", () => {
     bodies["/api/admin/sessions"] = { sessions: [] };
     renderTile();
     await screen.findByText("42");
-    expect(screen.getByText("Total session time").closest("div")!.textContent).toContain("—");
+    expect(screen.getByText("Total session").closest("div")!.textContent).toContain("—");
     bodies["/api/admin/sessions"] = { sessions: [], total_time_s: 7200 };
   });
 
