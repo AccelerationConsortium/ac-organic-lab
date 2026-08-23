@@ -47,7 +47,18 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from .record import write_run_record
+from .custody import (
+    CUSTODY_STRICT,
+    PLATE_CUSTODY_MISMATCH,
+    PLATE_CUSTODY_UNKNOWN,
+    PLATE_MOVED,
+    Observation,
+    custody_recorder,
+    observe,
+    reconcile,
+    record_custody_event,
+)
+from .record import close_run_record, open_run_record
 
 logger = logging.getLogger("workflow")
 
@@ -103,6 +114,31 @@ _DIGEST_FIELDS = frozenset(
      "plate_map", "parameters"}
 )
 
+#: Digest inputs that bitácora publishes only when present and truthy
+#: (`CompiledPackage.digest_payload`: "omit when absent so existing one-plate
+#: package digests do not change"). They are NOT required — a one-plate
+#: package legitimately lacks `plates` — but when a package carries one it is
+#: part of what was authorized and must be hashed. Keeping them in a separate
+#: set, rather than adding them to `_DIGEST_FIELDS`, is what lets the
+#: missing-input check stay strict for the required set without refusing every
+#: one-plate package. `plates` since bitácora template 1.10.0 (PLATES_AS_OBJECTS).
+_OPTIONAL_DIGEST_FIELDS = frozenset({"plates"})
+
+
+def digest_payload_of(package: dict) -> dict:
+    """The exact object bitácora hashed, rebuilt from the published package.
+
+    Mirrors `CompiledPackage.digest_payload` in bitácora: every required field,
+    plus each optional field iff it is present **and truthy** — an empty or
+    null `plates` is omitted there, so it is omitted here. Shared by the
+    verifier and its tests so the two cannot drift.
+    """
+    payload = {k: v for k, v in package.items() if k in _DIGEST_FIELDS}
+    for k in _OPTIONAL_DIGEST_FIELDS:
+        if package.get(k):
+            payload[k] = package[k]
+    return payload
+
 
 class RunRequest(BaseModel):
     authorization_id: str = Field(min_length=1)
@@ -129,10 +165,24 @@ class Authorization:
     revoked_at: str | None
     expires_at: str
     revoked_by: str | None = None
+    #: Nominal plate name → physical Container.hid this run was authorized on
+    #: (bitácora's `plate_bindings`). The hids also ride inside the steps
+    #: (`custody: {plate, hid, to}`, `{<plate>_hid}` args); this is the summary.
+    plate_bindings: dict = dataclass_field(default_factory=dict)
 
     @property
     def steps(self) -> list[dict]:
         return list(self.package.get("steps") or [])
+
+    @property
+    def custody_by_step(self) -> dict[str, dict]:
+        """`step_id → {plate, hid, to}` for every step bitácora's compiler
+        annotated as completing a handoff (PLATE_TRACKING.md D6). Declared, not
+        inferred: only these steps ever write a `move` row."""
+        return {
+            s["step_id"]: s["custody"] for s in self.steps
+            if isinstance(s.get("custody"), dict) and s["custody"].get("hid") and s["custody"].get("to")
+        }
 
 
 class RunRefused(Exception):
@@ -172,6 +222,7 @@ async def fetch_authorization(
         package_digest=d["package_digest"],
         package=d.get("package") or {},
         binding=d.get("binding") or {},
+        plate_bindings=d.get("plate_bindings") or {},
         authorized_by=d["authorized_by"],
         executable=bool(d.get("executable")),
         revoked_at=d.get("revoked_at"),
@@ -213,7 +264,7 @@ def verify_package_digest(auth: Authorization) -> None:
             "digest cannot be verified here — bitácora must publish them "
             "(CompiledPackage.digest_payload)"
         )
-    payload = {k: v for k, v in auth.package.items() if k in _DIGEST_FIELDS}
+    payload = digest_payload_of(auth.package)
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     recomputed = "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
     if recomputed != auth.package_digest:
@@ -318,8 +369,39 @@ def plan_row_from(auth: Authorization, report, *, launched_by: str | None = None
             "authorized_by": auth.authorized_by,
             "launched_by": launched_by,
             "binding": auth.binding,
+            # Which physical plates this run was authorized on (D4): the join
+            # from this Plan to the custody ledger's Container rows.
+            "plate_bindings": auth.plate_bindings,
             "ok": report.ok,
             "dry_run": report.dry_run,
+        },
+    }
+
+
+def planned_row_from(auth: Authorization, *, launched_by: str | None, dry_run: bool) -> dict:
+    """The same `Plan` shape *before* the run (D9): the pinned steps with status
+    `planned`, `ok` unknown. Posted at start so custody `move` rows written
+    during the run have a `plan_id` to anchor to; the final per-step statuses
+    land in the closing summary Note (a Plan row is never edited)."""
+    return {
+        "project": auth.project_id,
+        "protocol_path": auth.protocol_path,
+        "source_commit": auth.commit_sha,
+        "steps": [
+            {"step_id": s["step_id"], "action": s.get("skill"),
+             "params": {"role": s.get("role"), "status": "planned",
+                        **({"custody": s["custody"]} if isinstance(s.get("custody"), dict) else {})}}
+            for s in auth.steps
+        ],
+        "meta": {
+            "authorization_id": auth.authorization_id,
+            "package_digest": auth.package_digest,
+            "authorized_by": auth.authorized_by,
+            "launched_by": launched_by,
+            "binding": auth.binding,
+            "plate_bindings": auth.plate_bindings,
+            "ok": None,
+            "dry_run": dry_run,
         },
     }
 
@@ -372,6 +454,11 @@ class RunState:
     changed: "asyncio.Event" = dataclass_field(default_factory=lambda: asyncio.Event())
     abort_requested: str | None = None  # who asked
     result: dict | None = None
+    #: The Plan opened at start (D9): {"opened", "plan_id", "experiment_id"}.
+    record: dict = dataclass_field(default_factory=dict)
+    #: Notes custody produced mid-run (a mismatch, an unknown outcome), filed
+    #: with the run's other notes at close.
+    custody_notes: list[dict] = dataclass_field(default_factory=list)
 
     def emit(self, type_: str, data: dict) -> None:
         self.events.append({"type": type_, "seq": len(self.events), "data": data})
@@ -418,12 +505,35 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
             return f"authorization {state.authorization_id} expired mid-run"
         return None
 
+    # D9: open the Plan before the first step so custody rows can anchor to it.
+    # A dry run opens nothing (it is a preflight; `write` files it as a draft
+    # at the end, as before). A record layer that is down at start leaves
+    # `opened: False`, and the close falls back to the end-of-run write.
+    if state.dry_run:
+        state.record = {"opened": False, "reason": "dry_run"}
+    else:
+        state.record = await open_run_record(
+            plan=planned_row_from(auth, launched_by=identity, dry_run=False),
+            design_ref=(auth.package or {}).get("design_ref"),
+            operator=identity, started_at=state.started_at_utc,
+        )
+    state.emit("record", {k: v for k, v in state.record.items()
+                          if k in ("opened", "plan_id", "experiment_id", "reason", "error")})
+
+    custody_by_step = auth.custody_by_step
+    recorder = custody_recorder() if custody_by_step else None
+    locations_cfg = getattr(request.app.state, "locations_config", None)
+
     async def on_step(step_report) -> None:
         state.emit("step", {
             "step_id": step_report.step_id, "status": step_report.status,
             "role": step_report.role, "skill": step_report.skill,
             "equipment_id": step_report.equipment_id, "error": step_report.error,
         })
+        spec = custody_by_step.get(step_report.step_id)
+        if spec is not None:
+            await custody_after_step(state, request, auth, step_report, spec,
+                                     recorder=recorder, locations=locations_cfg)
 
     from lab_skills import execute_plan
 
@@ -446,7 +556,9 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
     duration = time.monotonic() - state.started_at
     state.status = "finished"
     plan_row = plan_row_from(auth, report, launched_by=identity)
-    notes = notes_from(report, authorization_id=auth.authorization_id)
+    # Custody's own notes (a mismatch, an unknown outcome) file beside the
+    # step notes — same Plan, same anchors.
+    notes = notes_from(report, authorization_id=auth.authorization_id) + list(state.custody_notes)
     state.result = {
         "authorization_id": auth.authorization_id,
         "ok": report.ok,
@@ -465,11 +577,13 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
     # consumer that sees the run finish also sees whether it was recorded — and
     # deliberately incapable of raising, because the run already happened and a
     # failed write must never be reported as a failed run (record.py, property 1).
-    state.result["record"]["write"] = await write_run_record(
-        plan=plan_row, notes=notes,
+    state.result["record"]["write"] = await close_run_record(
+        opened=state.record, plan=plan_row, notes=notes,
         design_ref=(auth.package or {}).get("design_ref"),
         operator=identity,
         started_at=state.started_at_utc,
+        summary={"ok": report.ok, "aborted_reason": report.aborted_reason,
+                 "dry_run": report.dry_run, "duration_s": round(duration, 3)},
     )
     state.emit("done", state.result)
     await _record_run_event(
@@ -481,6 +595,111 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
                 "aborted_reason": report.aborted_reason},
         duration_s=duration,
     )
+
+
+async def custody_after_step(state: RunState, request: Request, auth: Authorization,
+                             step_report, spec: dict, *, recorder, locations) -> None:
+    """The robot half of custody (PLATE_TRACKING.md D6–D8): a compiled step
+    that completes a handoff just ended — record what that means, never raise.
+
+    * ``succeeded`` → one ``move`` row (commanded), then a **fresh** snapshot of
+      the device anchoring the destination, ``observe`` / ``reconcile``; a
+      contradiction files a deviation Note and a ``plate_custody_mismatch`` row,
+      nothing ever auto-corrects.
+    * ``unknown`` (sent, never answered) → **no** move row — the last known
+      place stands — an ``outcome_unknown`` Note and a ``plate_custody_unknown``
+      row, so the gap is visible rather than papered over.
+    * ``dry_run`` / ``blocked`` / ``failed`` / ``skipped`` → nothing moved,
+      nothing recorded; the SSE frame says why.
+    """
+    hid, to, plate = spec.get("hid"), spec.get("to"), spec.get("plate")
+    frame: dict[str, Any] = {"step_id": step_report.step_id, "plate": plate, "hid": hid, "to": to}
+    try:
+        status = step_report.status
+        if status in ("dry_run", "blocked", "failed", "skipped"):
+            state.emit("custody", {**frame, "recorded": False, "reason": status})
+            return
+        entry = locations.by_name(to) if locations is not None else None
+        device = getattr(entry, "equipment", None) or "custody"
+        plan_id = state.record.get("plan_id")
+        if status == "unknown":
+            body = (f"step {step_report.step_id} was sent and never answered: plate {hid} "
+                    f"may or may not have arrived at {to}; its last recorded place stands")
+            state.custody_notes.append({
+                "kind": "outcome_unknown", "step_id": step_report.step_id, "body": body,
+                "data": {"custody": spec, "status": status, "authorization_id": auth.authorization_id},
+            })
+            await record_custody_event(request, PLATE_CUSTODY_UNKNOWN, device_id=device,
+                                       message=body, payload={**frame, "run_id": state.run_id,
+                                                              "authorization_id": auth.authorization_id})
+            state.emit("custody", {**frame, "recorded": False, "reason": "unknown"})
+            return
+        # succeeded — 1. the commanded move
+        if recorder is None:
+            result = {"recorded": False, "reason": "not_configured"}
+        else:
+            result = await recorder.record_move(
+                hid=hid, to=to, performed_by=step_report.equipment_id or step_report.role,
+                recorder=state.launched_by, project=auth.project_id,
+                plan_id=plan_id, step_id=step_report.step_id,
+                params={"authorization_id": auth.authorization_id, "run_id": state.run_id,
+                        "role": step_report.role, "skill": step_report.skill,
+                        "plate": plate, "via": "executor"},
+            )
+        # 2. the observed side — a fresh read of the destination's device
+        observation = Observation("none", None, "no registry entry")
+        aggregator = getattr(request.app.state, "aggregator", None)
+        if entry is not None and entry.equipment and aggregator is not None:
+            try:
+                snapshot = await aggregator.fetch_one(entry.equipment)
+            except Exception as exc:  # noqa: BLE001 — a failed read is "unobservable"
+                snapshot = None
+                logger.warning("custody: could not read %s after %s: %s", entry.equipment, step_report.step_id, exc)
+            observation = observe(snapshot, entry, locations)
+        verdict = reconcile(hid, observation)
+        frame.update({"recorded": bool(result.get("recorded")), "result": result,
+                      "observed": observation.as_dict(), "verdict": verdict})
+        state.emit("custody", frame)
+        await record_custody_event(
+            request, PLATE_MOVED, device_id=device,
+            message=f"{hid} → {to} ({step_report.step_id}) → {'recorded' if result.get('recorded') else result.get('reason')}; {verdict}",
+            payload={**frame, "run_id": state.run_id, "authorization_id": auth.authorization_id,
+                     "performed_by": step_report.equipment_id or step_report.role,
+                     "source": "executor"},
+        )
+        if verdict == "mismatch":
+            body = (f"custody mismatch after {step_report.step_id}: plate {hid} was recorded at {to} "
+                    f"but {observation.source} reads {observation.value!r}")
+            state.custody_notes.append({
+                "kind": "deviation", "step_id": step_report.step_id, "body": body,
+                "data": {"custody": spec, "observed": observation.as_dict(),
+                         "authorization_id": auth.authorization_id},
+            })
+            await record_custody_event(request, PLATE_CUSTODY_MISMATCH, device_id=device,
+                                       message=body, payload={**frame, "run_id": state.run_id,
+                                                              "authorization_id": auth.authorization_id})
+    except Exception as exc:  # noqa: BLE001 — custody must never stop a run
+        logger.exception("custody hook failed for %s", step_report.step_id)
+        state.emit("custody", {**frame, "recorded": False, "reason": f"hook error: {exc}"})
+
+
+async def custody_at_start(auth: Authorization, *, identity: str) -> tuple[list[dict], list[str]]:
+    """Run-start cross-check (D7): where the record layer says each bound plate
+    is now, and warnings for any it does not know. Returns ``(plates, warnings)``.
+    Under ``CUSTODY_STRICT=1`` the caller refuses on warnings."""
+    recorder = custody_recorder() if auth.plate_bindings else None
+    plates: list[dict] = []
+    warnings: list[str] = []
+    if recorder is None:
+        return plates, warnings
+    for plate, hid in auth.plate_bindings.items():
+        cur = await recorder.current_location(hid, user=identity, project=auth.project_id)
+        plates.append({"plate": plate, **cur})
+        if cur.get("found") is False:
+            warnings.append(f"plate '{plate}' is bound to {hid!r}, which the record layer does not know")
+        elif cur.get("found") is None:
+            warnings.append(f"plate '{plate}' ({hid}): record layer could not answer — {cur.get('error')}")
+    return plates, warnings
 
 
 def build_workflow_router() -> APIRouter:
@@ -514,6 +733,15 @@ def build_workflow_router() -> APIRouter:
                 )
                 raise HTTPException(status_code=409, detail=str(exc)) from None
 
+        # Where the bound plates are *now*, per the record layer — a warning on
+        # the `started` frame, or a refusal under CUSTODY_STRICT (D7).
+        plates, custody_warnings = await custody_at_start(auth, identity=identity)
+        if custody_warnings and CUSTODY_STRICT and not body.dry_run:
+            reason = "custody check failed: " + "; ".join(custody_warnings)
+            await _record_run_event(request, body.authorization_id, outcome="refused",
+                                    owner=identity, detail=reason)
+            raise HTTPException(status_code=409, detail=reason)
+
         state = RunState(
             run_id=f"run_{uuid.uuid4().hex[:12]}",
             authorization_id=auth.authorization_id,
@@ -529,6 +757,10 @@ def build_workflow_router() -> APIRouter:
             "steps_total": len(plan.steps),
             "dry_run": body.dry_run,
             "launched_by": identity,
+            "plate_bindings": auth.plate_bindings,
+            "custody": plates,
+            "custody_warnings": custody_warnings,
+            "custody_steps": sorted(auth.custody_by_step),
         })
         asyncio.get_running_loop().create_task(
             _drive_run(state, request, auth, plan, connection)

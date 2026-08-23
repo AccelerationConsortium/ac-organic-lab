@@ -29,6 +29,12 @@ const UTILS: { slug: string; label: string; description: string; href?: string }
     label: "Labware builder",
     description: "Build + validate Opentrons schema-2 labware definition JSON.",
   },
+  {
+    slug: "plates",
+    label: "Plates",
+    description:
+      "Where every plate is — the record layer's custody ledger — and record a bench-top move.",
+  },
 ];
 
 export default function UtilsLayout({ children }: { children: React.ReactNode }) {

@@ -11,6 +11,7 @@ This document describes the long-term architecture of the AC Organic Self-drivin
 - The unified equipment status contract (`docs/STATUS_SPEC.md`)
 - The equipment inventory (`equipment.yaml`)
 - The platform layout config (`platforms.yaml`)
+- The location registry — every place a plate or container can be (`locations.yaml`; see `docs/PLATE_TRACKING.md`)
 - The Python SDK that workflows, agents, and the dashboard use to drive the lab (`skills/`)
 - The dashboard's web server (`api/`) and Next.js UI (`web/`)
 - Deployment and operations docs (`deploy/`, `docs/`)
@@ -99,6 +100,7 @@ ac-organic-lab/
 ├── CLAUDE.md                       # Claude-Code-specific notes (imports AGENTS.md)
 ├── equipment.yaml                  # inventory (root)
 ├── platforms.yaml                  # Overview layout / section config (root)
+├── locations.yaml                  # registry of places a container can be (root) — PLATE_TRACKING.md
 ├── data/
 │   └── lab.db                      # SQLite history database (gitignored)
 ├── docs/
@@ -114,6 +116,7 @@ ac-organic-lab/
 │   └── src/lab_skills/
 │       ├── registry.py             # EquipmentEntry, Tile, PillConfig, Registry
 │       ├── platforms.py            # PlatformSection, PlatformsConfig, load_platforms
+│       ├── locations.py            # LocationEntry, LocationsConfig, load_locations
 │       └── aggregator.py           # EquipmentAggregator
 ├── api/                            # PYTHON: dashboard web server
 │   ├── pyproject.toml              # depends on ../skills
@@ -154,6 +157,7 @@ Owns:
 
 - `equipment.yaml` parsing → `Registry` / `EquipmentEntry` model
 - `platforms.yaml` parsing → `PlatformsConfig` / `PlatformSection` model
+- `locations.yaml` parsing → `LocationsConfig` / `LocationEntry` model (the registry of places; `validate_against(registry)` cross-checks it with `equipment.yaml`)
 - One async polling loop per process (`EquipmentAggregator`) over all configured devices
 - Per-device adapters for STATUS_SPEC v1.0, legacy pre-spec devices, and mocks
 - The `Lab.connect()` / `LabSession` / `EquipmentClient` API used by workflow code
@@ -389,14 +393,17 @@ A workflow author writing `solubility-screening` adds **one** dependency: `lab-s
 
 Workflow code says `lab.role("sealer").seal_start(...)`, never `lab.get("plateloc").seal_start(...)`. A `binding: dict[str, str]` config in the project repo maps role → equipment_id. This makes workflows portable across labs and survivable through device replacements.
 
-### 5. Two YAML files, cleanly separated concerns
+### 5. Three YAML files, cleanly separated concerns
 
-`equipment.yaml` answers "what hardware exists and how to reach it". `platforms.yaml` answers "how should the UI present it". Keeping them separate means:
+`equipment.yaml` answers "what hardware exists and how to reach it". `platforms.yaml` answers "how should the UI present it". `locations.yaml` (added 2026-08-22) answers "where can a thing *be*" — the registry of places a plate or any container can occupy (a deck slot, a reader carrier, the arm's gripper, a bench spot, waste). Keeping them separate means:
 
-- Hardware changes (new device, maintenance, URL change) never touch the UI layout file
+- Hardware changes (new device, maintenance, URL change) never touch the UI layout file or the place registry
 - UI layout changes (reorder sections, add a new platform page) never touch hardware config
-- The SDK (`lab-skills`) parses both — `load_registry()` for equipment, `load_platforms()` for sections — but `EquipmentEntry` carries no UI concerns beyond tile sizing and pill config
+- Adding a place (a new bench staging spot, a fridge shelf) touches neither of the other two
+- The SDK (`lab-skills`) parses all three — `load_registry()` for equipment, `load_platforms()` for sections, `load_locations()` for places — but `EquipmentEntry` carries no UI concerns beyond tile sizing and pill config, and no custody vocabulary at all
 - `platform` assignment is computed at API compose time, not stored on the equipment entry
+
+`locations.yaml` is a registry of *places*, never of *state*: "where is plate X now" lives in the record layer (AnaliticaDB `Container.location_id` + the `ContainerAction` ledger), which the registry seeds. It is also deliberately not a state machine — which moves are legal is device-authoritative. See [`PLATE_TRACKING.md`](PLATE_TRACKING.md).
 
 ### 6. Soft maintenance over commented-out lines
 
@@ -494,6 +501,7 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 - `docs/SKILLS_CATALOG.md` — skill catalog design (`SkillDef` / `Skill`, runtime availability, evolution from hard-coded → device-declared)
 - `docs/INTERLOCKS.md` — four-layer safety model and the project interlock API (`add_interlock`, `validate_plan`, `PlanReport`)
 - `docs/LAB_MONITORING.md` — logging, events, the central history DB, and alerting (Kuma + the aggregator notifier + PyPoe; overview + runbook)
+- `docs/PLATE_TRACKING.md` — plate / container location and custody tracking: the `locations.yaml` registry, the AnaliticaDB ledger, who writes it, and why it is not a state machine
 - `docs/AUTH_DESIGN.md` — identity, authorization, and the data-isolation `can_read` policy AnaliticaDB shares
 - `docs/DATABASE_DESIGN.md` — the experiment-data record layer (ELN + LIMS results catalog)
 - `docs/EQUIP_GUIDE.md` — onboarding and maintenance guideline (§1–§6b)
@@ -503,6 +511,7 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 - `docs/ROADMAP.md` — per-device migration status
 - `equipment.yaml` — the lab's equipment inventory (schema v2)
 - `platforms.yaml` — the Overview page layout and Nav tab config
+- `locations.yaml` — the registry of places a container can be (seeds the record layer's `Location` table)
 - [`skills/README.md`](../skills/README.md) — SDK usage and module map
 - [`api/README.md`](../api/README.md) — dashboard server package map
 - `.cursor/plans/build_lab-skills_*.plan.md` — current working milestone plan

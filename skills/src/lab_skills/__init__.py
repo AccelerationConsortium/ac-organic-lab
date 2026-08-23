@@ -65,6 +65,11 @@ from .models import (
     PROTOCOL_VERSION,
     ProbeResponse,
 )
+from .locations import (
+    LocationEntry,
+    LocationsConfig,
+    load_locations,
+)
 from .platforms import (
     PlatformSection,
     PlatformsConfig,
@@ -140,6 +145,8 @@ __all__ = [
     "PlanRunReport",
     "PlateReaderClient",
     "PlateSealerClient",
+    "LocationEntry",
+    "LocationsConfig",
     "PlatformSection",
     "PlatformsConfig",
     "PlugConfig",
@@ -163,6 +170,7 @@ __all__ = [
     "__version__",
     "clear_interlocks",
     "execute_plan",
+    "load_locations",
     "load_platforms",
     "load_registry",
     "register_interlock",

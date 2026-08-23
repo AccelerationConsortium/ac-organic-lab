@@ -1,0 +1,157 @@
+# Location registry — every nameable place a plate (or any container) can be.
+#
+# This is the third root YAML file (ARCHITECTURE.md decision #5):
+#   equipment.yaml  → what hardware exists and how to reach it
+#   platforms.yaml  → how the UI presents it
+#   locations.yaml  → WHERE CAN A THING BE
+#
+# Read docs/PLATE_TRACKING.md before editing. The rules that matter:
+#
+# - Names are IDENTIFIERS and IMMUTABLE. The record layer's ledger points at
+#   them. Renaming = add a new entry and set `active: false` on the old one.
+#   Never delete an entry.
+# - This file is authoritative for WHICH PLACES EXIST (type, equipment,
+#   aliases, label). It never carries state: "where is plate X now" lives in
+#   AnaliticaDB (`Container.location_id` + the `ContainerAction` ledger), which
+#   this file seeds (`Location` rows, `location_type` = `type`).
+# - It is not a state machine. Which moves are legal is device-authoritative
+#   (xArm motion graph, OT-2 deck) and is NOT encoded here.
+# - `aliases` are OBSERVATION-ONLY: the device's own vocabulary for the place
+#   (OT-2 deck slot key, xArm graph node ids), so a reader can map a device
+#   snapshot back to a canonical name. Never used to infer a move.
+# - `capacity` is informational (dashboard warning), never enforced by the
+#   ledger.
+# - Name shape: `<equipment_id>/<position>` for device-anchored places,
+#   `<site>/<path>` otherwise. `type` ∈ storage|instrument|deck|fridge|waste
+#   (AnaliticaDB's enum; there is deliberately no `transport` — a plate in
+#   transit is in `xarm_translocation/gripper`).
+#
+# xArm node aliases come from xarm-translocation/src/settings/motion_graph.yaml
+# — the `*_low` nodes are where the gripper opens/closes (`gripper_transitions`);
+# `*_high` / `*_home` are approach waypoints. Entries marked "confirm with lab"
+# were named from the graph's tags and the device /status envelopes without a
+# human at the bench; fix the `notes`, not the `name`, once confirmed — or add
+# a new entry and deactivate this one if the name itself is wrong.
+
+locations:
+  # ── OT-2 (HTE) deck ───────────────────────────────────────────────────
+  - {name: ot2_hte/slot_1,  type: deck, equipment: ot2_hte, aliases: {ot2_hte: "1"},  label: "OT-2 HTE · slot 1"}
+  - {name: ot2_hte/slot_2,  type: deck, equipment: ot2_hte, aliases: {ot2_hte: "2",  xarm_translocation: [opentrons_2_low, opentrons_2_high]}, label: "OT-2 HTE · slot 2"}
+  - {name: ot2_hte/slot_3,  type: deck, equipment: ot2_hte, aliases: {ot2_hte: "3"},  label: "OT-2 HTE · slot 3"}
+  - {name: ot2_hte/slot_4,  type: deck, equipment: ot2_hte, aliases: {ot2_hte: "4",  xarm_translocation: [opentrons_4_low, opentrons_4_low_top, opentrons_4_high]}, label: "OT-2 HTE · slot 4"}
+  - {name: ot2_hte/slot_5,  type: deck, equipment: ot2_hte, aliases: {ot2_hte: "5"},  label: "OT-2 HTE · slot 5"}
+  - {name: ot2_hte/slot_6,  type: deck, equipment: ot2_hte, aliases: {ot2_hte: "6",  xarm_translocation: [opentrons_6_low, opentrons_6_high]}, label: "OT-2 HTE · slot 6"}
+  - {name: ot2_hte/slot_7,  type: deck, equipment: ot2_hte, aliases: {ot2_hte: "7"},  label: "OT-2 HTE · slot 7"}
+  - {name: ot2_hte/slot_8,  type: deck, equipment: ot2_hte, aliases: {ot2_hte: "8"},  label: "OT-2 HTE · slot 8"}
+  - {name: ot2_hte/slot_9,  type: deck, equipment: ot2_hte, aliases: {ot2_hte: "9"},  label: "OT-2 HTE · slot 9"}
+  - {name: ot2_hte/slot_10, type: deck, equipment: ot2_hte, aliases: {ot2_hte: "10"}, label: "OT-2 HTE · slot 10"}
+  - {name: ot2_hte/slot_11, type: deck, equipment: ot2_hte, aliases: {ot2_hte: "11"}, label: "OT-2 HTE · slot 11"}
+  - {name: ot2_hte/slot_12, type: deck, equipment: ot2_hte, aliases: {ot2_hte: "12"}, label: "OT-2 HTE · slot 12 (fixed trash)"}
+
+  # ── OT-2 (complexation) deck — no arm reaches it; human-loaded ────────
+  - {name: ot2_complexation/slot_1,  type: deck, equipment: ot2_complexation, aliases: {ot2_complexation: "1"},  label: "OT-2 complexation · slot 1"}
+  - {name: ot2_complexation/slot_2,  type: deck, equipment: ot2_complexation, aliases: {ot2_complexation: "2"},  label: "OT-2 complexation · slot 2"}
+  - {name: ot2_complexation/slot_3,  type: deck, equipment: ot2_complexation, aliases: {ot2_complexation: "3"},  label: "OT-2 complexation · slot 3"}
+  - {name: ot2_complexation/slot_4,  type: deck, equipment: ot2_complexation, aliases: {ot2_complexation: "4"},  label: "OT-2 complexation · slot 4"}
+  - {name: ot2_complexation/slot_5,  type: deck, equipment: ot2_complexation, aliases: {ot2_complexation: "5"},  label: "OT-2 complexation · slot 5"}
+  - {name: ot2_complexation/slot_6,  type: deck, equipment: ot2_complexation, aliases: {ot2_complexation: "6"},  label: "OT-2 complexation · slot 6"}
+  - {name: ot2_complexation/slot_7,  type: deck, equipment: ot2_complexation, aliases: {ot2_complexation: "7"},  label: "OT-2 complexation · slot 7"}
+  - {name: ot2_complexation/slot_8,  type: deck, equipment: ot2_complexation, aliases: {ot2_complexation: "8"},  label: "OT-2 complexation · slot 8"}
+  - {name: ot2_complexation/slot_9,  type: deck, equipment: ot2_complexation, aliases: {ot2_complexation: "9"},  label: "OT-2 complexation · slot 9"}
+  - {name: ot2_complexation/slot_10, type: deck, equipment: ot2_complexation, aliases: {ot2_complexation: "10"}, label: "OT-2 complexation · slot 10"}
+  - {name: ot2_complexation/slot_11, type: deck, equipment: ot2_complexation, aliases: {ot2_complexation: "11"}, label: "OT-2 complexation · slot 11"}
+  - {name: ot2_complexation/slot_12, type: deck, equipment: ot2_complexation, aliases: {ot2_complexation: "12"}, label: "OT-2 complexation · slot 12 (fixed trash)"}
+
+  # ── Instruments the xArm serves (HTE platform) ────────────────────────
+  - name: cytation_5/carrier
+    type: instrument
+    equipment: cytation_5
+    aliases: {xarm_translocation: [cytation_low, cytation_high, cytation_high_pull]}
+    label: "Cytation 5 · plate carrier"
+    notes: "The device reports the plate here as details.loaded_plate (plate_id == Container.hid)."
+  - name: plateloc/stage
+    type: instrument
+    equipment: plateloc
+    aliases: {xarm_translocation: [plateloc_low, plateloc_high]}
+    label: "PlateLoc · seal stage"
+    notes: "Presence only: components.stage ∈ in|out. The device does not know which plate."
+  - name: torry_pines_shaker/nest
+    type: instrument
+    equipment: torry_pines_shaker
+    aliases: {xarm_translocation: [hood_shaker_low, hood_shaker_high]}
+    label: "Shaker · plate nest (hood)"
+    notes: "Unobservable from the device — no plate sensor."
+  - name: filter_every_well/stage
+    type: instrument
+    equipment: filter_every_well
+    aliases: {xarm_translocation: [hood_filter_low, hood_filter_high]}
+    label: "Filtration press · stage (receiver plate)"
+    notes: "confirm with lab — the press stacks a filter plate over a receiver plate; this is the lower position. Presence only: components.plate ∈ in|out."
+  - name: filter_every_well/stage_top
+    type: instrument
+    equipment: filter_every_well
+    aliases: {xarm_translocation: [hood_filter_top_plate]}
+    label: "Filtration press · top (filter plate)"
+    notes: "confirm with lab — the upper plate of the stack (xArm node hood_filter_top_plate)."
+  - name: dose_every_well/stage
+    type: instrument
+    equipment: dose_every_well
+    aliases: {xarm_translocation: [deck_solid_low, deck_solid_high]}
+    label: "Solid doser · plate stage"
+    notes: "confirm with lab — xArm graph tags this [deck, solid]. Presence only: components.plate ∈ absent|present."
+  - name: agilent_uplc_ms/drawer
+    type: instrument
+    equipment: agilent_uplc_ms
+    aliases: {xarm_translocation: [uplc_draw_open_max, uplc_draw_open_min, uplc_draw_open_close, uplc_draw_home, uplc_plate_home]}
+    label: "UPLC-MS · sample drawer"
+    notes: "confirm with lab — one plate position assumed; add drawer/tray_N entries if the tray holds several."
+
+  # ── BioStack — hands plates to the Cytation directly (no arm) ─────────
+  - name: agilent_biostack/handoff
+    type: instrument
+    equipment: agilent_biostack
+    label: "BioStack · handoff nest"
+    notes: "Presence only: components.handoff ∈ empty|…"
+  - name: agilent_biostack/stack_in
+    type: instrument
+    equipment: agilent_biostack
+    capacity: 30
+    label: "BioStack · input stack"
+    notes: "confirm with lab — stack capacity and naming (in/out vs left/right)."
+  - name: agilent_biostack/stack_out
+    type: instrument
+    equipment: agilent_biostack
+    capacity: 30
+    label: "BioStack · output stack"
+    notes: "confirm with lab — see stack_in."
+
+  # ── The arm itself ────────────────────────────────────────────────────
+  - name: xarm_translocation/gripper
+    type: instrument
+    equipment: xarm_translocation
+    capacity: 1
+    label: "xArm · gripper (in transit)"
+    notes: "Where a plate IS between a pick and a place, and where it stays if a run aborts mid-transfer. Recovery is an ordinary human move. Presence: details.gripper.object_detected."
+  - name: xarm_translocation/deck_slot_1
+    type: storage
+    equipment: xarm_translocation
+    aliases: {xarm_translocation: [deck_slot1_low, deck_slot1_high]}
+    label: "xArm track deck · nest 1"
+    notes: "confirm with lab — the graph's [deck, slot1] nodes; assumed a plate nest on the arm's linear-track deck."
+  - name: xarm_translocation/deck_slot_2
+    type: storage
+    equipment: xarm_translocation
+    aliases: {xarm_translocation: [deck_slot2_low, deck_slot2_high]}
+    label: "xArm track deck · nest 2"
+    notes: "confirm with lab — see deck_slot_1."
+
+  # ── Non-device places ─────────────────────────────────────────────────
+  - name: bench/hte_staging
+    type: storage
+    capacity: 10
+    label: "HTE bench · staging area"
+    notes: "Human-only place: plates waiting to be loaded or already unloaded. Recorded via the dashboard / bitácora front doors."
+  - name: waste/hte_solid
+    type: waste
+    label: "HTE · solid waste"
+    notes: "Terminal: a `dispose` row, not a `move`, is how a plate gets here."

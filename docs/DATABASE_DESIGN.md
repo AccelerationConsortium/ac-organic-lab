@@ -700,6 +700,22 @@ rows would put the record layer on the critical path of a pipetting step and
 give one device two masters. `plate_id` travelling as an opaque string, and
 the workflow doing the joining, is what keeps the seam thin.
 
+### Where this went (2026-08-22)
+
+The cross-repo design that acts on this section is
+[`PLATE_TRACKING.md`](PLATE_TRACKING.md). Two additions to the decisions
+above, recorded here so the record-layer side does not have to look them up:
+
+- **The `Location` registry is seeded from `ac-organic-lab/locations.yaml`**,
+  and the authority is one-directional: the yaml is authoritative for *which
+  places exist* (name, type, equipment, aliases); this database is
+  authoritative for *what is where* (`Container.location_id`) and *what
+  happened* (`ContainerAction`). Names are identifiers and immutable
+  (`active: false`, never rename or delete). The yaml never carries state; the
+  database never invents places.
+- **The in-transit place is the arm's gripper** (`xarm_translocation/gripper`,
+  `location_type = instrument`, capacity 1) — no `transport` enum value.
+
 ## Cross-cutting consequences
 
 - **Ownership scope.** The current authz model assumes every row has an

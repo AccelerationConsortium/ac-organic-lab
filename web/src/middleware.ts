@@ -32,6 +32,12 @@ const CONTROL_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // X-Auth-Role we inject here after verifying the session).
 const LABWARE_PATH_RE = /^\/api\/labware(?:\/.*)?$/;
 
+// Plate custody (docs/PLATE_TRACKING.md D5): reads are public, but recording
+// a bench-top move is a write to the lab's custody ledger, attributed to the
+// human — so it needs a signed-in user, whose verified identity we inject as
+// X-Auth-User for api/app/custody.py to record as the mover.
+const CUSTODY_PATH_RE = /^\/api\/custody(?:\/.*)?$/;
+
 // -- /api/assistant/* gate (Phase 2) -----------------------------------------
 //
 // The lab assistant is read-only for hardware but can read ALL lab history,
@@ -152,7 +158,7 @@ export async function middleware(request: NextRequest) {
   // ---- Control-surface guard (view-only until signed in) ----------------
   if (
     CONTROL_METHODS.has(request.method) &&
-    (CONTROL_PATH_RE.test(pathname) || LABWARE_PATH_RE.test(pathname))
+    (CONTROL_PATH_RE.test(pathname) || LABWARE_PATH_RE.test(pathname) || CUSTODY_PATH_RE.test(pathname))
   ) {
     // Never trust a client-supplied identity header; we set it only after
     // verifying a session, so control.py's audit owner can't be forged.
@@ -183,6 +189,7 @@ export const config = {
     "/api/equipment/:path*",
     "/api/assistant/:path*",
     "/api/labware/:path*",
+    "/api/custody/:path*",
     "/admin/:path*",
     "/api/admin/:path*",
     "/notebooks/:path*",

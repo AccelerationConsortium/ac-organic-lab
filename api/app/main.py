@@ -19,7 +19,13 @@ from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
 
 import httpx
-from lab_skills import EquipmentAggregator, PlatformsConfig, load_platforms, load_registry
+from lab_skills import (
+    EquipmentAggregator,
+    PlatformsConfig,
+    load_locations,
+    load_platforms,
+    load_registry,
+)
 from lab_skills.skill_catalog import SKILL_REGISTRY
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +34,8 @@ from . import __version__
 from .assistant import build_assistant_router
 from .alert_notifier import AlertNotifier
 from .control import build_control_router
+from .custody import build_custody_router
+from .locations import build_locations_router
 from .workflow import build_workflow_router
 from .db import LabDatabase, resolve_db_path
 from .deck import build_deck_router
@@ -503,11 +511,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.overrides = load_dashboard_overrides()
     app.state.platforms_config = load_platforms()
+    # Third root YAML: the registry of places a container can be. Static; the
+    # record layer (AnaliticaDB) holds where things *are*. PLATE_TRACKING.md.
+    app.state.locations_config = load_locations()
     logger.info("Loaded equipment registry: %d entries", aggregator.equipment_count)
     logger.info(
         "Loaded platforms config: %d sections",
         len(app.state.platforms_config.sections),
     )
+    logger.info(
+        "Loaded locations registry: %d places",
+        len(app.state.locations_config.locations),
+    )
+    for problem in app.state.locations_config.validate_against(registry):
+        # Surfaced, never fatal: a stale equipment id in locations.yaml must not
+        # take the dashboard down, but it must not pass silently either.
+        logger.warning("locations.yaml: %s", problem)
 
     # Lab history database
     db_path = resolve_db_path()
@@ -572,6 +591,13 @@ app.include_router(build_control_router())
 app.include_router(build_workflow_router())
 
 app.include_router(build_deck_router())
+# Location registry (locations.yaml) — the places a container can be. Static;
+# read-only; seeds the record layer. docs/PLATE_TRACKING.md.
+app.include_router(build_locations_router())
+# Custody: the human front door for bench-top plate moves + "where is every
+# plate" (read-through to the record layer). The robot half lives in
+# workflow.py's custody_after_step. docs/PLATE_TRACKING.md D5–D8.
+app.include_router(build_custody_router())
 # Central custom-labware definition store (repo-committed + admin uploads).
 app.include_router(build_labware_router())
 # History + ingest endpoints (SQLite-backed).

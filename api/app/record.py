@@ -282,6 +282,150 @@ class RunRecorder:
                     "experiment_hid": hid, "notes_pending": len(notes)}
 
 
+    # ── Plan-at-start (PLATE_TRACKING.md D9) ───────────────────────────────
+    #
+    # `write` files the Plan AFTER the run. Custody `move` rows are written
+    # DURING it and anchor to `plan_id` + `step_id` on an append-only ledger, so
+    # the Plan must exist before the first step: `open` posts it (planned
+    # steps, `approved → executing`), `close` files the notes and the terminal
+    # status. A Plan row cannot be edited afterwards (no PATCH), so the final
+    # per-step statuses go into one summary Note — which is also the shape the
+    # record layer's own semantics want: Plan = intent, Notes = what happened.
+    # `write` stays as the fallback (dry runs, or a record layer that was down
+    # at start) so a run is filed the old way rather than not at all.
+
+    async def open(
+        self, *, plan: dict[str, Any], design_ref: str | None,
+        operator: str, started_at: str,
+    ) -> dict[str, Any]:
+        """Open the run's Plan before execution. Returns ``{"opened": True,
+        experiment_id, plan_id}`` or ``{"opened": False, error}``; never raises."""
+        project = plan.get("project") or ""
+        self._project = project
+        protocol_path = plan.get("protocol_path") or ""
+        hid = experiment_hid(design_ref=design_ref, protocol_path=protocol_path)
+        commit = (plan.get("source_commit") or "")[:7]
+        title = f"{_stem(protocol_path) or 'run'}{f' @ {commit}' if commit else ''}"
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                experiment_id = await self._ensure_experiment(
+                    client, project=project, hid=hid, title=hid,
+                    operator=operator, started_at=started_at)
+                r = await client.post(f"{self._base_url}/plans",
+                                      headers=self._headers(operator),
+                                      json={**plan, "title": title, "creator": operator,
+                                            "experiment_id": experiment_id})
+                r.raise_for_status()
+                plan_id = str(r.json()["plan_id"])
+                approver = (plan.get("meta") or {}).get("authorized_by") or operator
+                status_error = None
+                for target in ("approved", "executing"):
+                    try:
+                        rs = await client.post(
+                            f"{self._base_url}/plans/{plan_id}/status",
+                            headers=self._headers(approver if target == "approved" else operator),
+                            json={"status": target})
+                        rs.raise_for_status()
+                    except Exception as exc:  # noqa: BLE001 — the row is filed; status is best-effort
+                        status_error = f"{target}: {str(exc)[:180]}"
+                        break
+                return {"opened": True, "experiment_id": experiment_id, "plan_id": plan_id,
+                        "status": "executing" if status_error is None else "draft",
+                        "status_error": status_error}
+        except Exception as exc:  # noqa: BLE001 — property 1
+            logger.warning("record open failed for %s: %s", protocol_path, exc)
+            return {"opened": False, "error": str(exc)[:300], "experiment_hid": hid}
+
+    async def close(
+        self, *, opened: dict[str, Any], plan: dict[str, Any],
+        notes: list[dict[str, Any]], operator: str, summary: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Close an opened Plan: file the notes, one summary Note with the final
+        per-step statuses, and the terminal status. Never raises."""
+        self._project = plan.get("project") or ""
+        experiment_id, plan_id = opened.get("experiment_id"), opened.get("plan_id")
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                written, failed = 0, []
+                for note in [*notes, _summary_note(plan, summary)]:
+                    try:
+                        rn = await client.post(
+                            f"{self._base_url}/notes",
+                            headers=self._headers(operator),
+                            json={**note_for_record(note), "experiment_id": experiment_id,
+                                  "plan_id": plan_id, "creator": operator})
+                        rn.raise_for_status()
+                        written += 1
+                    except Exception as exc:  # noqa: BLE001 — one note, not the run
+                        failed.append({"step_id": note.get("step_id"), "error": str(exc)[:200]})
+                status = _terminal_status(plan.get("meta") or {}) or "abandoned"
+                status_error = None
+                try:
+                    rs = await client.post(f"{self._base_url}/plans/{plan_id}/status",
+                                           headers=self._headers(operator),
+                                           json={"status": status})
+                    rs.raise_for_status()
+                except Exception as exc:  # noqa: BLE001
+                    status_error = f"{status}: {str(exc)[:180]}"
+                return {"written": True, "experiment_id": experiment_id, "plan_id": plan_id,
+                        "notes_written": written, "notes_failed": failed or None,
+                        "status": status, "status_error": status_error, "opened_at_start": True}
+        except Exception as exc:  # noqa: BLE001 — property 1
+            logger.warning("record close failed for plan %s: %s", plan_id, exc)
+            return {"written": False, "error": str(exc)[:300], "plan_id": plan_id,
+                    "notes_pending": len(notes) + 1}
+
+
+def _summary_note(plan: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
+    """The run's outcome as one step-less Note: final per-step statuses (the
+    Plan row holds the *planned* steps and cannot be edited), `ok`, why it
+    stopped, how long it took. `kind: event` — it is what happened, not a
+    deviation; deviations have their own notes."""
+    steps = plan.get("steps") or []
+    counts: dict[str, int] = {}
+    for s in steps:
+        st = (s.get("params") or {}).get("status") or "?"
+        counts[st] = counts.get(st, 0) + 1
+    body = (f"run {'completed' if summary.get('ok') else 'did not complete'}: "
+            + ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
+            + (f"; stopped: {summary['aborted_reason']}" if summary.get("aborted_reason") else ""))
+    return {"kind": "event", "body": body,
+            "data": {"summary": True, "steps": steps, **summary}}
+
+
+async def open_run_record(
+    *, plan: dict[str, Any], design_ref: str | None, operator: str, started_at: str,
+) -> dict[str, Any]:
+    """Module-level entry point for :meth:`RunRecorder.open`; ``not_configured``
+    when the record layer is off."""
+    secret = edge_secret()
+    if not ANALITICADB_URL or not secret:
+        return {"opened": False, "reason": "not_configured"}
+    return await RunRecorder(ANALITICADB_URL, secret).open(
+        plan=plan, design_ref=design_ref, operator=operator, started_at=started_at)
+
+
+async def close_run_record(
+    *, opened: dict[str, Any], plan: dict[str, Any], notes: list[dict[str, Any]],
+    design_ref: str | None, operator: str, started_at: str, summary: dict[str, Any],
+) -> dict[str, Any]:
+    """Close an opened run; when it was never opened (dry run, record layer down
+    at start, unconfigured) fall back to :func:`write_run_record`, so the run is
+    filed the old way rather than lost."""
+    if not opened.get("opened"):
+        out = await write_run_record(plan=plan, notes=notes, design_ref=design_ref,
+                                     operator=operator, started_at=started_at)
+        out["opened_at_start"] = False
+        if opened.get("reason"):
+            out.setdefault("open_reason", opened["reason"])
+        return out
+    secret = edge_secret()
+    if not ANALITICADB_URL or not secret:
+        return {"written": False, "reason": "not_configured"}
+    return await RunRecorder(ANALITICADB_URL, secret).close(
+        opened=opened, plan=plan, notes=notes, operator=operator, summary=summary)
+
+
 async def write_run_record(
     *, plan: dict[str, Any], notes: list[dict[str, Any]],
     design_ref: str | None, operator: str, started_at: str,

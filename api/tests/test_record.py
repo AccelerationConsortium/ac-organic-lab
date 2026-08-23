@@ -433,3 +433,82 @@ def test_the_plan_status_fallback_still_matches_the_live_enum():
         "and check app.record.PLAN_STATUS still maps into it."
     )
 
+
+
+# ── Plan-at-start (PLATE_TRACKING.md D9) ──────────────────────────────────
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_open_posts_the_plan_before_the_run_and_walks_to_executing():
+    respx.get(f"{BASE}/experiments").mock(return_value=httpx.Response(200, json=[{"experiment_id": "e"}]))
+    plan = respx.post(f"{BASE}/plans").mock(return_value=httpx.Response(200, json={"plan_id": "p1"}))
+    st = respx.post(f"{BASE}/plans/p1/status").mock(return_value=httpx.Response(200, json={"plan_id": "p1"}))
+    planned = {**PLAN, "meta": {"authorized_by": "approver@lab", "ok": None},
+               "steps": [{"step_id": "s1", "action": "graph.gripper", "params": {"status": "planned"}}]}
+    out = await RunRecorder(BASE, "s3cret").open(plan=planned, design_ref=None,
+                                                 operator="me@lab", started_at="2026-08-23T00:00:00Z")
+    assert out == {"opened": True, "experiment_id": "e", "plan_id": "p1", "status": "executing", "status_error": None}
+    assert plan.called
+    targets = [json.loads(c.request.content)["status"] for c in st.calls]
+    assert targets == ["approved", "executing"]
+    # approval is stamped as the human who authorized, not the launcher
+    assert st.calls[0].request.headers["X-Auth-User"] == "approver@lab"
+    assert st.calls[1].request.headers["X-Auth-User"] == "me@lab"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_close_files_notes_a_summary_and_the_terminal_status():
+    note = respx.post(f"{BASE}/notes").mock(return_value=httpx.Response(200, json={"note_id": "n"}))
+    st = respx.post(f"{BASE}/plans/p1/status").mock(return_value=httpx.Response(200, json={"plan_id": "p1"}))
+    final = {**PLAN, "meta": {"ok": True, "dry_run": False},
+             "steps": [{"step_id": "s1", "action": "x", "params": {"status": "succeeded"}}]}
+    out = await RunRecorder(BASE, "s3cret").close(
+        opened={"opened": True, "experiment_id": "e", "plan_id": "p1"},
+        plan=final, notes=NOTES, operator="me@lab",
+        summary={"ok": True, "aborted_reason": None, "duration_s": 12.5})
+    assert out["written"] is True and out["status"] == "completed" and out["opened_at_start"] is True
+    assert out["notes_written"] == 2  # the device fault + the summary
+    bodies = [json.loads(c.request.content) for c in note.calls]
+    assert all(b["plan_id"] == "p1" for b in bodies)
+    summary = next(b for b in bodies if b["data"].get("summary"))
+    assert summary["kind"] == "event" and "1 succeeded" in summary["body"]
+    assert json.loads(st.calls.last.request.content) == {"status": "completed"}
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_close_of_a_failed_run_is_abandoned_and_an_open_failure_falls_back():
+    respx.post(f"{BASE}/notes").mock(return_value=httpx.Response(200, json={"note_id": "n"}))
+    st = respx.post(f"{BASE}/plans/p1/status").mock(return_value=httpx.Response(200, json={"plan_id": "p1"}))
+    out = await RunRecorder(BASE, "s3cret").close(
+        opened={"opened": True, "experiment_id": "e", "plan_id": "p1"},
+        plan={**PLAN, "meta": {"ok": False}}, notes=[], operator="me@lab",
+        summary={"ok": False, "aborted_reason": "aborted by me"})
+    assert out["status"] == "abandoned"
+    assert json.loads(st.calls.last.request.content) == {"status": "abandoned"}
+
+
+@pytest.mark.anyio
+async def test_close_without_an_open_falls_back_to_the_end_of_run_write(monkeypatch):
+    """A dry run (never opened) or a record layer that was down at start must
+    still be filed the old way — `write` — not lost."""
+    seen = {}
+
+    async def fake_write(**kw):
+        seen.update(kw)
+        return {"written": True, "plan_id": "late"}
+
+    monkeypatch.setattr(rec, "write_run_record", fake_write)
+    out = await rec.close_run_record(opened={"opened": False, "reason": "dry_run"}, plan=PLAN, notes=[],
+                                     design_ref=None, operator="me", started_at="t", summary={})
+    assert out["plan_id"] == "late" and out["opened_at_start"] is False and out["open_reason"] == "dry_run"
+    assert seen["plan"] is PLAN
+
+
+@pytest.mark.anyio
+async def test_open_is_a_no_op_when_unconfigured(monkeypatch):
+    monkeypatch.setattr(rec, "ANALITICADB_URL", "")
+    out = await rec.open_run_record(plan=PLAN, design_ref=None, operator="me", started_at="t")
+    assert out == {"opened": False, "reason": "not_configured"}

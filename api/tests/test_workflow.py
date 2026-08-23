@@ -21,6 +21,7 @@ from app.workflow import (
     Authorization,
     RunRefused,
     assert_executable,
+    digest_payload_of,
     notes_from,
     plan_from,
     plan_row_from,
@@ -50,11 +51,23 @@ def _package(**over) -> dict:
 
 
 def _digest(pkg: dict) -> str:
-    from app.workflow import _DIGEST_FIELDS
-
-    payload = {k: v for k, v in pkg.items() if k in _DIGEST_FIELDS}
+    """What bitácora computes: the digest payload, canonical JSON, sha256.
+    Uses the verifier's own `digest_payload_of` so the test and the gate cannot
+    disagree about *which* fields are hashed — the one thing this file exists
+    to pin is that the gate hashes what bitácora hashed."""
+    payload = digest_payload_of(pkg)
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+#: A two-plate layout as bitácora's `plates:` block publishes it (template
+#: 1.10.0, PLATES_AS_OBJECTS). Only the shape matters here.
+TWO_PLATES = {
+    "acid_stock": {"labware": "agilent_96_2ml_deep_square", "rows": 8, "columns": 12,
+                   "role": "feedstock", "wells": {"A1": {"contents": "acid_a"}}},
+    "reaction": {"labware": "corning_96_wellplate_360ul_flat", "rows": 8, "columns": 12,
+                 "role": "conditions", "wells": {"A1": {"conditions": {"acid": "acid_a"}}}},
+}
 
 
 def _auth(**over) -> Authorization:
@@ -173,6 +186,50 @@ def test_the_digest_covers_the_science_not_only_the_steps() -> None:
     b = _package(plate_map={"labware": "lw", "wells": {"A1": {}}})
     assert a["steps"] == b["steps"]
     assert _digest(a) != _digest(b)
+
+
+def test_a_two_plate_package_verifies() -> None:
+    """Regression: bitácora adds `plates` to the digest payload when a protocol
+    declares a multi-plate layout (template 1.10.0). A verifier that hashed only
+    the one-plate field set recomputed a different digest and refused the run
+    as tampered — a false tamper report, the exact failure `digest_payload`
+    exists to prevent. The payload must include `plates` when it is present."""
+    pkg = _package(plates=TWO_PLATES)
+    assert "plates" in digest_payload_of(pkg)
+    auth = _auth(package=pkg)            # digest computed over the same payload
+    verify_package_digest(auth)          # must not raise
+    # …and swapping feedstock contents must change the digest (the reason the
+    # block is digested at all: "otherwise swapping feedstock contents would
+    # authorize the same package").
+    swapped = _package(plates={**TWO_PLATES, "acid_stock": {
+        **TWO_PLATES["acid_stock"], "wells": {"A1": {"contents": "acid_b"}}}})
+    assert _digest(swapped) != _digest(pkg)
+    with pytest.raises(RunRefused, match="digest mismatch"):
+        verify_package_digest(_auth(package=swapped, package_digest=_digest(pkg)))
+
+
+def test_a_one_plate_package_digest_is_unchanged() -> None:
+    """`plates` is optional-when-truthy, not required: a one-plate package has
+    no `plates` key and its digest must be exactly what it was before the
+    field existed — otherwise every already-issued authorization would start
+    failing verification. Also pins that `plates` is NOT a required input."""
+    pkg = _package()
+    assert "plates" not in pkg
+    assert set(digest_payload_of(pkg)) == {
+        "compiler_version", "protocol", "design_ref", "steps", "design",
+        "plate_map", "parameters",
+    }
+    verify_package_digest(_auth(package=pkg))   # no "missing digest input"
+
+
+def test_an_empty_plates_block_is_not_digested() -> None:
+    """Mirrors bitácora's `if self.plates:` — an absent, null or empty block is
+    omitted, so `plates: {}` and no `plates` key hash identically. The verifier
+    must apply the same truthiness rule or the two sides disagree on exactly
+    the packages that carry the key but no plates."""
+    assert digest_payload_of(_package(plates={})) == digest_payload_of(_package())
+    assert digest_payload_of(_package(plates=None)) == digest_payload_of(_package())
+    assert _digest(_package(plates={})) == _digest(_package())
 
 
 # ── the one translation ────────────────────────────────────────────────
@@ -530,3 +587,166 @@ def test_the_gate_rechecks_the_authorization_between_steps(run_rig):
         if got["status"] == "finished":
             break
     assert "revoked" in got["result"]["aborted_reason"]
+
+
+# ── custody (PLATE_TRACKING.md D6–D9): the robot half ───────────────────────
+#
+# A compiled step carrying `custody: {plate, hid, to}` writes ONE `move` row
+# when it succeeds — and nothing when it did not, or when its outcome is
+# unknown. Driven through the real run driver with a fake recorder, so the
+# hook's placement (after the step report, never raising) is what's tested.
+
+
+def test_authorization_carries_plate_bindings_and_finds_custody_steps() -> None:
+    steps = [
+        {"step_id": "pick", "role": "plate_mover", "skill": "graph.gripper", "args": {},
+         "custody": {"plate": "reaction", "hid": "PLT-1", "to": "xarm_translocation/gripper"}},
+        {"step_id": "shake", "role": "shaker", "skill": "shake.start", "args": {}},
+        {"step_id": "bad", "role": "r", "skill": "s", "args": {}, "custody": {"plate": "x"}},  # unresolved → ignored
+    ]
+    auth = _auth(package=_package(steps=steps), plate_bindings={"reaction": "PLT-1"})
+    assert auth.plate_bindings == {"reaction": "PLT-1"}
+    assert set(auth.custody_by_step) == {"pick"}
+    assert _auth().plate_bindings == {}
+    from app.workflow import planned_row_from
+    row = planned_row_from(auth, launched_by="me", dry_run=False)
+    assert row["meta"]["plate_bindings"] == {"reaction": "PLT-1"} and row["meta"]["ok"] is None
+    assert row["steps"][0]["params"]["custody"]["to"] == "xarm_translocation/gripper"
+    assert row["steps"][1]["params"]["status"] == "planned"
+
+
+class _CustodyRecorderFake:
+    def __init__(self):
+        self.moves = []
+
+    async def record_move(self, **kw):
+        self.moves.append(kw)
+        return {"recorded": True, "action_id": f"a{len(self.moves)}", "container_id": "c", "to_location_id": "l"}
+
+    async def current_location(self, hid, **kw):
+        return {"found": True, "hid": hid, "location_name": "bench/hte_staging"}
+
+
+CUSTODY_STEPS = [
+    {"step_id": "pick", "role": "plate_mover", "skill": "graph.gripper", "args": {"state": "grip_120"},
+     "custody": {"plate": "reaction", "hid": "PLT-1", "to": "xarm_translocation/gripper"}},
+    {"step_id": "place", "role": "plate_mover", "skill": "graph.gripper", "args": {"state": "empty"},
+     "custody": {"plate": "reaction", "hid": "PLT-1", "to": "torry_pines_shaker/nest"}},
+    {"step_id": "shake", "role": "shaker", "skill": "shake.start", "args": {}},
+]
+
+
+class _FakeAggregator:
+    """Answers `fetch_one` with a canned snapshot per equipment id (or None)."""
+
+    def __init__(self, snapshots=None):
+        self.snapshots = snapshots or {}
+        self.asked = []
+
+    async def fetch_one(self, equipment_id):
+        self.asked.append(equipment_id)
+        return self.snapshots.get(equipment_id)
+
+
+def _custody_rig(run_rig, monkeypatch, statuses, *, dry_run=False, aggregator=None):
+    client, wf, auth, install, finished = run_rig
+    import app.workflow as wfmod
+    from app.main import app as _app
+    fake = _CustodyRecorderFake()
+    monkeypatch.setattr(wfmod, "custody_recorder", lambda: fake)
+    # Never read the live lab from a test: the real aggregator would poll the
+    # real xArm and turn its empty gripper into a "mismatch".
+    _app.state.aggregator = aggregator if aggregator is not None else _FakeAggregator()
+    # the rig's auth has no custody steps; swap in one that does
+    cauth = _auth(package=_package(steps=CUSTODY_STEPS), plate_bindings={"reaction": "PLT-1"})
+
+    async def fake_fetch(client_, authorization_id, identity=None):
+        return cauth
+
+    monkeypatch.setattr(wfmod, "fetch_authorization", fake_fetch)
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        reports = []
+        for step, status in zip(plan.steps, statuses):
+            r = _step_report(step.id, status)
+            r.role, r.skill = step.role, step.skill
+            r.equipment_id = "xarm_translocation" if step.role == "plate_mover" else "torry_pines_shaker"
+            reports.append(r)
+            await on_step(r)
+        return _FakeRunReport(reports, ok=all(s == "succeeded" for s in statuses))
+
+    install(fake_exec)
+    r = client.post("/api/workflow/runs", json={"authorization_id": cauth.authorization_id, "dry_run": dry_run})
+    assert r.status_code == 202, r.text
+    run_id = r.json()["run_id"]
+    # drain the event stream (ends on `done`)
+    events = []
+    with client.stream("GET", f"/api/workflow/runs/{run_id}/events") as resp:
+        for line in resp.iter_lines():
+            if line.startswith("data:"):
+                import json as _json
+                events.append(_json.loads(line[5:]))
+    return fake, events, cauth
+
+
+class _Snap:
+    def __init__(self, details=None, components=None):
+        class _St:
+            pass
+        self.status = _St()
+        self.status.details = details or {}
+        self.status.components = components or {}
+        self.fetch_error = None
+
+
+def test_the_destination_device_is_read_fresh_and_a_contradiction_is_filed(run_rig, monkeypatch):
+    """After the pick the arm reports an empty gripper — a contradiction: a
+    deviation note and a mismatch verdict, and the move row stays (the ledger
+    records what was commanded; nothing auto-corrects)."""
+    agg = _FakeAggregator({"xarm_translocation": _Snap(details={"gripper": {"object_detected": False}}),
+                           "torry_pines_shaker": _Snap(components={})})
+    fake, events, _ = _custody_rig(run_rig, monkeypatch, ["succeeded", "succeeded", "succeeded"], aggregator=agg)
+    assert agg.asked == ["xarm_translocation", "torry_pines_shaker"]   # the destinations, not the actor
+    custody = {e["data"]["step_id"]: e["data"] for e in events if e["type"] == "custody"}
+    assert custody["pick"]["verdict"] == "mismatch" and custody["pick"]["recorded"] is True
+    assert custody["place"]["verdict"] == "unobservable"
+    done = next(e for e in events if e["type"] == "done")["data"]
+    dev = [n for n in done["record"]["notes"] if n["kind"] == "deviation" and n["step_id"] == "pick"]
+    assert dev and "custody mismatch" in dev[0]["body"]
+    assert len(fake.moves) == 2
+
+
+def test_a_succeeded_custody_step_records_exactly_one_move_with_its_anchors(run_rig, monkeypatch):
+    fake, events, cauth = _custody_rig(run_rig, monkeypatch, ["succeeded", "succeeded", "succeeded"])
+    assert [m["hid"] for m in fake.moves] == ["PLT-1", "PLT-1"]          # pick, place — not shake
+    assert [m["to"] for m in fake.moves] == ["xarm_translocation/gripper", "torry_pines_shaker/nest"]
+    assert [m["step_id"] for m in fake.moves] == ["pick", "place"]
+    assert all(m["performed_by"] == "xarm_translocation" for m in fake.moves)
+    assert all(m["project"] == cauth.project_id for m in fake.moves)
+    assert all(m["params"]["authorization_id"] == cauth.authorization_id for m in fake.moves)
+    custody = [e for e in events if e["type"] == "custody"]
+    assert [c["data"]["recorded"] for c in custody] == [True, True]
+    # the shaker nest has no sensor and this rig has no aggregator → unobservable, never a mismatch
+    assert {c["data"]["verdict"] for c in custody} == {"unobservable"}
+    started = next(e for e in events if e["type"] == "started")["data"]
+    assert started["custody_steps"] == ["pick", "place"]
+    assert started["plate_bindings"] == {"reaction": "PLT-1"}
+
+
+def test_a_failed_or_unknown_step_writes_no_move(run_rig, monkeypatch):
+    fake, events, _ = _custody_rig(run_rig, monkeypatch, ["succeeded", "unknown", "skipped"])
+    assert [m["step_id"] for m in fake.moves] == ["pick"]               # place was unknown → nothing
+    custody = {e["data"]["step_id"]: e["data"] for e in events if e["type"] == "custody"}
+    assert custody["place"]["recorded"] is False and custody["place"]["reason"] == "unknown"
+    done = next(e for e in events if e["type"] == "done")["data"]
+    # …and the unknown outcome is filed as a note, never as a deviation
+    kinds = [n["kind"] for n in done["record"]["notes"] if n.get("step_id") == "place"]
+    assert "outcome_unknown" in kinds and "deviation" not in kinds
+
+
+def test_a_dry_run_records_nothing(run_rig, monkeypatch):
+    fake, events, _ = _custody_rig(run_rig, monkeypatch, ["dry_run", "dry_run", "dry_run"], dry_run=True)
+    assert fake.moves == []
+    assert all(e["data"]["reason"] == "dry_run" for e in events if e["type"] == "custody")
+    record = next(e for e in events if e["type"] == "record")["data"]
+    assert record == {"opened": False, "reason": "dry_run"}

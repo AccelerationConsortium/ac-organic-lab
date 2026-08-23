@@ -990,3 +990,86 @@ export async function deleteLabware(loadName: string): Promise<void> {
     method: "DELETE",
   });
 }
+
+
+// -- Plate custody (docs/PLATE_TRACKING.md D5–D8) -------------------------------
+//
+// Where every plate is, per the record layer's custody ledger — a read-through
+// (the dashboard keeps no copy), and the human front door for a bench-top move,
+// which writes the same `move` row the run executor writes.
+
+export interface CustodyPlate {
+  hid: string;
+  container_id: string;
+  container_type: string | null;
+  model: string | null;
+  status: string | null;
+  location_id: string | null;
+  /** Registry name (e.g. `ot2_hte/slot_2`), or null when never placed. */
+  location: string | null;
+  equipment_id: string | null;
+  project_id: string | null;
+}
+
+export interface CustodyAction {
+  action_id: string;
+  action_type: string;
+  to_location_id: string | null;
+  source_container_id: string | null;
+  target_container_id: string | null;
+  performed_by: string;
+  performed_at: string;
+  step_id: string | null;
+  plan_id: string | null;
+  params: Record<string, unknown>;
+}
+
+export interface CustodyMoveRequest {
+  hid: string;
+  to: string;
+  note?: string;
+  performed_by?: string;
+}
+
+export interface CustodyMoveResponse {
+  recorded: boolean;
+  hid: string;
+  to: string;
+  action_id?: string;
+}
+
+export async function getCustodyPlates(): Promise<{ plates: CustodyPlate[] }> {
+  return fetchJson<{ plates: CustodyPlate[] }>("/api/custody/plates");
+}
+
+export async function getCustodyPlate(
+  hid: string,
+): Promise<CustodyPlate & { history: CustodyAction[] }> {
+  return fetchJson<CustodyPlate & { history: CustodyAction[] }>(
+    `/api/custody/plates/${encodeURIComponent(hid)}`,
+  );
+}
+
+export async function postCustodyMove(body: CustodyMoveRequest): Promise<CustodyMoveResponse> {
+  return fetchJson<CustodyMoveResponse>("/api/custody/move", {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export interface LocationEntry {
+  name: string;
+  type: string;
+  equipment: string | null;
+  capacity: number | null;
+  label: string | null;
+  active: boolean;
+  aliases: Record<string, string | string[]>;
+  notes: string | null;
+}
+
+/** The registry of places a container can be (`locations.yaml`). */
+export async function getLocations(): Promise<{ locations: LocationEntry[] }> {
+  return fetchJson<{ locations: LocationEntry[] }>("/api/locations");
+}
