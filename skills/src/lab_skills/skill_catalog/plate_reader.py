@@ -142,12 +142,13 @@ class ReadResult(BaseModel):
 class TemperatureArgs(_StrictArgs):
     """Body for ``POST /control/incubator/set_temperature``.
 
-    The 4 °C floor comes from the driver assuming every Cytation can cool.
-    Units without a cooling module may accept a low setpoint and not act on
-    it, so treat sub-ambient as unverified per device.
+    Range mirrors the live device OpenAPI (probed 2026-08-23): 18-65 °C.
+    The Cytation 5's incubation ceiling is 65 °C, and the 18 °C floor
+    reflects that this unit heats only — there is no cooling module, so
+    sub-ambient setpoints are refused by the device.
     """
 
-    celsius: float = Field(..., ge=4.0, le=45.0)
+    celsius: float = Field(..., ge=18.0, le=65.0)
 
 
 class TemperatureStopArgs(BaseModel):
@@ -350,7 +351,7 @@ register(
         SkillDef(
             name="incubator.set_temperature",
             kind="plate_reader",
-            description="Set the incubator setpoint (4-45 C) and begin ramping.",
+            description="Set the incubator setpoint (18-65 C) and begin ramping.",
             endpoint="/control/incubator/set_temperature",
             args_schema=TemperatureArgs,
             requires_states=["ready", "busy", "dry_run"],

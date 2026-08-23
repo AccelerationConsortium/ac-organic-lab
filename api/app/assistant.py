@@ -470,7 +470,7 @@ shutdown, drawer.open, drawer.close, plate.load, plate.unload, well.update,
 read.absorbance, read.fluorescence, read.luminescence, imaging.capture, and
 incubator.set_temperature. Read methods do NOT accept gain; imaging.capture
 gain is camera analog gain in dB and is a different field. The incubator
-argument is `celsius` (4-45), not `temperature_c`. Never propose
+argument is `celsius` (18-65), not `temperature_c`. Never propose
 shake.start: Cytation shaking has no duration timer and needs a later
 shake.stop, so the complete start/use/stop sequence belongs in a
 human-authorized workflow. Never propose incubator.stop or shake.stop;

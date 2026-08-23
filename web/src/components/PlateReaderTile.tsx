@@ -26,10 +26,10 @@ const TONE_CLASSES: Record<Tone, string> = {
     "border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800/20",
 };
 
-// Driver / catalog floor and ceiling. Live `details.temperature_range_c`
-// overrides these when the device publishes them.
-const TEMP_MIN_FALLBACK = 4;
-const TEMP_MAX_FALLBACK = 45;
+// Device floor and ceiling (live OpenAPI: heat-only, no cooling module).
+// Live `details.temperature_range_c` overrides these when published.
+const TEMP_MIN_FALLBACK = 18;
+const TEMP_MAX_FALLBACK = 65;
 const DEFAULT_TEMP_C = 37;
 
 type IncubatorState =
