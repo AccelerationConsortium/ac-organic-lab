@@ -271,12 +271,18 @@ host. Spec is what the device's live `/status` envelope reports.
    `details.loaded_plate` is on the live envelope (`null` with no plate
    loaded). Phase 4's `plate_reader.py` is registered in
    `skill_catalog/` (15 SkillDefs, including incubator + shaker; arg
-   ranges match the live OpenAPI as of 2026-08-19). With the v1.2 work
-   of 2026-08-02 this device has no open migration items; what remains
-   is **hardware verification of the write surface** — the `/control/*`
-   reads and imaging capture have only ever been exercised dry-run
-   (`RUNBOOK.md` §3-§4), so no measurement has yet been driven
-   end-to-end from a workflow.
+   ranges match the live OpenAPI as of 2026-08-23 — the incubator is
+   **18-65 °C**, not the 4-45 an earlier "aligned to OpenAPI" pass
+   assumed; probe `<base>/openapi.json` rather than trusting a prior
+   alignment). With the v1.2 work of 2026-08-02 this device has no open
+   migration items, and as of 2026-08-23/24 the write surface is
+   **hardware-verified for imaging capture and absorbance reads** (the
+   latter matching a Gen5 sweep, once the instrument's 94-99 checksum
+   rejection was worked around). What remains is fluorescence /
+   luminescence reads, a sub-ambient setpoint, and driving a measurement
+   end-to-end **from a workflow** — see the `cytation_5` sub-tasks below,
+   which also record that incubator temperature is unreadable while the
+   shaker runs.
 
 ### Conformance checklists
 
@@ -638,11 +644,54 @@ Open:
   `gain` removed from every `read.*` (device 422s it); imaging gain is
   camera analog dB (0–47). Typed `PlateReaderClient` so
   `session.role("plate_reader").read_absorbance(...)` works.
-- [ ] **Hardware verification of the write surface.** Reads, drawer moves
-  and `imaging.capture` have only been exercised dry-run; the live envelope
-  is verified but no measurement has been driven end-to-end. See
-  `RUNBOOK.md` §3-§4 (the FTDI ↔ libusbK driver swap this shares with
-  `biotek_driver`) before booking bench time.
+- [x] **Hardware verification of the write surface — absorbance reads land**
+  (device repo, 2026-08-23/24). `imaging.capture` was verified end-to-end on
+  2026-08-12; absorbance was the last major unverified path, and it now reads
+  and **matches a Gen5 sweep** (A1 0.0841 vs 0.084, C5 2.5394 vs 2.525). It
+  had been failing for a non-obvious reason: PyLabRobot's command checksum
+  (`sum(cmd) % 100`) is **rejected by the instrument whenever it lands in
+  94-99** — the start-read ACKs `2D06`, which surfaced as "the reader was not
+  in a state to run it" and sent the bench session chasing plate state for an
+  hour. `_pad_for_checksum` grows the read rectangle until the checksum clears
+  and discards the extra wells (the wavelength is the measurement and cannot
+  move). 41-93 are unreachable with a single-well region and remain untested,
+  so the guard is conservative. The earlier "column 1 is unreadable" finding
+  was wrong and is retracted. **Still unverified:** fluorescence and
+  luminescence reads (IMPLEMENTATION.md tests 2+), and any sub-ambient
+  incubator setpoint — 18 °C is the *declared* floor and no low setpoint has
+  ever been commanded.
+- [x] **The FTDI ↔ libusbK driver swap is retired** (device repo, verified on
+  hardware 2026-08-23) — **this entry previously told you to perform it before
+  booking bench time; do not.** A **D2XX transport shim** talks through the
+  vendor driver instead of libusb, so the reader stays on FTDI permanently and
+  both stacks coexist at the driver level. D2XX still opens the device
+  exclusively, so Gen5 and the service cannot hold it at once — but trading it
+  is now `nssm stop cytation` / `nssm start cytation`, scriptable and
+  reachable by `sdl-lab-hostops`, replacing a 20-minute GUI procedure whose
+  return leg was GUI-only (`ftdibus.inf` outranks the self-signed libwdi
+  package and no CLI can override driver ranking). RUNBOOK §4/§5 are demoted
+  to history. Two traps worth knowing: **Gen5's status line lies** — it kept
+  showing "Status: Ready" from stored config while the service held the
+  device, and only "Temperature: ???" revealed it was not communicating; and
+  `config.example` still ships `libusb` as the default (d2xx needs the `d2xx`
+  extra) while **this PC runs d2xx**, so check the deployed config, not the
+  example.
+- [ ] **Incubator temperature is unreadable while the shaker runs** (measured
+  2026-08-24) — a hardware limit, not a concurrency bug: the `"h"` query gets
+  **no reply at all**, silent past 1 s and past 5 s. Forcing it is worse than
+  skipping it, because the late reply is consumed as the *next* command's
+  response (a 0.0 °C reading observed where the truth was 23.6). `/status`
+  therefore skips the query while shaking and says so in
+  `components.incubator.message`. **This already cost a campaign:** the
+  2026-08-21 30 h solubility run recorded no temperature at all across its
+  entire six-hour heated phase — 36 consecutive blank polls, over exactly the
+  span where the number mattered. Getting a series during a shaken incubation
+  requires **pausing the shaker around each read**, which is actuation and so
+  belongs in workflow code, never in a side-effect-free `/status` poll
+  (STATUS_SPEC §4 #1). Open item: build that sampling step into the
+  solubility workflow before the next heated run. A `link_lock.py`
+  serializer (D+O treated as one transaction) also shipped and is still
+  needed for the shake re-trigger — it just was never the cause here.
 - [ ] **Watch: the service's own extras.** Its NSSM launch line was
   `uv run --extra api`, which strips `pylabrobot` from the venv on any
   restart — a plain `uv sync` disarmed the driver on 2026-08-02 and the
