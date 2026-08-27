@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { EquipmentSnapshot } from "@/types/api";
@@ -48,28 +48,50 @@ afterEach(() => {
 });
 
 describe("HostsPanel", () => {
-  it("lists every host with OS, services, controlled equipment and ops API", () => {
+  it("lists every host with OS and its capabilities as color-coded chips", () => {
     render(<HostsPanel snapshots={[opsSnapshot("hostops_cytation_pc")]} />);
 
     const cytation = screen.getByText("Cytation PC").closest("article")!;
     expect(cytation.textContent).toContain("Windows PC");
     expect(cytation.textContent).toContain("sdl2-pc-03-cytation");
-    expect(cytation.textContent).toContain("plateloc :8010");
-    expect(cytation.textContent).toContain("PlateLoc sealer");
-    expect(cytation.textContent).toContain("serial-port enumeration");
+    // One chip per capability, tinted by kind: service sky, equipment
+    // emerald, the hostops agent violet.
+    const plateloc = within(cytation).getByText("plateloc :8010");
+    expect(plateloc.getAttribute("data-kind")).toBe("service");
+    expect(plateloc.className).toContain("sky");
+    const sealer = within(cytation).getByText("PlateLoc sealer");
+    expect(sealer.getAttribute("data-kind")).toBe("equipment");
+    expect(sealer.className).toContain("emerald");
+    const ops = within(cytation).getByText("hostops :8060");
+    expect(ops.getAttribute("data-kind")).toBe("ops");
+    expect(ops.className).toContain("violet");
+    // The prose the old fact rows held now rides the chip tooltip.
+    expect(ops.getAttribute("title")).toContain("serial-port enumeration");
     // Live hostops snapshot present → status badge.
     expect(cytation.textContent).toContain("Ready");
 
-    // Ops host without a snapshot yet degrades honestly.
+    // Ops host without a snapshot yet degrades honestly; its USB portproxy
+    // is a bridge-kind (amber) chip.
     const uplc = screen.getByText("UPLC PC").closest("article")!;
     expect(uplc.textContent).toContain("Windows PC");
     expect(uplc.textContent).toContain("no data");
-    expect(uplc.textContent).toContain("UPLC-MS sidecar");
+    const bridge = within(uplc).getByText("OT-2 USB bridge :31950");
+    expect(bridge.getAttribute("data-kind")).toBe("bridge");
+    expect(bridge.className).toContain("amber");
 
-    // gaia has no ops agent and says so.
+    // gaia runs no ops agent → no violet chip and no status badge slot.
     const gaia = screen.getByText("Central Server (gaia)").closest("article")!;
     expect(gaia.textContent).toContain("Linux server");
-    expect(gaia.textContent).toContain("no ops agent");
+    expect(gaia.querySelector("[data-kind='ops']")).toBeNull();
+  });
+
+  it("explains the chip colors in a legend", () => {
+    render(<HostsPanel snapshots={[]} />);
+
+    const legend = screen.getByRole("list", { name: "Capability color legend" });
+    for (const label of ["service", "lab-ops agent", "controls equipment", "network bridge"]) {
+      expect(within(legend).getByText(label)).toBeTruthy();
+    }
   });
 
   it("shows unreachable when the hostops poll fails", () => {

@@ -5,9 +5,21 @@ import { STATE_META, effectiveState } from "@/lib/state-meta";
 
 /**
  * The lab's host machines — the servers and device PCs the equipment services
- * run on, rendered in the same tile chrome as the printer grid below. This is
- * a hand-maintained inventory (hosts are not equipment, so they have no
+ * run on, rendered in the same tile chrome as the printer grid. This is a
+ * hand-maintained inventory (hosts are not equipment, so they have no
  * registry entry); keep it in sync with DEVICE_PC_SETUP.md §7.
+ *
+ * What a machine offers is rendered as **capability chips**, color-coded by
+ * kind (legend in the panel header):
+ *
+ *   - sky      `service`   — a lab service process listening on the machine
+ *   - violet   `ops`       — the sdl-lab-hostops agent surface (whitelisted
+ *                            MCP: status / logs / restarts, never a shell)
+ *   - emerald  `equipment` — hardware this machine's services front
+ *   - amber    `bridge`    — a network path other equipment depends on
+ *
+ * Chip `title` tooltips carry the detail the old prose rows held (ports,
+ * caveats, what the ops API actually offers) — hover for it.
  *
  * `opsId` marks a host running the `sdl-lab-hostops` agent and names its
  * equipment.yaml id; those tiles carry the agent's live status pill (the
@@ -20,22 +32,48 @@ import { STATE_META, effectiveState } from "@/lib/state-meta";
  * admin-only, matching the gate in `web/src/middleware.ts`; a non-admin sees
  * no link at all.
  */
+
+type CapKind = "service" | "ops" | "equipment" | "bridge";
+
+type Capability = {
+  label: string;
+  kind: CapKind;
+  /** Hover detail (port, caveat, what the surface offers). */
+  title?: string;
+};
+
 type LabHost = {
   id: string;
   name: string;
   kind: string; // subtitle label, e.g. "Windows PC"
   hostname: string;
-  /** Lab services / servers running on the machine. */
-  services: string;
-  /** Equipment this machine controls (what the services front). */
-  controls: string;
-  /** What the lab-ops agent on this host offers; null = no agent. */
-  opsApi: string | null;
+  /** What the machine offers, rendered as color-coded chips in this order. */
+  capabilities: Capability[];
   opsId?: string;
 };
 
-const HOSTOPS_API =
-  "Service status · logs · restart (whitelisted) · serial-port enumeration · local /status probes — bearer-token MCP, port 8060";
+// Chip tints per capability kind. Same palette families the pill system uses
+// (lib/pill.ts) so the chips read as part of one design system; lighter fills
+// because these are informational, not interactive.
+const CAP_STYLE: Record<CapKind, string> = {
+  service:
+    "border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-900/30 dark:text-sky-200",
+  ops: "border-violet-300 bg-violet-50 text-violet-900 dark:border-violet-800 dark:bg-violet-900/30 dark:text-violet-200",
+  equipment:
+    "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200",
+  bridge:
+    "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-200",
+};
+
+const CAP_LEGEND: { kind: CapKind; label: string }[] = [
+  { kind: "service", label: "service" },
+  { kind: "ops", label: "lab-ops agent" },
+  { kind: "equipment", label: "controls equipment" },
+  { kind: "bridge", label: "network bridge" },
+];
+
+const HOSTOPS_TITLE =
+  "sdl-lab-hostops — whitelisted host-ops MCP (bearer token, :8060): service status · logs · restart (whitelisted subset) · serial-port enumeration · local /status probes. Never a shell.";
 
 const LAB_HOSTS: LabHost[] = [
   {
@@ -43,21 +81,42 @@ const LAB_HOSTS: LabHost[] = [
     name: "Central Server (gaia)",
     kind: "Linux server",
     hostname: "sdl2-server-gaia",
-    services:
-      "Dashboard web + API, auth edge (Caddy + ac_auth), kasa-tapo gateway + go2rtc, Uptime Kuma, PyPoe, Hermes, AnaliticaDB, Bitácora",
-    controls: "Tapo cameras and Kasa plugs / power strips (via the kasa-tapo gateway)",
-    opsApi: null,
+    capabilities: [
+      { label: "dashboard web :8000", kind: "service" },
+      { label: "dashboard API :8001", kind: "service" },
+      { label: "auth edge", kind: "service", title: "Caddy single edge + ac_auth sidecar (:8009)" },
+      { label: "kasa-tapo gateway", kind: "service", title: "Camera/plug gateway (:8002) + go2rtc streams" },
+      { label: "Uptime Kuma", kind: "service" },
+      { label: "PyPoe", kind: "service" },
+      { label: "Hermes", kind: "service" },
+      { label: "AnaliticaDB", kind: "service", title: "ELN + LIMS record layer (:8010)" },
+      { label: "Bitácora", kind: "service", title: "Agentic ELN (:3001)" },
+      { label: "Tapo cameras", kind: "equipment", title: "Via the kasa-tapo gateway" },
+      { label: "Kasa plugs / strips", kind: "equipment", title: "Via the kasa-tapo gateway" },
+    ],
   },
   {
     id: "cytation-pc",
     name: "Cytation PC",
     kind: "Windows PC",
     hostname: "sdl2-pc-03-cytation",
-    services:
-      "xarm :8000 · plateloc :8010 · ot2-gateway-hte :8020 · ot2-gateway-complexation :8021 · torry-pines-shaker :8030 · cytation :8040 · biostack4 :8050 · sdl-lab-hostops :8060",
-    controls:
-      "xArm5 (arm, gripper, track), PlateLoc sealer, both OT-2 robots, Torrey Pines shaker, Cytation 5 reader, BioStack stacker",
-    opsApi: HOSTOPS_API,
+    capabilities: [
+      { label: "xarm :8000", kind: "service" },
+      { label: "plateloc :8010", kind: "service" },
+      { label: "ot2-gateway-hte :8020", kind: "service" },
+      { label: "ot2-gateway-complexation :8021", kind: "service" },
+      { label: "torry-pines-shaker :8030", kind: "service" },
+      { label: "cytation :8040", kind: "service" },
+      { label: "biostack4 :8050", kind: "service" },
+      { label: "hostops :8060", kind: "ops", title: HOSTOPS_TITLE },
+      { label: "xArm5", kind: "equipment", title: "Arm, gripper, linear track" },
+      { label: "PlateLoc sealer", kind: "equipment" },
+      { label: "OT-2 (HTE)", kind: "equipment" },
+      { label: "OT-2 (complexation)", kind: "equipment" },
+      { label: "Torrey Pines shaker", kind: "equipment" },
+      { label: "Cytation 5 reader", kind: "equipment" },
+      { label: "BioStack stacker", kind: "equipment" },
+    ],
     opsId: "hostops_cytation_pc",
   },
   {
@@ -65,10 +124,12 @@ const LAB_HOSTS: LabHost[] = [
     name: "UPLC PC",
     kind: "Windows PC",
     hostname: "sdl2-pc-06-uplc",
-    services: "hplc-ms-status :8010 (UPLC-MS sidecar) · sdl-lab-hostops :8060",
-    controls:
-      "Agilent UPLC-MS (via OpenLab CDS) · network bridge to the OT-2 complexation robot (USB portproxy :31950)",
-    opsApi: HOSTOPS_API,
+    capabilities: [
+      { label: "hplc-ms-status :8010", kind: "service", title: "UPLC-MS sidecar — owns the run queue; production runs from branch fix_server_vial" },
+      { label: "hostops :8060", kind: "ops", title: HOSTOPS_TITLE },
+      { label: "Agilent UPLC-MS", kind: "equipment", title: "Via OpenLab CDS" },
+      { label: "OT-2 USB bridge :31950", kind: "bridge", title: "netsh portproxy to the complexation robot's USB link — the USB-B cable into this PC is load-bearing" },
+    ],
     opsId: "hostops_uplc_pc",
   },
 ];
@@ -78,14 +139,15 @@ const LAB_HOSTS: LabHost[] = [
 const TILE_CARD =
   "flex h-full flex-col gap-2 overflow-hidden rounded-xl border border-slate-200 bg-surface-raised p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900";
 
-function FactRow({ label, value }: { label: string; value: string }) {
+function CapChip({ cap }: { cap: Capability }) {
   return (
-    <div className="text-xs">
-      <span className="font-medium uppercase text-ink-muted dark:text-slate-400">
-        {label}
-      </span>{" "}
-      <span className="text-ink-subtle dark:text-slate-300">{value}</span>
-    </div>
+    <span
+      title={cap.title}
+      data-kind={cap.kind}
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${CAP_STYLE[cap.kind]}`}
+    >
+      {cap.label}
+    </span>
   );
 }
 
@@ -125,10 +187,10 @@ function HostTile({
             ))}
         </div>
       </header>
-      <div className="flex flex-col gap-1.5">
-        <FactRow label="Services" value={host.services} />
-        <FactRow label="Controls" value={host.controls} />
-        <FactRow label="Lab-ops API" value={host.opsApi ?? "none — no ops agent on this host"} />
+      <div className="flex flex-wrap content-start gap-1">
+        {host.capabilities.map((cap) => (
+          <CapChip key={cap.label} cap={cap} />
+        ))}
       </div>
       <AuthGatedLink
         href={`/utils/computers/ssh/${host.id}`}
@@ -154,7 +216,7 @@ export function HostsPanel({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
   const byId = new Map(snapshots.map((s) => [s.id, s]));
   return (
     <section className="flex flex-col gap-4">
-      <header>
+      <header className="flex flex-col gap-1.5">
         <h1 className="text-lg font-semibold text-ink dark:text-slate-100">
           Computers and Servers
         </h1>
@@ -163,6 +225,21 @@ export function HostsPanel({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
           sdl-lab-hostops agent carry its live status pill. Admins get an
           in-browser SSH terminal per machine; every session is audited.
         </p>
+        <div
+          className="flex flex-wrap items-center gap-1.5"
+          role="list"
+          aria-label="Capability color legend"
+        >
+          {CAP_LEGEND.map(({ kind, label }) => (
+            <span
+              key={kind}
+              role="listitem"
+              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${CAP_STYLE[kind]}`}
+            >
+              {label}
+            </span>
+          ))}
+        </div>
       </header>
       {/* Same grid geometry as EquipmentGrid — four equal stretchy columns
           filling the content container, so a 2-wide host tile is exactly half
