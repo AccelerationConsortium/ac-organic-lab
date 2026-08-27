@@ -29,7 +29,10 @@ next-env.d.ts
 
 # Local secrets and overrides
 .env
-.env.bak-*
+# Any separator: a `.env.bak.<stamp>` from `cp -p .env ...` slipped past the
+# old `.env.bak-*` and sat untracked in the repo root with a live API key in
+# it, one `git add -A` from being committed.
+.env.bak*
 .env.local
 .env.*.local
 api/.env
