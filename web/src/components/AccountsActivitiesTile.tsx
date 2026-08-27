@@ -6,34 +6,37 @@ import { useMemo } from "react";
 import {
   fmtDuration,
   useAdminQuery,
-  type AdminState,
   type ClaimedBy,
   type ControlActionsResponse,
-  type SessionsResponse,
+  type OverviewSessions,
+  type OverviewState,
 } from "@/lib/admin-api";
 import { useEquipmentList } from "@/lib/use-equipment";
 import { useUserAuth } from "@/lib/user-auth";
 import { AdminTile, ErrorNote, Stat } from "./AdminTile";
 
 /**
- * "Accounts & Activities" — the admin headline numbers in two lines of four
- * stats (four columns, each a stacked pair, so the vertical pairing holds):
+ * "Accounts & Activities" — the headline numbers in two lines of four stats
+ * (four columns, each a stacked pair, so the vertical pairing holds):
  *
  *   Active accounts | Equipment         | Projects        | Control actions
  *   Live sessions   | Equipment claimed | Current session | Total session
  *
  * It leads the admin console (paired with Roster health, same footprint as
  * every other panel) and the Overview page mounts the same tile as the first
- * card of its masonry with a GO → link into /admin.
+ * card of its masonry with a GO → link into /admin for admins.
  *
- * Renders nothing for a non-admin viewer: the roster/session figures come from
- * the sidecar's admin-only endpoints, and the Admin tab is hidden for them too.
+ * Names the tile after the aggregate data source it uses: the roster/session
+ * figures come from sidecar /overview/* endpoints, which any signed-in user
+ * may read (they carry counts only — no account listing). The fuller /admin/*
+ * endpoints stay admin-only and back the admin console. Renders nothing for a
+ * signed-out viewer (the figures require a session).
  */
 export function AccountsActivitiesTile({
   adminLink = false,
   className,
 }: {
-  /** Show a GO → link to the admin console in the header. */
+  /** Show a GO → link to the admin console in the header (admins only). */
   adminLink?: boolean;
   /** Extra classes on the card. */
   className?: string;
@@ -41,14 +44,18 @@ export function AccountsActivitiesTile({
   const { authenticated, identity } = useUserAuth();
   const isAdmin = authenticated && identity?.role === "admin";
 
-  const state = useAdminQuery<AdminState>("/api/admin/state", 60_000, isAdmin);
-  const sessions = useAdminQuery<SessionsResponse>("/api/admin/sessions", 30_000, isAdmin);
+  const state = useAdminQuery<OverviewState>("/api/overview/state", 60_000, authenticated);
+  const sessions = useAdminQuery<OverviewSessions>(
+    "/api/overview/sessions",
+    30_000,
+    authenticated,
+  );
   // Only the lifetime `total` is needed here; the audit table on the admin
   // page fetches its own window.
   const controlActions = useAdminQuery<ControlActionsResponse>(
     "/api/history/control-actions?limit=1",
     30_000,
-    isAdmin,
+    authenticated,
   );
   const equipment = useEquipmentList();
 
@@ -59,7 +66,7 @@ export function AccountsActivitiesTile({
     ).length;
   }, [equipment.data]);
 
-  if (!isAdmin) return null;
+  if (!authenticated) return null;
 
   const s = state.data;
   const rosterTotal = s ? s.roster.users + s.roster.automation : null;
@@ -67,11 +74,11 @@ export function AccountsActivitiesTile({
   // Signed-in time summed over the *live* sessions (now − created_at). Ended
   // sessions leave no duration record — logout deletes the row and expiry
   // purges it — so a lifetime figure would be a guess; this one is exact for
-  // what is on screen. `now` is per render; the 30 s refetch re-renders.
-  const nowS = Date.now() / 1000;
-  const liveSessions = sessions.data?.sessions ?? [];
-  const sessionSeconds = liveSessions.reduce((acc, r) => acc + Math.max(0, nowS - r.created_at), 0);
-  const sessionAccounts = new Set(liveSessions.map((r) => r.email)).size;
+  // what is on screen. The sidecar computes it against a single `now`.
+  const live = sessions.data?.live;
+  const liveCount = live?.count ?? 0;
+  const sessionAccounts = live?.accounts;
+  const sessionSeconds = live?.seconds;
 
   const totalTime = sessions.data?.total_time_s;
 
@@ -90,7 +97,7 @@ export function AccountsActivitiesTile({
       <Stat
         key="sessions"
         label="Live sessions"
-        value={sessions.data ? String(liveSessions.length) : "…"}
+        value={sessions.data ? String(liveCount) : "…"}
         detail={
           sessions.data
             ? `${sessionAccounts} ${sessionAccounts === 1 ? "account" : "accounts"} signed in`
@@ -125,7 +132,7 @@ export function AccountsActivitiesTile({
       <Stat
         key="session-time"
         label="Current session"
-        value={sessions.data ? fmtDuration(sessionSeconds) : "…"}
+        value={sessions.data ? fmtDuration(sessionSeconds ?? 0) : "…"}
         detail="live sessions, summed"
         title="Σ (now − signed in) across unexpired sessions"
       />,

@@ -181,13 +181,15 @@ export default function OverviewPage() {
           card from splitting across the column boundary; `mb-4` is the vertical
           gap between stacked cards (multicol uses margins, not `gap`). */}
       <div className="columns-1 gap-4 lg:columns-2">
-        {/* Admin headline: the same half-width "Accounts & Activities" tile
-            that leads the admin console, as the masonry's first card with a
-            GO → link into /admin. The wrapper is admin-gated (not just the
-            tile) so non-admins get no empty spacer in the first column. */}
-        {isAdmin && (
+        {/* Headline "Accounts & Activities" tile: visible to every signed-in
+            user (its roster/session figures come from the aggregate /overview/*
+            endpoints, readable by any role). The GO → link into /admin is
+            admins-only — non-admins would be bounced back by the middleware.
+            Wrapper gated on `authenticated` (not just the tile) so signed-out
+            viewers get no empty spacer in the first column. */}
+        {authenticated && (
           <div className="mb-4 break-inside-avoid">
-            <AccountsActivitiesTile adminLink />
+            <AccountsActivitiesTile adminLink={isAdmin} />
           </div>
         )}
         {visibleSections.map((section) => {

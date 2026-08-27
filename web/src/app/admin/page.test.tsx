@@ -52,6 +52,17 @@ const NOW_S = Math.floor(Date.now() / 1000);
 
 // Canned sidecar + history bodies, keyed by path prefix.
 const bodies: Record<string, unknown> = {
+  // The tile itself reads the aggregate /overview/* endpoints (any signed-in
+  // role); the admin page's other panels still read the /admin/* details.
+  // Numbers mirror the /admin/* bodies below: 2 live sessions from one
+  // account, 1h + 2h signed in -> 3 h current, 25 h all-time.
+  "/api/overview/state": {
+    roster: { users: 3, automation: 1, projects: 2, active_accounts: 3 },
+  },
+  "/api/overview/sessions": {
+    live: { count: 2, accounts: 1, seconds: 3 * 3600 },
+    total_time_s: 25 * 3600,
+  },
   "/api/admin/state": {
     roster: { users: 3, automation: 1, projects: 2, active_accounts: 3 },
     roster_loaded_at: NOW_S - 600,

@@ -2,12 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 
 // ---------------------------------------------------------------------------
 // Shared plumbing for the admin console and the "Accounts & Activities"
-// headline tile (which the Overview page also mounts for admins): the
-// response shapes of the ac_auth sidecar's /admin/* proxies and the
-// dashboard's control-action audit feed, one react-query hook, and the
-// formatters both surfaces use. Server-side access is enforced by the Next
-// middleware (admin session for /api/admin/*) and re-checked by the sidecar;
-// `enabled` below only avoids firing requests that would 401.
+// headline tile (which the Overview page also mounts): the response shapes of
+// the ac_auth sidecar's /admin/* and /overview/* proxies plus the dashboard's
+// control-action audit feed, one react-query hook, and the formatters both
+// surfaces use.
+//
+// Access model: /admin/* requires an admin session (middleware + sidecar both
+// enforce it) and backs the full admin console. The /overview/* endpoints are
+// the aggregate-only variant — readable by any signed-in user — and back the
+// tiny headline tile that is now visible to everyone. `enabled` below only
+// avoids firing requests that would 401 (signed-out viewer).
 // ---------------------------------------------------------------------------
 
 export interface AdminState {
@@ -23,6 +27,16 @@ export interface AdminState {
   expiring_soon: { email: string; expires_at: number }[];
 }
 
+/** Aggregate roster counts from /overview/state — no account listing. */
+export interface OverviewState {
+  roster: {
+    users: number;
+    automation: number;
+    projects: number;
+    active_accounts: number;
+  };
+}
+
 export interface SessionRow {
   email: string;
   created_at: number;
@@ -34,6 +48,20 @@ export interface SessionsResponse {
   /** All-time signed-in seconds, reconstructed sidecar-side from auth_events
    *  (union of session windows; see Db.total_session_time_s). Absent from a
    *  sidecar that predates the field. */
+  total_time_s?: number | null;
+}
+
+/** Aggregate live-session figures from /overview/sessions — no emails. */
+export interface OverviewSessions {
+  live: {
+    /** Number of unexpired sessions right now. */
+    count: number;
+    /** Number of distinct accounts holding a live session. */
+    accounts: number;
+    /** Σ(now − created_at) across live sessions, single `now`, seconds. */
+    seconds: number;
+  };
+  /** All-time signed-in seconds (reconstructed from auth_events). */
   total_time_s?: number | null;
 }
 

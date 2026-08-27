@@ -23,14 +23,13 @@ vi.mock("@/lib/use-equipment", () => ({
 }));
 
 const bodies: Record<string, unknown> = {
-  "/api/admin/state": {
+  "/api/overview/state": {
     roster: { users: 2, automation: 1, projects: 3, active_accounts: 2 },
-    roster_loaded_at: 1,
-    last_reload: null,
-    pending_automation: [],
-    expiring_soon: [],
   },
-  "/api/admin/sessions": { sessions: [], total_time_s: 7200 },
+  "/api/overview/sessions": {
+    live: { count: 0, accounts: 0, seconds: 0 },
+    total_time_s: 7200,
+  },
   "/api/history/control-actions": { actions: [], total: 42 },
 };
 
@@ -64,11 +63,25 @@ afterEach(() => {
 });
 
 describe("AccountsActivitiesTile", () => {
-  it("renders nothing (and fetches nothing) for a non-admin viewer", () => {
-    auth.identity = { role: "operator" };
+  it("renders nothing (and fetches nothing) for a signed-out viewer", () => {
+    auth.authenticated = false;
+    auth.identity = null;
     const { container } = renderTile();
     expect(container.innerHTML).toBe("");
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("renders for a non-admin signed-in viewer, with no GO link", async () => {
+    auth.identity = { role: "operator" };
+    renderTile();
+    await screen.findByText("42"); // lifetime total, not window length
+    expect(screen.getByText("Accounts & Activities")).toBeTruthy();
+    expect(screen.getByText("Equipment claimed").closest("div.flex")!.textContent).toContain("2");
+    // aggregate data loads for any signed-in role...
+    expect(screen.getByText("Active accounts").closest("div")!.textContent).toContain("2");
+    expect(screen.getByText("Live sessions").closest("div")!.textContent).toContain("0");
+    // ...but the admin console link stays admin-only
+    expect(screen.queryByRole("link", { name: "GO →" })).toBeNull();
   });
 
   it("shows the headline pairs, with a GO link when asked", async () => {
@@ -83,11 +96,16 @@ describe("AccountsActivitiesTile", () => {
   });
 
   it("shows an em dash for total session time until the sidecar serves it", async () => {
-    bodies["/api/admin/sessions"] = { sessions: [] };
+    bodies["/api/overview/sessions"] = {
+      live: { count: 0, accounts: 0, seconds: 0 },
+    };
     renderTile();
     await screen.findByText("42");
     expect(screen.getByText("Total session").closest("div")!.textContent).toContain("—");
-    bodies["/api/admin/sessions"] = { sessions: [], total_time_s: 7200 };
+    bodies["/api/overview/sessions"] = {
+      live: { count: 0, accounts: 0, seconds: 0 },
+      total_time_s: 7200,
+    };
   });
 
   it("omits the GO link on the admin console itself", async () => {

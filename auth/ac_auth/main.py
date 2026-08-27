@@ -811,6 +811,62 @@ def create_app(
             "expiring_soon": sorted(expiring, key=lambda e: e["expires_at"]),
         }
 
+    # ---- overview read endpoints (aggregate-only, any signed-in user) -------
+    #
+    # Back the Overview page's "Accounts & Activities" headline tile, which is
+    # visible to every signed-in user (not just admins). They return ONLY
+    # aggregate figures — roster counts and live-session summaries — never the
+    # account/session listings the /admin/* endpoints expose. Access requires a
+    # valid session of any role (401 otherwise); the full /admin/* detail stays
+    # admin-only in _require_admin above.
+
+    async def _require_authenticated(request: Request) -> User:
+        """401 without a valid session principal — any role may read the
+        aggregate overview figures, since they reveal no per-account detail."""
+        caller = await _session_user(request)
+        if caller is None:
+            raise HTTPException(status_code=401, detail="not authenticated")
+        return caller
+
+    @app.get("/overview/state")
+    async def overview_state(request: Request) -> dict:
+        """Headline roster counts for the Overview tile — numbers only, no
+        account listing (that lives behind /admin/state)."""
+        await _require_authenticated(request)
+        roster = _roster(request)
+        return {
+            "roster": {
+                "users": len(roster.users),
+                "automation": len(roster.automation),
+                "projects": len(roster.projects),
+                "active_accounts": len(_active_principals(roster)),
+            },
+        }
+
+    @app.get("/overview/sessions")
+    async def overview_sessions(request: Request) -> dict:
+        """Aggregate live-session figures plus all-time signed-in seconds for
+        the Overview tile — counts/summaries only (no emails). ``seconds`` is
+        Σ(now − created_at) across live sessions, computed against a single
+        ``now`` for a self-consistent snapshot."""
+        await _require_authenticated(request)
+        db = _db(request)
+        now = time.time()
+        rows = await asyncio.to_thread(db.list_active_sessions)
+        seconds = sum(max(0.0, now - s.created_at) for s in rows)
+        accounts = len({s.email for s in rows})
+        total_time_s = await asyncio.to_thread(
+            db.total_session_time_s, request.app.state.settings.session_ttl_s
+        )
+        return {
+            "live": {
+                "count": len(rows),
+                "accounts": accounts,
+                "seconds": round(seconds, 1),
+            },
+            "total_time_s": round(total_time_s, 1),
+        }
+
     @app.get("/auth/users")
     async def users(request: Request) -> dict:
         """Active human accounts for the dashboard's login dropdown, as

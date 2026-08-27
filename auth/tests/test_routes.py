@@ -521,6 +521,43 @@ def test_admin_endpoints_require_admin(tmp_path):
             assert c.get(p).status_code == 200  # admin
 
 
+def test_overview_endpoints_any_signed_in_user_aggregates_only(tmp_path):
+    app, _, mailer = _ctx(
+        tmp_path,
+        users=(("alice@utoronto.ca", "operator"), ("root@utoronto.ca", "admin")),
+        automation=(("robot@lab.local", False),),  # pending approval
+    )
+    with TestClient(app) as c:
+        # anonymous -> 401
+        assert c.get("/overview/state").status_code == 401
+        assert c.get("/overview/sessions").status_code == 401
+
+        # a plain operator (NOT admin) may read both
+        _signin(c, mailer, "alice@utoronto.ca")
+        assert c.get("/overview/state").status_code == 200
+        assert c.get("/overview/sessions").status_code == 200
+
+        state = c.get("/overview/state").json()
+        # aggregate roster counts only — no account listing, no pending/expiring emails
+        assert state["roster"] == {
+            "users": 2,
+            "automation": 1,
+            "projects": 0,
+            "active_accounts": 2,  # robot is pending approval -> not active
+        }
+        assert "pending_automation" not in state
+        assert "expiring_soon" not in state
+
+        sessions = c.get("/overview/sessions").json()
+        # summaries only — no email list
+        assert set(sessions["live"]) == {"count", "accounts", "seconds"}
+        assert sessions["live"]["count"] >= 1  # alice holds a live session
+        assert sessions["live"]["accounts"] >= 1
+        assert "total_time_s" in sessions
+        # no list-of-dicts payloads anywhere in the response
+        assert not any(isinstance(v, list) and v and isinstance(v[0], dict) for v in sessions.values())
+
+
 def test_admin_accounts_and_state_shape(tmp_path):
     app, db, mailer = _ctx(
         tmp_path,
