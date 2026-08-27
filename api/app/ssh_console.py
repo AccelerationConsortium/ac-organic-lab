@@ -273,9 +273,10 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         target="uplc-pc",
         shell="cmd.exe (Windows OpenSSH)",
         note=(
-            "Hosts the UPLC-MS sidecar and the USB portproxy bridge to the OT-2 "
-            "complexation robot. The sidecar owns the run queue — do not restart "
-            "it mid-campaign."
+            "Hosts the UPLC-MS sidecar. The sidecar owns the run queue — do "
+            "not restart it mid-campaign. The OT-2 complexation robot's USB-B "
+            "cable stays plugged into this PC as a physical network fallback "
+            "(the portproxy bridge itself was retired 2026-08-27; see ROADMAP)."
         ),
         profiles=(
             SshProfile(id="cmd", label="cmd", args=(), description="Windows cmd.exe (the OpenSSH default shell)."),

@@ -843,7 +843,8 @@ left dead by an external event, discovered hours later — is what the
 whitelisted, remediate remotely. Residual watch item below.
 
 **Campus Wi-Fi (`compsci`) outage, 2026-08-14 → both OT-2 control paths
-moved off Wi-Fi permanently.** The `172.31/16` campus Wi-Fi the robots and
+moved off Wi-Fi.** *(Updated 2026-08-27 — the complexation half has since
+changed again; see the retirement note below the list.)* The `172.31/16` campus Wi-Fi the robots and
 several Pis ride lost its uplink ~14:45 EDT and flapped for the rest of the
 day: both OT-2s, `sdl2-pi0-fumehood3-actuator`, and `sdl2-pi5-cnc-01`
 dropped off the tailnet simultaneously (two APs on different bands; LAN-local
@@ -856,24 +857,40 @@ configuration — the gateways no longer reach the robots over Wi-Fi at all**:
 - `ot2-gateway-hte` → the robot's wired Pi Ethernet at `192.168.254.50`
   (lab switch subnet).
 - `ot2-gateway-complexation` → a `netsh` port-forward bridge on the UPLC PC
-  (`100.64.254.19:31950` → the robot's USB link-local `169.254.40.81:31950`,
-  listener bound to the tailnet IP only, firewall rule
-  `ot2-complexation-usb-bridge`). The robot's USB-B cable into the UPLC PC
-  is load-bearing — label it.
+  (`100.64.254.19:31950` → the robot's USB link-local `169.254.40.81:31950`).
+
+**The complexation bridge was retired 2026-08-27.** At some point after the
+outage the gateway was repointed at the robot's own tailnet IP
+(`OT2_HTTP_BASE_URL=http://100.64.254.91:31950`, `sdl2-ot2-complexation`) —
+which meant nothing routed through the bridge anymore, and the bridge itself
+was found **dead**: the `netsh` rule survived a reboot but `iphlpsvc` never
+rebound the listener (it binds only if the listen address exists when the
+service starts, and Tailscale's interface comes up later — config present, no
+socket, connections refused). Rather than leave a fallback that silently
+isn't one, the portproxy rule and the `ot2-complexation-usb-bridge` firewall
+rule were deleted. Note what this means: **complexation control rides the
+robot's tailnet path, whose direct route is campus Wi-Fi (`172.31.60.9`)** —
+the very network this incident is about (tailscale can DERP-relay, but a full
+Wi-Fi drop on the robot severs it). The USB-B cable into the UPLC PC stays
+plugged as the *physical* fallback — the link-local endpoint
+(`169.254.40.81:31950`) still answers from that PC. Re-arm in an outage:
+`netsh interface portproxy add v4tov4 listenaddress=100.64.254.19
+listenport=31950 connectaddress=169.254.40.81 connectport=31950`, re-add the
+firewall rule for TCP 31950, restart `iphlpsvc` if the listener doesn't bind,
+and repoint the gateway env below. (`ot2-gateway-hte` remains on the wired
+Pi Ethernet path exactly as listed — verified 2026-08-27.)
 
 **All of this is config, not code.** Robot addresses live in each gateway
 service's NSSM env on the Cytation PC — change with
 `C:\SDL_Tools\nssm.exe set ot2-gateway-<x> AppEnvironmentExtra …` (edit
 `OT2_HTTP_BASE_URL`, hte also `OT2_HOST_ALIAS`) then `nssm restart`; revert =
 restore `http://172.31.60.10:31950` (hte) / the tailnet name (complexation).
-The bridge is `netsh interface portproxy delete|add v4tov4 …` on the UPLC PC
-(persistent across reboots). Open hardening: a DHCP reservation for hte's
-wired MAC (`b8:27:eb:33:af:b6`); complexation's link-local IP can renumber
-on a robot reboot (update the portproxy if so); report the outage to campus
-IT. The durable conclusion is the same one the `env_hte` DHCP item already
+Open hardening: a DHCP reservation for hte's wired MAC
+(`b8:27:eb:33:af:b6`); report the outage to campus IT. The durable conclusion is the same one the `env_hte` DHCP item already
 reached: **lab devices belong on lab-owned network**, and this outage is the
-strongest argument yet. The robots' own Wi-Fi/tailscale remains for SSH
-convenience only — nothing operational depends on it anymore.
+strongest argument yet. As of 2026-08-27 that conclusion is only half
+honoured: hte is Wi-Fi-independent, complexation is not (see the retirement
+note above).
 
 Active watch items (not regressions; behavioural notes):
 

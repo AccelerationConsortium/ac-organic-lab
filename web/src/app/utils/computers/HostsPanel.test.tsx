@@ -70,14 +70,13 @@ describe("HostsPanel", () => {
     // Live hostops snapshot present → status badge.
     expect(cytation.textContent).toContain("Ready");
 
-    // Ops host without a snapshot yet degrades honestly; its USB portproxy
-    // is a bridge-kind (amber) chip.
+    // Ops host without a snapshot yet degrades honestly. The OT-2 USB
+    // portproxy chip is gone with the bridge itself (retired 2026-08-27,
+    // ROADMAP) — the gateway rides the robot's tailnet directly.
     const uplc = screen.getByText("UPLC PC").closest("article")!;
     expect(uplc.textContent).toContain("Windows PC");
     expect(uplc.textContent).toContain("no data");
-    const bridge = within(uplc).getByText("OT-2 USB bridge :31950");
-    expect(bridge.getAttribute("data-kind")).toBe("bridge");
-    expect(bridge.className).toContain("amber");
+    expect(uplc.textContent).not.toContain("USB bridge");
 
     // gaia runs no ops agent → no violet chip and no status badge slot.
     const gaia = screen.getByText("Central Server (gaia)").closest("article")!;
@@ -89,7 +88,7 @@ describe("HostsPanel", () => {
     render(<HostsPanel snapshots={[]} />);
 
     const legend = screen.getByRole("list", { name: "Capability color legend" });
-    for (const label of ["service", "lab-ops agent", "controls equipment", "network bridge"]) {
+    for (const label of ["service", "lab-ops agent", "controls equipment"]) {
       expect(within(legend).getByText(label)).toBeTruthy();
     }
   });

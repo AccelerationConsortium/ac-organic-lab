@@ -16,7 +16,10 @@ import { STATE_META, effectiveState } from "@/lib/state-meta";
  *   - violet   `ops`       — the sdl-lab-hostops agent surface (whitelisted
  *                            MCP: status / logs / restarts, never a shell)
  *   - emerald  `equipment` — hardware this machine's services front
- *   - amber    `bridge`    — a network path other equipment depends on
+ *
+ * (An amber `bridge` kind existed briefly for the UPLC PC's OT-2 USB
+ * portproxy; the bridge was retired 2026-08-27 — see ROADMAP → the campus
+ * Wi-Fi outage entry — and the kind went with it.)
  *
  * Chip `title` tooltips carry the detail the old prose rows held (ports,
  * caveats, what the ops API actually offers) — hover for it.
@@ -33,7 +36,7 @@ import { STATE_META, effectiveState } from "@/lib/state-meta";
  * no link at all.
  */
 
-type CapKind = "service" | "ops" | "equipment" | "bridge";
+type CapKind = "service" | "ops" | "equipment";
 
 type Capability = {
   label: string;
@@ -61,15 +64,12 @@ const CAP_STYLE: Record<CapKind, string> = {
   ops: "border-violet-300 bg-violet-50 text-violet-900 dark:border-violet-800 dark:bg-violet-900/30 dark:text-violet-200",
   equipment:
     "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200",
-  bridge:
-    "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-200",
 };
 
 const CAP_LEGEND: { kind: CapKind; label: string }[] = [
   { kind: "service", label: "service" },
   { kind: "ops", label: "lab-ops agent" },
   { kind: "equipment", label: "controls equipment" },
-  { kind: "bridge", label: "network bridge" },
 ];
 
 const HOSTOPS_TITLE =
@@ -128,7 +128,6 @@ const LAB_HOSTS: LabHost[] = [
       { label: "hplc-ms-status :8010", kind: "service", title: "UPLC-MS sidecar — owns the run queue; production runs from branch fix_server_vial" },
       { label: "hostops :8060", kind: "ops", title: HOSTOPS_TITLE },
       { label: "Agilent UPLC-MS", kind: "equipment", title: "Via OpenLab CDS" },
-      { label: "OT-2 USB bridge :31950", kind: "bridge", title: "netsh portproxy to the complexation robot's USB link — the USB-B cable into this PC is load-bearing" },
     ],
     opsId: "hostops_uplc_pc",
   },
