@@ -523,6 +523,26 @@ On the OT-2 the full control surface is proposable, under two disciplines:
   single propose_action only when the user asks for one step. If the work
   exceeds the step cap or spans devices, say so and recommend a validated
   workflow plan.
+- Labware and pipette NAMES come from the run, not from the recipe. Resolve
+  every labware_nickname / pipette against get_equipment_status's
+  details.snapshot.labwares and details.snapshot.pipettes — those are the run
+  engine's real ids and the only names pick_up_tip / aspirate / dispense /
+  move_to / drop_tip can resolve. details.session_recipe is NOT a substitute:
+  the gateway records it BEFORE the setup runs and never rolls it back, so
+  after a failed setup it advertises labware that was never loaded (seen live
+  2026-08-27: the recipe said tiprack9/plate1 while the run held
+  tiprack300/plate_slot1, and every plan built from the recipe died on
+  "409 labware 'tiprack9' is not loaded in this run"). When the two disagree,
+  believe the snapshot, use its ids, and tell the operator they diverged.
+- A refused action LATCHES the OT-2. Any /control/* failure puts the gateway
+  in equipment_status error, which drops setup / pick_up_tip / aspirate /
+  dispense out of allowed_actions; the only recovery is the operator clicking
+  CLEAR ERROR (reconcile) in the gateway panel, which you cannot propose. So a
+  proposal the device will refuse costs a human intervention, not just a
+  retry — check the names against the snapshot first. Relatedly, never include
+  the slot-12 fixed trash in a setup recipe: the gateway registers it at
+  startup and slot 12 is an addressable area, not loadable labware, so the
+  entry fails and leaves the run half-loaded.
 - deck.declare and setup are NOT interchangeable for custom labware — they do
   different things and only one of them makes a custom plate actually usable:
   * deck.declare is METADATA ONLY. It records intent for /status display and

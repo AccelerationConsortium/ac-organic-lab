@@ -112,6 +112,18 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   (`X-Claim-Token` → 423) on most control surfaces, and the xArm's
   login-gated `/control/claim` + per-device edge secret (see ROADMAP →
   *Control-surface exposure*).
+- **On the OT-2 gateways, the run engine is the only truth for labware and
+  pipette names.** Read them from `/status`'s `details.snapshot.labwares` /
+  `.pipettes`. Two neighbouring fields look authoritative and are not:
+  `details.session_recipe` is written *before* the setup runs and never rolled
+  back, so a failed setup advertises names that were never loaded; and
+  `POST /control/deck/declare` is a **full-layout replace**, so saving a layout
+  that omits a slot silently wipes it while `details.tip_racks` still reports
+  the rack stocked. Both produced a `409 … is not loaded in this run` on
+  2026-08-19 (`ot2_hte`) and 2026-08-27 (`ot2_complexation`). Any `/control/*`
+  refusal then *latches* the gateway into `error` — recovery is the operator's
+  CLEAR ERROR (`reconcile`) in the device panel, which is deliberately not
+  agent-proposable.
 
 ## 5. Memory & instruction policy (how agents keep notes)
 
