@@ -10,6 +10,7 @@ import {
   type AssistantPlanStepResult,
 } from "@/lib/api";
 import { speakableFromMarkdown } from "@/lib/speech";
+import { useVoiceInput } from "@/lib/use-voice-input";
 import { useUserAuth } from "@/lib/user-auth";
 
 /**
@@ -238,6 +239,25 @@ function AssistantBubbleInner() {
   // updater. Speaking has to happen on the `done` frame, and a state updater
   // is the wrong place for a side effect (React may invoke it twice).
   const streamTextRef = useRef("");
+  // Whether this turn's answer has already been spoken mid-stream. Speaking
+  // the first sentence as soon as it completes — rather than on `done` —
+  // is most of the perceived latency win for voice: the ear gets the answer
+  // while the tail of the turn is still streaming to the eye.
+  const spokeThisTurnRef = useRef(false);
+
+  // Voice input (push-to-talk). The transcript is auto-SENT in Ask mode —
+  // that mode is read-only, so the cost of a mishearing is one wasted query —
+  // and only fills the input box in Control mode, where a turn can end in a
+  // proposal card and the operator must see what they asked before it goes.
+  const voice = useVoiceInput((text) => {
+    if (modeRef.current === "ask") {
+      void sendMessageRef.current(text);
+    } else {
+      setInput((prev) => (prev ? `${prev} ${text}` : text));
+    }
+  });
+  const modeRef = useRef<Mode>("ask");
+  const sendMessageRef = useRef<(t: string) => Promise<void>>(async () => {});
 
   const stopSpeaking = useCallback(() => {
     if (typeof window !== "undefined" && window.speechSynthesis) {
@@ -677,6 +697,7 @@ function AssistantBubbleInner() {
       // New question: drop the previous answer's buffer, and stop speaking the
       // previous answer — it is now stale.
       streamTextRef.current = "";
+      spokeThisTurnRef.current = false;
       stopSpeaking();
 
       try {
@@ -759,6 +780,9 @@ function AssistantBubbleInner() {
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
   }, []);
 
+  modeRef.current = mode;
+  sendMessageRef.current = sendMessage;
+
   const applyEvent = useCallback(
     (event: { type: string; [k: string]: unknown }) => {
       // Mirror the streaming answer outside the state updater below, so the
@@ -766,8 +790,18 @@ function AssistantBubbleInner() {
       // side-effecting inside setTurns. Cheap, and idempotent per frame.
       if (event.type === "text" && typeof event.delta === "string") {
         streamTextRef.current += event.delta;
+        // First sentence complete? Speak it now instead of at `done`. The
+        // boundary check is cheap and the guard ref makes it once per turn.
+        if (!spokeThisTurnRef.current && speakAloudRef.current) {
+          const m = streamTextRef.current.match(/^[\s\S]{10,}?[.!?](?=\s)/);
+          if (m) {
+            spokeThisTurnRef.current = true;
+            speakAnswer(m[0]);
+          }
+        }
       } else if (event.type === "done") {
-        speakAnswer(streamTextRef.current);
+        // Already spoken mid-stream: the rest of the turn is for the eyes.
+        if (!spokeThisTurnRef.current) speakAnswer(streamTextRef.current);
       }
       // A control proposal is not part of an assistant text turn — surface it
       // as a confirm card rather than folding it into the transcript.
@@ -1263,6 +1297,34 @@ function AssistantBubbleInner() {
             }}
           >
             <div className="flex items-end gap-2">
+              {voice.available && (
+                <button
+                  type="button"
+                  onClick={() => void voice.start()}
+                  disabled={sending || voice.state === "transcribing"}
+                  aria-label={
+                    voice.state === "recording"
+                      ? "Stop recording"
+                      : "Ask by voice"
+                  }
+                  title={
+                    voice.state === "recording"
+                      ? "Listening — click to stop (stops by itself when you pause)"
+                      : voice.state === "transcribing"
+                        ? "Transcribing…"
+                        : controlMode
+                          ? "Ask by voice (fills the box — review before sending in Control mode)"
+                          : "Ask by voice (sends when you stop talking)"
+                  }
+                  className={`self-stretch rounded border px-2.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                    voice.state === "recording"
+                      ? "animate-pulse border-red-400 bg-red-50 text-red-600 dark:border-red-600 dark:bg-red-950/40 dark:text-red-400"
+                      : "border-slate-300 text-ink-subtle hover:bg-slate-100 hover:text-ink dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                  }`}
+                >
+                  {voice.state === "recording" ? "◼" : voice.state === "transcribing" ? "…" : "🎤"}
+                </button>
+              )}
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -1291,6 +1353,9 @@ function AssistantBubbleInner() {
                 Send
               </button>
             </div>
+            {voice.error && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400">{voice.error}</p>
+            )}
             {backendInfo?.model && (
               <p className="mt-1 text-center text-xs text-ink-subtle dark:text-slate-400">
                 Hermes agents: {backendInfo.model}

@@ -1,0 +1,21 @@
+# Loopback speech-to-text for the lab assistant (stt/ in the monorepo).
+# Qwen3-ASR-1.7B resident on the GPU (~4.4 GB VRAM); 127.0.0.1 only — the
+# dashboard's /api/assistant/voice/* proxy is its single caller and owns
+# identity. Install: deploy/README.md.
+[Unit]
+Description=SDL2 lab assistant speech-to-text (Qwen3-ASR, loopback)
+After=network.target
+
+[Service]
+User=sdl2
+WorkingDirectory=/home/sdl2/caoyang/ac-organic-lab/stt
+Environment=STT_HOST=127.0.0.1
+Environment=STT_PORT=8070
+Environment=STT_EQUIPMENT_YAML=/home/sdl2/caoyang/ac-organic-lab/equipment.yaml
+# uv run self-syncs the stt venv at start (same pattern as the device PCs).
+ExecStart=/home/sdl2/.local/bin/uv run --project /home/sdl2/caoyang/ac-organic-lab/stt lab-stt-serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1484,3 +1484,125 @@ for SSH key trust.
 - [`DEVICE_PC_SETUP.md`](DEVICE_PC_SETUP.md) §2.4 — SSH key trust on device PCs.
 - [`AUTH_DESIGN.md`](AUTH_DESIGN.md) — the session/roster model this gate reads.
 - [`LAB_MONITORING.md`](LAB_MONITORING.md) §4 — the `equipment_events` type registry.
+
+---
+
+## 7. Assistant voice — read-aloud + push-to-talk [IMPLEMENTED]
+
+**Shipped 2026-08-27** (read-aloud and the HTTPS prerequisite the same day,
+voice input hours later). The assistant bubble gained a spoken output channel
+and a spoken input channel. They are deliberately asymmetric: output is a
+browser-local convenience, input is a GPU service — and neither changes one
+byte of the chat pipeline. Voice is an **I/O shell around the existing SSE
+contract**, not a new backend: the same `/api/assistant/chat`, the same
+frames, the same modes.
+
+### 7.1 Why this exists, and the prerequisite it forced
+
+The use case is hands-busy operation: gloved at a fume hood, eyes on an
+instrument, asking "is the shaker running" without touching a keyboard.
+
+Browsers gate the microphone (`getUserMedia`) on a **secure context**, which
+the canonical `http://100.64.254.6` origin is not — so voice forced the edge
+to grow an HTTPS origin first: `https://sdl2-server-gaia.tail6a1dd7.ts.net`,
+a real Let's Encrypt cert issued by `tailscale cert` (the tailnet has HTTPS
+certificates enabled), renewed by `caddy-tailscale-cert.timer`, serving the
+same routes via a shared `(edge_routes)` Caddyfile snippet. The plain-HTTP
+origin is unchanged; on it, the mic button simply never renders. Two costs,
+accepted knowingly: the hostname is now in public Certificate Transparency
+logs, and the HTTPS origin carries its own session cookie (a different
+origin is a different sign-in).
+
+### 7.2 Read-aloud (output) — `web/src/lib/speech.ts`
+
+A 🔊 toggle in the panel header. **Off by default** (a dashboard that starts
+talking unprompted in a shared lab is a bad neighbour), persisted per person
+in `localStorage`, hidden where the browser lacks `speechSynthesis`. Synthesis
+is entirely browser-local — the server sends text, as it always did.
+
+Speech is a **summary channel, not a transcript reader**. `speakableFromMarkdown`
+drops fenced code, tables, and URLs (a spoken stack trace conveys nothing),
+bounds the utterance to whole sentences within 180 chars (~12 s — under the
+~15 s where a long-standing Chrome bug stalls utterances), appends "More on
+screen." when anything was cut, and makes `snake_case` ids pronounceable.
+This lands softly because the assistant's system prompt already demands 1–3
+sentences with the answer first: the lead sentence *is* the summary.
+
+For latency, the **first completed sentence is spoken mid-stream** rather
+than on the `done` frame; the rest of the turn is for the eyes. Escape,
+toggling off, closing the panel, or sending a new message all cancel speech.
+
+### 7.3 Push-to-talk (input) — `stt/`, `api/app/voice.py`, `use-voice-input.ts`
+
+One click total: 🎤 starts recording; an `AnalyserNode` watches signal level
+and ~0.9 s of trailing quiet ends the clip (second click or a 30 s cap as
+backstops). The clip POSTs to `/api/assistant/voice/transcribe`, and the
+transcript follows a **per-mode policy** that is the section's one real
+safety decision:
+
+| Mode | Transcript handling | Why |
+|---|---|---|
+| **Ask** | **auto-sends** — no Enter | read-only mode; a mishearing costs one wasted query |
+| **Control** | fills the input box only | a turn can end in a proposal card; the operator must see what they asked before it goes |
+
+**Voice is never an authorization channel.** *Authorize* and plan approval
+remain clicks on rendered cards (§5.1's argument verbatim: identity says
+*who*, never *whether the human meant it* — and ASR mishears). Push-to-talk
+only; no wake word, no open mic, ever.
+
+The pipeline: browser `MediaRecorder` clip → dashboard proxy (requires the
+middleware-verified `X-Auth-User`; anonymous audio is **refused, not
+transcribed**) → loopback STT service on `127.0.0.1:8070`. **No audio leaves
+the tailnet**, nothing is persisted, and logs carry who spoke and the latency
+— never the text. The mic button renders only when browser *and* service are
+capable (`/api/assistant/voice/health`, the same configured-gate pattern that
+hides the whole bubble).
+
+### 7.4 The STT service (`stt/` — see its README for ops detail)
+
+**Qwen3-ASR-1.7B** resident on the local GPU, chosen over faster-whisper
+(CTranslate2 INT8 is broken on Blackwell/sm_120; Whisper hallucinates on
+silence — the worst failure mode for a lab assistant) and over Parakeet
+(better leaderboard WER, but its word-boosting decoder is experimental and
+can't take out-of-vocabulary terms). The decisive feature is **trained-in
+context biasing**: the service builds its vocabulary prompt from
+`equipment.yaml` at startup — every device name plus spoken forms of ids
+("ot2 hte") — so onboarding a device extends the recognizer the same way it
+extends the dashboard.
+
+Engineering notes that took debugging to learn: the processor's float32
+audio features must be cast to the model's bfloat16 (`BatchFeature.to(device,
+dtype=...)` casts only floating tensors); transformers' audio loader needs
+`librosa`; and a **warmup transcription of synthetic silence at load** absorbs
+CUDA's ~3 s first-request cost so no operator ever pays it.
+
+Measured on the RTX 5080: **~550–700 ms warm for an 11 s clip** including
+ffmpeg decode (~400 ms for a typical utterance), 4.4 GB VRAM. End-to-end,
+voice-in → first spoken word ≈ 3–5 s, dominated by the assistant turn itself
+(~4 s on the Ask-mode OpenRouter backend) — STT is ~10 % of the budget.
+
+`stt/` is in the monorepo but **not a uv workspace member**: its own venv on
+Python 3.12 (the workspace's 3.14 has no GPU-stack wheels), and a GPU model
+must never load inside the `api/` process that owns the uptime sweep and
+every SSE stream. Deployed as `ac-organic-lab-stt.service`
+(`deploy/`), loopback-only; the dashboard proxy is its single network caller.
+
+### 7.5 Tuning and open items
+
+- `SPEECH_RMS` (0.04, `use-voice-input.ts`) is set for a headset mic. A room
+  mic beside a running shaker may never read as quiet — the manual stop still
+  works; raise the threshold if auto-stop misbehaves. Mic quality dominates
+  model choice: budget for a headset/lapel mic before tuning the decoder.
+- The bake-off harness never ran: ~20 recorded real utterances, device names
+  weighted, would confirm Qwen3-ASR over alternatives with data rather than
+  benchmarks. `STT_MODEL` is the seam.
+- Kuma's pill is the one remaining absolute-HTTP link (own site block on
+  :8005); an HTTPS visitor who clicks it leaves the secure origin.
+- Cookies stay non-`Secure` until the HTTPS origin becomes the published
+  canonical entrypoint.
+
+### See also (assistant voice)
+
+- §5 — the control-mode proposal flow that voice input must never bypass.
+- `stt/README.md` — service ops, env vars, privacy posture.
+- [`AUTH_DESIGN.md`](AUTH_DESIGN.md) — the verified `X-Auth-User` the proxy requires.

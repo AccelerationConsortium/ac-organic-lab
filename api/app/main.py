@@ -32,6 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
 from .assistant import build_assistant_router
+from .voice import build_voice_router
 from .alert_notifier import AlertNotifier
 from .control import build_control_router
 from .custody import build_custody_router
@@ -606,6 +607,7 @@ app.include_router(build_history_router())
 # Read-only Claude assistant -- streams chat over SSE, has tool access to
 # the history DB and a whitelisted set of systemd journals. See assistant.py.
 app.include_router(build_assistant_router())
+app.include_router(build_voice_router())
 # Admin-only browser SSH console into the lab's host machines (Utils ->
 # Computers and Servers). Human admins only -- never a machine principal; see
 # the module docstring and docs/AGENTIC_LAB_DESIGN.md Part II.
