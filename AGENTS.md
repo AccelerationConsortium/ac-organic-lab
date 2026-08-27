@@ -115,12 +115,19 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
 - **On the OT-2 gateways, the run engine is the only truth for labware and
   pipette names.** Read them from `/status`'s `details.snapshot.labwares` /
   `.pipettes`. Two neighbouring fields look authoritative and are not:
-  `details.session_recipe` is written *before* the setup runs and never rolled
-  back, so a failed setup advertises names that were never loaded; and
-  `POST /control/deck/declare` is a **full-layout replace**, so saving a layout
-  that omits a slot silently wipes it while `details.tip_racks` still reports
-  the rack stocked. Both produced a `409 … is not loaded in this run` on
-  2026-08-19 (`ot2_hte`) and 2026-08-27 (`ot2_complexation`). Any `/control/*`
+  `details.session_recipe` is a convenience mirror, not a substitute — it is
+  written *before* the setup runs, and historically was never rolled back, so a
+  failed setup advertised names that were never loaded. The gateway now rolls
+  the recipe back on a failed setup, resolves an unknown name by adopting the
+  run's own ids, and routes a slot-12 fixed-trash recipe entry to the trash
+  registrar instead of failing the load (opentrons-server PR #11, deployed
+  2026-08-27) — still resolve from the snapshot; it stays authoritative, and a
+  run left diverged before the fix persists until the next restart or fresh
+  setup. Separately, `POST /control/deck/declare` is a **full-layout replace**,
+  so saving a layout that omits a slot silently wipes it while
+  `details.tip_racks` still reports the rack stocked. Both produced a
+  `409 … is not loaded in this run` on 2026-08-19 (`ot2_hte`) and 2026-08-27
+  (`ot2_complexation`). Any `/control/*`
   refusal then *latches* the gateway into `error` — recovery is the operator's
   CLEAR ERROR (`reconcile`) in the device panel, which is deliberately not
   agent-proposable.
