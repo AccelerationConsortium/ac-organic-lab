@@ -1361,3 +1361,54 @@ async def test_propose_plan_not_authorized_and_no_actor(monkeypatch: pytest.Monk
         await ac._propose_plan(_registry(), "xarm", [{"action": "move.uplc_draw_home"}], "")
     )
     assert out["code"] == "no_actor"
+
+
+# ---------------------------------------------------------------------------
+# Step 1j: decline_proposal (the no-proposal terminal call)
+# ---------------------------------------------------------------------------
+
+
+def test_decline_proposal_returns_declined_payload() -> None:
+    out = json.loads(ac._decline_proposal("safety_floor", "stop verbs are operator-only"))
+    assert out == {
+        "declined": {
+            "reason_code": "safety_floor",
+            "explanation": "stop verbs are operator-only",
+        }
+    }
+
+
+def test_decline_proposal_coerces_unknown_reason_to_other() -> None:
+    # The tool exists to TERMINATE a turn; a bad enum must not fail it.
+    out = json.loads(ac._decline_proposal("bogus_code", "reasoning here"))
+    assert out["declined"]["reason_code"] == "other"
+
+
+def test_decline_proposal_requires_an_explanation() -> None:
+    out = json.loads(ac._decline_proposal("informational", "   "))
+    assert out["code"] == "empty_explanation"
+
+
+def test_decline_proposal_flattens_whitespace() -> None:
+    out = json.loads(ac._decline_proposal("informational", "no\naction\n  asked"))
+    assert out["declined"]["explanation"] == "no action asked"
+
+
+def test_refusal_codes_cover_every_propose_path_err_code() -> None:
+    """Parity guard: every `_err("<code>", ...)` a propose path can emit is in
+    REFUSAL_CODES, so assistant.py's proposal_refused frame can never silently
+    miss a new refusal. Codes from the non-propose tools (labware lookup,
+    decline's own validation) are exempt — they are not proposal refusals."""
+
+    import inspect
+    import re
+
+    source = inspect.getsource(ac)
+    # Refusals reach _err two ways: a literal `_err("<code>", ...)`, or a
+    # raised `ProposalRefused("<code>", ...)` relayed as `_err(exc.code, ...)`.
+    all_codes = set(re.findall(r'_err\(\s*\n?\s*"([a-z_]+)"', source))
+    all_codes |= set(re.findall(r'ProposalRefused\(\s*\n?\s*"([a-z_]+)"', source))
+    non_propose = {"unknown_labware", "incomplete_definition", "empty_explanation"}
+    assert all_codes - non_propose <= ac.REFUSAL_CODES
+    # And the set holds nothing stale that no code path can produce.
+    assert ac.REFUSAL_CODES <= all_codes

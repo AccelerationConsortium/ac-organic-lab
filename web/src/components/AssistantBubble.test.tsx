@@ -698,3 +698,47 @@ describe("AssistantBubble resize", () => {
     });
   });
 });
+
+describe("AssistantBubble Step 1j refusal/decline chips", () => {
+  async function sendInControlMode(text: string) {
+    await openPanel();
+    const control = await screen.findByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const box = screen.getByPlaceholderText(/operate a device/i);
+    fireEvent.change(box, { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  }
+
+  it("renders an amber chip from a proposal_refused frame", async () => {
+    installFetch([
+      'data: {"type":"text","delta":"That is not currently allowed."}\n\n',
+      'data: {"type":"proposal_refused","refusal":{"code":"not_allowed","message":"seal.start is not in allowed_actions"}}\n\n',
+      'data: {"type":"done"}\n\n',
+    ]);
+    await sendInControlMode("seal the plate");
+    await screen.findByText(/Proposal refused \(not_allowed\)/);
+    expect(screen.getByText(/seal\.start is not in allowed_actions/)).toBeTruthy();
+  });
+
+  it("renders a muted chip from a declined frame", async () => {
+    installFetch([
+      'data: {"type":"text","delta":"Stop verbs stay operator-only."}\n\n',
+      'data: {"type":"declined","declined":{"reason_code":"safety_floor","explanation":"stop verbs are operator-only"}}\n\n',
+      'data: {"type":"done"}\n\n',
+    ]);
+    await sendInControlMode("stop the shaker");
+    await screen.findByText(/No action proposed — stop verbs are operator-only/);
+  });
+
+  it("hides informational declines (they only terminate the turn)", async () => {
+    installFetch([
+      'data: {"type":"text","delta":"The shaker is idle."}\n\n',
+      'data: {"type":"declined","declined":{"reason_code":"informational","explanation":"no action requested"}}\n\n',
+      'data: {"type":"done"}\n\n',
+    ]);
+    await sendInControlMode("what is the shaker doing?");
+    await screen.findByText(/The shaker is idle\./);
+    expect(screen.queryByText(/No action proposed/)).toBeNull();
+  });
+});

@@ -528,3 +528,178 @@ async def test_slow_tool_call_keeps_the_stream_alive(monkeypatch) -> None:
     assert [f["type"] for f in during_tool] == ["status"] * len(during_tool)
     assert len(during_tool) >= 3
     assert during_tool[0]["label"] == "running query_runs…"
+
+
+# ---------------------------------------------------------------------------
+# Step 1j: terminal-call enforcement (nudge) + refusal/decline frames
+# ---------------------------------------------------------------------------
+
+
+def _prose_round(text: str = "Sure, done!") -> bytes:
+    return _sse_body(
+        [
+            {"choices": [{"delta": {"content": text}}]},
+            {"usage": {"completion_tokens": 3}, "choices": []},
+            "[DONE]",
+        ]
+    )
+
+
+def _tool_round(name: str, args: str = "{}") -> bytes:
+    return _sse_body(
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_a",
+                                    "function": {"name": name, "arguments": args},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {"usage": {"completion_tokens": 7}, "choices": []},
+            "[DONE]",
+        ]
+    )
+
+
+@respx.mock
+async def test_control_prose_only_turn_is_nudged_once_then_reported(monkeypatch) -> None:
+    """A control turn that twice ends with prose and no terminal call gets
+    exactly one nudge round, then a visible harness `declined` frame — never
+    a silent no-button ending."""
+
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _fake_sessions_factory([], "{}"),
+    )
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions")
+    route.side_effect = [
+        Response(200, content=_prose_round("I will move the arm now."), headers={"content-type": "text/event-stream"}),
+        Response(200, content=_prose_round("Understood."), headers={"content-type": "text/event-stream"}),
+    ]
+
+    frames = _frames(
+        [
+            f
+            async for f in assistant_openai.run_openai_turn(
+                [ChatMessage(role="user", content="move the arm to home")],
+                control=True,
+                actor="op@lab.local",
+            )
+        ]
+    )
+    types = [f["type"] for f in frames]
+    assert types.count("declined") == 1
+    assert types[-1] == "done"
+    declined = next(f for f in frames if f["type"] == "declined")["declined"]
+    assert "without proposing or declining" in declined["explanation"]
+    # Exactly two HTTP rounds: the original + one nudge, never more.
+    assert len(route.calls) == 2
+    second_body = json.loads(route.calls[1].request.content)
+    assert any(
+        "terminal call" in str(m.get("content")) for m in second_body["messages"]
+    )
+
+
+@respx.mock
+async def test_control_decline_tool_ends_turn_without_nudge(monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    declined_payload = {
+        "declined": {"reason_code": "safety_floor", "explanation": "stop verbs are operator-only"}
+    }
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _fake_sessions_factory([], json.dumps(declined_payload)),
+    )
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions")
+    route.side_effect = [
+        Response(200, content=_tool_round("mcp__lab-control__decline_proposal", '{"reason_code": "safety_floor", "explanation": "stop verbs are operator-only"}'), headers={"content-type": "text/event-stream"}),
+        Response(200, content=_prose_round("I cannot propose that."), headers={"content-type": "text/event-stream"}),
+    ]
+
+    frames = _frames(
+        [
+            f
+            async for f in assistant_openai.run_openai_turn(
+                [ChatMessage(role="user", content="stop the shaker")],
+                control=True,
+                actor="op@lab.local",
+            )
+        ]
+    )
+    types = [f["type"] for f in frames]
+    assert "declined" in types
+    assert types[-1] == "done"
+    # Terminal call seen -> exactly two rounds, no nudge request.
+    assert len(route.calls) == 2
+    declined = next(f for f in frames if f["type"] == "declined")["declined"]
+    assert declined["reason_code"] == "safety_floor"
+
+
+@respx.mock
+async def test_control_refused_proposal_emits_refusal_frame_and_no_nudge(monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    refusal_payload = {"error": "'seal.start' is not in allowed_actions", "code": "not_allowed"}
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _fake_sessions_factory([], json.dumps(refusal_payload)),
+    )
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions")
+    route.side_effect = [
+        Response(200, content=_tool_round("mcp__lab-control__propose_action", '{"equipment_id": "plateloc", "action": "seal.start"}'), headers={"content-type": "text/event-stream"}),
+        Response(200, content=_prose_round("The device refused: heater not in band."), headers={"content-type": "text/event-stream"}),
+    ]
+
+    frames = _frames(
+        [
+            f
+            async for f in assistant_openai.run_openai_turn(
+                [ChatMessage(role="user", content="seal the plate")],
+                control=True,
+                actor="op@lab.local",
+            )
+        ]
+    )
+    types = [f["type"] for f in frames]
+    assert "proposal_refused" in types
+    assert "proposal" not in types
+    assert types[-1] == "done"
+    assert len(route.calls) == 2
+    refusal = next(f for f in frames if f["type"] == "proposal_refused")["refusal"]
+    assert refusal["code"] == "not_allowed"
+
+
+@respx.mock
+async def test_ask_mode_prose_turn_is_never_nudged(monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _fake_sessions_factory([], "{}"),
+    )
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions")
+    route.side_effect = [
+        Response(200, content=_prose_round("The shaker is idle."), headers={"content-type": "text/event-stream"}),
+    ]
+
+    frames = _frames(
+        [
+            f
+            async for f in assistant_openai.run_openai_turn(
+                [ChatMessage(role="user", content="what is the shaker doing?")]
+            )
+        ]
+    )
+    assert [f["type"] for f in frames][-1] == "done"
+    assert len(route.calls) == 1

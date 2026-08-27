@@ -278,6 +278,82 @@ def test_translate_event_history_tool_result_has_no_proposal() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Step 1j: refusal + decline extraction and frames
+# ---------------------------------------------------------------------------
+
+
+def test_refusal_from_tool_result_matches_refusal_codes() -> None:
+    block = {"content": json.dumps({"error": "not in allowed_actions", "code": "not_allowed"})}
+    refusal = assistant._refusal_from_tool_result(block)
+    assert refusal == {"code": "not_allowed", "message": "not in allowed_actions"}
+
+
+def test_refusal_ignores_errors_without_a_refusal_code() -> None:
+    # History-tool errors (or any error whose code is not in REFUSAL_CODES)
+    # must never render the amber refusal chip.
+    assert assistant._refusal_from_tool_result({"content": json.dumps({"error": "boom"})}) is None
+    assert (
+        assistant._refusal_from_tool_result(
+            {"content": json.dumps({"error": "boom", "code": "something_else"})}
+        )
+        is None
+    )
+
+
+def test_refusal_from_tool_result_unwraps_claude_result_envelope() -> None:
+    block = {
+        "content": json.dumps(
+            {"result": json.dumps({"error": "nope", "code": "invalid_args"})}
+        )
+    }
+    assert assistant._refusal_from_tool_result(block) == {
+        "code": "invalid_args",
+        "message": "nope",
+    }
+
+
+def test_declined_from_tool_result() -> None:
+    payload = {"declined": {"reason_code": "informational", "explanation": "no action asked"}}
+    block = {"content": json.dumps(payload)}
+    assert assistant._declined_from_tool_result(block) == payload["declined"]
+    assert assistant._declined_from_tool_result({"content": "[]"}) is None
+
+
+def test_translate_event_emits_proposal_refused_frame() -> None:
+    payload = {"error": "'seal.start' is not in allowed_actions", "code": "not_allowed"}
+    event = {
+        "type": "user",
+        "message": {
+            "content": [
+                {"type": "tool_result", "content": [{"type": "text", "text": json.dumps(payload)}]}
+            ]
+        },
+    }
+    frames = assistant._translate_event(event)
+    types = [f["type"] for f in frames]
+    assert "proposal_refused" in types
+    assert "proposal" not in types
+    refusal = next(f for f in frames if f["type"] == "proposal_refused")["refusal"]
+    assert refusal["code"] == "not_allowed"
+
+
+def test_translate_event_emits_declined_frame() -> None:
+    payload = {"declined": {"reason_code": "safety_floor", "explanation": "stop verbs stay operator-only"}}
+    event = {
+        "type": "user",
+        "message": {
+            "content": [
+                {"type": "tool_result", "content": [{"type": "text", "text": json.dumps(payload)}]}
+            ]
+        },
+    }
+    frames = assistant._translate_event(event)
+    types = [f["type"] for f in frames]
+    assert "declined" in types
+    assert next(f for f in frames if f["type"] == "declined")["declined"]["reason_code"] == "safety_floor"
+
+
+# ---------------------------------------------------------------------------
 # ChatRequest
 # ---------------------------------------------------------------------------
 

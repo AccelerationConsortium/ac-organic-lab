@@ -69,7 +69,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from .assistant_control import PLAN_TTL_S, plan_step_hash
+from .assistant_control import PLAN_TTL_S, REFUSAL_CODES, plan_step_hash
 
 logger = logging.getLogger(__name__)
 
@@ -386,18 +386,26 @@ click.
 
 HARD RULES FOR EVERY CONTROL REQUEST (do not skip):
 
-1. ALWAYS either propose or explain why not. When the user asks you to make a
-   device do something, your reply MUST end in exactly one of two ways — never
-   leave the request dangling with neither:
-   (a) you call propose_action or propose_plan, which renders the authorize
-       button the user must click; or
-   (b) you give a specific, truthful reason you will not propose it (action
-       not proposable / safety-floor only / spans devices / would exceed the
-       step cap / needs a human at the instrument / the device is unavailable
-       or unreachable / you lack the state to act safely).
-   Do not answer a control request with prose alone when the request is in
-   scope — if it is in scope and safe, propose it; if not, say why. Never
-   "forget" to emit the proposal.
+1. EVERY REPLY ENDS WITH EXACTLY ONE lab-control TERMINAL CALL. The three
+   terminal tools are propose_action, propose_plan, and decline_proposal —
+   one of them must be the last tool you call before your reply ends, every
+   single control-mode turn, with no exception for informational exchanges:
+   (a) propose_action / propose_plan — the ONLY thing that renders the
+       authorize button. TEXT NEVER RENDERS A BUTTON: writing "I've proposed
+       it, click Authorize" without having called the tool shows the
+       operator nothing. If you did not call the tool, there is no button.
+   (b) decline_proposal(reason_code, explanation) — when you will not or
+       cannot propose. reason_code is one of: not_proposable, safety_floor,
+       cross_device, too_many_steps, needs_human, device_unavailable,
+       unsafe_state, informational (a purely informational exchange with no
+       action to propose), other. explanation is ONE line the operator reads
+       on screen; still give the fuller reasoning in your text.
+   A propose call that comes back REFUSED (an error+code result) also ends
+   the turn: the refusal is shown to the operator automatically — relay the
+   reason in your text, do not retry a workaround, and do not follow it with
+   decline_proposal. Prose alone never ends a control-mode turn; a reply
+   without a terminal call is a protocol violation — the harness bounces it
+   back to you once, then reports the failure to the operator.
 2. SURFACE STATE CONFLICTS BEFORE THE BUTTON. Before proposing, read the
    device's live state (list_available_actions / get_equipment_status) and
    check the action against it. If what the user asked would conflict with
@@ -756,6 +764,35 @@ def _plan_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _refusal_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
+    """A lab-control proposal refusal in a tool_result block, if any.
+
+    ``propose_action`` / ``propose_plan`` refuse with ``{"error": <msg>,
+    "code": <code>}`` where ``code`` is one of
+    ``assistant_control.REFUSAL_CODES``. Step 1j surfaces these as a
+    dedicated ``proposal_refused`` frame: a refusal with no frame is the
+    operator's "the assistant understood but no authorize button appeared"
+    complaint — the why lived only in prose the model may or may not write.
+    Matching on the code set keeps ordinary history-tool errors (which carry
+    no such code) out of the refusal chip."""
+
+    for data in _json_payloads_from_tool_result(block):
+        code = data.get("code")
+        if isinstance(data.get("error"), str) and code in REFUSAL_CODES:
+            return {"code": code, "message": data["error"]}
+    return None
+
+
+def _declined_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
+    """The explicit no-proposal terminal (Step 1j): ``decline_proposal``
+    returns ``{"declined": {"reason_code": ..., "explanation": ...}}``."""
+
+    for data in _json_payloads_from_tool_result(block):
+        if isinstance(data.get("declined"), dict):
+            return data["declined"]
+    return None
+
+
 def _translate_event(event: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert one ``claude -p --output-format stream-json`` line into zero
     or more frames suitable for the AssistantBubble SSE consumer.
@@ -814,6 +851,15 @@ def _translate_event(event: dict[str, Any]) -> list[dict[str, Any]]:
                     plan = _plan_from_tool_result(block)
                     if plan is not None:
                         out.append({"type": "plan", "plan": plan})
+                    # Step 1j: a refused proposal and an explicit decline are
+                    # both terminal outcomes the operator must SEE — the
+                    # button's absence alone is not an explanation.
+                    refusal = _refusal_from_tool_result(block)
+                    if refusal is not None:
+                        out.append({"type": "proposal_refused", "refusal": refusal})
+                    declined = _declined_from_tool_result(block)
+                    if declined is not None:
+                        out.append({"type": "declined", "declined": declined})
 
     elif etype == "result":
         # Final wrap-up. is_error=true means a hard failure that didn't

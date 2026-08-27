@@ -49,10 +49,12 @@ from .assistant import (
     SYSTEM_PROMPT,
     ChatMessage,
     _control_server_env,
+    _declined_from_tool_result,
     _history_server_env,
     _mcp_server_command,
     _plan_from_tool_result,
     _proposal_from_tool_result,
+    _refusal_from_tool_result,
     _sse,
 )
 
@@ -76,6 +78,31 @@ OPENAI_CONTROL_REASONING_EFFORT = os.environ.get(
 # One round = one chat-completions request. Tool-using answers need several;
 # a runaway loop should die well before the wallclock cap does it for us.
 MAX_TOOL_ROUNDS = 12
+
+# Step 1j enforcement: bounced back to the model EXACTLY ONCE per control turn
+# when its reply ends with prose but no lab-control terminal call
+# (propose_action / propose_plan / decline_proposal). This is the mechanical
+# backstop for the prompt's rule 1 — small models routinely "understand" the
+# request, narrate an answer, and never call the tool, which renders no
+# authorize button. The message reaches the model as a user-role turn but is
+# written by this backend, never by the operator, and is not persisted into
+# the bubble's history (the convo is rebuilt from the bubble each request).
+CONTROL_TERMINAL_NUDGE = (
+    "[automated harness check — the operator did not write this] Your reply "
+    "ended without a lab-control terminal call. Control mode requires every "
+    "reply to end with exactly one of: propose_action, propose_plan, or "
+    "decline_proposal(reason_code, explanation). If the operator's last "
+    "message asked for a device action that is in scope, make the propose "
+    "call NOW — the authorize button renders ONLY from the tool call, never "
+    "from your text. Otherwise call decline_proposal (reason_code "
+    "'informational' if there was simply no action to propose). Do not "
+    "repeat your previous text."
+)
+
+# The short (post ``mcp__<server>__`` prefix) names of the three terminal
+# tools. A control turn that never lands one of these — nor a proposal/plan/
+# refusal/decline payload from any tool — is incomplete (see the nudge above).
+_TERMINAL_TOOL_NAMES = frozenset({"propose_action", "propose_plan", "decline_proposal"})
 MCP_CALL_TIMEOUT_S = 30.0
 # How often a silent stretch may re-announce the phase: a throttle, so that
 # thinking tokens (which arrive far too fast to forward one frame each) cost
@@ -403,6 +430,11 @@ async def run_openai_turn(
     saw_reasoning = False
     cached_in: int | None = None
     terminal = "incomplete"
+    # Step 1j: has this turn landed a lab-control terminal outcome — a
+    # propose/decline tool call, or any proposal / plan / refusal / decline
+    # payload? Gates the one-shot CONTROL_TERMINAL_NUDGE below.
+    terminal_call_seen = False
+    nudged = False
 
     # Before anything slow happens — MCP servers spawning, the model queueing
     # — so the bubble shows a live pill from the moment the request lands
@@ -519,6 +551,52 @@ async def run_openai_turn(
                             )
 
                     if not tool_calls:
+                        if include_control and not terminal_call_seen:
+                            if not nudged:
+                                # Rule-1 enforcement: bounce the incomplete
+                                # reply back exactly once. The prose already
+                                # streamed to the bubble stays visible; the
+                                # model's next round adds the missing call.
+                                nudged = True
+                                convo.append(
+                                    {"role": "assistant", "content": round_text or ""}
+                                )
+                                convo.append(
+                                    {"role": "user", "content": CONTROL_TERMINAL_NUDGE}
+                                )
+                                yield _sse(
+                                    {
+                                        "type": "status",
+                                        "phase": "thinking",
+                                        "label": "completing proposal…",
+                                    }
+                                )
+                                continue
+                            # Nudged once and still no terminal call: stop and
+                            # tell the operator instead of ending silently —
+                            # the invisible version of this is exactly the
+                            # "understood but no button" complaint.
+                            yield _sse(
+                                {
+                                    "type": "declined",
+                                    "declined": {
+                                        "reason_code": "other",
+                                        "explanation": (
+                                            "The assistant ended its turn without "
+                                            "proposing or declining, so no authorize "
+                                            "button was produced. Rephrase the "
+                                            "request, or use the device tile "
+                                            "controls."
+                                        ),
+                                    },
+                                }
+                            )
+                            logger.warning(
+                                "control turn ended without a terminal lab-control "
+                                "call despite nudge: user=%s model=%s",
+                                actor,
+                                model,
+                            )
                         terminal = "done"
                         yield _sse({"type": "done"})
                         return
@@ -570,8 +648,11 @@ async def run_openai_turn(
                         finally:
                             running.cancel()
                         yield _sse({"type": "tool_result", "name": pretty})
+                        if pretty in _TERMINAL_TOOL_NAMES:
+                            terminal_call_seen = True
                         proposal = _proposal_from_tool_result({"content": result_text})
                         if proposal is not None:
+                            terminal_call_seen = True
                             if on_proposal is not None:
                                 try:
                                     await on_proposal(proposal)
@@ -584,6 +665,7 @@ async def run_openai_turn(
                         # sibling of a proposal — one card, approved by hash.
                         plan = _plan_from_tool_result({"content": result_text})
                         if plan is not None:
+                            terminal_call_seen = True
                             if on_plan is not None:
                                 try:
                                     await on_plan(plan)
@@ -592,6 +674,17 @@ async def run_openai_turn(
                                         "assistant_plan audit failed", exc_info=True
                                     )
                             yield _sse({"type": "plan", "plan": plan})
+                        # Step 1j: a refused proposal and an explicit decline
+                        # are terminal outcomes the operator must SEE — the
+                        # button's absence alone is not an explanation.
+                        refusal = _refusal_from_tool_result({"content": result_text})
+                        if refusal is not None:
+                            terminal_call_seen = True
+                            yield _sse({"type": "proposal_refused", "refusal": refusal})
+                        declined = _declined_from_tool_result({"content": result_text})
+                        if declined is not None:
+                            terminal_call_seen = True
+                            yield _sse({"type": "declined", "declined": declined})
                         convo.append(
                             {
                                 "role": "tool",

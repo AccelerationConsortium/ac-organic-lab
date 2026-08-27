@@ -69,6 +69,15 @@ interface ChatTurn {
    * turns persisted before this field existed; those render as Ask, which
    * matches the old behavior exactly (mode resets to Ask on reload). */
   mode?: Mode;
+  /** Control mode (Step 1j): a propose_action/propose_plan refusal surfaced
+   * by the backend (`proposal_refused` frame). Rendered as an amber chip in
+   * the turn, so "why is there no authorize button" is always on screen
+   * instead of living only in the model's prose. */
+  refusal?: { code: string; message: string };
+  /** Control mode (Step 1j): the model's explicit no-proposal terminal
+   * (`decline_proposal`). Informational declines are dropped at ingest —
+   * they exist to end the turn, not to be read. */
+  declined?: { reason_code: string; explanation: string };
 }
 
 /** A validated, propose-only action from the lab-control MCP server. */
@@ -885,6 +894,37 @@ function AssistantBubbleInner() {
             updated.tools = updated.tools.map((t, i) =>
               i === realIdx ? { ...t, ok: true } : t
             );
+          }
+        } else if (
+          event.type === "proposal_refused" &&
+          event.refusal &&
+          typeof event.refusal === "object"
+        ) {
+          // Step 1j: the proposal was attempted and the lab-control server
+          // refused it. Without this chip the refusal is invisible — the
+          // operator sees the request "understood" and no button.
+          const r = event.refusal as { code?: unknown; message?: unknown };
+          updated.refusal = {
+            code: String(r.code ?? ""),
+            message: String(r.message ?? ""),
+          };
+        } else if (
+          event.type === "declined" &&
+          event.declined &&
+          typeof event.declined === "object"
+        ) {
+          // Step 1j: the model explicitly ended the turn without proposing.
+          // Informational declines carry no information beyond "this was
+          // Q&A" — the prose already answers — so they render nothing.
+          const d = event.declined as {
+            reason_code?: unknown;
+            explanation?: unknown;
+          };
+          if (d.reason_code !== "informational") {
+            updated.declined = {
+              reason_code: String(d.reason_code ?? "other"),
+              explanation: String(d.explanation ?? ""),
+            };
           }
         } else if (event.type === "done") {
           // Natural end of a completed turn. Marks the run as terminated so
@@ -1916,6 +1956,16 @@ function Turn({
               <span className="opacity-60">{isUser ? "" : "…"}</span>
             )}
           </span>
+        )}
+        {turn.refusal && (
+          <div className="mt-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[12px] text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+            Proposal refused ({turn.refusal.code}): {turn.refusal.message}
+          </div>
+        )}
+        {turn.declined && (
+          <div className="mt-1.5 rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[12px] text-slate-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400">
+            No action proposed — {turn.declined.explanation}
+          </div>
         )}
       </div>
     </div>

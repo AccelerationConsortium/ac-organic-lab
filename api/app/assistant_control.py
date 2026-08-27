@@ -105,6 +105,47 @@ PLAN_TTL_S = 600
 # past this the model is told to split the work or recommend a workflow plan.
 MAX_PLAN_STEPS = 40
 
+# Every machine code a propose_action / propose_plan refusal can carry (the
+# ``_err`` calls in the propose paths). assistant.py matches tool-result
+# payloads against this set to emit a visible ``proposal_refused`` frame:
+# without one, a refused proposal is indistinguishable from the model never
+# proposing at all — the operator sees the request "understood" and no
+# authorize button, and the why lives only in prose the model may not write.
+REFUSAL_CODES = frozenset(
+    {
+        "no_actor",
+        "unknown_equipment",
+        "disabled",
+        "unreachable",
+        "not_allowed",
+        "unmappable_action",
+        "invalid_args",
+        "forbidden_field",
+        "not_authorized",
+        "empty_plan",
+        "too_many_steps",
+        "invalid_step",
+    }
+)
+
+# The reason vocabulary for decline_proposal — mirrors the control prompt's
+# "why not" list. An unknown code coerces to "other" rather than erroring:
+# the tool exists to TERMINATE a control turn, and must never be one more
+# thing that can fail and leave the turn dangling.
+DECLINE_REASON_CODES = frozenset(
+    {
+        "not_proposable",
+        "safety_floor",
+        "cross_device",
+        "too_many_steps",
+        "needs_human",
+        "device_unavailable",
+        "unsafe_state",
+        "informational",
+        "other",
+    }
+)
+
 
 # ---------------------------------------------------------------------------
 # Config seams (mirror api/app/control.py so behaviour matches the passthrough)
@@ -708,6 +749,31 @@ async def _propose_action(
     return _dumps({"proposal": proposal})
 
 
+def _decline_proposal(reason_code: str, explanation: str) -> str:
+    """The no-proposal terminal call (Step 1j, 2026-08-25).
+
+    Control mode's contract is "every reply ends with a terminal lab-control
+    call": propose_action / propose_plan when an action is proposed, THIS
+    when one is not. Making the decline a tool (rather than prose) is what
+    lets the backend enforce the contract mechanically — a control turn that
+    ends with no terminal call is detectably incomplete, and the operator
+    always sees an explicit on-screen reason instead of inferring one from
+    the button's absence.
+    """
+
+    code = (reason_code or "").strip()
+    if code not in DECLINE_REASON_CODES:
+        code = "other"
+    text = " ".join((explanation or "").split())
+    if not text:
+        return _err(
+            "empty_explanation",
+            "decline_proposal needs a one-line explanation the operator will "
+            "read on screen; call it again with one",
+        )
+    return _dumps({"declined": {"reason_code": code, "explanation": text}})
+
+
 def plan_step_hash(steps: list[dict[str, Any]]) -> str:
     """Stable digest of a plan's ``(action, args)`` list.
 
@@ -919,6 +985,22 @@ def _build_server(registry: Registry):
 
         return await _propose_plan(registry, equipment_id, steps, reason)
 
+    @server.tool()
+    async def decline_proposal(reason_code: str, explanation: str = "") -> str:
+        """End a control-mode reply WITHOUT proposing. Call this whenever the
+        user's request will not get a propose_action/propose_plan call this
+        turn: the action is out of scope or safety-floor, spans devices,
+        exceeds the step cap, the device is unavailable, the state is unsafe
+        — or the exchange was purely informational and there is simply no
+        action to propose (reason_code "informational"). ``reason_code`` is
+        one of: not_proposable, safety_floor, cross_device, too_many_steps,
+        needs_human, device_unavailable, unsafe_state, informational, other.
+        ``explanation`` is ONE line the operator reads on screen. Every
+        control-mode reply must end with exactly one terminal call —
+        propose_action, propose_plan, or this."""
+
+        return _decline_proposal(reason_code, explanation)
+
     return server
 
 
@@ -944,4 +1026,12 @@ if __name__ == "__main__":  # pragma: no cover
     run()
 
 
-__all__ = ["run", "PROPOSAL_TTL_S", "PLAN_TTL_S", "MAX_PLAN_STEPS", "plan_step_hash"]
+__all__ = [
+    "run",
+    "PROPOSAL_TTL_S",
+    "PLAN_TTL_S",
+    "MAX_PLAN_STEPS",
+    "REFUSAL_CODES",
+    "DECLINE_REASON_CODES",
+    "plan_step_hash",
+]
