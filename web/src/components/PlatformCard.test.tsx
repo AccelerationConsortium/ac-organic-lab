@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { EquipmentSnapshot } from "@/types/api";
@@ -217,7 +217,11 @@ describe("PlatformCard camera preview selection", () => {
 
     // Exactly one stream toggle and one preview region, and that region
     // names the first camera — the second appears as an equipment row only.
-    expect(screen.getAllByTitle("Show camera stream")).toHaveLength(1);
+    // The preview starts expanded, so collapse it and read the placeholder,
+    // which is where the previewed camera's name is rendered.
+    const toggles = screen.getAllByTitle("Hide camera stream");
+    expect(toggles).toHaveLength(1);
+    fireEvent.click(toggles[0]);
     const preview = screen.getByText("Stream hidden").parentElement!;
     expect(preview.textContent).toContain("Echem Platform Camera");
     expect(preview.textContent).not.toContain("Echem OT2 Camera");

@@ -453,17 +453,25 @@ function UptimeSection({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
       {snapshots.length === 0 ? (
         <EmptyState message="No devices found in registry." />
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:[grid-template-columns:repeat(2,minmax(0,540px))]">
+        // Same masonry as the Overview page: two full-width columns (edge-to-
+        // edge with the page heading, matching an Overview platform card's
+        // width and alignment), each tile at its own content height —
+        // `break-inside-avoid` keeps a tile from splitting across the column
+        // boundary, `mb-4` is the vertical gap (multicol uses margins, not
+        // `gap`). The previous grid capped columns at 540px and stretched
+        // every tile to its row partner's height.
+        <div className="columns-1 gap-4 lg:columns-2">
           {platforms.map((p) => (
-            <PlatformGroup
-              key={p}
-              platform={p}
-              snaps={byPlatform[p]}
-              uptimeData={uptimeData?.devices}
-              isPending={isPending}
-              days={days}
-              onDaysChange={setDays}
-            />
+            <div key={p} className="mb-4 break-inside-avoid">
+              <PlatformGroup
+                platform={p}
+                snaps={byPlatform[p]}
+                uptimeData={uptimeData?.devices}
+                isPending={isPending}
+                days={days}
+                onDaysChange={setDays}
+              />
+            </div>
           ))}
         </div>
       )}

@@ -29,6 +29,54 @@ html.dark body {
   color: #e2e8f0;
 }
 
+/* Scrollbars — one style for the page and every inner scroll panel (admin
+   tile tables, assistant bubble, deck panel, …), themed with the palette so
+   dark theme never mixes UA-default light scrollbars into a dark page.
+   Chromium + Safari take the ::-webkit-scrollbar rules; Firefox takes the
+   standard properties, guarded behind @supports so Chromium (121+) doesn't
+   see scrollbar-color and drop the webkit styling for plain square bars.
+   Bitácora's globals.css carries the same values so the inventory embed's
+   scrollbars are indistinguishable from the host page's. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1; /* slate-300 */
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8; /* slate-400 */
+}
+html.dark::-webkit-scrollbar-thumb,
+html.dark ::-webkit-scrollbar-thumb {
+  background-color: #475569; /* slate-600 */
+}
+html.dark::-webkit-scrollbar-thumb:hover,
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background-color: #64748b; /* slate-500 */
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  html,
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  html.dark,
+  html.dark * {
+    scrollbar-color: #475569 transparent;
+  }
+}
+
 /* Heading collapse (ChromeToggle): the title + logo row is hidden while
    <html> carries `chrome-collapsed`; the class is restored before first paint
    by layout.tsx's init script, so there is no flash either way. Printing

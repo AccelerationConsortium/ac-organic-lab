@@ -336,7 +336,7 @@ The static inventory of "what equipment exists in this lab". Edited by humans wh
 
 > **`platform:` removed in schema v2.** Equipment entries no longer carry a `platform:` field. Section membership is declared exclusively in `platforms.yaml`; `EquipmentSnapshot.platform` is resolved by the API at compose time.
 
-> **Stream visibility** is not a YAML field. When a platform has a camera the platform card shows a "Show stream / Hide stream" toggle — the live feed is collapsed by default. There is no `hide_stream` flag; the toggle is purely a runtime UI control.
+> **Stream visibility** is not a YAML field. When a platform has a camera the platform card shows a "Show stream / Hide stream" toggle — the live feed is **expanded by default** and the toggle collapses it. There is no `hide_stream` flag; the toggle is purely a runtime UI control.
 
 ### `platforms.yaml` (root)
 

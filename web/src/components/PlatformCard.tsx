@@ -177,7 +177,9 @@ export function PlatformCard({
   // The platform's camera (if any) drives the preview region and also remains
   // in the equipment list so its status is visible alongside the other modules.
   const camera = snapshots.find((s) => s.kind === "camera") ?? null;
-  const [streamVisible, setStreamVisible] = useState(false);
+  // Expanded by default: the preview is the fastest read on the Overview page,
+  // so the card shows the live feed on arrival and the toggle collapses it.
+  const [streamVisible, setStreamVisible] = useState(true);
 
   const showSkeleton = pending && snapshots.length === 0;
   const count = snapshots.length > 0 ? snapshots.length : (expectedCount ?? 0);

@@ -5,28 +5,9 @@ sections:
   #   kind: environmental_map
   #   equipment: [env_hte, env_storage, env_lab499_west, env_lab499_east]
 
-  - id: web_services
-    title: Services
-    description: Lab web UIs and dashboards
-    kind: platform
-    # hostops_* stay registered + polled in equipment.yaml but render on
-    # /utils/devices (the PCs & Servers panel), not on this card.
-    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, bitacora_eln, pypoe_web, kasa_tapo_gateway, bambu_gateway, uptime_kuma, hermes_web]
-    
-  - id: complexation
-    title: Complexation Platform
-    description: Electrochemistry platform
-    href: /platforms/complexation
-    kind: platform
-    equipment:
-      # cam_echem_tapo_c245 ("Echem Platform Camera") is deliberately NOT
-      # listed (hidden from this platform since 2026-08-23). It stays
-      # registered + polled in equipment.yaml; re-add it here to show it.
-      # The Overview card streams only the FIRST camera in this list, so the
-      # OT-2 camera is now the one that streams.
-      - cam_echem_tapo_c100
-      - ot2_complexation
-
+  # Overview / Nav order: HTE → Services → Complexation. The headline
+  # "Accounts & Activities" tile is rendered by the Overview page ahead of
+  # every section, so the full page order is Accounts & Activities → these.
   - id: hte
     title: HTE Platform
     description: High-throughput platform for chemistry
@@ -51,5 +32,24 @@ sections:
       - plug_hte_strip_right
       - plug_hte_strip_left
 
+  - id: web_services
+    title: Services
+    description: Lab web UIs and dashboards
+    kind: platform
+    # hostops_* stay registered + polled in equipment.yaml but render on
+    # /utils/devices (the PCs & Servers panel), not on this card.
+    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, bitacora_eln, pypoe_web, kasa_tapo_gateway, bambu_gateway, uptime_kuma, hermes_web]
 
-
+  - id: complexation
+    title: Complexation Platform
+    description: Electrochemistry platform
+    href: /platforms/complexation
+    kind: platform
+    equipment:
+      # cam_echem_tapo_c245 ("Echem Platform Camera") is deliberately NOT
+      # listed (hidden from this platform since 2026-08-23). It stays
+      # registered + polled in equipment.yaml; re-add it here to show it.
+      # The Overview card streams only the FIRST camera in this list, so the
+      # OT-2 camera is now the one that streams.
+      - cam_echem_tapo_c100
+      - ot2_complexation
