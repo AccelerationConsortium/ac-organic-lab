@@ -9,6 +9,7 @@ import {
   finishAssistantPlan,
   type AssistantPlanStepResult,
 } from "@/lib/api";
+import { speakableFromMarkdown } from "@/lib/speech";
 import { useUserAuth } from "@/lib/user-auth";
 
 /**
@@ -133,6 +134,9 @@ type Mode = "ask" | "control";
 const STORAGE_KEY = "ac-assistant-history-v1";
 const POSITION_KEY = "ac-assistant-position-v1";
 const SIZE_KEY = "ac-assistant-size-v1";
+// Read-aloud is a per-person preference, not per-conversation, so unlike the
+// transcript above it lives in localStorage and survives a tab close.
+const SPEAK_KEY = "ac-assistant-speak-v1";
 const MAX_STORED_TURNS = 20;
 const PANEL_W = 460;
 const PANEL_H = 520;
@@ -222,6 +226,25 @@ function AssistantBubbleInner() {
   // null = not yet resolved. True when the signed-in user holds a role on at
   // least one equipment (operator+), from /api/auth/mine + identity role.
   const [controlEligible, setControlEligible] = useState<boolean | null>(null);
+  // Read answers aloud. Off by default — a dashboard that starts talking
+  // unprompted in a shared lab is a bad neighbour. Hidden entirely where the
+  // browser has no speechSynthesis (it is not universal, and jsdom lacks it).
+  const [speakAloud, setSpeakAloud] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(false);
+  // applyEvent is a []-dep callback, so the live toggle value reaches it via a
+  // ref rather than by rebuilding the callback on every flip.
+  const speakAloudRef = useRef(false);
+  // Assistant text accumulated for THIS turn, mirrored outside the setTurns
+  // updater. Speaking has to happen on the `done` frame, and a state updater
+  // is the wrong place for a side effect (React may invoke it twice).
+  const streamTextRef = useRef("");
+
+  const stopSpeaking = useCallback(() => {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+  }, []);
+
   // The single outstanding proposal (one at a time, UI_DESIGN §5.3).
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [proposalExpired, setProposalExpired] = useState(false);
@@ -353,6 +376,54 @@ function AssistantBubbleInner() {
   useEffect(() => {
     if (controlEligible === false && mode === "control") setMode("ask");
   }, [controlEligible, mode]);
+
+  // Read-aloud: probe support and restore the saved preference once, on mount.
+  // Support is probed rather than assumed — speechSynthesis is missing in some
+  // browsers and in jsdom, and the toggle should not render where it is a no-op.
+  useEffect(() => {
+    const supported =
+      typeof window !== "undefined" && typeof window.speechSynthesis !== "undefined";
+    setSpeechSupported(supported);
+    if (!supported) return;
+    try {
+      if (localStorage.getItem(SPEAK_KEY) === "1") {
+        setSpeakAloud(true);
+        speakAloudRef.current = true;
+      }
+    } catch {
+      /* private mode / storage disabled — stay off */
+    }
+  }, []);
+
+  // Keep the ref in sync for applyEvent, persist the preference, and never
+  // leave an utterance running when the feature is switched off.
+  useEffect(() => {
+    speakAloudRef.current = speakAloud;
+    try {
+      localStorage.setItem(SPEAK_KEY, speakAloud ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+    if (!speakAloud) stopSpeaking();
+  }, [speakAloud, stopSpeaking]);
+
+  // Silence on the way out: closing the panel, navigating away, or unmounting
+  // must not leave the browser talking to an empty room. Escape stops it too —
+  // the one control someone reaches for when they want it to stop NOW.
+  useEffect(() => {
+    if (!open) stopSpeaking();
+  }, [open, stopSpeaking]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") stopSpeaking();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      stopSpeaking();
+    };
+  }, [stopSpeaking]);
 
   // Restore prior conversation on mount (per-tab; sessionStorage clears on close).
   useEffect(() => {
@@ -603,6 +674,10 @@ function AssistantBubbleInner() {
       const controller = new AbortController();
       abortRef.current = controller;
       terminatedRef.current = false;
+      // New question: drop the previous answer's buffer, and stop speaking the
+      // previous answer — it is now stale.
+      streamTextRef.current = "";
+      stopSpeaking();
 
       try {
         const res = await fetch("/api/assistant/chat", {
@@ -670,11 +745,30 @@ function AssistantBubbleInner() {
         setSending(false);
       }
     },
-    [turns, sending, mode, clearProposal, clearPlan]
+    [turns, sending, mode, clearProposal, clearPlan, stopSpeaking]
   );
+
+  const speakAnswer = useCallback((markdown: string) => {
+    if (!speakAloudRef.current) return;
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    const text = speakableFromMarkdown(markdown);
+    if (!text) return;
+    // Never queue: a new answer replaces the old one rather than making the
+    // operator wait out a stale utterance.
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  }, []);
 
   const applyEvent = useCallback(
     (event: { type: string; [k: string]: unknown }) => {
+      // Mirror the streaming answer outside the state updater below, so the
+      // `done` frame can hand a complete answer to speech synthesis without
+      // side-effecting inside setTurns. Cheap, and idempotent per frame.
+      if (event.type === "text" && typeof event.delta === "string") {
+        streamTextRef.current += event.delta;
+      } else if (event.type === "done") {
+        speakAnswer(streamTextRef.current);
+      }
       // A control proposal is not part of an assistant text turn — surface it
       // as a confirm card rather than folding it into the transcript.
       if (event.type === "proposal" && event.proposal && typeof event.proposal === "object") {
@@ -771,7 +865,7 @@ function AssistantBubbleInner() {
         return [...prev.slice(0, -1), updated];
       });
     },
-    []
+    [speakAnswer]
   );
 
   const authorizeProposal = useCallback(async () => {
@@ -1022,6 +1116,28 @@ function AssistantBubbleInner() {
                   if (m === "ask") clearProposal();
                 }}
               />
+              {speechSupported && (
+                <button
+                  type="button"
+                  onClick={() => setSpeakAloud((v) => !v)}
+                  aria-pressed={speakAloud}
+                  aria-label={
+                    speakAloud ? "Turn off reading answers aloud" : "Read answers aloud"
+                  }
+                  title={
+                    speakAloud
+                      ? "Reading answers aloud — a short spoken summary of each answer. Esc stops it. Click to turn off."
+                      : "Read answers aloud (a short spoken summary; the full answer stays on screen)"
+                  }
+                  className={`rounded border px-2 py-1 text-xs font-medium transition ${
+                    speakAloud
+                      ? "border-emerald-400 bg-emerald-50 text-emerald-700 dark:border-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300"
+                      : "border-slate-300 text-ink-subtle hover:bg-slate-100 hover:text-ink dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                  }`}
+                >
+                  {speakAloud ? "🔊" : "🔇"}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={clearHistory}
