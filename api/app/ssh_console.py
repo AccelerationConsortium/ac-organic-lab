@@ -129,6 +129,63 @@ def _idle_timeout_s() -> float:
 
 
 @dataclass(frozen=True)
+class SshProfile:
+    """One way to open a session on a host — the default login shell, a tmux
+    attach-or-create, a WSL shell on a Windows PC. ``args`` is the remote
+    command appended after the ssh target; the browser only ever names a
+    profile ``id``, so the command surface stays a server-side whitelist
+    exactly like the host list itself."""
+
+    id: str
+    label: str
+    args: tuple[str, ...]
+    description: str
+
+    def public(self) -> dict[str, str]:
+        # `args` deliberately withheld: the page renders buttons, it does not
+        # need (and must never grow to trust) command strings.
+        return {"id": self.id, "label": self.label, "description": self.description}
+
+
+# Shared attach-or-create tmux session. One fixed name, deliberately: a
+# second admin attaching lands in the SAME session (tmux mirrors the screen),
+# which for a lab console is a feature — pair-debugging — not a leak; the
+# whole surface is admins-only anyway.
+_TMUX_ARGS = ("tmux", "new-session", "-A", "-s", "console")
+
+_PROFILE_TMUX = SshProfile(
+    id="tmux",
+    label="tmux",
+    args=_TMUX_ARGS,
+    description=(
+        "Attach-or-create the shared 'console' tmux session. Survives a "
+        "closed tab or dropped connection — reconnect and reattach. A second "
+        "admin attaching sees the same screen."
+    ),
+)
+
+# Windows: the default shell over OpenSSH is cmd.exe; wsl.exe drops into the
+# Ubuntu (WSL2) distro instead, cold-booting it on demand. tmux inside WSL
+# gives the same persistence as on Linux — the detached session keeps the WSL
+# VM alive, so it survives the browser going away.
+_PROFILE_WSL = SshProfile(
+    id="wsl",
+    label="WSL",
+    args=("wsl.exe",),
+    description="Ubuntu (WSL2) shell instead of cmd.exe. Boots the distro on demand.",
+)
+_PROFILE_WSL_TMUX = SshProfile(
+    id="wsl-tmux",
+    label="WSL tmux",
+    args=("wsl.exe", "-e", *_TMUX_ARGS),
+    description=(
+        "Attach-or-create the shared 'console' tmux session inside WSL. "
+        "Survives disconnects (the detached session keeps the WSL VM alive)."
+    ),
+)
+
+
+@dataclass(frozen=True)
 class SshHost:
     id: str
     label: str
@@ -138,8 +195,18 @@ class SshHost:
     target: str
     shell: str
     note: str
+    #: First entry is the default (plain login shell).
+    profiles: tuple[SshProfile, ...] = ()
 
-    def public(self) -> dict[str, str]:
+    def profile(self, profile_id: str | None) -> SshProfile | None:
+        if not profile_id:
+            return self.profiles[0]
+        for candidate in self.profiles:
+            if candidate.id == profile_id:
+                return candidate
+        return None
+
+    def public(self) -> dict[str, Any]:
         """Banner facts for the page. No secrets — the key file and any
         per-host ssh options stay in the service user's ~/.ssh/config."""
         return {
@@ -151,6 +218,7 @@ class SshHost:
             "target": self.target,
             "shell": self.shell,
             "note": self.note,
+            "profiles": [profile.public() for profile in self.profiles],
             # What an operator would type themselves, from the dashboard host…
             "ssh_command": f"ssh {self.target}",
             # …and the form that needs no ~/.ssh/config alias.
@@ -172,6 +240,10 @@ SSH_HOSTS: tuple[SshHost, ...] = (
             "than inheriting the API service's systemd sandbox, so you get a "
             "normal login shell."
         ),
+        profiles=(
+            SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
+            _PROFILE_TMUX,
+        ),
     ),
     SshHost(
         id="cytation-pc",
@@ -186,6 +258,11 @@ SSH_HOSTS: tuple[SshHost, ...] = (
             "and the BioStack. Service control is `C:\\SDL_Tools\\nssm.exe` — "
             "prefer the whitelisted host-ops surface for routine restarts."
         ),
+        profiles=(
+            SshProfile(id="cmd", label="cmd", args=(), description="Windows cmd.exe (the OpenSSH default shell)."),
+            _PROFILE_WSL,
+            _PROFILE_WSL_TMUX,
+        ),
     ),
     SshHost(
         id="uplc-pc",
@@ -199,6 +276,11 @@ SSH_HOSTS: tuple[SshHost, ...] = (
             "Hosts the UPLC-MS sidecar and the USB portproxy bridge to the OT-2 "
             "complexation robot. The sidecar owns the run queue — do not restart "
             "it mid-campaign."
+        ),
+        profiles=(
+            SshProfile(id="cmd", label="cmd", args=(), description="Windows cmd.exe (the OpenSSH default shell)."),
+            _PROFILE_WSL,
+            _PROFILE_WSL_TMUX,
         ),
     ),
 )
@@ -239,6 +321,7 @@ def _require_admin(request: Request) -> str:
 class _Ticket:
     host_id: str
     user: str
+    profile_id: str
     issued_at: float
 
 
@@ -246,12 +329,12 @@ _TICKETS: dict[str, _Ticket] = {}
 _ACTIVE: set[str] = set()
 
 
-def _mint_ticket(host_id: str, user: str) -> str:
+def _mint_ticket(host_id: str, user: str, profile_id: str) -> str:
     now = time.monotonic()
     for token in [t for t, tk in _TICKETS.items() if now - tk.issued_at > _TICKET_TTL_S]:
         _TICKETS.pop(token, None)
     token = secrets.token_urlsafe(32)
-    _TICKETS[token] = _Ticket(host_id=host_id, user=user, issued_at=now)
+    _TICKETS[token] = _Ticket(host_id=host_id, user=user, profile_id=profile_id, issued_at=now)
     return token
 
 
@@ -304,7 +387,7 @@ def _set_winsize(fd: int, rows: int, cols: int) -> None:
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
-def _ssh_argv(ssh_bin: str, host: SshHost) -> list[str]:
+def _ssh_argv(ssh_bin: str, host: SshHost, profile: SshProfile) -> list[str]:
     return [
         ssh_bin,
         # Force a PTY even though our stdin is already one: without -tt ssh
@@ -322,6 +405,9 @@ def _ssh_argv(ssh_bin: str, host: SshHost) -> list[str]:
         "-o", "ServerAliveInterval=30",
         "-o", "ServerAliveCountMax=3",
         host.target,
+        # The profile's remote command (tmux attach, wsl.exe, …) — a fixed
+        # server-side tuple, never client text. Empty for the login shell.
+        *profile.args,
     ]
 
 
@@ -371,6 +457,8 @@ async def _fail(websocket: WebSocket, message: str) -> None:
 
 class SessionRequest(BaseModel):
     host_id: str
+    #: Profile id from the host's `profiles` list; omitted → the default.
+    profile: str | None = None
 
 
 def build_ssh_router() -> APIRouter:
@@ -393,18 +481,25 @@ def build_ssh_router() -> APIRouter:
         host = HOSTS_BY_ID.get(body.host_id)
         if host is None:
             raise HTTPException(status_code=404, detail=f"Unknown SSH host: {body.host_id!r}")
-        token = _mint_ticket(host.id, user)
+        profile = host.profile(body.profile)
+        if profile is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown session profile for {host.id}: {body.profile!r}",
+            )
+        token = _mint_ticket(host.id, user, profile.id)
         await _audit(
             request.app,
             host.id,
-            f"{user} requested an SSH session on {host.label}",
-            {"user": user, "outcome": "ticket_issued", "target": host.target},
+            f"{user} requested an SSH session on {host.label} ({profile.label})",
+            {"user": user, "outcome": "ticket_issued", "target": host.target, "profile": profile.id},
         )
-        logger.info("ssh ticket issued: %s -> %s", user, host.id)
+        logger.info("ssh ticket issued: %s -> %s (%s)", user, host.id, profile.id)
         return {
             "ticket": token,
             "expires_in_s": _TICKET_TTL_S,
             "host": host.public(),
+            "profile": profile.public(),
         }
 
     @router.websocket("/ws")
@@ -430,6 +525,10 @@ def build_ssh_router() -> APIRouter:
         if host is None:  # pragma: no cover - ticket ids come from the whitelist
             await _fail(websocket, f"Unknown SSH host: {redeemed.host_id}")
             return
+        profile = host.profile(redeemed.profile_id)
+        if profile is None:  # pragma: no cover - minted from the same whitelist
+            await _fail(websocket, f"Unknown session profile: {redeemed.profile_id}")
+            return
         if len(_ACTIVE) >= _max_sessions():
             await _fail(
                 websocket,
@@ -441,7 +540,7 @@ def build_ssh_router() -> APIRouter:
             await _fail(websocket, "No `ssh` binary on the dashboard host's PATH.")
             return
 
-        await _run_session(websocket, host, redeemed.user, ssh_bin, cols, rows)
+        await _run_session(websocket, host, profile, redeemed.user, ssh_bin, cols, rows)
 
     return router
 
@@ -449,6 +548,7 @@ def build_ssh_router() -> APIRouter:
 async def _run_session(
     websocket: WebSocket,
     host: SshHost,
+    profile: SshProfile,
     user: str,
     ssh_bin: str,
     cols: int,
@@ -496,7 +596,7 @@ async def _run_session(
         os.set_blocking(master_fd, False)
         _set_winsize(master_fd, rows, cols)
         proc = await asyncio.create_subprocess_exec(
-            *_ssh_argv(ssh_bin, host),
+            *_ssh_argv(ssh_bin, host, profile),
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
@@ -514,7 +614,14 @@ async def _run_session(
 
         await _send(
             websocket,
-            {"t": "o", "d": f"\x1b[2m· connecting to {host.label} — ssh {host.target}\x1b[0m\r\n"},
+            {
+                "t": "o",
+                "d": (
+                    f"\x1b[2m· connecting to {host.label} — ssh {host.target}"
+                    + (f" {' '.join(profile.args)}" if profile.args else "")
+                    + "\x1b[0m\r\n"
+                ),
+            },
         )
 
         async def pump_out() -> str:
@@ -601,6 +708,7 @@ async def _run_session(
             "user": user,
             "outcome": outcome,
             "target": host.target,
+            "profile": profile.id,
             "duration_s": duration_s,
         }
         if exit_code is not None:

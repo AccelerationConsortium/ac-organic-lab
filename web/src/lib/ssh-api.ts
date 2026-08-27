@@ -12,6 +12,16 @@ import { fetchJson } from "./api";
  * the socket presents that instead.
  */
 
+/** One way to open a session on a host — plain shell, tmux attach, WSL.
+ *  Only ids and labels reach the browser; the remote command each id maps to
+ *  is a server-side whitelist (`ssh_console.py`), so the page can never send
+ *  a command string. */
+export interface SshProfile {
+  id: string;
+  label: string;
+  description: string;
+}
+
 /** Banner facts for one SSH-reachable host. No secrets: the key file and the
  *  per-host ssh options live in the dashboard host's `~/.ssh/config`. */
 export interface SshHost {
@@ -23,6 +33,8 @@ export interface SshHost {
   target: string;
   shell: string;
   note: string;
+  /** Session types this host offers; the first is the default shell. */
+  profiles: SshProfile[];
   /** What an operator would type on the dashboard host. */
   ssh_command: string;
   /** The same, without relying on a `~/.ssh/config` alias. */
@@ -33,6 +45,7 @@ export interface SshTicket {
   ticket: string;
   expires_in_s: number;
   host: SshHost;
+  profile: SshProfile;
 }
 
 export function fetchSshHosts(): Promise<{ hosts: SshHost[] }> {
@@ -40,12 +53,16 @@ export function fetchSshHosts(): Promise<{ hosts: SshHost[] }> {
 }
 
 /** Mint a single-use ticket for `hostId`. Redeem it immediately — it expires
- *  in ~30 s and dies on first use, so it is minted per connection attempt. */
-export function openSshSession(hostId: string): Promise<SshTicket> {
+ *  in ~30 s and dies on first use, so it is minted per connection attempt.
+ *  `profileId` picks the session type (omit for the host's default shell). */
+export function openSshSession(
+  hostId: string,
+  profileId?: string,
+): Promise<SshTicket> {
   return fetchJson<SshTicket>("/api/ssh/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ host_id: hostId }),
+    body: JSON.stringify({ host_id: hostId, profile: profileId ?? null }),
   });
 }
 

@@ -1435,6 +1435,18 @@ independent reasons, both measured rather than assumed:
   lookahead — and not merely by an early return inside the function. Getting
   this wrong makes the terminal fail to connect with no useful error.
 
+**Session profiles (added the same week).** Each host offers a server-defined
+list of session types the page renders as a segmented picker next to Connect:
+gaia offers *Shell* and *tmux* (attach-or-create the shared `console` session,
+so a dropped tab or connection is survivable — reconnect and reattach; a
+second admin attaching sees the same screen); the Windows PCs offer *cmd*,
+*WSL* (Ubuntu WSL2 instead of cmd.exe, cold-booting the distro on demand) and
+*WSL tmux* (the same persistence trick — the detached session keeps the WSL VM
+alive). The browser only ever names a profile **id**; the remote command each
+id maps to is a fixed tuple in `ssh_console.py`'s whitelist, carried inside
+the ticket, so the command surface stays exactly as closed as the host list.
+The audit rows record which profile a session used.
+
 **Credentials stay in ssh's own config.** The server-side whitelist
 (`api/app/ssh_console.py::SSH_HOSTS`) names an alias from the service user's
 `~/.ssh/config` (`cytation-pc`, `uplc-pc`, `localhost`) — the key file, login

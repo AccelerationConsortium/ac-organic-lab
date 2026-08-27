@@ -100,7 +100,7 @@ export default function SshConsolePage() {
   return (
     <div className="flex flex-col gap-4">
       <Banner host={host} />
-      <SshTerminal hostId={host.id} hostLabel={host.label} />
+      <SshTerminal hostId={host.id} hostLabel={host.label} profiles={host.profiles} />
     </div>
   );
 }

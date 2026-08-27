@@ -12,7 +12,12 @@ import type { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
 import { ApiError } from "@/lib/api";
-import { openSshSession, sshSocketUrl, type SshServerFrame } from "@/lib/ssh-api";
+import {
+  openSshSession,
+  sshSocketUrl,
+  type SshProfile,
+  type SshServerFrame,
+} from "@/lib/ssh-api";
 
 type Phase = "idle" | "connecting" | "open" | "closed" | "error";
 
@@ -48,14 +53,29 @@ const PHASE_DOT: Record<Phase, string> = {
  *
  * Frames are JSON both ways so a session end can be reported in-band:
  * `{t:"i"|"r"}` up, `{t:"o"|"e"|"x"}` down (see lib/ssh-api.ts).
+ *
+ * `profiles` (from the host banner) renders as a segmented picker next to
+ * Connect — plain shell, tmux attach-or-create, WSL on the Windows PCs. The
+ * picker only ever chooses a server-side profile *id*; the command each id
+ * runs lives in `api/app/ssh_console.py`'s whitelist. Locked while a session
+ * is up: switching means disconnect, pick, reconnect.
  */
-export function SshTerminal({ hostId, hostLabel }: { hostId: string; hostLabel: string }) {
+export function SshTerminal({
+  hostId,
+  hostLabel,
+  profiles,
+}: {
+  hostId: string;
+  hostLabel: string;
+  profiles: SshProfile[];
+}) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const [profileId, setProfileId] = useState<string | undefined>(profiles[0]?.id);
 
   // -- terminal instance (once) --------------------------------------------
   useEffect(() => {
@@ -135,7 +155,7 @@ export function SshTerminal({ hostId, hostLabel }: { hostId: string; hostLabel: 
     let ticket: string;
     try {
       fitRef.current?.fit();
-      const session = await openSshSession(hostId);
+      const session = await openSshSession(hostId, profileId);
       ticket = session.ticket;
     } catch (err) {
       const detail =
@@ -187,7 +207,7 @@ export function SshTerminal({ hostId, hostLabel }: { hostId: string; hostLabel: 
       // failed handshake — so say the one thing that is actually knowable.
       setMessage((current) => current ?? "WebSocket connection failed.");
     };
-  }, [hostId]);
+  }, [hostId, profileId]);
 
   const connected = phase === "open" || phase === "connecting";
 
@@ -198,6 +218,35 @@ export function SshTerminal({ hostId, hostLabel }: { hostId: string; hostLabel: 
           <span className={`h-2 w-2 rounded-full ${PHASE_DOT[phase]}`} aria-hidden />
           {PHASE_LABEL[phase]}
         </span>
+        {profiles.length > 1 && (
+          <div
+            className="inline-flex overflow-hidden rounded-md border border-slate-300 dark:border-slate-700"
+            role="radiogroup"
+            aria-label="Session type"
+          >
+            {profiles.map((profile) => {
+              const active = profile.id === profileId;
+              return (
+                <button
+                  key={profile.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  title={profile.description}
+                  disabled={connected}
+                  onClick={() => setProfileId(profile.id)}
+                  className={`px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    active
+                      ? "bg-sky-100 text-sky-900 dark:bg-sky-900/60 dark:text-sky-100"
+                      : "bg-white text-ink hover:bg-surface-subtle dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                  }`}
+                >
+                  {profile.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <button
           type="button"
           onClick={connected ? disconnect : connect}
