@@ -103,3 +103,40 @@ def test_health_configured_false_when_service_down() -> None:
     with TestClient(_make_app()) as client:
         r = client.get("/api/assistant/voice/health")
     assert r.json() == {"configured": False}
+
+
+# --- /speak (server TTS proxy) ------------------------------------------------
+
+
+def test_anonymous_speak_is_401() -> None:
+    with TestClient(_make_app()) as client:
+        r = client.post("/api/assistant/voice/speak", json={"text": "hello"})
+    assert r.status_code == 401
+
+
+@respx.mock
+def test_speak_forwards_and_returns_wav() -> None:
+    route = respx.post(f"{STT}/speak").mock(
+        return_value=httpx.Response(200, content=b"RIFFfake", headers={"content-type": "audio/wav"})
+    )
+    with TestClient(_make_app()) as client:
+        r = client.post(
+            "/api/assistant/voice/speak",
+            json={"text": "The press is ready."},
+            headers={"X-Auth-User": "alice@example.edu"},
+        )
+    assert r.status_code == 200
+    assert r.content == b"RIFFfake"
+    assert r.headers["content-type"] == "audio/wav"
+    assert route.called
+
+
+@respx.mock
+def test_health_passes_tts_flag() -> None:
+    respx.get(f"{STT}/health").mock(
+        return_value=httpx.Response(
+            200, json={"status": "healthy", "loaded": True, "model": "m", "tts": True}
+        )
+    )
+    with TestClient(_make_app()) as client:
+        assert client.get("/api/assistant/voice/health").json()["tts"] is True

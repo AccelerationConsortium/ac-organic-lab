@@ -268,9 +268,21 @@ function AssistantBubbleInner() {
   const modeRef = useRef<Mode>("ask");
   const sendMessageRef = useRef<(t: string) => Promise<void>>(async () => {});
 
+  // Server-side neural TTS (Kokoro on the lab GPU, /api/assistant/voice/speak)
+  // is preferred: the browser's speechSynthesis voices are the espeak-era
+  // robots on most lab machines. The browser voice survives only as the
+  // fallback when the service is down or the fetch fails.
+  const serverTtsRef = useRef(false);
+  const speakAudioRef = useRef<HTMLAudioElement | null>(null);
+
   const stopSpeaking = useCallback(() => {
     if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
+    }
+    const a = speakAudioRef.current;
+    if (a) {
+      a.pause();
+      speakAudioRef.current = null;
     }
   }, []);
 
@@ -413,6 +425,15 @@ function AssistantBubbleInner() {
     const supported =
       typeof window !== "undefined" && typeof window.speechSynthesis !== "undefined";
     setSpeechSupported(supported);
+    // Server TTS makes the toggle meaningful even where the browser has no
+    // speechSynthesis of its own.
+    fetch("/api/assistant/voice/health")
+      .then((r) => (r.ok ? r.json() : { tts: false }))
+      .then((j) => {
+        serverTtsRef.current = j.tts === true;
+        if (j.tts === true) setSpeechSupported(true);
+      })
+      .catch(() => undefined);
     if (!supported) return;
     try {
       if (localStorage.getItem(SPEAK_KEY) === "1") {
@@ -778,16 +799,48 @@ function AssistantBubbleInner() {
     [turns, sending, mode, clearProposal, clearPlan, stopSpeaking]
   );
 
-  const speakAnswer = useCallback((markdown: string) => {
-    if (!speakAloudRef.current) return;
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-    const text = speakableFromMarkdown(markdown);
-    if (!text) return;
-    // Never queue: a new answer replaces the old one rather than making the
-    // operator wait out a stale utterance.
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
-  }, []);
+  const speakAnswer = useCallback(
+    (markdown: string) => {
+      if (!speakAloudRef.current) return;
+      const text = speakableFromMarkdown(markdown);
+      if (!text) return;
+      // Never queue: a new answer replaces the old one rather than making
+      // the operator wait out a stale utterance.
+      stopSpeaking();
+
+      const fallback = () => {
+        if (typeof window === "undefined" || !window.speechSynthesis) return;
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+      };
+
+      if (!serverTtsRef.current) {
+        fallback();
+        return;
+      }
+      void (async () => {
+        try {
+          const res = await fetch("/api/assistant/voice/speak", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const url = URL.createObjectURL(await res.blob());
+          const audio = new Audio(url);
+          speakAudioRef.current = audio;
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            if (speakAudioRef.current === audio) speakAudioRef.current = null;
+          };
+          await audio.play();
+        } catch {
+          fallback();
+        }
+      })();
+    },
+    [stopSpeaking]
+  );
 
   modeRef.current = mode;
   sendMessageRef.current = sendMessage;

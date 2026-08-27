@@ -171,3 +171,60 @@ describe("AssistantBubble read-aloud", () => {
     await waitFor(() => expect(cancel).toHaveBeenCalled());
   });
 });
+
+describe("AssistantBubble server TTS", () => {
+  it("prefers the GPU voice over speechSynthesis when the service offers it", async () => {
+    const { speak } = installSpeech();
+    // health says tts:true; /speak returns a wav blob; Audio is stubbed.
+    const speakCalls: string[] = [];
+    vi.stubGlobal(
+      "Audio",
+      class {
+        onended: (() => void) | null = null;
+        constructor(public src: string) {}
+        play() {
+          return Promise.resolve();
+        }
+        pause() {}
+      }
+    );
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => "blob:fake"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/api/assistant/voice/health"))
+          return Promise.resolve({ ok: true, json: async () => ({ configured: false, tts: true }) });
+        if (url.includes("/api/assistant/voice/speak")) {
+          speakCalls.push(JSON.parse(String(init?.body)).text);
+          return Promise.resolve({ ok: true, blob: async () => new Blob([new Uint8Array(4)]) });
+        }
+        if (url.includes("/api/assistant/health"))
+          return Promise.resolve({ ok: true, json: async () => ({ configured: true }) });
+        if (url.includes("/api/auth/mine"))
+          return Promise.resolve({ ok: true, json: async () => ({ equipment: {} }) });
+        if (url.includes("/api/assistant/chat"))
+          return Promise.resolve({
+            ok: true,
+            body: sseBody([
+              'data: {"type":"text","delta":"The press is ready. And more detail follows here."}\n\n',
+              'data: {"type":"done"}\n\n',
+            ]),
+          });
+        return Promise.resolve({ ok: false, text: async () => "", json: async () => ({}) });
+      })
+    );
+    await openPanel();
+    fireEvent.click(await toggle());
+    await ask("how is the press");
+
+    await waitFor(() => expect(speakCalls.length).toBeGreaterThan(0));
+    expect(speakCalls[0]).toContain("The press is ready.");
+    // The robot voice was never used.
+    expect(speak).not.toHaveBeenCalled();
+  });
+});

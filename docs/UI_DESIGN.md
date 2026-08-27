@@ -1517,8 +1517,16 @@ origin is a different sign-in).
 
 A 🔊 toggle in the panel header. **Off by default** (a dashboard that starts
 talking unprompted in a shared lab is a bad neighbour), persisted per person
-in `localStorage`, hidden where the browser lacks `speechSynthesis`. Synthesis
-is entirely browser-local — the server sends text, as it always did.
+in `localStorage`.
+
+The voice itself is **Kokoro-82M on the lab GPU** (`POST
+/api/assistant/voice/speak`, same identity gate as transcription): the
+browser's own `speechSynthesis` was the first implementation and proved
+unlistenable — on most lab machines its voices are espeak-era robots — so it
+survives only as the fallback when the TTS service is down. Kokoro is ~300 MB
+of VRAM beside the ASR model and synthesizes a shaped sentence in **~50–90 ms**
+warm; voice selectable via `STT_TTS_VOICE` (default `af_heart`, `""` disables).
+The toggle renders when either engine is available.
 
 Speech is a **summary channel, not a transcript reader**. `speakableFromMarkdown`
 drops fenced code, tables, and URLs (a spoken stack trace conveys nothing),
@@ -1558,7 +1566,7 @@ the tailnet**, nothing is persisted, and logs carry who spoke and the latency
 capable (`/api/assistant/voice/health`, the same configured-gate pattern that
 hides the whole bubble).
 
-### 7.4 The STT service (`stt/` — see its README for ops detail)
+### 7.4 The voice service (`stt/` — see its README for ops detail)
 
 **Qwen3-ASR-1.7B** resident on the local GPU, chosen over faster-whisper
 (CTranslate2 INT8 is broken on Blackwell/sm_120; Whisper hallucinates on
@@ -1569,6 +1577,13 @@ context biasing**: the service builds its vocabulary prompt from
 `equipment.yaml` at startup — every device name plus spoken forms of ids
 ("ot2 hte") — so onboarding a device extends the recognizer the same way it
 extends the dashboard.
+
+The same service carries `/speak` (Kokoro TTS, §7.2). One engineering note
+there: the ASR and TTS loads run **sequentially in one thread**, deliberately —
+both stacks import transformers submodules through its lazy-import machinery,
+which is not thread-safe, and two parallel load threads raced it in practice
+(kokoro's `from transformers import AlbertModel` failed while the ASR thread
+was mid-import; the same import succeeds in isolation).
 
 Engineering notes that took debugging to learn: the processor's float32
 audio features must be cast to the model's bfloat16 (`BatchFeature.to(device,

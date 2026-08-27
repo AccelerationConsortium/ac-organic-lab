@@ -12,6 +12,7 @@ Env:
   STT_HOST/STT_PORT   bind                (default 127.0.0.1:8070)
   STT_EQUIPMENT_YAML  registry for the vocabulary prompt
   STT_VOCAB_FILE      optional extra terms, one per line
+  STT_TTS_VOICE       Kokoro voice for /speak (default af_heart; "" disables TTS)
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from .engine import DEFAULT_MODEL, QwenAsrEngine
+from .tts import DEFAULT_VOICE, MAX_TEXT_CHARS, KokoroTtsEngine
 from .vocab import build_context
 
 logger = logging.getLogger(__name__)
@@ -45,13 +47,31 @@ async def lifespan(app: FastAPI):
     # the HTTP contract without a GPU or a 4 GB download.
     if not model_id:
         app.state.load_task = asyncio.create_task(asyncio.sleep(0))
+        app.state.tts = None
+        app.state.tts_load_task = app.state.load_task
         yield
         return
 
+    voice = os.environ.get("STT_TTS_VOICE", DEFAULT_VOICE)
+    app.state.tts = None
+
+    # ONE loader thread, ASR then TTS — deliberately not parallel threads:
+    # both stacks import transformers submodules through its lazy-import
+    # machinery, which is not thread-safe. Two concurrent loads raced it in
+    # practice (kokoro's `from transformers import AlbertModel` failed with
+    # ImportError while the ASR thread was mid-import; the same import
+    # succeeds in isolation). Boot is ~15s+~15s instead of max() of the two.
     def _load() -> QwenAsrEngine:
-        return QwenAsrEngine(model_id=model_id, device=device)
+        engine = QwenAsrEngine(model_id=model_id, device=device)
+        if voice:
+            try:
+                app.state.tts = KokoroTtsEngine(voice=voice, device=device)
+            except Exception:  # TTS is optional; ASR must survive its failure
+                logger.exception("tts load failed (voice input still up)")
+        return engine
 
     app.state.load_task = asyncio.create_task(asyncio.to_thread(_load))
+    app.state.tts_load_task = app.state.load_task
 
     def _store(task: asyncio.Task) -> None:
         if task.cancelled():
@@ -81,6 +101,8 @@ async def health() -> dict:
         "model": os.environ.get("STT_MODEL", DEFAULT_MODEL),
         "loaded": app.state.engine is not None,
         "load_failed": bool(task.done() and not task.cancelled() and task.exception()),
+        "tts": app.state.tts is not None,
+        "tts_voice": os.environ.get("STT_TTS_VOICE", DEFAULT_VOICE) or None,
     }
 
 
@@ -114,6 +136,30 @@ async def transcribe(audio: UploadFile = File(...)) -> dict:
         "elapsed_ms": result.elapsed_ms,
         "model": engine.model_id,
     }
+
+
+@app.post("/speak")
+async def speak(body: dict) -> "Response":
+    """Synthesize one short utterance. Body: {"text": str}. Returns WAV."""
+    from fastapi.responses import Response
+
+    tts = app.state.tts
+    if tts is None:
+        raise HTTPException(503, "tts not loaded")
+    text = str(body.get("text", "")).strip()
+    if not text:
+        raise HTTPException(422, "empty text")
+    if len(text) > MAX_TEXT_CHARS:
+        raise HTTPException(413, "text too long — speak summaries, not transcripts")
+
+    async with _gpu_lock:
+        result = await asyncio.to_thread(tts.synthesize, text)
+    logger.info("synthesized %.1fs audio in %dms", result.audio_s, result.elapsed_ms)
+    return Response(
+        content=result.wav,
+        media_type="audio/wav",
+        headers={"X-Audio-Seconds": str(result.audio_s), "X-Elapsed-Ms": str(result.elapsed_ms)},
+    )
 
 
 def main() -> None:

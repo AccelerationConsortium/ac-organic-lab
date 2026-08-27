@@ -18,15 +18,17 @@ curl -F audio=@clip.wav http://127.0.0.1:8070/transcribe
 
 | Route | Contract |
 |---|---|
-| `GET /health` | `{status, model, loaded, load_failed}` — `loaded` gates the mic button |
+| `GET /health` | `{status, model, loaded, load_failed, tts, tts_voice}` — `loaded` gates the mic button, `tts` the GPU voice |
 | `POST /transcribe` | multipart `audio` (anything ffmpeg decodes) → `{text, audio_s, elapsed_ms, model}` |
+| `POST /speak` | `{text}` (≤600 chars) → `audio/wav` — Kokoro-82M, the read-aloud voice (~50–90 ms warm) |
 
 Measured on the RTX 5080: ~550–700 ms for an 11 s clip warm (a startup warmup
 pass absorbs CUDA's ~3 s first-request cost); ~4.4 GB VRAM.
 
 Config (env): `STT_MODEL` (default `Qwen/Qwen3-ASR-1.7B-hf`; empty string =
 serve without loading, for tests), `STT_DEVICE`, `STT_HOST`/`STT_PORT`,
-`STT_EQUIPMENT_YAML`, `STT_VOCAB_FILE` (extra terms, one per line).
+`STT_EQUIPMENT_YAML`, `STT_VOCAB_FILE` (extra terms, one per line),
+`STT_TTS_VOICE` (Kokoro voice for `/speak`; default `af_heart`, `""` disables).
 
 Privacy: audio is decoded in a TemporaryDirectory and never persisted; logs
 carry durations and latency, never text. The dashboard-side caller

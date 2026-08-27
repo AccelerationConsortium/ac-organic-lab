@@ -82,3 +82,44 @@ def test_503_while_model_loading():
         c.app.state.engine = None  # type: ignore[attr-defined]
         r = c.post("/transcribe", files={"audio": ("clip", b"xx", "audio/webm")})
         assert r.status_code == 503
+
+
+# --- /speak (TTS) -----------------------------------------------------------
+
+
+class _FakeTts:
+    voice = "af_heart"
+
+    def synthesize(self, text: str):
+        from lab_stt.tts import Synthesis
+
+        assert text
+        return Synthesis(wav=b"RIFFfake", audio_s=1.2, elapsed_ms=88)
+
+
+def test_speak_returns_wav(client):
+    service.app.state.tts = _FakeTts()
+    r = client.post("/speak", json={"text": "The press is ready."})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/wav"
+    assert r.content == b"RIFFfake"
+    assert r.headers["x-audio-seconds"] == "1.2"
+
+
+def test_speak_503_when_tts_not_loaded(client):
+    service.app.state.tts = None
+    r = client.post("/speak", json={"text": "hi"})
+    assert r.status_code == 503
+
+
+def test_speak_rejects_empty_and_oversized(client):
+    service.app.state.tts = _FakeTts()
+    assert client.post("/speak", json={"text": "  "}).status_code == 422
+    assert client.post("/speak", json={"text": "x" * 601}).status_code == 413
+
+
+def test_health_reports_tts(client):
+    service.app.state.tts = _FakeTts()
+    assert client.get("/health").json()["tts"] is True
+    service.app.state.tts = None
+    assert client.get("/health").json()["tts"] is False
