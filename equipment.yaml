@@ -124,14 +124,27 @@ equipment:
     tiles:
       hte: { w: 2, h: 1 }
     # "Open" pill / tile deep-link -> the edge-gated canonical panel URL
-    # (Caddy: forward_auth @xarm_ui -> ac_auth). ABSOLUTE edge URL (port 80) so
-    # it always lands on the Caddy edge, NOT the device's directly-reachable
-    # :8000/web side-door and NOT the dashboard's own :8000 origin (a
-    # root-relative /xarm5/web/ would resolve to :8000/xarm5/web/ when the
-    # dashboard is viewed on :8000). See docs/ROADMAP.md "Control-surface exposure".
+    # (Caddy: forward_auth @xarm_ui -> ac_auth). ROOT-RELATIVE, so it resolves
+    # against whichever edge origin the operator is already on and keeps them
+    # on one origin with one session. This was an absolute
+    # http://100.64.254.6/... URL until 2026-08-26; that pinned every visitor
+    # to the plain-HTTP origin, so anyone on the HTTPS tailnet origin (added
+    # the same day for secure-context features -- microphone, clipboard) got
+    # bounced back to insecure HTTP and a second sign-in. Root-relative is
+    # also what PillConfig documents as the intended form
+    # (skills/src/lab_skills/registry.py); the old comment here contradicted it.
+    # Either way this never points at the device's directly-reachable
+    # :8000/web side-door -- the edge is the audited path.
+    #
+    # CAVEAT (the reason the absolute form existed): viewing the dashboard
+    # directly on :8000, bypassing Caddy, resolves this to :8000/xarm5/web/,
+    # which Next.js does not serve. That is accepted -- :8000-direct is
+    # off-canon by design ("users MUST reach the lab as http://100.64.254.6/",
+    # deploy/Caddyfile.single-edge) and already costs a separate session.
+    # See docs/ROADMAP.md "Control-surface exposure".
     pills:
       link_label: "Open"
-      link_href: http://100.64.254.6/xarm5/web/
+      link_href: /xarm5/web/
 
   - id: fume_hood_actuator
     name: Fume Hood Actuator
@@ -165,13 +178,15 @@ equipment:
       hte: { w: 2, h: 3}
     # "Open" pill -> the edge-gated OT-2 gateway operator SPA at
     # /ot2/hte/ui/ (Caddy: forward_auth @ot2_hte -> ac_auth, header_up
-    # X-Edge-Key). ABSOLUTE edge URL (port 80) so it lands on the Caddy edge,
-    # NOT the device's directly-reachable :8020/ui side-door (which 404s
-    # without X-Edge-Key anyway). base_url stays the direct device port —
-    # the aggregator polls /status there, unaffected by the edge route.
+    # X-Edge-Key). ROOT-RELATIVE so it follows the operator's current edge
+    # origin (HTTP-IP or HTTPS-tailnet) instead of pinning them to plain HTTP
+    # — see the xarm_translocation entry above for the full rationale and the
+    # :8000-direct caveat. Never the device's directly-reachable :8020/ui
+    # side-door (which 404s without X-Edge-Key anyway). base_url stays the
+    # direct device port — the aggregator polls /status there, unaffected.
     pills:
       link_label: "Open"
-      link_href: http://100.64.254.6/ot2/hte/ui/
+      link_href: /ot2/hte/ui/
   - id: dose_every_well
     name: Dose Every Well
     kind: solid_doser
@@ -389,14 +404,15 @@ equipment:
       complexation: { w: 2, h: 3 }
     # "Open" pill -> the edge-gated OT-2 gateway operator SPA at
     # /ot2/complexation/ui/ (Caddy: forward_auth @ot2_complexation -> ac_auth,
-    # header_up X-Edge-Key). ABSOLUTE edge URL (port 80) so it lands on the
-    # Caddy edge, NOT the device's directly-reachable :8021/ui side-door
-    # (which 404s without X-Edge-Key anyway). base_url stays the direct
-    # device port — the aggregator polls /status there, unaffected by the
-    # edge route.
+    # header_up X-Edge-Key). ROOT-RELATIVE so it follows the operator's current
+    # edge origin (HTTP-IP or HTTPS-tailnet) instead of pinning them to plain
+    # HTTP — see the xarm_translocation entry above for the full rationale and
+    # the :8000-direct caveat. Never the device's directly-reachable :8021/ui
+    # side-door (which 404s without X-Edge-Key anyway). base_url stays the
+    # direct device port — the aggregator polls /status there, unaffected.
     pills:
       link_label: "Open"
-      link_href: http://100.64.254.6/ot2/complexation/ui/
+      link_href: /ot2/complexation/ui/
 
   # ---------------------------------------------------------------------
   # Web Services
@@ -460,11 +476,10 @@ equipment:
     # /status. The browsable UI, however, is served through the single auth edge
     # at /pypoe/ (Caddy handle_path + X-Forwarded-Prefix) so it carries the
     # shared /auth banner — flat under the edge root, matching the other service
-    # UIs (/xarm5, /analytica, /agente). The "Open" pill points at the ABSOLUTE
-    # edge URL (http://100.64.254.6/pypoe/) rather than a root-relative path, so
-    # it lands on the Caddy edge (port 80) even when the dashboard itself is being
-    # viewed directly on :8000 — a root-relative link would resolve to
-    # :8000/pypoe/, which the edge routes don't cover.
+    # UIs (/xarm5, /analytica, /agente). The "Open" pill is ROOT-RELATIVE so it
+    # follows the operator's current edge origin (HTTP-IP or HTTPS-tailnet)
+    # instead of pinning them to plain HTTP — see xarm_translocation above for
+    # the full rationale and the :8000-direct caveat.
     base_url: http://100.64.254.6:8006
     status_path: /status
     poll_timeout_seconds: 3.0
@@ -472,7 +487,7 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills:
       link_label: "Open"
-      link_href: http://100.64.254.6/pypoe/
+      link_href: /pypoe/
 
   # kasa-tapo-services — the camera + plug gateway process itself (loopback
   # :8002 on this host, reverse-proxied by Caddy for streams/controls). The
@@ -509,6 +524,11 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills:
       link_label: "Open"
+      # Stays ABSOLUTE, unlike every other pill: Kuma is its own Caddy site
+      # block on :8005, not a path under the main edge, so there is no
+      # root-relative form. An HTTPS visitor therefore leaves the secure
+      # origin here (and signs in again). Fix properly by giving Kuma a path
+      # on the main edge, not by editing this line.
       link_href: http://100.64.254.6:8005/
       admin_only: true
       # Kuma's admin UI has its own login and sits outside the SSO edge
@@ -534,7 +554,7 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills:
       link_label: "Open"
-      link_href: http://100.64.254.6/hermes/
+      link_href: /hermes/
       authorized_only: true
       admin_only: true
 
@@ -542,8 +562,7 @@ equipment:
   # fronted by the edge at /agente/ (the built Vite base) so it shows the shared
   # auth banner and one sign-in. Displayed as "AnaliticaChat" on the dashboard.
   # It serves no STATUS_SPEC /status, so it's a link-out tile (adapter: mock,
-  # not health-polled — shown "ready" because base_url is set); base_url is the
-  # edge path the "Open ↗" pill points at.
+  # not health-polled — shown "ready" because base_url is set).
   - id: laagente_analitica
     name: Analitica Chat
     kind: other
@@ -552,8 +571,14 @@ equipment:
     poll_timeout_seconds: 3.0
     tiles:
       web_services: { w: 2, h: 1 }
+    # link_href, not `open: true`: `open` links to base_url, which must stay
+    # absolute, and an absolute HTTP URL pins HTTPS visitors back to the
+    # insecure origin. PillConfig documents link_href as the preferred form
+    # whenever the target is an edge path rather than a raw device port.
+    # Renders identically ("Open ↗").
     pills:
-      open: true
+      link_label: "Open"
+      link_href: /agente/
 
   # Bitácora — the agentic ELN (Next.js standalone :3001 + FastAPI :8050),
   # fronted by the edge at /bitacora/ so it shares the auth banner and one
@@ -582,11 +607,12 @@ equipment:
     tiles:
       web_services: { w: 2, h: 1 }
     # No `open: true` — base_url is now loopback and useless to a browser. The
-    # pill points at the ABSOLUTE edge URL (port 80) so it lands on the Caddy
-    # edge even when the dashboard is viewed directly on :8000.
+    # pill is ROOT-RELATIVE so it follows the operator's current edge origin
+    # (HTTP-IP or HTTPS-tailnet) — see xarm_translocation above for the full
+    # rationale and the :8000-direct caveat.
     pills:
       link_label: "Open"
-      link_href: http://100.64.254.6/bitacora/
+      link_href: /bitacora/
 
   # AnaliticaDB — the analytical-chemistry results catalog (FastAPI) on the
   # dashboard host. Serves a minimal STATUS_SPEC v1.0 /status envelope
