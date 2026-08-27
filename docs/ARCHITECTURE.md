@@ -218,6 +218,15 @@ Owns:
   claim → action → release dance for v1.1 devices, and writes one
   `control_action` audit row to `equipment_events` per call (actor, action,
   outcome). See design decision #1.
+- **Browser SSH console** (`ssh_console.py`): an admin-only shell into the
+  lab's host machines (Utils → Computers and Servers), spawning `ssh` on a
+  PTY and streaming it to xterm.js over a WebSocket. Deliberately the
+  narrowest surface here: **human admins with a session cookie only** — a
+  machine principal (`X-Api-Key`) is refused, because a shell sits below
+  every safety layer in decision #1 and `AGENTIC_LAB_DESIGN.md` Part II keeps
+  agent surfaces away from arbitrary shell. Hosts are a server-side
+  whitelist naming `~/.ssh/config` aliases; every session is audited as an
+  `ssh_session` event. See [`UI_DESIGN.md`](UI_DESIGN.md) §6.
 - **Lab assistant** (`assistant.py`, `mcp_server.py`): a read-only chat
   endpoint and the MCP server that backs it. See the *Lab assistant*
   component below and design decision #10.

@@ -63,6 +63,38 @@ const ASSISTANT_PUBLIC_PATHS = new Set(["/api/assistant/health"]);
 const ADMIN_PAGE_RE = /^\/admin(?:\/.*)?$/;
 const ADMIN_API_RE = /^\/api\/admin(?:\/.*)?$/;
 
+// -- SSH console gate (admin HUMANS only — never a machine principal) --------
+//
+// A shell on a device PC sits BELOW every safety layer the lab has (claims,
+// allowed_actions, the four interlock layers, the propose-only assistant), so
+// this surface is deliberately the narrowest one in the dashboard:
+//
+//   * role must resolve to `admin`, and
+//   * the session must be a real browser session — we verify with the COOKIE
+//     ONLY and never forward X-Api-Key, so an API-key principal cannot mint a
+//     ticket even if its roster role is admin. docs/AGENTIC_LAB_DESIGN.md
+//     Part II keeps the unattended `lab-runner` agent free of any terminal
+//     toolset for exactly this reason (it ingests Slack); this is the web-side
+//     half of that rule.
+//
+// /api/ssh/ws is EXEMPT, like /xarm5/ws and /hermes/api/ws at the edge. The
+// socket instead presents a single-use, 30 s ticket minted by
+// POST /api/ssh/session — which DOES pass through this gate. See
+// api/app/ssh_console.py.
+//
+// The exemption is load-bearing in the `matcher` below, NOT in the early
+// return here, and the difference is not cosmetic: Next resolves routes for
+// an upgrade request with the raw socket standing in for the response, and
+// invoking middleware in that state throws inside the server
+// ("Error handling upgrade request TypeError: Cannot read properties of
+// undefined (reading 'bind')") and kills the handshake before the rewrite to
+// FastAPI is ever reached. Measured against next 14.2.35. So the matcher must
+// never select the ws path; the early return below is only a guard in case
+// someone widens it again.
+const SSH_API_RE = /^\/api\/ssh(?:\/.*)?$/;
+const SSH_WS_PATH = "/api/ssh/ws";
+const SSH_PAGE_RE = /^\/utils\/computers\/ssh(?:\/.*)?$/;
+
 // Stale Notebooks bookmark. /notebooks no longer exists as an in-dashboard
 // route (Bitácora opens in its own browser tab). An old bookmark (or a direct
 // URL) is redirected to Bitácora for a signed-in visitor, or back to the
@@ -80,12 +112,18 @@ const CONTROL_OPEN = process.env.DASHBOARD_CONTROL_OPEN === "true";
 // Fails closed (ok: false) when the sidecar is unreachable.
 async function verifySession(
   request: NextRequest,
+  opts: { cookieOnly?: boolean } = {},
 ): Promise<{ ok: boolean; user?: string; role?: string }> {
   try {
     const res = await fetch(`${AUTH_SERVICE_BASE}/auth/verify`, {
       headers: {
         cookie: request.headers.get("cookie") ?? "",
-        "x-api-key": request.headers.get("x-api-key") ?? "",
+        // Withheld in cookieOnly mode so a machine principal cannot
+        // authenticate: the sidecar accepts either credential, and the SSH
+        // console must be reachable by humans alone.
+        "x-api-key": opts.cookieOnly
+          ? ""
+          : request.headers.get("x-api-key") ?? "",
       },
       cache: "no-store",
     });
@@ -129,6 +167,39 @@ export async function middleware(request: NextRequest) {
           { detail: "Sign in to use the lab assistant." },
           { status: 401 },
         );
+      }
+      if (v.user) headers.set("x-auth-user", v.user);
+      if (v.role) headers.set("x-auth-role", v.role);
+    }
+
+    return NextResponse.next({ request: { headers } });
+  }
+
+  // ---- SSH console guard (admin humans only; ws exempt — see above) ------
+  if (SSH_API_RE.test(pathname) || SSH_PAGE_RE.test(pathname)) {
+    if (pathname === SSH_WS_PATH) return NextResponse.next();
+
+    const headers = new Headers(request.headers);
+    headers.delete("x-auth-user");
+    headers.delete("x-auth-role");
+
+    if (!CONTROL_OPEN) {
+      const v = await verifySession(request, { cookieOnly: true });
+      if (!v.ok || v.role !== "admin") {
+        if (SSH_API_RE.test(pathname)) {
+          return NextResponse.json(
+            {
+              detail: v.ok
+                ? "The SSH console is restricted to admins."
+                : "Sign in as an admin to open an SSH session.",
+            },
+            { status: v.ok ? 403 : 401 },
+          );
+        }
+        const url = request.nextUrl.clone();
+        url.pathname = "/utils/computers";
+        url.search = "";
+        return NextResponse.redirect(url);
       }
       if (v.user) headers.set("x-auth-user", v.user);
       if (v.role) headers.set("x-auth-role", v.role);
@@ -192,6 +263,10 @@ export const config = {
     "/api/custody/:path*",
     "/admin/:path*",
     "/api/admin/:path*",
+    // Negative lookahead, not "/api/ssh/:path*": the ws path must not reach
+    // middleware at all on an upgrade request (see the SSH block above).
+    "/api/ssh/((?!ws$).*)",
+    "/utils/computers/ssh/:path*",
     "/notebooks/:path*",
   ],
 };

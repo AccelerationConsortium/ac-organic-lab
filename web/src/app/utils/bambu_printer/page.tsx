@@ -5,8 +5,8 @@ import { redirect } from "next/navigation";
 // so direct URL loads (old bookmarks) see a dead 307.
 export const dynamic = "force-dynamic";
 
-/** The printers page was generalised into /utils/devices (hosts + printers);
- *  this stub keeps old links working. */
+/** The printers page was generalised into /utils/devices (hosts + printers),
+ *  then split back out as /utils/printers; this stub keeps old links working. */
 export default function BambuPrinterRedirect() {
-  redirect("/utils/devices");
+  redirect("/utils/printers");
 }

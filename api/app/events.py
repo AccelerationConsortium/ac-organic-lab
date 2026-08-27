@@ -36,6 +36,13 @@ CONTROL_ACTION = "control_action"
 #: Device-alert delivery audit rows (written by ``alert_notifier.py``).
 ALERT_EMITTED = "alert_emitted"
 
+#: Browser SSH-console audit rows (written by ``ssh_console.py``): one on
+#: ticket mint, one when the session ends. ``device_id`` is the SSH host id
+#: (``gaia`` / ``cytation-pc`` / ...), not an ``equipment.yaml`` id — a host
+#: machine is not equipment, but the audit trail belongs in the same table so
+#: "who opened a shell where, when" is answerable next to "who moved the sash".
+SSH_SESSION = "ssh_session"
+
 #: All event types written by this app. Device-originated types arriving via
 #: /api/ingest/events (startup, shutdown, error, agent_observation, …) are
 #: intentionally NOT constrained by this set.
@@ -44,6 +51,7 @@ APP_EVENT_TYPES = frozenset({
     ACTIVITY_TRANSITION,
     CONTROL_ACTION,
     ALERT_EMITTED,
+    SSH_SESSION,
 })
 
 #: Reserved metrics key (STATUS_SPEC §2.3.1): monotonic count of completed

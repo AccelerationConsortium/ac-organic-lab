@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 // follow it — direct URL loads flash the shell first and curl sees a dead 307.
 export const dynamic = "force-dynamic";
 
-/** /utils index → Devices, the section's default utility. */
+/** /utils index → Computers and Servers, the section's default utility. */
 export default function UtilsIndexPage() {
-  redirect("/utils/devices");
+  redirect("/utils/computers");
 }

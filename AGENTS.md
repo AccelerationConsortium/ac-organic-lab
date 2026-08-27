@@ -97,6 +97,15 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   most workflow-critical services (see DEVICE_PC_SETUP §7 for the full table).
 - **Port 8010 is used by two different hosts** (UPLC-MS on `sdl2-pc-06-uplc`,
   PlateLoc on `sdl2-pc-03-cytation`). No collision, but easy to confuse.
+- **A WebSocket route under `/api/*` must be excluded from the Next
+  middleware `matcher`**, not merely early-returned inside `middleware()`.
+  Next resolves routes for an upgrade with the raw socket standing in for the
+  response, so invoking middleware there throws (`Error handling upgrade
+  request TypeError: … reading 'bind'`) and kills the handshake before the
+  rewrite to FastAPI. Use a negative lookahead, e.g.
+  `"/api/ssh/((?!ws$).*)"`. Authenticate the socket with a short-lived ticket
+  minted over plain HTTP instead — the same reason `/xarm5/ws` and
+  `/hermes/api/ws` are `forward_auth`-exempt at the edge.
 - **Mostly no app-level auth between aggregator and equipment** — Tailscale
   ACLs are the main gate; don't design as if every device authenticated its
   callers. The exceptions are per-device: hard claim enforcement

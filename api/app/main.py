@@ -48,6 +48,7 @@ from .events import (
 )
 from .history import build_history_router
 from .labware import build_labware_router
+from .ssh_console import build_ssh_router
 from .presentation import (
     AggregatorHealth,
     EquipmentList,
@@ -605,6 +606,10 @@ app.include_router(build_history_router())
 # Read-only Claude assistant -- streams chat over SSE, has tool access to
 # the history DB and a whitelisted set of systemd journals. See assistant.py.
 app.include_router(build_assistant_router())
+# Admin-only browser SSH console into the lab's host machines (Utils ->
+# Computers and Servers). Human admins only -- never a machine principal; see
+# the module docstring and docs/AGENTIC_LAB_DESIGN.md Part II.
+app.include_router(build_ssh_router())
 
 
 def _aggregator() -> EquipmentAggregator:

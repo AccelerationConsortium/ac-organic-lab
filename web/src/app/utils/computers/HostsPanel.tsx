@@ -1,4 +1,5 @@
 import type { EquipmentSnapshot } from "@/types/api";
+import { AuthGatedLink } from "@/components/AuthGatedLink";
 import { StalenessIndicator } from "@/components/StalenessIndicator";
 import { STATE_META, effectiveState } from "@/lib/state-meta";
 
@@ -12,6 +13,12 @@ import { STATE_META, effectiveState } from "@/lib/state-meta";
  * equipment.yaml id; those tiles carry the agent's live status pill (the
  * hostops entries stay registered and polled — they just render here instead
  * of on the Services card).
+ *
+ * Each `id` below must match an entry in `api/app/ssh_console.py::SSH_HOSTS`
+ * — that id is the `/utils/computers/ssh/<id>` route the "SSH terminal" link
+ * opens, and the server looks the ssh target up by it. The link is
+ * admin-only, matching the gate in `web/src/middleware.ts`; a non-admin sees
+ * no link at all.
  */
 type LabHost = {
   id: string;
@@ -123,6 +130,16 @@ function HostTile({
         <FactRow label="Controls" value={host.controls} />
         <FactRow label="Lab-ops API" value={host.opsApi ?? "none — no ops agent on this host"} />
       </div>
+      <AuthGatedLink
+        href={`/utils/computers/ssh/${host.id}`}
+        external
+        adminOnly
+        hideUnauthorized
+        title={`Open an SSH terminal on ${host.hostname} (admins only, audited)`}
+        className="w-fit rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-ink transition-colors hover:border-slate-400 hover:bg-surface-subtle dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+      >
+        SSH terminal ↗
+      </AuthGatedLink>
       {snapshot && (
         <div className="mt-auto flex items-center justify-end gap-2 text-[10px] text-ink-subtle dark:text-slate-400">
           {typeof snapshot.latency_ms === "number" && <span>{snapshot.latency_ms} ms</span>}
@@ -139,16 +156,22 @@ export function HostsPanel({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
     <section className="flex flex-col gap-4">
       <header>
         <h1 className="text-lg font-semibold text-ink dark:text-slate-100">
-          PCs &amp; Servers
+          Computers and Servers
         </h1>
         <p className="text-sm text-ink-subtle dark:text-slate-300">
           The machines the lab&apos;s services run on. Hosts running the
-          sdl-lab-hostops agent carry its live status pill.
+          sdl-lab-hostops agent carry its live status pill. Admins get an
+          in-browser SSH terminal per machine; every session is audited.
         </p>
       </header>
-      {/* Same grid geometry as EquipmentGrid; every host tile is 2 wide. */}
+      {/* Same grid geometry as EquipmentGrid — four equal stretchy columns
+          filling the content container, so a 2-wide host tile is exactly half
+          the container: the same width and left/right alignment as an
+          Overview platform card. (Columns were previously capped at 262px,
+          which left the grid ~120px short of the container's right edge.)
+          Every host tile is 2 wide. */}
       <div
-        className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:[grid-template-columns:repeat(4,minmax(0,262px))]"
+        className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
         style={{ gridAutoRows: "minmax(220px, auto)" }}
       >
         {LAB_HOSTS.map((host) => (

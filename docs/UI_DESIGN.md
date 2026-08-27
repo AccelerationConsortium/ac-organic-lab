@@ -5,7 +5,8 @@
 tiering) recorded the same day; the former `WORKFLOW_UI_DESIGN.md` design
 note folded in as §3 (still [PROPOSED], nothing built); §5 (assistant control
 mode) drafted 2026-08-07 as [PROPOSED] and **implemented** 2026-08-11/13
-(Steps 1, 1b–1e — see the §5 heading for the shipped scope).
+(Steps 1, 1b–1e — see the §5 heading for the shipped scope); §6 (the Utils
+Computers/Printers split and the admin-only SSH console) shipped 2026-08-27.
 **Audience:** dashboard operators and developers touching the `web/` UI.
 
 This is the home for dashboard UI design and decisions. Each shipped
@@ -729,7 +730,7 @@ single-glyph surfaces; rendering pre-tracking time as zero usage.
 
 ---
 
-## 5. Assistant control mode [IMPLEMENTED — Steps 1, 1b–1i]
+## 5. Assistant control mode [IMPLEMENTED — Steps 1, 1b–1j]
 
 **Drafted 2026-08-07** on branch `actionable-assistant`; **Step 1 implemented
 2026-08-11**. Extends the tier-2 dashboard assistant (§2) from a purely
@@ -1170,7 +1171,49 @@ per step), never the existence of the hardware gate — the loosening Part II
 §"trust ladder" names as the intended direction. The human still authorizes
 every hardware action and the audit names them.
 
-### 5.4 What control mode does *not* change
+#### Step 1j — the terminal-call contract (2026-08-25)
+
+The recurring operator complaint: the assistant *understands* a control
+request, narrates an answer — and no authorize button appears. Two causes,
+both structural. First, the button renders **only** from a
+`propose_action`/`propose_plan` tool result; the "propose or explain why
+not" rule was prompt-only, and once Control mode moved from claude-cli/
+sonnet to a flash-tier OpenRouter model (`ASSISTANT_OPENAI_CONTROL_MODEL`),
+prose-only endings became routine — the model writes "I've proposed it"
+without calling the tool, which renders nothing. Second, a proposal the
+lab-control server **refused** (`not_allowed`, `invalid_args`, …) produced
+no frame at all: the refusal's why lived only in prose the model may or may
+not write, so a refused proposal was indistinguishable from no proposal.
+
+Step 1j makes the contract mechanical instead of rhetorical:
+
+- **`decline_proposal(reason_code, explanation)`** joins `lab-control` as
+  the third terminal tool. Every control-mode reply must end with exactly
+  one terminal call — propose_action, propose_plan, or decline_proposal
+  (reason codes: not_proposable, safety_floor, cross_device,
+  too_many_steps, needs_human, device_unavailable, unsafe_state,
+  informational, other; an unknown code coerces to `other` — the tool
+  terminates turns, it must never be one more thing that can fail). It
+  never actuates; it returns `{"declined": {...}}`.
+- **Refusals and declines are frames, not prose.** Both backends surface
+  `proposal_refused` (a propose result whose `code` is in
+  `assistant_control.REFUSAL_CODES`) and `declined` frames; the bubble
+  renders them as an amber chip ("Proposal refused (code): …") and a muted
+  chip ("No action proposed — …") inside the turn. Informational declines
+  render nothing — they exist to end the turn, not to be read. The why of
+  a missing button is now always on screen.
+- **The openai backend enforces the contract.** A control turn about to end
+  with no terminal outcome (no propose/decline call, no proposal / plan /
+  refusal / decline payload) is bounced back to the model **exactly once**
+  (`CONTROL_TERMINAL_NUDGE`, a harness-authored user-role message that is
+  never persisted into the bubble's history). If the model still ends
+  without one, the backend emits a harness `declined` frame naming the
+  failure instead of ending silently. The claude-cli backend cannot be
+  nudged mid-loop (the CLI owns the agentic loop), so there the contract
+  rests on the rewritten prompt rule 1 plus the same frame surfacing.
+
+The §5.1 commitment is untouched: none of this adds an actuating path —
+the worst a misbehaving model can now do is *visibly* fail to propose.
 
 - **The tier-2 trust level (§2.2).** No tool in either mode actuates, so the
   read-only-by-construction guarantee and ARCHITECTURE decision #10 survive
@@ -1321,3 +1364,111 @@ which move its trust tier:
   the assistant chat's own gate.
 - [`INTERLOCKS.md`](INTERLOCKS.md) — the layers a single passthrough action
   does not get.
+
+---
+
+## 6. Utils → Computers and Servers, and the browser SSH console [IMPLEMENTED]
+
+**Shipped 2026-08-27.** Two changes that arrived together: the Utils
+`Devices` pill split into **Computers and Servers** and **3D Printers**, and
+each host tile in the first gained a link to a full page with an SSH banner
+and a live terminal on that machine.
+
+### 6.1 Why the pill split
+
+`/utils/devices` had been one page stacking two unrelated inventories: the
+host machines (`HostsPanel`) and the Bambu printers (`BambuPrinterPanel`).
+They share no audience — you open one to answer "what is running where and
+is it healthy", the other to watch a print — and the combined page had no
+name that described both. They are now separate routes with their own pills:
+
+| Route | Pill | Content |
+|---|---|---|
+| `/utils/computers` | Computers and Servers | `HostsPanel` — servers + device PCs, host-ops status pill, SSH link |
+| `/utils/printers` | 3D Printers | `BambuPrinterPanel` — Bambu MQTT telemetry |
+
+`/utils/devices` redirects to the hosts half and `/utils/bambu_printer`
+(the pre-2026 route, already a stub) now redirects to `/utils/printers`
+instead of hopping through `/utils/devices`. `/utils` still redirects to the
+section default, which is now Computers and Servers.
+
+### 6.2 The SSH console
+
+Each host tile carries an **SSH terminal ↗** link to
+`/utils/computers/ssh/<host-id>`, opened in a new tab: an SSH banner (host
+identity, login user, shell, and the exact `ssh …` command an operator would
+type themselves) above an xterm.js terminal wired to a real `ssh` process on
+the dashboard host.
+
+Three decisions worth recording.
+
+**Human admins only — never a machine principal.** This is the narrowest
+gate in the dashboard, and deliberately narrower than "admin":
+`web/src/middleware.ts` verifies `/api/ssh/*` and the page route with the
+**session cookie only**, never forwarding `X-Api-Key`, so an API-key
+principal is refused even if its roster role is `admin`. A shell sits *below*
+every safety layer the lab has — claims, `allowed_actions`, the four
+interlock layers, the propose-only assistant — so handing one to an agent
+principal would quietly undo them all.
+[`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md) Part II already keeps the
+unattended `lab-runner` profile free of any terminal toolset for exactly this
+reason (it ingests Slack), and forbids the host-ops fleet from running
+arbitrary shell; this is the web-side half of the same rule. Note the
+attended `lab-ops` Hermes profile *does* have a local terminal under its own
+OS user (`sdl2`, which holds the lab SSH keys) — nothing here widens that,
+and nothing here is needed by it.
+
+**A ticket, not the cookie, authenticates the socket.** The identity check
+happens over plain HTTP on `POST /api/ssh/session`, which returns a
+single-use ticket that expires in 30 s; the WebSocket presents that. Two
+independent reasons, both measured rather than assumed:
+
+- Caddy's `forward_auth` answers a WebSocket upgrade with a bare 403 before
+  any cookie check — the same failure that produced the `/xarm5/ws` and
+  `/hermes/api/ws` exemptions in `deploy/Caddyfile.single-edge`.
+- Next resolves routes for an upgrade with the raw socket standing in for the
+  response object, and invoking middleware in that state throws inside the
+  server (`Error handling upgrade request TypeError: Cannot read properties
+  of undefined (reading 'bind')`, next 14.2.35) and kills the handshake
+  *before* the rewrite to FastAPI is reached. So `/api/ssh/ws` is excluded in
+  the middleware **`matcher`** — `"/api/ssh/((?!ws$).*)"`, a negative
+  lookahead — and not merely by an early return inside the function. Getting
+  this wrong makes the terminal fail to connect with no useful error.
+
+**Credentials stay in ssh's own config.** The server-side whitelist
+(`api/app/ssh_console.py::SSH_HOSTS`) names an alias from the service user's
+`~/.ssh/config` (`cytation-pc`, `uplc-pc`, `localhost`) — the key file, login
+user and hostname live there, not in this app, and the browser never supplies
+a host. `BatchMode=yes` means no password prompt can appear in a terminal the
+server could never answer, and `StrictHostKeyChecking=yes` means a web
+request can never teach the dashboard a new host key. `gaia` loops back over
+ssh rather than spawning a local shell, so the operator gets a normal login
+shell instead of one inheriting the API service's systemd sandbox
+(`ProtectHome=read-only` would be baffling).
+
+Every session writes two `ssh_session` rows to `equipment_events` (ticket
+issued, session ended with actor / outcome / duration / exit code), keyed by
+the host id rather than an `equipment.yaml` id — a host machine is not
+equipment, but "who opened a shell where, when" belongs next to "who moved
+the sash".
+
+Kill switches: `SSH_CONSOLE_ENABLED=false` removes the surface entirely (404);
+`SSH_CONSOLE_MAX_SESSIONS` (default 4) and `SSH_CONSOLE_IDLE_TIMEOUT_S`
+(default 1800) bound what a forgotten tab can hold open.
+
+### 6.3 What this is not
+
+Not a replacement for the host-ops fleet. `sdl-lab-hostops` stays the surface
+for routine service status / log tails / whitelisted restarts, because it is
+audited, agent-reachable, and cannot do anything else. The SSH console is the
+maintenance and diagnosis path a human reaches for when the whitelist does
+not cover the question — the same division DEVICE_PC_SETUP §2.4 already draws
+for SSH key trust.
+
+### See also (SSH console)
+
+- [`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md) Part II — agent trust tiers
+  and why no agent surface gets a shell.
+- [`DEVICE_PC_SETUP.md`](DEVICE_PC_SETUP.md) §2.4 — SSH key trust on device PCs.
+- [`AUTH_DESIGN.md`](AUTH_DESIGN.md) — the session/roster model this gate reads.
+- [`LAB_MONITORING.md`](LAB_MONITORING.md) §4 — the `equipment_events` type registry.

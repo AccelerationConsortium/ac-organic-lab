@@ -8,16 +8,25 @@ import { pillClass, stickyPillRow } from "@/lib/pill";
  * Utils section — operator tools that aren't tied to one piece of equipment.
  * Each utility is a route under /utils/<slug>; the pill row here switches
  * between them (same pill pattern as the Platforms tab). The /utils index
- * redirects to Devices, the default utility. Register new utilities in
- * UTILS below. (Inventory graduated back to a top-level /inventory page with
- * its own Nav tab, next to Notebooks.)
+ * redirects to Computers and Servers, the default utility. Register new
+ * utilities in UTILS below. (Inventory graduated back to a top-level
+ * /inventory page with its own Nav tab, next to Notebooks.)
+ *
+ * `Devices` used to be one pill carrying both the host machines and the Bambu
+ * printers; they are separate pills now, and /utils/devices redirects to the
+ * hosts half.
  */
 const UTILS: { slug: string; label: string; description: string; href?: string }[] = [
   {
-    slug: "devices",
-    label: "Devices",
+    slug: "computers",
+    label: "Computers and Servers",
     description:
-      "Lab host machines — servers and device PCs with host-ops coverage — plus the Bambu printers.",
+      "Lab host machines — servers and device PCs with host-ops coverage — and an SSH terminal into each.",
+  },
+  {
+    slug: "printers",
+    label: "3D Printers",
+    description: "Bambu printers — live MQTT telemetry from the Bambu Gateway.",
   },
   {
     slug: "api_reference",

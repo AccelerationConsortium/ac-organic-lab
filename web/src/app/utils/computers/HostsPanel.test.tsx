@@ -1,10 +1,21 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { EquipmentSnapshot } from "@/types/api";
 
 import { HostsPanel } from "./HostsPanel";
+
+// AuthGatedLink (which draws the SSH link) reads the session from here.
+const auth = {
+  authenticated: true,
+  identity: { role: "admin", email: "admin@lab.ca" } as
+    | { role: string; email: string }
+    | null,
+  canControl: () => true,
+  requestLogin: () => {},
+};
+vi.mock("@/lib/user-auth", () => ({ useUserAuth: () => auth }));
 
 function opsSnapshot(id: string, state = "ready"): EquipmentSnapshot {
   return {
@@ -30,7 +41,11 @@ function opsSnapshot(id: string, state = "ready"): EquipmentSnapshot {
   } as unknown as EquipmentSnapshot;
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  auth.authenticated = true;
+  auth.identity = { role: "admin", email: "admin@lab.ca" };
+});
 
 describe("HostsPanel", () => {
   it("lists every host with OS, services, controlled equipment and ops API", () => {
@@ -66,5 +81,27 @@ describe("HostsPanel", () => {
 
     const uplc = screen.getByText("UPLC PC").closest("article")!;
     expect(uplc.textContent).toContain("Unreachable");
+  });
+
+  it("links each host to its SSH terminal for an admin", () => {
+    render(<HostsPanel snapshots={[]} />);
+
+    const cytation = screen.getByText("Cytation PC").closest("article")!;
+    const link = cytation.querySelector("a[href='/utils/computers/ssh/cytation-pc']");
+    expect(link).not.toBeNull();
+    // New tab: the terminal is a working surface, not a navigation step.
+    expect(link!.getAttribute("target")).toBe("_blank");
+
+    expect(
+      screen.getByText("Central Server (gaia)").closest("article")!
+        .querySelector("a[href='/utils/computers/ssh/gaia']"),
+    ).not.toBeNull();
+  });
+
+  it("shows no SSH link to a non-admin", () => {
+    auth.identity = { role: "operator", email: "op@lab.ca" };
+    render(<HostsPanel snapshots={[]} />);
+
+    expect(document.querySelectorAll("a[href^='/utils/computers/ssh/']")).toHaveLength(0);
   });
 });
