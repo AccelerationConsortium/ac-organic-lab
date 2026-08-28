@@ -3,6 +3,7 @@ import type {
   ControlAck,
   EquipmentList,
   EquipmentSnapshot,
+  LabHostsResponse,
   MediaListing,
   PlatformsConfig,
   PlugSwitchRequest,
@@ -97,6 +98,10 @@ export async function getEquipmentList(): Promise<EquipmentList> {
 
 export async function getPlatforms(): Promise<PlatformsConfig> {
   return fetchJson<PlatformsConfig>("/api/platforms");
+}
+
+export async function getLabHosts(): Promise<LabHostsResponse> {
+  return fetchJson<LabHostsResponse>("/api/hosts");
 }
 
 export async function getEquipmentStatus(id: string): Promise<EquipmentSnapshot> {

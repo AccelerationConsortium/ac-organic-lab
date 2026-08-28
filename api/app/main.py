@@ -48,6 +48,7 @@ from .events import (
     snapshot_reachable,
 )
 from .history import build_history_router
+from .hosts import build_hosts_router
 from .labware import build_labware_router
 from .ssh_console import build_ssh_router
 from .presentation import (
@@ -612,6 +613,10 @@ app.include_router(build_voice_router())
 # Computers and Servers). Human admins only -- never a machine principal; see
 # the module docstring and docs/AGENTIC_LAB_DESIGN.md Part II.
 app.include_router(build_ssh_router())
+# Host inventory (Utils -> Computers and Servers): the whitelisted machines
+# with the services each runs, derived from equipment.yaml base_urls. Ungated
+# reads, same exposure as /api/equipment. See hosts.py.
+app.include_router(build_hosts_router())
 
 
 def _aggregator() -> EquipmentAggregator:

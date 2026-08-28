@@ -178,6 +178,53 @@ export interface EquipmentList {
 }
 
 // ---------------------------------------------------------------------
+// Host inventory (`GET /api/hosts`, api/app/hosts.py) — the lab's host
+// machines with the services each runs, derived from equipment.yaml
+// base_urls + the SSH console whitelist. Nothing hand-maintained.
+// ---------------------------------------------------------------------
+
+/** How a registry entry relates to the machine its base_url points at:
+ *  a hostops_* agent, a web-service process (`kind: other`), or an
+ *  equipment REST service fronting hardware (every other kind). */
+export type LabHostServiceRole = "service" | "equipment" | "ops";
+
+export interface LabHostService {
+  id: string;
+  name: string;
+  kind: string;
+  role: LabHostServiceRole;
+  base_url: string;
+  host: string;
+  /** Explicit port from base_url; null for edge paths (label with `path`). */
+  port: number | null;
+  path: string;
+  adapter: string;
+  protocol: string;
+  enabled: boolean;
+}
+
+/** A machine on the SSH console whitelist (always listed, even bare). */
+export interface LabHostMachine {
+  id: string;
+  label: string;
+  kind: string;
+  hostname: string;
+  services: LabHostService[];
+}
+
+/** A hostname seen in equipment.yaml that is not a whitelisted machine
+ *  (the device Pis) — still worth showing its services' ports/domains. */
+export interface LabHostGroup {
+  hostname: string;
+  services: LabHostService[];
+}
+
+export interface LabHostsResponse {
+  hosts: LabHostMachine[];
+  other_hosts: LabHostGroup[];
+}
+
+// ---------------------------------------------------------------------
 // Control request bodies (mirror kasa_tapo_services.models).
 // ---------------------------------------------------------------------
 
