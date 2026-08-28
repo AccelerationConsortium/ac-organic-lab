@@ -28,6 +28,7 @@ import os
 
 import httpx
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 
 logger = logging.getLogger(__name__)
 
@@ -107,8 +108,6 @@ def build_voice_router() -> APIRouter:
         """Synthesize a short utterance (the shaped read-aloud summary).
         Same identity rule as /transcribe: it spends lab GPU time, so it is
         not an anonymous surface."""
-        from fastapi.responses import Response
-
         actor = request.headers.get("x-auth-user")
         if not actor:
             raise HTTPException(401, "sign in to use voice output")
