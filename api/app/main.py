@@ -31,6 +31,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
+from .agent_bugs import build_agent_bugs_router
 from .assistant import build_assistant_router
 from .voice import build_voice_router
 from .alert_notifier import AlertNotifier
@@ -609,6 +610,9 @@ app.include_router(build_history_router())
 # the history DB and a whitelisted set of systemd journals. See assistant.py.
 app.include_router(build_assistant_router())
 app.include_router(build_voice_router())
+# Agent error-reporting bridge: a remote lab agent POSTs an error with its
+# ac_auth X-Api-Key and gets a Hermes diagnosis back in the response.
+app.include_router(build_agent_bugs_router())
 # Admin-only browser SSH console into the lab's host machines (Utils ->
 # Computers and Servers). Human admins only -- never a machine principal; see
 # the module docstring and docs/AGENTIC_LAB_DESIGN.md Part II.
