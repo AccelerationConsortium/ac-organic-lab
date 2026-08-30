@@ -892,7 +892,48 @@ strongest argument yet. As of 2026-08-27 that conclusion is only half
 honoured: hte is Wi-Fi-independent, complexation is not (see the retirement
 note above).
 
+**gaia memory thrash → self-heal monitors killed the healthy dashboard API,
+2026-08-27 → mitigated 2026-08-30.** The central server ran out of memory
+headroom (56 of 62 GB used, the 1 GB swap 100 % full, page cache squeezed to
+~2.7 GB; `/proc/pressure` showed sustained full-stall time), and under
+reclaim pressure the **whole machine froze ~25 s at a time** — confirmed by
+identical log gaps in *both* the dashboard API's and PyPoe's journals
+(e.g. 03:22:52 → 03:23:17 on 08-30, every process silent, then a one-second
+queue flush). Pressure began 08-27, the same afternoon the assistant voice
+services deployed (the STT service alone holds ~2.7 GB RAM + 5.4 GB VRAM;
+LaAgente `chat.py` ~4.4 GB; a dozen resident claude/codex sessions ~8 GB).
+Two PyPoe self-heal monitors (assistant + dashboard, both probing the API
+with `failures_to_alert: 1`) turned those stalls into the visible incident:
+
+- *Orphan recoveries*: a single timed-out probe latched the monitor's
+  `was_down` **before** its alert path re-probed, so a stall that cleared in
+  between posted no DOWN line yet still posted `:white_check_mark: recovered.`
+  on the next tick — Slack filled with recoveries for outages nobody was told
+  about (the reported symptom).
+- *Spurious SIGKILLs*: a stall outlasting the monitor's ~26 s probe budget
+  reached remediation, which SIGKILLed the **perfectly healthy** API —
+  12 kills 08-28 → 08-30, seven of them overnight on the 30th, each one also
+  dropping any in-flight SSE/workflow run (none was active, by luck). Every
+  pre-kill journal gap measures the exact probe budget; the API process
+  itself is ~74 MB and blameless.
+
+Fixed in PyPoe `8a6e0f6` (branch `feat/lab-integration`): recovery lines now
+always pair with a posted DOWN, the SIGKILL bounce is gated behind a
+`confirm_wait_s` re-probe, and `failures_to_alert` rose to 3 (assistant) /
+2 (dashboard) in code defaults and the deployed `slack.yaml`. **The root
+cause — gaia's memory headroom — is only documented, not fixed**: see the
+watch item below.
+
 Active watch items (not regressions; behavioural notes):
+
+- **gaia memory headroom** (from the 2026-08-30 incident above). ~62 GB with
+  <6 GB available and swap (1 GB, undersized) permanently full; reclaim
+  stalls freeze every service on the box, and gaia hosts the dashboard, the
+  auth edge, PyPoe, the camera gateway, and the history DB in one blast
+  radius. Relief options, none taken yet: trim resident claude/codex
+  sessions (~8 GB), weigh the STT service's RAM cost against its use, grow
+  swap. Any future "the whole dashboard blipped for ~30 s" report should be
+  checked against `/proc/pressure/memory` before blaming a service.
 
 - **Tailscale auto-updates stop the Tailscale service on every release**
   (MSI upgrade path). With the `cytation` dependency removed, no service on
