@@ -795,3 +795,245 @@ def test_a_dry_run_records_nothing(run_rig, monkeypatch):
     assert all(e["data"]["reason"] == "dry_run" for e in events if e["type"] == "custody")
     record = next(e for e in events if e["type"] == "record")["data"]
     assert record == {"opened": False, "reason": "dry_run"}
+
+
+# ── custody preflight (PLATE_TRACKING.md D1/D7): the layer-4 rule ────────────
+#
+# "Plate X must be at location L before step S", with L taken from this run's
+# own chain of accepted moves rather than from the protocol. The run-start
+# cross-check asks the ledger once; these tests are about the steps after it,
+# where a human can lift a plate off a nest mid-incubation and nothing else
+# would notice until the arm reached for empty air.
+
+
+class _LedgerFake:
+    """A recorder with a scripted ledger. ``current_location`` answers come from
+    ``answers`` in order — the run-start cross-check consumes the first — and
+    ``records=False`` makes every move fail, which is what breaks the chain."""
+
+    def __init__(self, answers, *, records=True):
+        self.answers, self.records = list(answers), records
+        self.moves: list[dict] = []
+        self.lookups: list[dict] = []
+
+    async def record_move(self, **kw):
+        self.moves.append(kw)
+        if not self.records:
+            return {"recorded": False, "reason": "unreachable"}
+        return {"recorded": True, "action_id": f"a{len(self.moves)}",
+                "container_id": "c", "to_location_id": "l"}
+
+    async def current_location(self, hid, **kw):
+        self.lookups.append({"hid": hid, **kw})
+        if self.answers:
+            return self.answers.pop(0)
+        return {"found": True, "hid": hid, "location_name": "bench/hte_staging"}
+
+
+class _EventDb:
+    """Captures lab.db rows, so the ops-audit half is assertable without a file."""
+
+    def __init__(self):
+        self.rows: list[tuple[str, str, dict]] = []
+
+    def record_equipment_event(self, device_id, event_type, *, message="", payload=None):
+        self.rows.append((device_id, event_type, payload or {}))
+
+
+def _at(name: str, hid: str = "PLT-1") -> dict:
+    return {"found": True, "hid": hid, "container_id": "c", "location_name": name}
+
+
+def _preflight_rig(run_rig, monkeypatch, ledger, statuses, *,
+                   dry_run=False, strict=False):
+    """Drive a run whose fake executor honours the gate the way `execute_plan`
+    does — gate before every step, and once it refuses, this and every remaining
+    step is `skipped` with the reason. The existing `_custody_rig` never calls
+    the gate at all, which is exactly the half the preflight lives in."""
+    client, wf, _unused, install, finished = run_rig
+    import app.workflow as wfmod
+    from app.main import app as _app
+
+    monkeypatch.setattr(wfmod, "custody_recorder", lambda: ledger)
+    monkeypatch.setattr(wfmod, "CUSTODY_STRICT", strict)
+    monkeypatch.setattr(_app.state, "aggregator", _FakeAggregator())
+    db = _EventDb()
+    monkeypatch.setattr(_app.state, "db", db)
+
+    cauth = _auth(package=_package(steps=CUSTODY_STEPS), plate_bindings={"reaction": "PLT-1"})
+
+    async def fake_fetch(client_, authorization_id, identity=None):
+        return cauth
+
+    monkeypatch.setattr(wfmod, "fetch_authorization", fake_fetch)
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        reports, reason = [], None
+        for step, status in zip(plan.steps, statuses):
+            if reason is None:
+                reason = await gate(step)
+            r = _step_report(step.id, "skipped" if reason else status)
+            r.role, r.skill = step.role, step.skill
+            r.equipment_id = ("xarm_translocation" if step.role == "plate_mover"
+                              else "torry_pines_shaker")
+            r.error = reason if reason else None
+            reports.append(r)
+            await on_step(r)
+        return _FakeRunReport(
+            reports, ok=reason is None and all(s == "succeeded" for s in statuses),
+            aborted_reason=reason, dry_run=dry_run,
+        )
+
+    install(fake_exec)
+    r = client.post("/api/workflow/runs",
+                    json={"authorization_id": cauth.authorization_id, "dry_run": dry_run})
+    assert r.status_code == 202, r.text
+    events = []
+    with client.stream("GET", f"/api/workflow/runs/{r.json()['run_id']}/events") as resp:
+        for line in resp.iter_lines():
+            if line.startswith("data:"):
+                import json as _json
+                events.append(_json.loads(line[5:]))
+    return events, db
+
+
+def _preflights(events) -> list[dict]:
+    return [e["data"] for e in events if e["type"] == "custody_preflight"]
+
+
+def test_the_opening_chain_declines_to_place_a_plate_the_ledger_could_not() -> None:
+    """`expected_locations` is where "we cannot say" enters the chain, and it has
+    to: a plate the ledger cannot place is one the preflight must decline to
+    judge, not one it may assume is where the protocol wishes it were."""
+    from app.workflow import expected_locations
+
+    assert expected_locations([
+        {"plate": "reaction", "hid": "PLT-1", "found": True, "location_name": "bench/hte_staging"},
+        {"plate": "stock", "hid": "PLT-2", "found": False},
+        {"plate": "spare", "hid": "PLT-3", "found": None, "error": "refused"},
+        {"plate": "unbound"},                       # no hid at all — not a link
+    ]) == {"PLT-1": "bench/hte_staging", "PLT-2": None, "PLT-3": None}
+
+
+def test_the_preflight_runs_only_on_custody_steps_and_asks_the_ledger_fresh(run_rig, monkeypatch):
+    """Two handoff steps, one shake. The shake is not a handoff, so nothing is
+    checked before it — and every check is a *fresh* read: the recorder caches
+    container rows, and `location_id` is the one field a move invalidates."""
+    ledger = _LedgerFake([_at("bench/hte_staging"),          # run start
+                          _at("bench/hte_staging"),          # before pick
+                          _at("xarm_translocation/gripper")])  # before place
+    events, _ = _preflight_rig(run_rig, monkeypatch, ledger,
+                               ["succeeded", "succeeded", "succeeded"])
+    checks = _preflights(events)
+    assert [c["step_id"] for c in checks] == ["pick", "place"]
+    assert [c["verdict"] for c in checks] == ["ok", "ok"]
+    assert checks[1]["expected"] == "xarm_translocation/gripper"   # the pick's own move
+    assert len(ledger.lookups) == 3                                # start + two steps
+    assert all(look["refresh"] for look in ledger.lookups[1:])
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["ok"] is True and done["aborted_reason"] is None
+
+
+def test_a_ledger_that_disagrees_is_filed_and_the_run_goes_on(run_rig, monkeypatch):
+    """Advisory by default, exactly like the run-start cross-check: the
+    disagreement is recorded — a deviation Note naming both places and a
+    `plate_custody_mismatch` row stamped `phase: preflight` — and the operator
+    decides. Nothing auto-corrects, and nothing stops on its own."""
+    ledger = _LedgerFake([_at("bench/hte_staging"),   # run start
+                          _at("bench/hte_staging"),   # before pick — agrees
+                          _at("bench/hte_staging")])  # before place — the plate never left
+    events, db = _preflight_rig(run_rig, monkeypatch, ledger,
+                                ["succeeded", "succeeded", "succeeded"])
+    check = _preflights(events)[1]
+    assert check["verdict"] == "mismatch"
+    assert check["expected"] == "xarm_translocation/gripper"
+    assert check["actual"] == "bench/hte_staging"
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["ok"] is True and done["aborted_reason"] is None     # advisory
+    note = next(n for n in done["record"]["notes"]
+                if n.get("data", {}).get("phase") == "preflight")
+    assert note["kind"] == "deviation" and note["step_id"] == "place"
+    assert "xarm_translocation/gripper" in note["body"] and "bench/hte_staging" in note["body"]
+    rows = [(d, p) for d, e, p in db.rows if e == "plate_custody_mismatch"]
+    assert len(rows) == 1
+    assert rows[0][0] == "xarm_translocation"      # the device anchoring `expected`
+    assert rows[0][1]["phase"] == "preflight"      # what tells it from the after-step row
+
+
+def test_strict_custody_stops_the_run_before_the_step_that_would_be_wrong(run_rig, monkeypatch):
+    """A plate that is not where the chain requires makes every *later* step
+    wrong too, not just this one — so the gate aborts and the SDK skips the
+    rest, rather than blocking one step and carrying on."""
+    ledger = _LedgerFake([_at("bench/hte_staging"), _at("bench/hte_staging"),
+                          _at("bench/hte_staging")])
+    events, _ = _preflight_rig(run_rig, monkeypatch, ledger,
+                               ["succeeded", "succeeded", "succeeded"], strict=True)
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["ok"] is False
+    assert "custody preflight for place" in done["aborted_reason"]
+    assert [s["status"] for s in done["steps"]] == ["succeeded", "skipped", "skipped"]
+    assert [m["step_id"] for m in ledger.moves] == ["pick"]   # `place` never moved
+
+
+def test_a_move_the_ledger_refused_makes_the_next_step_unverifiable_not_wrong(run_rig, monkeypatch):
+    """The chain advances only as far as the ledger went. When a `move` write
+    fails the plate is somewhere the ledger does not know, so the next preflight
+    declines to judge — under strict too. Accusing the ledger of disagreeing
+    with a move it was never told about would be a fabricated deviation."""
+    ledger = _LedgerFake([_at("bench/hte_staging"), _at("bench/hte_staging")],
+                         records=False)
+    events, db = _preflight_rig(run_rig, monkeypatch, ledger,
+                                ["succeeded", "succeeded", "succeeded"], strict=True)
+    checks = _preflights(events)
+    assert [c["verdict"] for c in checks[:1]] == ["ok"]
+    assert checks[1] == {"step_id": "place", "plate": "reaction", "hid": "PLT-1",
+                         "to": "torry_pines_shaker/nest",
+                         "checked": False, "reason": "unverifiable"}
+    assert len(ledger.lookups) == 2          # the unverifiable step asks nothing
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["aborted_reason"] is None
+    assert not [r for r in db.rows if r[1] == "plate_custody_mismatch"]
+
+
+def test_an_unknown_outcome_makes_the_next_step_unverifiable(run_rig, monkeypatch):
+    """A step that was sent and never answered may or may not have moved the
+    plate. The chain forgets where it is rather than guessing, which is the same
+    rule the after-step hook applies when it declines to write a `move` row."""
+    ledger = _LedgerFake([_at("bench/hte_staging"), _at("bench/hte_staging")])
+    events, _ = _preflight_rig(run_rig, monkeypatch, ledger,
+                               ["unknown", "succeeded", "succeeded"], strict=True)
+    checks = _preflights(events)
+    assert checks[0]["verdict"] == "ok"
+    assert checks[1]["reason"] == "unverifiable"
+    assert [m["step_id"] for m in ledger.moves] == ["place"]   # `pick` wrote nothing
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["aborted_reason"] is None
+
+
+def test_with_no_record_layer_the_preflight_is_silent(run_rig, monkeypatch):
+    """`record.py` property 3: a deployment that has not opted into the record
+    layer must behave exactly as before. No ledger, nothing to check, no frames
+    — and certainly no refusal."""
+    events, db = _preflight_rig(run_rig, monkeypatch, None,
+                                ["succeeded", "succeeded", "succeeded"], strict=True)
+    assert _preflights(events) == []
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["ok"] is True and done["aborted_reason"] is None
+
+
+def test_a_dry_run_reports_the_disagreement_and_still_runs(run_rig, monkeypatch):
+    """A dry run *is* the preflight. Refusing to preflight because the preflight
+    found something is the one outcome that helps nobody — so it checks, says
+    so, and completes even under strict."""
+    ledger = _LedgerFake([_at("bench/hte_staging"), _at("waste/bin")])
+    events, db = _preflight_rig(run_rig, monkeypatch, ledger,
+                                ["dry_run", "dry_run", "dry_run"],
+                                dry_run=True, strict=True)
+    checks = _preflights(events)
+    assert checks[0]["verdict"] == "mismatch" and checks[0]["actual"] == "waste/bin"
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["aborted_reason"] is None
+    assert [s["status"] for s in done["steps"]] == ["dry_run", "dry_run", "dry_run"]
+    # `bench/hte_staging` is a bench spot with no equipment behind it, so the
+    # audit row falls back to the custody pseudo-device.
+    assert [d for d, e, _ in db.rows if e == "plate_custody_mismatch"] == ["custody"]

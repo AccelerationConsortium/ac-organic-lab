@@ -167,6 +167,30 @@ async def test_current_location_joins_the_place_name():
     assert (await CustodyRecorder(BASE, "s").current_location("PLT-2", user="u"))["found"] is False
 
 
+@respx.mock
+@pytest.mark.anyio
+async def test_where_is_this_plate_now_can_ask_past_the_container_cache():
+    """The recorder caches container rows for its lifetime, which is right for
+    everything `record_move` needs — but a row also carries `location_id`, and
+    that is precisely what a move changes. A mid-run "where is it now" against
+    the cache answers with where the plate was before this run started moving
+    it, which would read as the ledger disagreeing with the run's own move."""
+    containers = respx.get(f"{BASE}/containers").mock(
+        return_value=httpx.Response(200, json=[{"container_id": "c1", "location_id": "l1"}]))
+    respx.get(f"{BASE}/locations/l1").mock(
+        return_value=httpx.Response(200, json={"name": "bench/hte_staging"}))
+    rec = CustodyRecorder(BASE, "s")
+    assert (await rec.current_location("PLT-1", user="u"))["location_name"] == "bench/hte_staging"
+
+    # the plate moves; the cached row still says otherwise
+    containers.mock(return_value=httpx.Response(200, json=[{"container_id": "c1", "location_id": "l2"}]))
+    respx.get(f"{BASE}/locations/l2").mock(
+        return_value=httpx.Response(200, json={"name": "torry_pines_shaker/nest"}))
+    assert (await rec.current_location("PLT-1", user="u"))["location_name"] == "bench/hte_staging"
+    fresh = await rec.current_location("PLT-1", user="u", refresh=True)
+    assert fresh["location_name"] == "torry_pines_shaker/nest"
+
+
 # ── the human front door ────────────────────────────────────────────────
 
 class _FakeRecorder:

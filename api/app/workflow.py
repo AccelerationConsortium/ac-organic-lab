@@ -48,6 +48,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .custody import (
+    CUSTODY_DEVICE_ID,
     CUSTODY_STRICT,
     PLATE_CUSTODY_MISMATCH,
     PLATE_CUSTODY_UNKNOWN,
@@ -463,6 +464,12 @@ class RunState:
     #: Notes custody produced mid-run (a mismatch, an unknown outcome), filed
     #: with the run's other notes at close.
     custody_notes: list[dict] = dataclass_field(default_factory=list)
+    #: hid → the registry location name this run believes the plate is at right
+    #: now, or ``None`` for "we cannot say". Seeded from the run-start ledger
+    #: read and advanced only by moves the ledger actually accepted, so the
+    #: per-step preflight never holds the ledger to an expectation the ledger
+    #: was never told. See :func:`custody_preflight`.
+    custody_expected: dict[str, str | None] = dataclass_field(default_factory=dict)
 
     def emit(self, type_: str, data: dict) -> None:
         self.events.append({"type": type_, "seq": len(self.events), "data": data})
@@ -488,6 +495,12 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
     """The background task that owns one run, start to finish."""
     identity = state.launched_by
 
+    # Resolved before `gate` so the closure cannot be called against a
+    # half-built run: the preflight below reads all three.
+    custody_by_step = auth.custody_by_step
+    recorder = custody_recorder() if custody_by_step else None
+    locations_cfg = getattr(request.app.state, "locations_config", None)
+
     async def gate(step) -> str | None:
         # Operator abort — checked first, it is free.
         if state.abort_requested:
@@ -507,6 +520,16 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
             )
         if not fresh.executable:
             return f"authorization {state.authorization_id} expired mid-run"
+        # Custody preflight (D1, the layer-4 rule PLATE_TRACKING names and
+        # nobody had written): is the plate still where this run's own chain of
+        # moves says it is? Only for the steps bitácora annotated as handoffs,
+        # and only when there is a ledger to ask.
+        spec = custody_by_step.get(getattr(step, "id", None))
+        if spec is not None and recorder is not None:
+            return await custody_preflight(
+                state, request, auth, getattr(step, "id", None), spec,
+                recorder=recorder, locations=locations_cfg,
+            )
         return None
 
     # D9: open the Plan before the first step so custody rows can anchor to it.
@@ -523,10 +546,6 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
         )
     state.emit("record", {k: v for k, v in state.record.items()
                           if k in ("opened", "plan_id", "experiment_id", "reason", "error")})
-
-    custody_by_step = auth.custody_by_step
-    recorder = custody_recorder() if custody_by_step else None
-    locations_cfg = getattr(request.app.state, "locations_config", None)
 
     async def on_step(step_report) -> None:
         state.emit("step", {
@@ -601,6 +620,130 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
     )
 
 
+async def custody_preflight(state: RunState, request: Request, auth: Authorization,
+                            step_id: str | None, spec: dict, *,
+                            recorder, locations) -> str | None:
+    """Before a handoff step runs: is the plate still where this run thinks it
+    is? Returns an abort reason, or ``None`` to proceed.
+
+    This is the layer-4 rule ``PLATE_TRACKING.md`` D1 and ``INTERLOCKS.md`` name
+    but nobody had written — "plate X must be at location L before step S" —
+    with L taken from :attr:`RunState.custody_expected` rather than from the
+    protocol. The run-start cross-check (:func:`custody_at_start`) already asks
+    the ledger once; between steps is where divergence actually appears, because
+    a plate can be lifted off a nest by a human while a 30-minute incubation
+    runs, and nothing else would notice until the arm reached for empty air.
+
+    What it compares matters. The expectation is **this run's own chain**: the
+    ledger's answer at start, advanced by each move the ledger *accepted*. A
+    move the ledger refused (it was down, the container is unknown) sets the
+    expectation to ``None`` — unverifiable — so the preflight can never accuse
+    the ledger of disagreeing with a move it was never told about. That is the
+    same discipline :func:`reconcile` applies to devices: contradiction is a
+    finding, absence is not.
+
+    Verdicts, and what each files:
+
+    * ``ok`` — the ledger agrees. One SSE frame, nothing else.
+    * ``mismatch`` — the ledger puts the plate somewhere else. Frame, a
+      deviation Note naming both places, and a ``plate_custody_mismatch`` row
+      with ``payload.phase = "preflight"`` (the same event type the after-step
+      contradiction writes; the phase is what tells the two apart).
+    * ``not_in_ledger`` — the container has vanished from the ledger mid-run.
+      Handled exactly like a mismatch: something happened to a plate this run is
+      about to touch, and it is if anything the more alarming of the two.
+    * ``unanswered`` — the record layer could not answer. Frame only: a store
+      that did not reply has said nothing *about the plate*, and a Note claiming
+      a deviation would be the record inventing evidence.
+
+    Under ``CUSTODY_STRICT`` every non-``ok`` verdict aborts the run (including
+    ``unanswered`` — strict means custody must be *verifiable*, which is the
+    same posture the run-start gate takes). The SDK's gate contract makes that
+    an abort with the remaining steps ``skipped``, which is right: a plate that
+    is not where the chain requires makes every later step wrong, not just this
+    one. A dry run checks and reports but never aborts — a dry run *is* the
+    preflight, and refusing to preflight because the preflight failed helps
+    nobody.
+
+    Never raises: an internal bug here degrades to an advisory frame. Stopping a
+    physical run because the code that watches it is broken is the wrong trade.
+    """
+    hid, to, plate = spec.get("hid"), spec.get("to"), spec.get("plate")
+    frame: dict[str, Any] = {"step_id": step_id, "plate": plate, "hid": hid, "to": to}
+    try:
+        expected = state.custody_expected.get(hid)
+        if expected is None:
+            state.emit("custody_preflight",
+                       {**frame, "checked": False, "reason": "unverifiable"})
+            return None
+
+        cur = await recorder.current_location(
+            hid, user=state.launched_by, project=auth.project_id, refresh=True)
+        found, actual = cur.get("found"), cur.get("location_name")
+        frame.update({"checked": True, "expected": expected, "actual": actual})
+
+        if found is True and actual == expected:
+            state.emit("custody_preflight", {**frame, "verdict": "ok"})
+            return None
+
+        if found is True:
+            verdict = "mismatch"
+            body = (f"custody preflight for {step_id}: plate {hid} should be at "
+                    f"{expected!r} before this step, but the ledger reads {actual!r}")
+        elif found is False:
+            verdict = "not_in_ledger"
+            body = (f"custody preflight for {step_id}: plate {hid} should be at "
+                    f"{expected!r} before this step, but the record layer no "
+                    f"longer knows the container")
+        else:
+            verdict = "unanswered"
+            body = (f"custody preflight for {step_id}: plate {hid} should be at "
+                    f"{expected!r}; the record layer could not answer "
+                    f"({cur.get('error')})")
+        frame.update({"verdict": verdict, "error": cur.get("error")})
+        state.emit("custody_preflight", frame)
+
+        if verdict != "unanswered":
+            state.custody_notes.append({
+                "kind": "deviation", "step_id": step_id, "body": body,
+                "data": {"custody": spec, "phase": "preflight", "expected": expected,
+                         "actual": actual, "found": found,
+                         "authorization_id": auth.authorization_id},
+            })
+            entry = locations.by_name(expected) if locations is not None else None
+            await record_custody_event(
+                request, PLATE_CUSTODY_MISMATCH,
+                device_id=getattr(entry, "equipment", None) or CUSTODY_DEVICE_ID,
+                message=body,
+                payload={**frame, "phase": "preflight", "run_id": state.run_id,
+                         "authorization_id": auth.authorization_id},
+            )
+        if CUSTODY_STRICT and not state.dry_run:
+            return body
+        return None
+    except Exception as exc:  # noqa: BLE001 — a watcher must not stop the run
+        logger.exception("custody preflight failed for %s", step_id)
+        state.emit("custody_preflight",
+                   {**frame, "checked": False, "reason": f"preflight error: {exc}"})
+        return None
+
+
+def expected_locations(plates: list[dict]) -> dict[str, str | None]:
+    """The opening links of the expected-location chain, from
+    :func:`custody_at_start`'s ledger read: hid → location name where the ledger
+    answered, ``None`` where it did not. Pure.
+
+    ``None`` is load-bearing rather than a gap: a plate the ledger cannot place
+    is one the per-step preflight must decline to judge, not one it may assume
+    is where the protocol wishes it were."""
+    out: dict[str, str | None] = {}
+    for p in plates:
+        hid = p.get("hid")
+        if hid:
+            out[hid] = p.get("location_name") if p.get("found") is True else None
+    return out
+
+
 async def custody_after_step(state: RunState, request: Request, auth: Authorization,
                              step_report, spec: dict, *, recorder, locations) -> None:
     """The robot half of custody (PLATE_TRACKING.md D6–D8): a compiled step
@@ -627,6 +770,10 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
         device = getattr(entry, "equipment", None) or "custody"
         plan_id = state.record.get("plan_id")
         if status == "unknown":
+            # The plate may or may not have arrived, so the chain can no longer
+            # say where it is. Later steps preflight as unverifiable rather than
+            # against a place nobody can vouch for.
+            state.custody_expected[hid] = None
             body = (f"step {step_report.step_id} was sent and never answered: plate {hid} "
                     f"may or may not have arrived at {to}; its last recorded place stands")
             state.custody_notes.append({
@@ -650,6 +797,10 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
                         "role": step_report.role, "skill": step_report.skill,
                         "plate": plate, "via": "executor"},
             )
+        # Advance the chain the preflight compares against — but only as far as
+        # the ledger actually went. A move it refused leaves the plate somewhere
+        # the ledger does not know, which is exactly "we cannot say".
+        state.custody_expected[hid] = to if result.get("recorded") else None
         # 2. the observed side — a fresh read of the destination's device
         observation = Observation("none", None, "no registry entry")
         aggregator = getattr(request.app.state, "aggregator", None)
@@ -753,6 +904,7 @@ def build_workflow_router() -> APIRouter:
             dry_run=body.dry_run,
             started_at=time.monotonic(),
             started_at_utc=datetime.now(timezone.utc).isoformat(),
+            custody_expected=expected_locations(plates),
         )
         _remember(state)
         state.emit("started", {

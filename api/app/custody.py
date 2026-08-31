@@ -215,8 +215,17 @@ class CustodyRecorder:
         return self._locations[name]
 
     async def resolve_container(self, client: httpx.AsyncClient, hid: str, *,
-                                user: str, project: str | None = None) -> dict | None:
-        if hid in self._containers:
+                                user: str, project: str | None = None,
+                                refresh: bool = False) -> dict | None:
+        """The container row for ``hid``, cached for this recorder's lifetime.
+
+        ``refresh`` re-reads it. The cache is safe for what ``record_move``
+        needs — a container's id and identity never change — but a row also
+        carries ``location_id``, which is *precisely* what a move changes. A
+        caller asking where a plate is now must say so, or it gets the answer
+        from before this run started moving it.
+        """
+        if hid in self._containers and not refresh:
             return self._containers[hid]
         r = await client.get(f"{self.base_url}/containers",
                              headers=self._headers(user, project), params={"hid": hid})
@@ -277,12 +286,20 @@ class CustodyRecorder:
             return {"recorded": False, "reason": "unreachable", "detail": str(exc)[:300]}
 
     async def current_location(self, hid: str, *, user: str,
-                               project: str | None = None) -> dict[str, Any]:
+                               project: str | None = None,
+                               refresh: bool = False) -> dict[str, Any]:
         """``{"found": bool, "hid", "container_id", "location_id", "location_name"}``;
-        never raises (``found: None`` when the store could not answer)."""
+        never raises (``found: None`` when the store could not answer).
+
+        Pass ``refresh=True`` for a *fresh* answer — a recorder that has already
+        written a move for this plate holds the pre-move row (see
+        :meth:`resolve_container`), and comparing against that would report the
+        plate as still where it was before the run touched it.
+        """
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                row = await self.resolve_container(client, hid, user=user, project=project)
+                row = await self.resolve_container(client, hid, user=user,
+                                                   project=project, refresh=refresh)
                 if row is None:
                     return {"found": False, "hid": hid}
                 name = None
