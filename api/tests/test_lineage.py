@@ -43,10 +43,18 @@ def _entry(step_id="transfer_acid", *, mapping="identity",
             "dest": {"plate": dest, "hid": dest_hid}, "dest_well": dest_well}
 
 
-def _pkg(step_ids, lineage) -> dict:
-    return {"steps": [{"step_id": s, "role": "liquid_handler", "skill": "dispense"}
-                      for s in step_ids],
+def _pkg(step_ids, lineage, steps=None) -> dict:
+    """A published package. ``step_ids`` gives bare argument-free dispenses (the
+    topology-only shape most of these tests care about); pass ``steps`` instead
+    for compiled steps that carry a skill and args."""
+    return {"steps": steps or [{"step_id": s, "role": "liquid_handler", "skill": "dispense"}
+                               for s in step_ids],
             "lineage": lineage}
+
+
+def _step(step_id, skill="dispense", **args) -> dict:
+    return {"step_id": step_id, "role": "liquid_handler", "skill": skill,
+            "args": args}
 
 
 def _all(step_ids, status="succeeded") -> dict[str, str]:
@@ -167,6 +175,72 @@ def test_a_step_that_did_not_expand_per_well_is_gated_whole() -> None:
                                 "fill__dispense": "failed"}) == []
 
 
+# ── the commanded amount ─────────────────────────────────────────────────
+
+
+def test_one_source_and_one_dispense_carries_the_volume() -> None:
+    """The ordinary per-well transfer: aspirate and dispense both name the same
+    `volume_ul`, and the dispensing half is the one this row is about. The unit
+    comes from the argument's own name, so nothing is converted or assumed."""
+    steps = [_step("t__A1__aspirate", "aspirate", pipette="p300", volume_ul=50.0),
+             _step("t__A1__dispense", "dispense", pipette="p300", volume_ul=50.0)]
+    pkg = _pkg(None, [_entry("t")], steps=steps)
+    specs = transfers_from(pkg, _all([s["step_id"] for s in steps]))
+    assert (specs[0]["amount_commanded"], specs[0]["unit"]) == (50.0, "uL")
+
+
+def test_a_pairwise_merge_keeps_the_amount_null() -> None:
+    """Two sources into one well: the package says how much arrived, never how
+    much each source contributed — that split lives in the protocol's mapping,
+    not in any compiled step. Splitting it here would be a fabrication, and one
+    an append-only ledger would keep forever."""
+    steps = [_step("combine__B3__dispense", "dispense", volume_ul=100.0)]
+    pkg = _pkg(None, [
+        _entry("combine", mapping="pairwise", source_hid="PLT-A",
+               source_well="B3", dest_well="B3"),
+        _entry("combine", mapping="pairwise", source_hid="PLT-N",
+               source_well="B3", dest_well="B3"),
+    ], steps=steps)
+    specs = transfers_from(pkg, _all(["combine__B3__dispense"]))
+    assert len(specs) == 2
+    assert [s["amount_commanded"] for s in specs] == [None, None]
+    assert [s["unit"] for s in specs] == [None, None]
+
+
+def test_two_dispenses_into_one_well_keep_the_amount_null() -> None:
+    """One source, but split across two pours. The true amount is their sum,
+    and a sum is an inference about what the run did rather than a reading of
+    what it was told."""
+    steps = [_step("split__A1__dispense_a", "dispense", volume_ul=25.0),
+             _step("split__A1__dispense_b", "dispense", volume_ul=25.0)]
+    pkg = _pkg(None, [_entry("split")], steps=steps)
+    specs = transfers_from(pkg, _all([s["step_id"] for s in steps]))
+    assert specs[0]["amount_commanded"] is None
+
+
+def test_a_gate_with_no_recognised_volume_argument_is_null() -> None:
+    """A step with no amount at all, and a number under a key whose name does
+    not state its unit. The second is the one that matters: `volume` could be
+    µL or mL and the difference is a thousandfold, so it is not read."""
+    for steps in ([_step("seal")],
+                  [_step("t__A1__dispense", "dispense", volume=50.0)],
+                  [_step("t__A1__dispense", "dispense", volume_ul="50")],
+                  [_step("t__A1__dispense", "dispense", volume_ul=0)]):
+        pkg = _pkg(None, [_entry(steps[0]["step_id"].split("__")[0])], steps=steps)
+        specs = transfers_from(pkg, _all([s["step_id"] for s in steps]))
+        assert specs and specs[0]["amount_commanded"] is None
+        assert specs[0]["unit"] is None
+
+
+def test_an_aspirate_only_gate_still_yields_its_one_volume() -> None:
+    """`dispense` is a preference, not a requirement — with a single
+    volume-bearing step in the gate there is nothing to disambiguate."""
+    steps = [_step("prime__A1__aspirate", "aspirate", volume_ul=12.5)]
+    pkg = _pkg(None, [_entry("prime")], steps=steps)
+    specs = transfers_from(pkg, _all(["prime__A1__aspirate"]))
+    assert (specs[0]["amount_commanded"], specs[0]["unit"]) == (12.5, "uL")
+
+
 # ── the poster ───────────────────────────────────────────────────────────
 
 
@@ -221,8 +295,28 @@ async def test_a_transfer_row_points_at_the_wells_and_anchors_to_the_plan() -> N
         "source": {"hid": "PLT-A", "well": "A1"},
         "dest": {"hid": "PLT-R", "well": "A1"},
     }
-    # Amounts stay out entirely in this slice — absent, never a guessed zero.
-    assert "amount_commanded" not in sent and "amount_observed" not in sent
+    # This package's steps declare no volume, so the amount columns are left
+    # out of the body entirely — absent, never a guessed zero. `amount_observed`
+    # has no writer at all: no device reports what it actually poured.
+    assert "amount_commanded" not in sent and "unit" not in sent
+    assert "amount_observed" not in sent
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_resolved_amount_reaches_the_ledger_with_its_unit() -> None:
+    """`amount_commanded` and `unit` travel together or not at all — a number
+    with no unit is not a quantity."""
+    _mock_plates()
+    post = respx.post(f"{BASE}/container-actions").mock(
+        return_value=httpx.Response(200, json={"action_id": "a1"}))
+    steps = [_step("transfer_acid__A1__aspirate", "aspirate", volume_ul=37.5),
+             _step("transfer_acid__A1__dispense", "dispense", volume_ul=37.5)]
+    specs = transfers_from(_pkg(None, [_entry()], steps=steps),
+                           _all([s["step_id"] for s in steps]))
+    assert (await _post(CustodyRecorder(BASE, "s"), specs))["emitted"] == 1
+    sent = json.loads(post.calls.last.request.content)
+    assert sent["amount_commanded"] == 37.5 and sent["unit"] == "uL"
 
 
 @respx.mock

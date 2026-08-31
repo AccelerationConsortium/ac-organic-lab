@@ -272,6 +272,7 @@ class CustodyRecorder:
     async def record_transfer(
         self, *, source_hid: str, source_well: str | None,
         dest_hid: str, dest_well: str | None, performed_by: str, recorder: str,
+        amount_commanded: float | None = None, unit: str | None = None,
         project: str | None = None, plan_id: str | None = None,
         step_id: str | None = None, params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -281,7 +282,12 @@ class CustodyRecorder:
         Source and target are the **child** (well) containers, which is what
         makes this row lineage rather than another custody move: `move` says a
         plate changed place, `transfer` says a well's contents have a parent.
-        Amounts are deliberately absent in this slice — see :mod:`app.lineage`.
+
+        ``amount_commanded`` + ``unit`` (a UCUM code from the ledger's ``Unit``
+        enum) travel together or not at all, and both are omitted from the body
+        when the caller has no amount — :mod:`app.lineage` decides that, and an
+        omitted column is how the ledger says "unknown". ``amount_observed``
+        has no writer yet: no device reports what it actually poured.
 
         Returns ``{"recorded": True, action_id, source_container_id,
         target_container_id}`` or ``{"recorded": False, "reason": …}``; never
@@ -315,6 +321,9 @@ class CustodyRecorder:
                                "source": {"hid": source_hid, "well": source_well},
                                "dest": {"hid": dest_hid, "well": dest_well}},
                 }
+                if amount_commanded is not None and unit:
+                    body["amount_commanded"] = amount_commanded
+                    body["unit"] = unit
                 if plan_id:
                     body["plan_id"] = plan_id
                     if step_id:

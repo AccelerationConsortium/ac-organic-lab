@@ -24,12 +24,15 @@ this module does two much smaller things:
   and best-effort, in the same never-raises posture as every other
   record-layer write (``record.py`` property 1).
 
-**Amounts stay null in this slice.** These rows say that A1 of the acid plate
-fed A1 of the reaction plate; deliberately not how much. The commanded volume
-is buried in a step's args and the observed one exists nowhere yet, and
-``amount_commanded`` / ``amount_observed`` are separate nullable columns
-precisely so they can arrive later without moving the join. A row that says
-*which wells* is already the thing nothing in the stack could answer.
+**Amounts are carried only where the package settles them.** A row's first job
+is topology — A1 of the acid plate fed A1 of the reaction plate — and that part
+is always derivable. ``amount_commanded`` is filled in only for the pairs where
+the package leaves no room to guess: one declared source into that well, and
+one gating step naming a volume (:func:`commanded_amount`). Everything else
+keeps the null, because a wrong number in an append-only ledger is worse than
+no number, and ``amount_commanded`` / ``amount_observed`` are separate nullable
+columns precisely so the second one can arrive later without moving the join.
+``amount_observed`` stays null throughout: no device reports it yet.
 """
 
 from __future__ import annotations
@@ -53,6 +56,20 @@ SEP = "__"
 SKIP_REASONS = frozenset(
     {"unbound_plate", "unknown_container", "no_child_containers", "unknown_well"}
 )
+
+#: Compiled-step argument names that state a commanded amount, mapped to the
+#: UCUM code the record layer's ``Unit`` enum accepts (PLATE_TRACKING.md §5:
+#: ``uL mL mg g umol mmol``). Exactly one entry, and that is the point: the
+#: OT-2's ``volume_ul`` (``skill_catalog.liquid_handler.LiquidMoveArgs``) is the
+#: one argument in the catalog whose *name* carries its unit, so reading it
+#: converts nothing and assumes nothing. An argument this table does not know
+#: leaves the amount null rather than inviting a guess about its unit.
+AMOUNT_ARGS: dict[str, str] = {"volume_ul": "uL"}
+
+#: The skill whose volume is the amount that *landed* in the destination well.
+#: A per-well transfer compiles to an aspirate and a dispense both carrying the
+#: same ``volume_ul``, and this row is about the dispensing half.
+DISPENSING_SKILL = "dispense"
 
 
 def gating_steps(compiled: Iterable[str], entry: dict) -> list[str]:
@@ -93,14 +110,59 @@ def gating_steps(compiled: Iterable[str], entry: dict) -> list[str]:
     return gate
 
 
-def spec_from(entry: dict, gate: list[str]) -> dict[str, Any]:
+def commanded_amount(gate: list[str], steps: dict[str, dict]) -> tuple[float, str] | None:
+    """``(value, unit)`` for the gate, or ``None`` when the package does not
+    settle it. Pure.
+
+    Two filters, both refusals rather than heuristics:
+
+    * **Only arguments whose name states their unit** (:data:`AMOUNT_ARGS`).
+      A number under an unrecognised key could be µL or mL and the difference
+      is a thousandfold; the ledger takes the null instead.
+    * **The dispense wins, and only if it is alone.** A per-well transfer
+      compiles to aspirate + dispense carrying the same ``volume_ul``, so
+      preferring the dispensing half resolves the ordinary case to one value.
+      When two dispenses feed the same well the total is their *sum*, and a
+      sum is an inference about what the run did rather than a reading of what
+      it was told — so that case, and any other that leaves more than one
+      candidate, returns ``None``.
+    """
+    candidates: list[tuple[str | None, float, str]] = []
+    for sid in gate:
+        step = steps.get(sid) or {}
+        args = step.get("args") or {}
+        if not isinstance(args, dict):
+            continue
+        for name, unit in AMOUNT_ARGS.items():
+            value = args.get(name)
+            # `bool` is an `int`; a flag is not a volume.
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            if value <= 0:
+                continue
+            candidates.append((step.get("skill"), float(value), unit))
+    dispensed = [c for c in candidates if c[0] == DISPENSING_SKILL]
+    chosen = dispensed or candidates
+    if len(chosen) != 1:
+        return None
+    _, value, unit = chosen[0]
+    return value, unit
+
+
+def spec_from(entry: dict, gate: list[str],
+              amount: tuple[float, str] | None = None) -> dict[str, Any]:
     """One entry, flattened into what the poster needs: both ends of the pair,
     the protocol step the ledger row anchors to, and the compiled steps that
     vouched for it (which is also how the poster attributes the row to a
-    machine — a compiled step knows its equipment, a protocol step does not)."""
+    machine — a compiled step knows its equipment, a protocol step does not).
+
+    ``amount`` is the ``(value, unit)`` :func:`transfers_from` resolved, or
+    ``None`` — which is a real answer here, not a missing one."""
     source = entry.get("source") or {}
     dest = entry.get("dest") or {}
     return {
+        "amount_commanded": amount[0] if amount else None,
+        "unit": amount[1] if amount else None,
         # The *protocol* step id, not a compiled one: a per-well expansion has
         # 96 compiled ids and the row belongs to the step a human authored.
         "step_id": entry.get("step_id"),
@@ -130,19 +192,36 @@ def transfers_from(package: dict, statuses: dict[str, str]) -> list[dict]:
       liquid, and the honest record of that is the ``outcome_unknown`` note
       custody already files, not a transfer row asserting a pour that may not
       have happened.
+
+    Amounts are resolved here too, and only where the package settles them.
+    A pair gets an ``amount_commanded`` when it is the **only** pair declared
+    into its destination well for that step *and* :func:`commanded_amount`
+    finds a single volume in the gate. Both halves are needed: a pairwise merge
+    declares two sources into one well and the package says how much arrived,
+    never how much each source contributed — that split lives in the protocol's
+    mapping, not in any compiled step, so attributing the well's volume to
+    either source would be a fabrication.
     """
-    compiled = [s.get("step_id") for s in (package.get("steps") or [])
-                if isinstance(s, dict) and s.get("step_id")]
+    entries = [e for e in (package.get("lineage") or []) if isinstance(e, dict)]
+    steps = {s["step_id"]: s for s in (package.get("steps") or [])
+             if isinstance(s, dict) and s.get("step_id")}
+    compiled = list(steps)
+    # How many pairs the package declares into each (protocol step, dest well).
+    declared: dict[tuple[Any, Any], int] = {}
+    for entry in entries:
+        key = (entry.get("step_id"), entry.get("dest_well"))
+        declared[key] = declared.get(key, 0) + 1
     specs: list[dict] = []
-    for entry in package.get("lineage") or []:
-        if not isinstance(entry, dict):
-            continue
+    for entry in entries:
         gate = gating_steps(compiled, entry)
         if not gate:
             continue
         if any(statuses.get(sid) != "succeeded" for sid in gate):
             continue
-        specs.append(spec_from(entry, gate))
+        amount = None
+        if declared[(entry.get("step_id"), entry.get("dest_well"))] == 1:
+            amount = commanded_amount(gate, steps)
+        specs.append(spec_from(entry, gate, amount))
     return specs
 
 
@@ -191,6 +270,7 @@ async def post_transfers(
             result = await recorder.record_transfer(
                 source_hid=spec["source_hid"], source_well=spec.get("source_well"),
                 dest_hid=spec["dest_hid"], dest_well=spec.get("dest_well"),
+                amount_commanded=spec.get("amount_commanded"), unit=spec.get("unit"),
                 performed_by=performed_by or operator, recorder=operator,
                 project=project, plan_id=plan_id, step_id=spec.get("step_id"),
                 params={"authorization_id": authorization_id, "run_id": run_id,

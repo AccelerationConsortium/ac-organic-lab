@@ -283,10 +283,19 @@ to nothing" (`DATABASE_DESIGN.md`) — a later consumer of the same ledger.
 > row per pair whose gating compiled steps all `succeeded`
 > (`api/app/lineage.py`, child well containers resolved via
 > `parent_container_id`, `plan_id`/`step_id`-anchored, never raises; summary
-> on the run's `done` frame under `record.transfers`). Amounts are
-> deliberately null in this slice — the rows are topology, per
-> PLATES_AS_OBJECTS §7; commanded volumes sit in the gating steps' `args`
-> when a follow-up wants them.
+> on the run's `done` frame under `record.transfers`). The rows are topology
+> first, per PLATES_AS_OBJECTS §7.
+>
+> *Update 2026-08-31 — `amount_commanded` where the package settles it.* The
+> commanded volume does sit in the gating steps' `args`, and is now read from
+> there, but only when nothing has to be inferred: exactly one declared pair
+> into that destination well, and exactly one gating step naming a volume
+> (`dispense` preferred, being the half that landed). A pairwise merge keeps
+> the null — the package says how much *arrived*, never how much each source
+> contributed, and that split lives in the protocol's mapping rather than in
+> any compiled step. Only `volume_ul` is read (`uL`), because it is the one
+> catalog argument whose name states its unit. `amount_observed` stays null
+> throughout: no device reports what it actually poured.
 
 ---
 
