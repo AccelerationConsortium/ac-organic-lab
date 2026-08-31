@@ -48,6 +48,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .custody import (
+    CUSTODY_DEVICE_ID,
     CUSTODY_STRICT,
     PLATE_CUSTODY_MISMATCH,
     PLATE_CUSTODY_UNKNOWN,
@@ -58,6 +59,7 @@ from .custody import (
     reconcile,
     record_custody_event,
 )
+from .lineage import post_transfers, transfers_from
 from .record import close_run_record, open_run_record
 
 logger = logging.getLogger("workflow")
@@ -121,8 +123,15 @@ _DIGEST_FIELDS = frozenset(
 #: part of what was authorized and must be hashed. Keeping them in a separate
 #: set, rather than adding them to `_DIGEST_FIELDS`, is what lets the
 #: missing-input check stay strict for the required set without refusing every
-#: one-plate package. `plates` since bitácora template 1.10.0 (PLATES_AS_OBJECTS).
-_OPTIONAL_DIGEST_FIELDS = frozenset({"plates"})
+#: one-plate package. `plates` since bitácora template 1.10.0 (PLATES_AS_OBJECTS);
+#: `substances` since COMPILER_VERSION 0.5.0 — a package with a substance
+#: registry was being refused as a digest mismatch, which reads as tampering
+#: and was only drift. `lineage` since 0.6.0 (the compiler-expanded well pairs
+#: `app.lineage` files as `transfer` rows), added with the field rather than
+#: after the first false tamper report. Every optional field bitácora starts
+#: hashing has to be added here, and the failure mode when it is not is a false
+#: tamper report.
+_OPTIONAL_DIGEST_FIELDS = frozenset({"plates", "substances", "lineage"})
 
 
 def digest_payload_of(package: dict) -> dict:
@@ -459,6 +468,12 @@ class RunState:
     #: Notes custody produced mid-run (a mismatch, an unknown outcome), filed
     #: with the run's other notes at close.
     custody_notes: list[dict] = dataclass_field(default_factory=list)
+    #: hid → the registry location name this run believes the plate is at right
+    #: now, or ``None`` for "we cannot say". Seeded from the run-start ledger
+    #: read and advanced only by moves the ledger actually accepted, so the
+    #: per-step preflight never holds the ledger to an expectation the ledger
+    #: was never told. See :func:`custody_preflight`.
+    custody_expected: dict[str, str | None] = dataclass_field(default_factory=dict)
 
     def emit(self, type_: str, data: dict) -> None:
         self.events.append({"type": type_, "seq": len(self.events), "data": data})
@@ -484,6 +499,16 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
     """The background task that owns one run, start to finish."""
     identity = state.launched_by
 
+    # One recorder serves both ledger verbs. A package may declare lineage and
+    # annotate no custody at all (a plate that never leaves its slot still has
+    # wells feeding wells), so it is built for either.
+    lineage = list((auth.package or {}).get("lineage") or [])
+    # Resolved before `gate` so the closure cannot be called against a
+    # half-built run: the preflight below reads all three.
+    custody_by_step = auth.custody_by_step
+    recorder = custody_recorder() if (custody_by_step or lineage) else None
+    locations_cfg = getattr(request.app.state, "locations_config", None)
+
     async def gate(step) -> str | None:
         # Operator abort — checked first, it is free.
         if state.abort_requested:
@@ -503,6 +528,16 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
             )
         if not fresh.executable:
             return f"authorization {state.authorization_id} expired mid-run"
+        # Custody preflight (D1, the layer-4 rule PLATE_TRACKING names and
+        # nobody had written): is the plate still where this run's own chain of
+        # moves says it is? Only for the steps bitácora annotated as handoffs,
+        # and only when there is a ledger to ask.
+        spec = custody_by_step.get(getattr(step, "id", None))
+        if spec is not None and recorder is not None:
+            return await custody_preflight(
+                state, request, auth, getattr(step, "id", None), spec,
+                recorder=recorder, locations=locations_cfg,
+            )
         return None
 
     # D9: open the Plan before the first step so custody rows can anchor to it.
@@ -519,10 +554,6 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
         )
     state.emit("record", {k: v for k, v in state.record.items()
                           if k in ("opened", "plan_id", "experiment_id", "reason", "error")})
-
-    custody_by_step = auth.custody_by_step
-    recorder = custody_recorder() if custody_by_step else None
-    locations_cfg = getattr(request.app.state, "locations_config", None)
 
     async def on_step(step_report) -> None:
         state.emit("step", {
@@ -585,6 +616,13 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
         summary={"ok": report.ok, "aborted_reason": report.aborted_reason,
                  "dry_run": report.dry_run, "duration_s": round(duration, 3)},
     )
+    # Lineage (D11) files after the Plan is closed and before `done` is emitted,
+    # for the same reason the run record does: a consumer that sees the run
+    # finish also sees whether its provenance was written. A dry run moved no
+    # liquid, so there is nothing to say fed anything.
+    if lineage and not state.dry_run:
+        state.result["record"]["transfers"] = await lineage_after_run(
+            state, auth, report, recorder=recorder)
     state.emit("done", state.result)
     await _record_run_event(
         request, auth.authorization_id,
@@ -595,6 +633,130 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
                 "aborted_reason": report.aborted_reason},
         duration_s=duration,
     )
+
+
+async def custody_preflight(state: RunState, request: Request, auth: Authorization,
+                            step_id: str | None, spec: dict, *,
+                            recorder, locations) -> str | None:
+    """Before a handoff step runs: is the plate still where this run thinks it
+    is? Returns an abort reason, or ``None`` to proceed.
+
+    This is the layer-4 rule ``PLATE_TRACKING.md`` D1 and ``INTERLOCKS.md`` name
+    but nobody had written — "plate X must be at location L before step S" —
+    with L taken from :attr:`RunState.custody_expected` rather than from the
+    protocol. The run-start cross-check (:func:`custody_at_start`) already asks
+    the ledger once; between steps is where divergence actually appears, because
+    a plate can be lifted off a nest by a human while a 30-minute incubation
+    runs, and nothing else would notice until the arm reached for empty air.
+
+    What it compares matters. The expectation is **this run's own chain**: the
+    ledger's answer at start, advanced by each move the ledger *accepted*. A
+    move the ledger refused (it was down, the container is unknown) sets the
+    expectation to ``None`` — unverifiable — so the preflight can never accuse
+    the ledger of disagreeing with a move it was never told about. That is the
+    same discipline :func:`reconcile` applies to devices: contradiction is a
+    finding, absence is not.
+
+    Verdicts, and what each files:
+
+    * ``ok`` — the ledger agrees. One SSE frame, nothing else.
+    * ``mismatch`` — the ledger puts the plate somewhere else. Frame, a
+      deviation Note naming both places, and a ``plate_custody_mismatch`` row
+      with ``payload.phase = "preflight"`` (the same event type the after-step
+      contradiction writes; the phase is what tells the two apart).
+    * ``not_in_ledger`` — the container has vanished from the ledger mid-run.
+      Handled exactly like a mismatch: something happened to a plate this run is
+      about to touch, and it is if anything the more alarming of the two.
+    * ``unanswered`` — the record layer could not answer. Frame only: a store
+      that did not reply has said nothing *about the plate*, and a Note claiming
+      a deviation would be the record inventing evidence.
+
+    Under ``CUSTODY_STRICT`` every non-``ok`` verdict aborts the run (including
+    ``unanswered`` — strict means custody must be *verifiable*, which is the
+    same posture the run-start gate takes). The SDK's gate contract makes that
+    an abort with the remaining steps ``skipped``, which is right: a plate that
+    is not where the chain requires makes every later step wrong, not just this
+    one. A dry run checks and reports but never aborts — a dry run *is* the
+    preflight, and refusing to preflight because the preflight failed helps
+    nobody.
+
+    Never raises: an internal bug here degrades to an advisory frame. Stopping a
+    physical run because the code that watches it is broken is the wrong trade.
+    """
+    hid, to, plate = spec.get("hid"), spec.get("to"), spec.get("plate")
+    frame: dict[str, Any] = {"step_id": step_id, "plate": plate, "hid": hid, "to": to}
+    try:
+        expected = state.custody_expected.get(hid)
+        if expected is None:
+            state.emit("custody_preflight",
+                       {**frame, "checked": False, "reason": "unverifiable"})
+            return None
+
+        cur = await recorder.current_location(
+            hid, user=state.launched_by, project=auth.project_id, refresh=True)
+        found, actual = cur.get("found"), cur.get("location_name")
+        frame.update({"checked": True, "expected": expected, "actual": actual})
+
+        if found is True and actual == expected:
+            state.emit("custody_preflight", {**frame, "verdict": "ok"})
+            return None
+
+        if found is True:
+            verdict = "mismatch"
+            body = (f"custody preflight for {step_id}: plate {hid} should be at "
+                    f"{expected!r} before this step, but the ledger reads {actual!r}")
+        elif found is False:
+            verdict = "not_in_ledger"
+            body = (f"custody preflight for {step_id}: plate {hid} should be at "
+                    f"{expected!r} before this step, but the record layer no "
+                    f"longer knows the container")
+        else:
+            verdict = "unanswered"
+            body = (f"custody preflight for {step_id}: plate {hid} should be at "
+                    f"{expected!r}; the record layer could not answer "
+                    f"({cur.get('error')})")
+        frame.update({"verdict": verdict, "error": cur.get("error")})
+        state.emit("custody_preflight", frame)
+
+        if verdict != "unanswered":
+            state.custody_notes.append({
+                "kind": "deviation", "step_id": step_id, "body": body,
+                "data": {"custody": spec, "phase": "preflight", "expected": expected,
+                         "actual": actual, "found": found,
+                         "authorization_id": auth.authorization_id},
+            })
+            entry = locations.by_name(expected) if locations is not None else None
+            await record_custody_event(
+                request, PLATE_CUSTODY_MISMATCH,
+                device_id=getattr(entry, "equipment", None) or CUSTODY_DEVICE_ID,
+                message=body,
+                payload={**frame, "phase": "preflight", "run_id": state.run_id,
+                         "authorization_id": auth.authorization_id},
+            )
+        if CUSTODY_STRICT and not state.dry_run:
+            return body
+        return None
+    except Exception as exc:  # noqa: BLE001 — a watcher must not stop the run
+        logger.exception("custody preflight failed for %s", step_id)
+        state.emit("custody_preflight",
+                   {**frame, "checked": False, "reason": f"preflight error: {exc}"})
+        return None
+
+
+def expected_locations(plates: list[dict]) -> dict[str, str | None]:
+    """The opening links of the expected-location chain, from
+    :func:`custody_at_start`'s ledger read: hid → location name where the ledger
+    answered, ``None`` where it did not. Pure.
+
+    ``None`` is load-bearing rather than a gap: a plate the ledger cannot place
+    is one the per-step preflight must decline to judge, not one it may assume
+    is where the protocol wishes it were."""
+    out: dict[str, str | None] = {}
+    for p in plates:
+        hid = p.get("hid")
+        if hid:
+            out[hid] = p.get("location_name") if p.get("found") is True else None
+    return out
 
 
 async def custody_after_step(state: RunState, request: Request, auth: Authorization,
@@ -623,6 +785,10 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
         device = getattr(entry, "equipment", None) or "custody"
         plan_id = state.record.get("plan_id")
         if status == "unknown":
+            # The plate may or may not have arrived, so the chain can no longer
+            # say where it is. Later steps preflight as unverifiable rather than
+            # against a place nobody can vouch for.
+            state.custody_expected[hid] = None
             body = (f"step {step_report.step_id} was sent and never answered: plate {hid} "
                     f"may or may not have arrived at {to}; its last recorded place stands")
             state.custody_notes.append({
@@ -646,6 +812,10 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
                         "role": step_report.role, "skill": step_report.skill,
                         "plate": plate, "via": "executor"},
             )
+        # Advance the chain the preflight compares against — but only as far as
+        # the ledger actually went. A move it refused leaves the plate somewhere
+        # the ledger does not know, which is exactly "we cannot say".
+        state.custody_expected[hid] = to if result.get("recorded") else None
         # 2. the observed side — a fresh read of the destination's device
         observation = Observation("none", None, "no registry entry")
         aggregator = getattr(request.app.state, "aggregator", None)
@@ -681,6 +851,48 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
     except Exception as exc:  # noqa: BLE001 — custody must never stop a run
         logger.exception("custody hook failed for %s", step_report.step_id)
         state.emit("custody", {**frame, "recorded": False, "reason": f"hook error: {exc}"})
+
+
+async def lineage_after_run(state: RunState, auth: Authorization, report, *,
+                            recorder) -> dict[str, Any]:
+    """File one ``transfer`` row per declared well pair the run completed
+    (PLATE_TRACKING.md D11). Returns a summary; **never raises**.
+
+    Custody records where a plate went, step by step; this records what fed
+    what, once, at the end. The timing differs because the facts differ: a move
+    is only true at the instant it happens, while "A1 fed A1" is settled by the
+    step's outcome and nothing later revises it — so deriving from the finished
+    report costs nothing and keeps 96 ledger writes out of the run's critical
+    path.
+
+    Which pairs ran is decided in :func:`~app.lineage.transfers_from` from the
+    package's compiler-expanded ``lineage`` and the final per-step statuses. The
+    equipment lookup goes through the *report*, not the package: a compiled step
+    knows its role, and only the run knows which machine that role resolved to.
+
+    The whole thing is wrapped because the run has already physically happened
+    (``record.py`` property 1). A provenance write that fails must read as
+    exactly that — not as a failed run.
+    """
+    if recorder is None:
+        return {"emitted": 0, "reason": "not_configured"}
+    try:
+        specs = transfers_from(auth.package or {},
+                               {s.step_id: s.status for s in report.steps})
+        equipment = {s.step_id: s.equipment_id for s in report.steps}
+        summary = await post_transfers(
+            recorder, specs,
+            plan_id=state.record.get("plan_id"),
+            operator=state.launched_by,
+            project=auth.project_id,
+            run_id=state.run_id,
+            authorization_id=auth.authorization_id,
+            performed_by_lookup=equipment.get,
+        )
+        return {"derived": len(specs), **summary}
+    except Exception as exc:  # noqa: BLE001 — the run already happened
+        logger.exception("lineage transfers failed for run %s", state.run_id)
+        return {"emitted": 0, "error": str(exc)[:300]}
 
 
 async def custody_at_start(auth: Authorization, *, identity: str) -> tuple[list[dict], list[str]]:
@@ -749,6 +961,7 @@ def build_workflow_router() -> APIRouter:
             dry_run=body.dry_run,
             started_at=time.monotonic(),
             started_at_utc=datetime.now(timezone.utc).isoformat(),
+            custody_expected=expected_locations(plates),
         )
         _remember(state)
         state.emit("started", {

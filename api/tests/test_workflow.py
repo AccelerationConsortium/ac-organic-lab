@@ -69,6 +69,28 @@ TWO_PLATES = {
                  "role": "conditions", "wells": {"A1": {"conditions": {"acid": "acid_a"}}}},
 }
 
+#: A substance registry as bitácora's `substances:` block publishes it
+#: (COMPILER_VERSION 0.5.0). Only the shape matters here.
+SUBSTANCES = {
+    "acid_a": {"name": "benzoic acid", "cas": "65-85-0", "role": "reagent"},
+    "solvent": {"name": "acetonitrile", "cas": "75-05-8", "role": "solvent"},
+}
+
+#: The compiled steps a per-well `dose` action expands into, and the `lineage`
+#: entries bitácora publishes beside them (compiler 0.6.0, PLATE_TRACKING D11):
+#: one entry per (source plate, destination well) pair.
+LINEAGE_STEPS = [
+    {"step_id": f"dose__{w}__dispense", "role": "liquid_handler",
+     "skill": "dispense", "args": {"volume_ul": 50}}
+    for w in ("A1", "A2")
+]
+LINEAGE = [
+    {"step_id": "dose", "mapping": "identity",
+     "source": {"plate": "acid_stock", "hid": "PLT-A"}, "source_well": w,
+     "dest": {"plate": "reaction", "hid": "PLT-R"}, "dest_well": w}
+    for w in ("A1", "A2")
+]
+
 
 def _auth(**over) -> Authorization:
     pkg = over.pop("package", _package())
@@ -230,6 +252,69 @@ def test_an_empty_plates_block_is_not_digested() -> None:
     assert digest_payload_of(_package(plates={})) == digest_payload_of(_package())
     assert digest_payload_of(_package(plates=None)) == digest_payload_of(_package())
     assert _digest(_package(plates={})) == _digest(_package())
+
+
+def test_a_package_with_a_substance_registry_verifies() -> None:
+    """The same regression `plates` had, one field later: bitácora's compiler
+    (0.5.0) added `substances` to the digest payload, and a verifier that did not
+    know the field recomputed a different digest and refused the run as tampered.
+    A false tamper report is the worst possible way to learn about drift — it
+    accuses a human of editing a package nobody touched."""
+    pkg = _package(substances=SUBSTANCES)
+    assert "substances" in digest_payload_of(pkg)
+    verify_package_digest(_auth(package=pkg))    # must not raise
+    # …and swapping a substance must change the digest: that is why the block is
+    # digested at all — the same steps run against different chemistry.
+    swapped = _package(substances={**SUBSTANCES, "acid_a": {
+        **SUBSTANCES["acid_a"], "cas": "99-96-7"}})
+    assert _digest(swapped) != _digest(pkg)
+    with pytest.raises(RunRefused, match="digest mismatch"):
+        verify_package_digest(_auth(package=swapped, package_digest=_digest(pkg)))
+
+
+def test_a_package_without_substances_digests_exactly_as_before() -> None:
+    """`substances` is optional-when-truthy, not required. A protocol that names
+    no substances has no `substances` key, and its digest must be byte-identical
+    to what it was before the field existed — otherwise adding the field would
+    invalidate every already-issued authorization."""
+    pkg = _package()
+    assert "substances" not in pkg
+    assert "substances" not in digest_payload_of(pkg)
+    verify_package_digest(_auth(package=pkg))    # not a "missing digest input"
+
+
+def test_an_empty_substances_block_is_not_digested() -> None:
+    """Mirrors bitácora's `if self.substances:` — absent, null and empty all hash
+    identically, so the two sides cannot disagree about exactly the packages that
+    carry the key but no substances."""
+    assert digest_payload_of(_package(substances={})) == digest_payload_of(_package())
+    assert digest_payload_of(_package(substances=None)) == digest_payload_of(_package())
+    assert _digest(_package(substances={})) == _digest(_package())
+
+
+def test_a_package_with_compiled_lineage_verifies() -> None:
+    """`lineage` is the third optional digest input (compiler 0.6.0) and was
+    added here *with* the field rather than after the first false tamper report
+    — the mistake `plates` and `substances` each made once. It has to be
+    digested for the same reason they are: the expanded well pairs are what the
+    ledger will claim happened, so re-pointing a transfer must not authorize the
+    same package."""
+    pkg = _package(lineage=LINEAGE)
+    assert "lineage" in digest_payload_of(pkg)
+    verify_package_digest(_auth(package=pkg))    # must not raise
+    repointed = _package(lineage=[{**LINEAGE[0], "source_well": "H12"}, LINEAGE[1]])
+    assert _digest(repointed) != _digest(pkg)
+    with pytest.raises(RunRefused, match="digest mismatch"):
+        verify_package_digest(_auth(package=repointed, package_digest=_digest(pkg)))
+
+
+def test_a_package_without_lineage_digests_exactly_as_before() -> None:
+    """Optional-when-truthy, like its two predecessors: a protocol whose steps
+    declare no mapping has no `lineage` key, and its digest must be unchanged."""
+    assert "lineage" not in digest_payload_of(_package())
+    assert digest_payload_of(_package(lineage=[])) == digest_payload_of(_package())
+    assert digest_payload_of(_package(lineage=None)) == digest_payload_of(_package())
+    verify_package_digest(_auth(package=_package()))   # not a "missing digest input"
 
 
 # ── the one translation ────────────────────────────────────────────────
@@ -750,3 +835,358 @@ def test_a_dry_run_records_nothing(run_rig, monkeypatch):
     assert all(e["data"]["reason"] == "dry_run" for e in events if e["type"] == "custody")
     record = next(e for e in events if e["type"] == "record")["data"]
     assert record == {"opened": False, "reason": "dry_run"}
+
+
+# ── custody preflight (PLATE_TRACKING.md D1/D7): the layer-4 rule ────────────
+#
+# "Plate X must be at location L before step S", with L taken from this run's
+# own chain of accepted moves rather than from the protocol. The run-start
+# cross-check asks the ledger once; these tests are about the steps after it,
+# where a human can lift a plate off a nest mid-incubation and nothing else
+# would notice until the arm reached for empty air.
+
+
+class _LedgerFake:
+    """A recorder with a scripted ledger. ``current_location`` answers come from
+    ``answers`` in order — the run-start cross-check consumes the first — and
+    ``records=False`` makes every move fail, which is what breaks the chain."""
+
+    def __init__(self, answers, *, records=True):
+        self.answers, self.records = list(answers), records
+        self.moves: list[dict] = []
+        self.lookups: list[dict] = []
+
+    async def record_move(self, **kw):
+        self.moves.append(kw)
+        if not self.records:
+            return {"recorded": False, "reason": "unreachable"}
+        return {"recorded": True, "action_id": f"a{len(self.moves)}",
+                "container_id": "c", "to_location_id": "l"}
+
+    async def current_location(self, hid, **kw):
+        self.lookups.append({"hid": hid, **kw})
+        if self.answers:
+            return self.answers.pop(0)
+        return {"found": True, "hid": hid, "location_name": "bench/hte_staging"}
+
+
+class _EventDb:
+    """Captures lab.db rows, so the ops-audit half is assertable without a file."""
+
+    def __init__(self):
+        self.rows: list[tuple[str, str, dict]] = []
+
+    def record_equipment_event(self, device_id, event_type, *, message="", payload=None):
+        self.rows.append((device_id, event_type, payload or {}))
+
+
+def _at(name: str, hid: str = "PLT-1") -> dict:
+    return {"found": True, "hid": hid, "container_id": "c", "location_name": name}
+
+
+def _preflight_rig(run_rig, monkeypatch, ledger, statuses, *,
+                   dry_run=False, strict=False):
+    """Drive a run whose fake executor honours the gate the way `execute_plan`
+    does — gate before every step, and once it refuses, this and every remaining
+    step is `skipped` with the reason. The existing `_custody_rig` never calls
+    the gate at all, which is exactly the half the preflight lives in."""
+    client, wf, _unused, install, finished = run_rig
+    import app.workflow as wfmod
+    from app.main import app as _app
+
+    monkeypatch.setattr(wfmod, "custody_recorder", lambda: ledger)
+    monkeypatch.setattr(wfmod, "CUSTODY_STRICT", strict)
+    monkeypatch.setattr(_app.state, "aggregator", _FakeAggregator())
+    db = _EventDb()
+    monkeypatch.setattr(_app.state, "db", db)
+
+    cauth = _auth(package=_package(steps=CUSTODY_STEPS), plate_bindings={"reaction": "PLT-1"})
+
+    async def fake_fetch(client_, authorization_id, identity=None):
+        return cauth
+
+    monkeypatch.setattr(wfmod, "fetch_authorization", fake_fetch)
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        reports, reason = [], None
+        for step, status in zip(plan.steps, statuses):
+            if reason is None:
+                reason = await gate(step)
+            r = _step_report(step.id, "skipped" if reason else status)
+            r.role, r.skill = step.role, step.skill
+            r.equipment_id = ("xarm_translocation" if step.role == "plate_mover"
+                              else "torry_pines_shaker")
+            r.error = reason if reason else None
+            reports.append(r)
+            await on_step(r)
+        return _FakeRunReport(
+            reports, ok=reason is None and all(s == "succeeded" for s in statuses),
+            aborted_reason=reason, dry_run=dry_run,
+        )
+
+    install(fake_exec)
+    r = client.post("/api/workflow/runs",
+                    json={"authorization_id": cauth.authorization_id, "dry_run": dry_run})
+    assert r.status_code == 202, r.text
+    events = []
+    with client.stream("GET", f"/api/workflow/runs/{r.json()['run_id']}/events") as resp:
+        for line in resp.iter_lines():
+            if line.startswith("data:"):
+                import json as _json
+                events.append(_json.loads(line[5:]))
+    return events, db
+
+
+def _preflights(events) -> list[dict]:
+    return [e["data"] for e in events if e["type"] == "custody_preflight"]
+
+
+def test_the_opening_chain_declines_to_place_a_plate_the_ledger_could_not() -> None:
+    """`expected_locations` is where "we cannot say" enters the chain, and it has
+    to: a plate the ledger cannot place is one the preflight must decline to
+    judge, not one it may assume is where the protocol wishes it were."""
+    from app.workflow import expected_locations
+
+    assert expected_locations([
+        {"plate": "reaction", "hid": "PLT-1", "found": True, "location_name": "bench/hte_staging"},
+        {"plate": "stock", "hid": "PLT-2", "found": False},
+        {"plate": "spare", "hid": "PLT-3", "found": None, "error": "refused"},
+        {"plate": "unbound"},                       # no hid at all — not a link
+    ]) == {"PLT-1": "bench/hte_staging", "PLT-2": None, "PLT-3": None}
+
+
+def test_the_preflight_runs_only_on_custody_steps_and_asks_the_ledger_fresh(run_rig, monkeypatch):
+    """Two handoff steps, one shake. The shake is not a handoff, so nothing is
+    checked before it — and every check is a *fresh* read: the recorder caches
+    container rows, and `location_id` is the one field a move invalidates."""
+    ledger = _LedgerFake([_at("bench/hte_staging"),          # run start
+                          _at("bench/hte_staging"),          # before pick
+                          _at("xarm_translocation/gripper")])  # before place
+    events, _ = _preflight_rig(run_rig, monkeypatch, ledger,
+                               ["succeeded", "succeeded", "succeeded"])
+    checks = _preflights(events)
+    assert [c["step_id"] for c in checks] == ["pick", "place"]
+    assert [c["verdict"] for c in checks] == ["ok", "ok"]
+    assert checks[1]["expected"] == "xarm_translocation/gripper"   # the pick's own move
+    assert len(ledger.lookups) == 3                                # start + two steps
+    assert all(look["refresh"] for look in ledger.lookups[1:])
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["ok"] is True and done["aborted_reason"] is None
+
+
+def test_a_ledger_that_disagrees_is_filed_and_the_run_goes_on(run_rig, monkeypatch):
+    """Advisory by default, exactly like the run-start cross-check: the
+    disagreement is recorded — a deviation Note naming both places and a
+    `plate_custody_mismatch` row stamped `phase: preflight` — and the operator
+    decides. Nothing auto-corrects, and nothing stops on its own."""
+    ledger = _LedgerFake([_at("bench/hte_staging"),   # run start
+                          _at("bench/hte_staging"),   # before pick — agrees
+                          _at("bench/hte_staging")])  # before place — the plate never left
+    events, db = _preflight_rig(run_rig, monkeypatch, ledger,
+                                ["succeeded", "succeeded", "succeeded"])
+    check = _preflights(events)[1]
+    assert check["verdict"] == "mismatch"
+    assert check["expected"] == "xarm_translocation/gripper"
+    assert check["actual"] == "bench/hte_staging"
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["ok"] is True and done["aborted_reason"] is None     # advisory
+    note = next(n for n in done["record"]["notes"]
+                if n.get("data", {}).get("phase") == "preflight")
+    assert note["kind"] == "deviation" and note["step_id"] == "place"
+    assert "xarm_translocation/gripper" in note["body"] and "bench/hte_staging" in note["body"]
+    rows = [(d, p) for d, e, p in db.rows if e == "plate_custody_mismatch"]
+    assert len(rows) == 1
+    assert rows[0][0] == "xarm_translocation"      # the device anchoring `expected`
+    assert rows[0][1]["phase"] == "preflight"      # what tells it from the after-step row
+
+
+def test_strict_custody_stops_the_run_before_the_step_that_would_be_wrong(run_rig, monkeypatch):
+    """A plate that is not where the chain requires makes every *later* step
+    wrong too, not just this one — so the gate aborts and the SDK skips the
+    rest, rather than blocking one step and carrying on."""
+    ledger = _LedgerFake([_at("bench/hte_staging"), _at("bench/hte_staging"),
+                          _at("bench/hte_staging")])
+    events, _ = _preflight_rig(run_rig, monkeypatch, ledger,
+                               ["succeeded", "succeeded", "succeeded"], strict=True)
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["ok"] is False
+    assert "custody preflight for place" in done["aborted_reason"]
+    assert [s["status"] for s in done["steps"]] == ["succeeded", "skipped", "skipped"]
+    assert [m["step_id"] for m in ledger.moves] == ["pick"]   # `place` never moved
+
+
+def test_a_move_the_ledger_refused_makes_the_next_step_unverifiable_not_wrong(run_rig, monkeypatch):
+    """The chain advances only as far as the ledger went. When a `move` write
+    fails the plate is somewhere the ledger does not know, so the next preflight
+    declines to judge — under strict too. Accusing the ledger of disagreeing
+    with a move it was never told about would be a fabricated deviation."""
+    ledger = _LedgerFake([_at("bench/hte_staging"), _at("bench/hte_staging")],
+                         records=False)
+    events, db = _preflight_rig(run_rig, monkeypatch, ledger,
+                                ["succeeded", "succeeded", "succeeded"], strict=True)
+    checks = _preflights(events)
+    assert [c["verdict"] for c in checks[:1]] == ["ok"]
+    assert checks[1] == {"step_id": "place", "plate": "reaction", "hid": "PLT-1",
+                         "to": "torry_pines_shaker/nest",
+                         "checked": False, "reason": "unverifiable"}
+    assert len(ledger.lookups) == 2          # the unverifiable step asks nothing
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["aborted_reason"] is None
+    assert not [r for r in db.rows if r[1] == "plate_custody_mismatch"]
+
+
+def test_an_unknown_outcome_makes_the_next_step_unverifiable(run_rig, monkeypatch):
+    """A step that was sent and never answered may or may not have moved the
+    plate. The chain forgets where it is rather than guessing, which is the same
+    rule the after-step hook applies when it declines to write a `move` row."""
+    ledger = _LedgerFake([_at("bench/hte_staging"), _at("bench/hte_staging")])
+    events, _ = _preflight_rig(run_rig, monkeypatch, ledger,
+                               ["unknown", "succeeded", "succeeded"], strict=True)
+    checks = _preflights(events)
+    assert checks[0]["verdict"] == "ok"
+    assert checks[1]["reason"] == "unverifiable"
+    assert [m["step_id"] for m in ledger.moves] == ["place"]   # `pick` wrote nothing
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["aborted_reason"] is None
+
+
+def test_with_no_record_layer_the_preflight_is_silent(run_rig, monkeypatch):
+    """`record.py` property 3: a deployment that has not opted into the record
+    layer must behave exactly as before. No ledger, nothing to check, no frames
+    — and certainly no refusal."""
+    events, db = _preflight_rig(run_rig, monkeypatch, None,
+                                ["succeeded", "succeeded", "succeeded"], strict=True)
+    assert _preflights(events) == []
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["ok"] is True and done["aborted_reason"] is None
+
+
+def test_a_dry_run_reports_the_disagreement_and_still_runs(run_rig, monkeypatch):
+    """A dry run *is* the preflight. Refusing to preflight because the preflight
+    found something is the one outcome that helps nobody — so it checks, says
+    so, and completes even under strict."""
+    ledger = _LedgerFake([_at("bench/hte_staging"), _at("waste/bin")])
+    events, db = _preflight_rig(run_rig, monkeypatch, ledger,
+                                ["dry_run", "dry_run", "dry_run"],
+                                dry_run=True, strict=True)
+    checks = _preflights(events)
+    assert checks[0]["verdict"] == "mismatch" and checks[0]["actual"] == "waste/bin"
+    done = next(e for e in events if e["type"] == "done")["data"]
+    assert done["aborted_reason"] is None
+    assert [s["status"] for s in done["steps"]] == ["dry_run", "dry_run", "dry_run"]
+    # `bench/hte_staging` is a bench spot with no equipment behind it, so the
+    # audit row falls back to the custody pseudo-device.
+    assert [d for d, e, _ in db.rows if e == "plate_custody_mismatch"] == ["custody"]
+
+
+# ── lineage (PLATE_TRACKING.md D11): the transfer rows, at run close ─────────
+#
+# Custody says where the plate went; lineage says what fed what. The derivation
+# is `app.lineage`'s and tested there — what these pin is the wiring: the rows
+# are filed after the record closes and before `done`, a dry run files none, and
+# an unconfigured record layer is a clean skip rather than a missing key or an
+# error.
+
+
+class _TransferRecorderFake:
+    def __init__(self, result=None):
+        self.transfers: list[dict] = []
+        self.result = result
+
+    async def record_transfer(self, **kw):
+        self.transfers.append(kw)
+        return self.result or {"recorded": True, "action_id": f"t{len(self.transfers)}"}
+
+    async def record_move(self, **kw):  # pragma: no cover — no custody steps here
+        raise AssertionError("this package annotates no custody")
+
+
+def _lineage_rig(run_rig, monkeypatch, statuses, *, dry_run=False,
+                 configured=True, recorder=None):
+    client, wf, _unused, install, finished = run_rig
+    import app.workflow as wfmod
+    from app.main import app as _app
+
+    fake = recorder if recorder is not None else _TransferRecorderFake()
+    monkeypatch.setattr(wfmod, "custody_recorder", lambda: fake if configured else None)
+    monkeypatch.setattr(_app.state, "aggregator", _FakeAggregator())
+
+    lauth = _auth(package=_package(steps=LINEAGE_STEPS, lineage=LINEAGE))
+
+    async def fake_fetch(client_, authorization_id, identity=None):
+        return lauth
+
+    monkeypatch.setattr(wfmod, "fetch_authorization", fake_fetch)
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        reports = []
+        for step, status in zip(plan.steps, statuses):
+            r = _step_report(step.id, status)
+            r.role, r.skill, r.equipment_id = step.role, step.skill, "ot2_hte"
+            reports.append(r)
+            await on_step(r)
+        return _FakeRunReport(reports, ok=all(s == "succeeded" for s in statuses),
+                              dry_run=dry_run)
+
+    install(fake_exec)
+    r = client.post("/api/workflow/runs",
+                    json={"authorization_id": lauth.authorization_id, "dry_run": dry_run})
+    assert r.status_code == 202, r.text
+    events = []
+    with client.stream("GET", f"/api/workflow/runs/{r.json()['run_id']}/events") as resp:
+        for line in resp.iter_lines():
+            if line.startswith("data:"):
+                import json as _json
+                events.append(_json.loads(line[5:]))
+    return fake, next(e for e in events if e["type"] == "done")["data"]
+
+
+def test_a_run_that_carries_lineage_files_its_transfers_before_it_reports_done(run_rig, monkeypatch):
+    """Deliberately inside the `done` payload, like the record write above it: a
+    consumer that sees the run finish also sees whether its provenance was
+    written, instead of having to ask afterwards."""
+    fake, done = _lineage_rig(run_rig, monkeypatch, ["succeeded", "succeeded"])
+    assert done["record"]["transfers"] == {"derived": 2, "emitted": 2,
+                                           "failed": [], "skipped": []}
+    assert [(t["source_hid"], t["source_well"], t["dest_hid"], t["dest_well"])
+            for t in fake.transfers] == [("PLT-A", "A1", "PLT-R", "A1"),
+                                         ("PLT-A", "A2", "PLT-R", "A2")]
+    # The row anchors to the PROTOCOL step and is attributed to the machine that
+    # poured, with the launcher as creator — the same split `record_move` makes.
+    assert {t["step_id"] for t in fake.transfers} == {"dose"}
+    assert all(t["performed_by"] == "ot2_hte" for t in fake.transfers)
+    assert all(t["params"]["via"] == "executor" for t in fake.transfers)
+
+
+def test_only_the_wells_that_actually_ran_are_filed(run_rig, monkeypatch):
+    fake, done = _lineage_rig(run_rig, monkeypatch, ["succeeded", "failed"])
+    assert done["record"]["transfers"]["emitted"] == 1
+    assert [t["dest_well"] for t in fake.transfers] == ["A1"]
+
+
+def test_a_dry_run_files_no_lineage(run_rig, monkeypatch):
+    """A preflight moved no liquid, so nothing fed anything."""
+    fake, done = _lineage_rig(run_rig, monkeypatch, ["dry_run", "dry_run"], dry_run=True)
+    assert fake.transfers == []
+    assert "transfers" not in done["record"]
+
+
+def test_with_no_record_layer_lineage_is_a_clean_skip(run_rig, monkeypatch):
+    """`record.py` property 3: unconfigured is a normal state, and it must say
+    so rather than vanish — a missing key reads like a bug in the executor."""
+    _, done = _lineage_rig(run_rig, monkeypatch, ["succeeded", "succeeded"],
+                           configured=False)
+    assert done["record"]["transfers"] == {"emitted": 0, "reason": "not_configured"}
+    assert done["ok"] is True
+
+
+def test_a_ledger_that_refuses_a_transfer_does_not_fail_the_run(run_rig, monkeypatch):
+    """Property 1, one layer out: the liquid has already moved. "We could not
+    file the paperwork" must never be reported as a failed run."""
+    rec = _TransferRecorderFake({"recorded": False, "reason": "http_422",
+                                 "detail": "unit is required"})
+    _, done = _lineage_rig(run_rig, monkeypatch, ["succeeded", "succeeded"],
+                           recorder=rec)
+    assert done["ok"] is True
+    transfers = done["record"]["transfers"]
+    assert transfers["emitted"] == 0 and len(transfers["failed"]) == 2
