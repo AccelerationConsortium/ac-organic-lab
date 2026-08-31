@@ -773,6 +773,13 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
       row, so the gap is visible rather than papered over.
     * ``dry_run`` / ``blocked`` / ``failed`` / ``skipped`` → nothing moved,
       nothing recorded; the SSE frame says why.
+
+    Every lab.db row written here carries ``payload.phase = "after_step"``, the
+    counterpart to the ``"preflight"`` :func:`custody_preflight` stamps. Both
+    write ``plate_custody_mismatch``, and they mean different things — one is
+    "the plate is not where this run left it", the other "the move we just
+    commanded did not take" — so the phase is what tells a reader which, without
+    resorting to testing for the absence of a key.
     """
     hid, to, plate = spec.get("hid"), spec.get("to"), spec.get("plate")
     frame: dict[str, Any] = {"step_id": step_report.step_id, "plate": plate, "hid": hid, "to": to}
@@ -796,7 +803,8 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
                 "data": {"custody": spec, "status": status, "authorization_id": auth.authorization_id},
             })
             await record_custody_event(request, PLATE_CUSTODY_UNKNOWN, device_id=device,
-                                       message=body, payload={**frame, "run_id": state.run_id,
+                                       message=body, payload={**frame, "phase": "after_step",
+                                                              "run_id": state.run_id,
                                                               "authorization_id": auth.authorization_id})
             state.emit("custody", {**frame, "recorded": False, "reason": "unknown"})
             return
@@ -833,7 +841,8 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
         await record_custody_event(
             request, PLATE_MOVED, device_id=device,
             message=f"{hid} → {to} ({step_report.step_id}) → {'recorded' if result.get('recorded') else result.get('reason')}; {verdict}",
-            payload={**frame, "run_id": state.run_id, "authorization_id": auth.authorization_id,
+            payload={**frame, "phase": "after_step", "run_id": state.run_id,
+                     "authorization_id": auth.authorization_id,
                      "performed_by": step_report.equipment_id or step_report.role,
                      "source": "executor"},
         )
@@ -846,7 +855,8 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
                          "authorization_id": auth.authorization_id},
             })
             await record_custody_event(request, PLATE_CUSTODY_MISMATCH, device_id=device,
-                                       message=body, payload={**frame, "run_id": state.run_id,
+                                       message=body, payload={**frame, "phase": "after_step",
+                                                              "run_id": state.run_id,
                                                               "authorization_id": auth.authorization_id})
     except Exception as exc:  # noqa: BLE001 — custody must never stop a run
         logger.exception("custody hook failed for %s", step_report.step_id)

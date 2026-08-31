@@ -1000,6 +1000,26 @@ def test_a_ledger_that_disagrees_is_filed_and_the_run_goes_on(run_rig, monkeypat
     assert rows[0][1]["phase"] == "preflight"      # what tells it from the after-step row
 
 
+def test_every_custody_row_says_which_half_of_the_run_wrote_it(run_rig, monkeypatch):
+    """`plate_custody_mismatch` is written from both halves and they mean
+    different things — "the plate is not where this run left it" before a step,
+    "the move we just commanded did not take" after one. Until both stamped a
+    phase, telling them apart meant testing for a *missing* key, which is an
+    accident of implementation rather than a signal."""
+    ledger = _LedgerFake([_at("bench/hte_staging"),   # run start
+                          _at("bench/hte_staging"),   # before pick — agrees
+                          _at("bench/hte_staging")])  # before place — the plate never left
+    events, db = _preflight_rig(run_rig, monkeypatch, ledger,
+                                ["succeeded", "unknown", "succeeded"])
+    custody_rows = [(e, p) for _d, e, p in db.rows if e.startswith("plate_")]
+    assert {e: p["phase"] for e, p in custody_rows} == {
+        "plate_moved": "after_step",             # the pick's own move
+        "plate_custody_unknown": "after_step",   # place was sent and never answered
+        "plate_custody_mismatch": "preflight",   # checked before place, not after it
+    }
+    assert len(custody_rows) == 3
+
+
 def test_strict_custody_stops_the_run_before_the_step_that_would_be_wrong(run_rig, monkeypatch):
     """A plate that is not where the chain requires makes every *later* step
     wrong too, not just this one — so the gate aborts and the SDK skips the
