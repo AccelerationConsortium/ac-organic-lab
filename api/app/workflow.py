@@ -59,6 +59,7 @@ from .custody import (
     reconcile,
     record_custody_event,
 )
+from .lineage import post_transfers, transfers_from
 from .record import close_run_record, open_run_record
 
 logger = logging.getLogger("workflow")
@@ -125,9 +126,12 @@ _DIGEST_FIELDS = frozenset(
 #: one-plate package. `plates` since bitácora template 1.10.0 (PLATES_AS_OBJECTS);
 #: `substances` since COMPILER_VERSION 0.5.0 — a package with a substance
 #: registry was being refused as a digest mismatch, which reads as tampering
-#: and was only drift. Every optional field bitácora starts hashing has to be
-#: added here, and the failure mode when it is not is a false tamper report.
-_OPTIONAL_DIGEST_FIELDS = frozenset({"plates", "substances"})
+#: and was only drift. `lineage` since 0.6.0 (the compiler-expanded well pairs
+#: `app.lineage` files as `transfer` rows), added with the field rather than
+#: after the first false tamper report. Every optional field bitácora starts
+#: hashing has to be added here, and the failure mode when it is not is a false
+#: tamper report.
+_OPTIONAL_DIGEST_FIELDS = frozenset({"plates", "substances", "lineage"})
 
 
 def digest_payload_of(package: dict) -> dict:
@@ -495,10 +499,14 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
     """The background task that owns one run, start to finish."""
     identity = state.launched_by
 
+    # One recorder serves both ledger verbs. A package may declare lineage and
+    # annotate no custody at all (a plate that never leaves its slot still has
+    # wells feeding wells), so it is built for either.
+    lineage = list((auth.package or {}).get("lineage") or [])
     # Resolved before `gate` so the closure cannot be called against a
     # half-built run: the preflight below reads all three.
     custody_by_step = auth.custody_by_step
-    recorder = custody_recorder() if custody_by_step else None
+    recorder = custody_recorder() if (custody_by_step or lineage) else None
     locations_cfg = getattr(request.app.state, "locations_config", None)
 
     async def gate(step) -> str | None:
@@ -608,6 +616,13 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
         summary={"ok": report.ok, "aborted_reason": report.aborted_reason,
                  "dry_run": report.dry_run, "duration_s": round(duration, 3)},
     )
+    # Lineage (D11) files after the Plan is closed and before `done` is emitted,
+    # for the same reason the run record does: a consumer that sees the run
+    # finish also sees whether its provenance was written. A dry run moved no
+    # liquid, so there is nothing to say fed anything.
+    if lineage and not state.dry_run:
+        state.result["record"]["transfers"] = await lineage_after_run(
+            state, auth, report, recorder=recorder)
     state.emit("done", state.result)
     await _record_run_event(
         request, auth.authorization_id,
@@ -836,6 +851,48 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
     except Exception as exc:  # noqa: BLE001 — custody must never stop a run
         logger.exception("custody hook failed for %s", step_report.step_id)
         state.emit("custody", {**frame, "recorded": False, "reason": f"hook error: {exc}"})
+
+
+async def lineage_after_run(state: RunState, auth: Authorization, report, *,
+                            recorder) -> dict[str, Any]:
+    """File one ``transfer`` row per declared well pair the run completed
+    (PLATE_TRACKING.md D11). Returns a summary; **never raises**.
+
+    Custody records where a plate went, step by step; this records what fed
+    what, once, at the end. The timing differs because the facts differ: a move
+    is only true at the instant it happens, while "A1 fed A1" is settled by the
+    step's outcome and nothing later revises it — so deriving from the finished
+    report costs nothing and keeps 96 ledger writes out of the run's critical
+    path.
+
+    Which pairs ran is decided in :func:`~app.lineage.transfers_from` from the
+    package's compiler-expanded ``lineage`` and the final per-step statuses. The
+    equipment lookup goes through the *report*, not the package: a compiled step
+    knows its role, and only the run knows which machine that role resolved to.
+
+    The whole thing is wrapped because the run has already physically happened
+    (``record.py`` property 1). A provenance write that fails must read as
+    exactly that — not as a failed run.
+    """
+    if recorder is None:
+        return {"emitted": 0, "reason": "not_configured"}
+    try:
+        specs = transfers_from(auth.package or {},
+                               {s.step_id: s.status for s in report.steps})
+        equipment = {s.step_id: s.equipment_id for s in report.steps}
+        summary = await post_transfers(
+            recorder, specs,
+            plan_id=state.record.get("plan_id"),
+            operator=state.launched_by,
+            project=auth.project_id,
+            run_id=state.run_id,
+            authorization_id=auth.authorization_id,
+            performed_by_lookup=equipment.get,
+        )
+        return {"derived": len(specs), **summary}
+    except Exception as exc:  # noqa: BLE001 — the run already happened
+        logger.exception("lineage transfers failed for run %s", state.run_id)
+        return {"emitted": 0, "error": str(exc)[:300]}
 
 
 async def custody_at_start(auth: Authorization, *, identity: str) -> tuple[list[dict], list[str]]:

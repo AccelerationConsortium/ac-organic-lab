@@ -76,6 +76,21 @@ SUBSTANCES = {
     "solvent": {"name": "acetonitrile", "cas": "75-05-8", "role": "solvent"},
 }
 
+#: The compiled steps a per-well `dose` action expands into, and the `lineage`
+#: entries bitácora publishes beside them (compiler 0.6.0, PLATE_TRACKING D11):
+#: one entry per (source plate, destination well) pair.
+LINEAGE_STEPS = [
+    {"step_id": f"dose__{w}__dispense", "role": "liquid_handler",
+     "skill": "dispense", "args": {"volume_ul": 50}}
+    for w in ("A1", "A2")
+]
+LINEAGE = [
+    {"step_id": "dose", "mapping": "identity",
+     "source": {"plate": "acid_stock", "hid": "PLT-A"}, "source_well": w,
+     "dest": {"plate": "reaction", "hid": "PLT-R"}, "dest_well": w}
+    for w in ("A1", "A2")
+]
+
 
 def _auth(**over) -> Authorization:
     pkg = over.pop("package", _package())
@@ -275,6 +290,31 @@ def test_an_empty_substances_block_is_not_digested() -> None:
     assert digest_payload_of(_package(substances={})) == digest_payload_of(_package())
     assert digest_payload_of(_package(substances=None)) == digest_payload_of(_package())
     assert _digest(_package(substances={})) == _digest(_package())
+
+
+def test_a_package_with_compiled_lineage_verifies() -> None:
+    """`lineage` is the third optional digest input (compiler 0.6.0) and was
+    added here *with* the field rather than after the first false tamper report
+    — the mistake `plates` and `substances` each made once. It has to be
+    digested for the same reason they are: the expanded well pairs are what the
+    ledger will claim happened, so re-pointing a transfer must not authorize the
+    same package."""
+    pkg = _package(lineage=LINEAGE)
+    assert "lineage" in digest_payload_of(pkg)
+    verify_package_digest(_auth(package=pkg))    # must not raise
+    repointed = _package(lineage=[{**LINEAGE[0], "source_well": "H12"}, LINEAGE[1]])
+    assert _digest(repointed) != _digest(pkg)
+    with pytest.raises(RunRefused, match="digest mismatch"):
+        verify_package_digest(_auth(package=repointed, package_digest=_digest(pkg)))
+
+
+def test_a_package_without_lineage_digests_exactly_as_before() -> None:
+    """Optional-when-truthy, like its two predecessors: a protocol whose steps
+    declare no mapping has no `lineage` key, and its digest must be unchanged."""
+    assert "lineage" not in digest_payload_of(_package())
+    assert digest_payload_of(_package(lineage=[])) == digest_payload_of(_package())
+    assert digest_payload_of(_package(lineage=None)) == digest_payload_of(_package())
+    verify_package_digest(_auth(package=_package()))   # not a "missing digest input"
 
 
 # ── the one translation ────────────────────────────────────────────────
@@ -1037,3 +1077,116 @@ def test_a_dry_run_reports_the_disagreement_and_still_runs(run_rig, monkeypatch)
     # `bench/hte_staging` is a bench spot with no equipment behind it, so the
     # audit row falls back to the custody pseudo-device.
     assert [d for d, e, _ in db.rows if e == "plate_custody_mismatch"] == ["custody"]
+
+
+# ── lineage (PLATE_TRACKING.md D11): the transfer rows, at run close ─────────
+#
+# Custody says where the plate went; lineage says what fed what. The derivation
+# is `app.lineage`'s and tested there — what these pin is the wiring: the rows
+# are filed after the record closes and before `done`, a dry run files none, and
+# an unconfigured record layer is a clean skip rather than a missing key or an
+# error.
+
+
+class _TransferRecorderFake:
+    def __init__(self, result=None):
+        self.transfers: list[dict] = []
+        self.result = result
+
+    async def record_transfer(self, **kw):
+        self.transfers.append(kw)
+        return self.result or {"recorded": True, "action_id": f"t{len(self.transfers)}"}
+
+    async def record_move(self, **kw):  # pragma: no cover — no custody steps here
+        raise AssertionError("this package annotates no custody")
+
+
+def _lineage_rig(run_rig, monkeypatch, statuses, *, dry_run=False,
+                 configured=True, recorder=None):
+    client, wf, _unused, install, finished = run_rig
+    import app.workflow as wfmod
+    from app.main import app as _app
+
+    fake = recorder if recorder is not None else _TransferRecorderFake()
+    monkeypatch.setattr(wfmod, "custody_recorder", lambda: fake if configured else None)
+    monkeypatch.setattr(_app.state, "aggregator", _FakeAggregator())
+
+    lauth = _auth(package=_package(steps=LINEAGE_STEPS, lineage=LINEAGE))
+
+    async def fake_fetch(client_, authorization_id, identity=None):
+        return lauth
+
+    monkeypatch.setattr(wfmod, "fetch_authorization", fake_fetch)
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        reports = []
+        for step, status in zip(plan.steps, statuses):
+            r = _step_report(step.id, status)
+            r.role, r.skill, r.equipment_id = step.role, step.skill, "ot2_hte"
+            reports.append(r)
+            await on_step(r)
+        return _FakeRunReport(reports, ok=all(s == "succeeded" for s in statuses),
+                              dry_run=dry_run)
+
+    install(fake_exec)
+    r = client.post("/api/workflow/runs",
+                    json={"authorization_id": lauth.authorization_id, "dry_run": dry_run})
+    assert r.status_code == 202, r.text
+    events = []
+    with client.stream("GET", f"/api/workflow/runs/{r.json()['run_id']}/events") as resp:
+        for line in resp.iter_lines():
+            if line.startswith("data:"):
+                import json as _json
+                events.append(_json.loads(line[5:]))
+    return fake, next(e for e in events if e["type"] == "done")["data"]
+
+
+def test_a_run_that_carries_lineage_files_its_transfers_before_it_reports_done(run_rig, monkeypatch):
+    """Deliberately inside the `done` payload, like the record write above it: a
+    consumer that sees the run finish also sees whether its provenance was
+    written, instead of having to ask afterwards."""
+    fake, done = _lineage_rig(run_rig, monkeypatch, ["succeeded", "succeeded"])
+    assert done["record"]["transfers"] == {"derived": 2, "emitted": 2,
+                                           "failed": [], "skipped": []}
+    assert [(t["source_hid"], t["source_well"], t["dest_hid"], t["dest_well"])
+            for t in fake.transfers] == [("PLT-A", "A1", "PLT-R", "A1"),
+                                         ("PLT-A", "A2", "PLT-R", "A2")]
+    # The row anchors to the PROTOCOL step and is attributed to the machine that
+    # poured, with the launcher as creator — the same split `record_move` makes.
+    assert {t["step_id"] for t in fake.transfers} == {"dose"}
+    assert all(t["performed_by"] == "ot2_hte" for t in fake.transfers)
+    assert all(t["params"]["via"] == "executor" for t in fake.transfers)
+
+
+def test_only_the_wells_that_actually_ran_are_filed(run_rig, monkeypatch):
+    fake, done = _lineage_rig(run_rig, monkeypatch, ["succeeded", "failed"])
+    assert done["record"]["transfers"]["emitted"] == 1
+    assert [t["dest_well"] for t in fake.transfers] == ["A1"]
+
+
+def test_a_dry_run_files_no_lineage(run_rig, monkeypatch):
+    """A preflight moved no liquid, so nothing fed anything."""
+    fake, done = _lineage_rig(run_rig, monkeypatch, ["dry_run", "dry_run"], dry_run=True)
+    assert fake.transfers == []
+    assert "transfers" not in done["record"]
+
+
+def test_with_no_record_layer_lineage_is_a_clean_skip(run_rig, monkeypatch):
+    """`record.py` property 3: unconfigured is a normal state, and it must say
+    so rather than vanish — a missing key reads like a bug in the executor."""
+    _, done = _lineage_rig(run_rig, monkeypatch, ["succeeded", "succeeded"],
+                           configured=False)
+    assert done["record"]["transfers"] == {"emitted": 0, "reason": "not_configured"}
+    assert done["ok"] is True
+
+
+def test_a_ledger_that_refuses_a_transfer_does_not_fail_the_run(run_rig, monkeypatch):
+    """Property 1, one layer out: the liquid has already moved. "We could not
+    file the paperwork" must never be reported as a failed run."""
+    rec = _TransferRecorderFake({"recorded": False, "reason": "http_422",
+                                 "detail": "unit is required"})
+    _, done = _lineage_rig(run_rig, monkeypatch, ["succeeded", "succeeded"],
+                           recorder=rec)
+    assert done["ok"] is True
+    transfers = done["record"]["transfers"]
+    assert transfers["emitted"] == 0 and len(transfers["failed"]) == 2
