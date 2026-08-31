@@ -9,7 +9,10 @@ human path cannot drift:
   barcode, == the device's ``plate_id``) to their AnaliticaDB ids, post one
   ``move`` row on the append-only ``ContainerAction`` ledger, and read a
   plate's current place back. Never raises into a run (record.py property 1):
-  every call returns a status dict.
+  every call returns a status dict. It is also where the ledger's *other*
+  executor-written verb lives — ``record_transfer`` / ``resolve_children``, the
+  well-to-well rows :mod:`app.lineage` derives — because both are the same
+  record-layer client and one client with two verbs cannot drift from itself.
 * :func:`observe` / :func:`reconcile` — **pure** functions that turn a device's
   ``/status`` snapshot into an observation about the destination, and an
   observation into a verdict. A mismatch is declared **only on contradiction**
@@ -192,6 +195,10 @@ class CustodyRecorder:
     timeout: float = 10.0
     _locations: dict[str, str] = field(default_factory=dict)   # name → location_id
     _containers: dict[str, dict] = field(default_factory=dict)  # hid → row
+    #: hid → {position → container_id} for a plate's positional children. One
+    #: GET per plate per run: a 96-well transfer would otherwise ask the same
+    #: question 96 times, and a plate's wells do not appear or vanish mid-run.
+    _children: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def _headers(self, user: str, project: str | None = None) -> dict[str, str]:
         h = {"X-Edge-Secret": self.secret, "X-Auth-User": user}
@@ -235,6 +242,100 @@ class CustodyRecorder:
             return None
         self._containers[hid] = rows[0]
         return rows[0]
+
+    async def resolve_children(self, client: httpx.AsyncClient, hid: str, *,
+                               user: str, project: str | None = None) -> dict[str, str] | None:
+        """``{position: container_id}`` for the plate ``hid``'s wells, cached.
+
+        A plate is one container with 96 positional children
+        (``UNIQUE(parent_container_id, position)``), and a `transfer` row points
+        at the *wells*, not the plate — so lineage needs this join and custody
+        never did. ``None`` means the plate itself is unknown to the ledger; an
+        empty dict means it is registered without children, which is a real and
+        different state (a plate minted before ``ContainerCreate.positions``
+        existed, or a container that is genuinely not a plate).
+        """
+        if hid in self._children:
+            return self._children[hid]
+        row = await self.resolve_container(client, hid, user=user, project=project)
+        if row is None:
+            return None
+        r = await client.get(f"{self.base_url}/containers",
+                             headers=self._headers(user, project),
+                             params={"parent_container_id": row["container_id"]})
+        r.raise_for_status()
+        wells = {str(c["position"]): str(c["container_id"])
+                 for c in r.json() if c.get("position")}
+        self._children[hid] = wells
+        return wells
+
+    async def record_transfer(
+        self, *, source_hid: str, source_well: str | None,
+        dest_hid: str, dest_well: str | None, performed_by: str, recorder: str,
+        project: str | None = None, plan_id: str | None = None,
+        step_id: str | None = None, params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """One ``transfer`` row: the contents of one well fed another
+        (PLATE_TRACKING.md D11).
+
+        Source and target are the **child** (well) containers, which is what
+        makes this row lineage rather than another custody move: `move` says a
+        plate changed place, `transfer` says a well's contents have a parent.
+        Amounts are deliberately absent in this slice — see :mod:`app.lineage`.
+
+        Returns ``{"recorded": True, action_id, source_container_id,
+        target_container_id}`` or ``{"recorded": False, "reason": …}``; never
+        raises, and only sends ``step_id`` together with a ``plan_id`` (the
+        ledger refuses a dangling step), exactly like :meth:`record_move`.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                ends = {}
+                for side, hid, well in (("source", source_hid, source_well),
+                                        ("dest", dest_hid, dest_well)):
+                    wells = await self.resolve_children(client, hid, user=recorder,
+                                                        project=project)
+                    if wells is None:
+                        return {"recorded": False, "reason": "unknown_container",
+                                "side": side, "hid": hid}
+                    if not wells:
+                        return {"recorded": False, "reason": "no_child_containers",
+                                "side": side, "hid": hid}
+                    if well not in wells:
+                        return {"recorded": False, "reason": "unknown_well",
+                                "side": side, "hid": hid, "well": well}
+                    ends[side] = wells[well]
+                body: dict[str, Any] = {
+                    "action_type": "transfer",
+                    "source_container_id": ends["source"],
+                    "target_container_id": ends["dest"],
+                    "performed_by": performed_by,
+                    "creator": recorder,
+                    "params": {**(params or {}),
+                               "source": {"hid": source_hid, "well": source_well},
+                               "dest": {"hid": dest_hid, "well": dest_well}},
+                }
+                if plan_id:
+                    body["plan_id"] = plan_id
+                    if step_id:
+                        body["step_id"] = step_id
+                elif step_id:
+                    body["params"]["step_id"] = step_id  # no plan to anchor into
+                if project:
+                    body["project"] = project
+                r = await client.post(f"{self.base_url}/container-actions",
+                                      headers=self._headers(recorder, project), json=body)
+                if r.status_code >= 400:
+                    return {"recorded": False, "reason": f"http_{r.status_code}",
+                            "detail": r.text[:300]}
+                out = r.json()
+                return {"recorded": True, "action_id": out.get("action_id"),
+                        "source_container_id": ends["source"],
+                        "target_container_id": ends["dest"]}
+        except Exception as exc:  # noqa: BLE001 — property 1
+            logger.warning("transfer not recorded (%s:%s → %s:%s): %s",
+                           source_hid, source_well, dest_hid, dest_well, exc)
+            return {"recorded": False, "reason": "unreachable", "detail": str(exc)[:300]}
 
     async def record_move(
         self, *, hid: str, to: str, performed_by: str, recorder: str,
