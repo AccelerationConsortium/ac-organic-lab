@@ -158,12 +158,89 @@ def test_liquid_handler_protocol_surface_endpoints() -> None:
     )
 
 
+def test_liquid_handler_tips_mark_args() -> None:
+    """``tips.mark`` mirrors the gateway's TipsMarkRequest: rack addressed by
+    slot (preferred) or nickname, tips by exactly one of wells / columns.
+
+    Note the shape differs from ``tips.reset`` (nickname-only) — marking part
+    of a rack is normally done by the slot the operator is looking at.
+    """
+    from pydantic import ValidationError
+
+    from lab_skills.skill_catalog.liquid_handler import TipsMarkArgs
+
+    TipsMarkArgs(slot="5", wells=["A1", "B1"], status="empty")
+    TipsMarkArgs(nickname="tiprack_300", columns=[1, 12], status="new")
+
+    # Rack must be named somehow.
+    with pytest.raises(ValidationError):
+        TipsMarkArgs(wells=["A1"], status="new")
+
+    # Exactly one of wells / columns — neither and both are both errors.
+    with pytest.raises(ValidationError):
+        TipsMarkArgs(slot="5", status="new")
+    with pytest.raises(ValidationError):
+        TipsMarkArgs(slot="5", wells=["A1"], columns=[1], status="new")
+
+    # Columns are 1-12 on an OT-2 deck; status is a closed pair.
+    with pytest.raises(ValidationError):
+        TipsMarkArgs(slot="5", columns=[0], status="new")
+    with pytest.raises(ValidationError):
+        TipsMarkArgs(slot="5", columns=[13], status="new")
+    with pytest.raises(ValidationError):
+        TipsMarkArgs(slot="5", wells=["A1"], status="used")  # type: ignore[arg-type]
+
+
+def test_liquid_handler_tempmod_args() -> None:
+    """Temperature module: 4-95 °C, and ``module`` is optional (omitted when
+    exactly one module is on the deck — the gateway resolves it)."""
+    from pydantic import ValidationError
+
+    from lab_skills.skill_catalog.liquid_handler import (
+        TempmodDeactivateArgs,
+        TempmodSetArgs,
+    )
+
+    TempmodSetArgs(celsius=4.0)
+    TempmodSetArgs(celsius=95.0, module="temp_block")
+    with pytest.raises(ValidationError):
+        TempmodSetArgs(celsius=3.9)
+    with pytest.raises(ValidationError):
+        TempmodSetArgs(celsius=95.1)
+    with pytest.raises(ValidationError):
+        TempmodSetArgs()  # type: ignore[call-arg]
+
+    assert TempmodDeactivateArgs().module is None
+    assert TempmodDeactivateArgs(module="4").module == "4"
+
+
+def test_liquid_handler_tempmod_is_hardware_driving() -> None:
+    """The gateway withholds ``tempmod.*`` in DRY_RUN and while a run is
+    starting, so the catalog treats them like the motion verbs (``ready``
+    only), not like the metadata verbs (``ready`` + ``dry_run``)."""
+
+    by_name = {d.name: d for d in SKILL_REGISTRY["liquid_handler"]}
+    assert by_name["tempmod.set"].requires_states == ["ready"]
+    assert by_name["tempmod.deactivate"].requires_states == ["ready"]
+    assert by_name["tempmod.set"].endpoint == "/control/tempmod/set"
+    assert by_name["tempmod.deactivate"].endpoint == "/control/tempmod/deactivate"
+    # tips.mark is metadata only, so it keeps the dry_run affordance.
+    assert by_name["tips.mark"].requires_states == ["ready", "dry_run"]
+    assert by_name["tips.mark"].endpoint == "/control/tips/mark"
+
+
 def test_liquid_handler_names_match_gateway_allowed_actions() -> None:
     """Availability is ``def.name in allowed_actions`` (session.py), so every
     OT-2 skill name must be one the gateway actually advertises. This encodes
-    the union of ``opentrons-server`` ``service.allowed_actions`` across states
-    (ready / requires_init / dry_run / paused) as the contract — a rename on
-    either side breaks ``lab.skills()`` matching and must fail here.
+    the union of ``opentrons-server`` ``service.allowed_actions`` across
+    **every** branch — ready / requires_init / dry_run / paused *and* error —
+    as the contract; a rename on either side breaks ``lab.skills()`` matching
+    and must fail here.
+
+    Naming the error branch is not pedantry: it is one of only two branches
+    that advertise ``tempmod.*``, and an earlier version of this docstring
+    omitted it, which is how those verbs stayed missing from the catalog (and
+    so unproposable by the assistant) after the gateway shipped them.
     """
 
     # The exact strings opentrons-server gateway/service.py::allowed_actions
@@ -172,7 +249,8 @@ def test_liquid_handler_names_match_gateway_allowed_actions() -> None:
         "startup", "shutdown", "home", "setup", "pause", "resume",
         "move_to", "pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware",
         "plate.load", "plate.unload", "well.update",
-        "tips.reset",
+        "tips.reset", "tips.mark",
+        "tempmod.set", "tempmod.deactivate",
         "lights.set", "deck.declare",
     }
     catalog_names = {d.name for d in SKILL_REGISTRY["liquid_handler"]}
