@@ -33,6 +33,7 @@ function snapshot(over: {
   incubator_state?: string;
   actual_c?: number | null;
   setpoint_c?: number | null;
+  claimed_by?: { session_id: string; owner: string; expires_at: string } | null;
 }): EquipmentSnapshot {
   const metrics: Record<string, { value: number; unit: string }> = {};
   if (over.actual_c != null) {
@@ -62,7 +63,10 @@ function snapshot(over: {
         "incubator.set_temperature",
         "incubator.stop",
       ],
-      details: { temperature_range_c: { min: 4, max: 45 } },
+      details: {
+        temperature_range_c: { min: 4, max: 45 },
+        claimed_by: over.claimed_by ?? null,
+      },
       metrics,
       components: {
         incubator: {
@@ -135,5 +139,60 @@ describe("PlateReaderTile incubator controls", () => {
     expect(
       (screen.getByRole("button", { name: "Set" }) as HTMLButtonElement).disabled,
     ).toBe(true);
+  });
+});
+
+describe("PlateReaderTile while a workflow holds the claim", () => {
+  const CLAIM = {
+    session_id: "f1f1c1a2",
+    owner: "agent:solubility-screening",
+    expires_at: "2026-08-21T00:00:30Z",
+  };
+
+  it("names the holder so the reader does not look idle and free", () => {
+    render(<PlateReaderTile snapshot={snapshot({ claimed_by: CLAIM })} />);
+    expect(
+      screen.getByText("In use by agent:solubility-screening"),
+    ).toBeTruthy();
+  });
+
+  it("disables the controls a claim would make 423", () => {
+    // The dashboard passthrough takes its own per-request claim, so it can
+    // never acquire one the device is already holding for someone else.
+    // Every control here would fail; disabling beats an error toast.
+    render(
+      <PlateReaderTile
+        snapshot={snapshot({
+          claimed_by: CLAIM,
+          actual_c: 36.8,
+          setpoint_c: 37,
+          incubator_state: "at_setpoint",
+        })}
+      />,
+    );
+    expect(
+      (screen.getByRole("button", { name: "Set" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Off" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Off" }));
+    expect(postPlateReaderStopTemperature).not.toHaveBeenCalled();
+  });
+
+  it("says nothing when no claim is held", () => {
+    render(<PlateReaderTile snapshot={snapshot({ actual_c: 22 })} />);
+    expect(screen.queryByText(/In use by/)).toBeNull();
+  });
+
+  it("leaves the status pill alone — a claim is not an operation", () => {
+    // STATUS_SPEC §2.3: a claimed but idle reader is `ready`. The banner
+    // exists precisely because the state enum cannot say "reserved".
+    render(<PlateReaderTile snapshot={snapshot({ claimed_by: CLAIM })} />);
+    expect(screen.getByText("In use by agent:solubility-screening")).toBeTruthy();
+    expect(screen.queryByText("busy")).toBeNull();
   });
 });

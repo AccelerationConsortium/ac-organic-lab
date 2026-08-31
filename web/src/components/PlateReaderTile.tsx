@@ -8,6 +8,7 @@ import {
   postPlateReaderStartup,
   postPlateReaderStopTemperature,
 } from "@/lib/api";
+import { claimHolder, claimLabel, claimTitle } from "@/lib/claim";
 import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
 import { LockButton } from "./ControlLock";
@@ -243,15 +244,21 @@ export function PlateReaderTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const st = status.equipment_status;
   const deviceOn = st !== "requires_init" && st !== "unknown";
   const advertised = allowedActions(snapshot);
+  // A live claim is one the dashboard cannot acquire (its passthrough takes
+  // a fresh per-request claim), so every control here would 423. Disable
+  // them and say who holds it instead of letting the operator find out from
+  // an error toast. See lib/claim.ts.
+  const claim = claimHolder(status);
+  const claimed = claim !== null;
   const canSetTemp =
-    !locked && advertised.includes("incubator.set_temperature");
+    !locked && !claimed && advertised.includes("incubator.set_temperature");
   const incubatorOn =
     reader.setpointTempC !== null ||
     (reader.incubatorState != null &&
       reader.incubatorState !== "off" &&
       reader.incubatorState !== "disconnected");
   const canStopTemp =
-    !locked && advertised.includes("incubator.stop") && incubatorOn;
+    !locked && !claimed && advertised.includes("incubator.stop") && incubatorOn;
 
   return (
     <TileShell
@@ -268,14 +275,16 @@ export function PlateReaderTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             : exec(() => postPlateReaderStartup(snapshot.id), {
                 action: "startup",
               }),
-        disabled: locked,
-        powerTitle: locked
-          ? noAccess
-            ? "No access"
-            : "Sign in to control"
-          : deviceOn
-            ? "Device is on — click to shut down"
-            : "Device is off — click to start up",
+        disabled: locked || claimed,
+        powerTitle: claim
+          ? claimTitle(claim)
+          : locked
+            ? noAccess
+              ? "No access"
+              : "Sign in to control"
+            : deviceOn
+              ? "Device is on — click to shut down"
+              : "Device is off — click to start up",
       }}
       headerRight={
         <>
@@ -289,6 +298,26 @@ export function PlateReaderTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </>
       }
     >
+      {/* Who holds the device, when anyone does. Rendered above the
+          sub-systems because it explains why the controls below are inert —
+          the reader is healthy and simply belongs to someone else, which is
+          not something `equipment_status` can express (it stays `ready`,
+          per STATUS_SPEC §2.3: a claim is not an operation in progress). */}
+      {claim && (
+        <div
+          className="flex items-center gap-1.5 rounded-md border border-sky-300 bg-sky-50 px-2 py-1 dark:border-sky-700 dark:bg-sky-950/40"
+          title={claimTitle(claim)}
+        >
+          <span
+            aria-hidden="true"
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500"
+          />
+          <span className="truncate text-[11px] font-medium text-sky-900 dark:text-sky-200">
+            {claimLabel(claim)}
+          </span>
+        </div>
+      )}
+
       {/* Four sub-systems as pills, two per row. */}
       <div className="grid grid-cols-2 gap-1.5">
         {COMPONENT_ROWS.map(({ key, caption }) => {
