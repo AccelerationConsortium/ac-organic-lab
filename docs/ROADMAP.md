@@ -144,7 +144,7 @@ each):
 | `camera` | 5 | `ptz`, `preset/{save,goto}`, `privacy`, `streaming` — `kasa-tapo-services` gateway; slash-separated names (byte-for-byte the gateway's `allowed_actions`), unlike every other kind's dotted names; added 2026-08-18 for the assistant's Control-mode Step 1f |
 | `fume_hood` | 2 | `sash.move`, `sash.stop` |
 | `hplc` | 6 | `run.{submit,abort}`, `queue.cancel`, `instrument.standby`, `workflow.{start,end}` (Agilent UPLC-MS sidecar) |
-| `liquid_handler` | 18 | OT-2 full `/control/*` surface: lifecycle (`startup`/`shutdown`), protocol exec (`setup`/`home`/`move_to`/`pick_up_tip`/`aspirate`/`dispense`/`drop_tip`/`move_labware`/`pause`/`resume`), plate + tip tracking (`plate.{load,unload}`/`well.update`/`tips.reset`), convenience (`lights.set`/`deck.declare`). Typed args added 2026-07-12; `move_to` (well or absolute-XYZ pipette motion) added 2026-07-18 |
+| `liquid_handler` | 21 | OT-2 full `/control/*` surface: lifecycle (`startup`/`shutdown`), protocol exec (`setup`/`home`/`move_to`/`pick_up_tip`/`aspirate`/`dispense`/`drop_tip`/`move_labware`/`pause`/`resume`), plate + tip tracking (`plate.{load,unload}`/`well.update`/`tips.{reset,mark}`), temperature module (`tempmod.{set,deactivate}`), convenience (`lights.set`/`deck.declare`). Typed args added 2026-07-12; `move_to` (well or absolute-XYZ pipette motion) added 2026-07-18; `tips.mark` + `tempmod.*` added 2026-08-30 (`tips.mark` is the partial-rack correction `tips.reset` could only make by over-claiming a full rack) |
 | `plate_reader` | 15 | Mirrors live `agilent-cytation-server` `/control/*` (drawer, plate, three reads, imaging, incubator, shaker). Arg ranges aligned to the device OpenAPI 2026-08-19: absorbance 230–999 nm, FL ex/em 250–700 nm, no `gain` on reads, camera analog gain 0–47 dB. |
 | `plate_sealer` | 8 | Includes 412-precondition skills with `requires_components` (heater + stage) |
 | `plate_stacker` | 6 | Agilent BioStack `/control/*` surface |
@@ -609,7 +609,7 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   validators once a real recipe exercises custom labware.
 - [ ] **The `liquid_handler` SkillDefs are now the only in-repo model of the
   OT-2's write surface.** With `Ot2ControlPanel` gone, nothing in `web/`
-  exercises those 18 verbs. The remaining guard is
+  exercises those 21 verbs. The remaining guard is
   `test_liquid_handler_names_match_gateway_allowed_actions`, which asserts the
   catalog equals a **hand-transcribed literal** of the gateway's advertised
   strings — so it catches a rename on *our* side, but a rename on the

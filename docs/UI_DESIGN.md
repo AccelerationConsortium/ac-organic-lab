@@ -873,7 +873,16 @@ interlocks to catch the half-executed remainder.
 |---|---|---|
 | **A — propose** | `lights.set`, `home`, `pause` | Zero or one scalar arg; each moves the robot toward a safer or more legible state. `home` is the tier's one real motion — the canonical make-it-safe pose, no args, idempotent, and the documented prerequisite for a hand entering the deck. |
 | **B — propose (record edits)** | `plate.load`, `plate.unload`, `well.update`, `deck.declare` | No motion, evaluable cards. They mutate the lab's *belief* about the deck, so a wrong one silently desyncs belief from reality — the reason they still confirm, not a reason to withhold them. |
-| **C — operator-only** | `startup`, `shutdown`, `setup`, `resume`, `tips.reset`, `move_to`, `pick_up_tip`, `aspirate`, `dispense`, `drop_tip`, `move_labware` | Sequence-bound (the six motion/liquid verbs), unevaluable (`setup`), secret-bearing (`startup` carries `password`, which would land on the card and in the `assistant_proposal` row), safety-floor inverse (`resume` — somebody paused, possibly with hands in the deck), or interlock-adjacent (`tips.reset` declares used tips fresh, disarming the contamination guard). |
+| **C — held back at Step 1b** | `startup`, `shutdown`, `setup`, `resume`, `tips.reset`, `move_to`, `pick_up_tip`, `aspirate`, `dispense`, `drop_tip`, `move_labware` | Sequence-bound (the six motion/liquid verbs), unevaluable (`setup`), secret-bearing (`startup` carries `password`, which would land on the card and in the `assistant_proposal` row), safety-floor inverse (`resume` — somebody paused, possibly with hands in the deck), or interlock-adjacent (`tips.reset` declares used tips fresh, disarming the contamination guard). **Superseded the same day by Step 1c below**: every action in this row is proposable today, and the row survives as the record of why each was withheld first. |
+
+The table is the Step 1b assignment; `_PROPOSABLE` in `api/app/assistant_control.py`
+is what actually ships. Two verbs post-date the table and joined on the same
+criterion, not by an exception: `tips.mark` (2026-08-30 — the partial-rack
+repair `tips.reset` can only make by over-claiming a full rack, so it is the
+*less* interlock-adjacent of the pair) and `tempmod.set` / `tempmod.deactivate`
+(2026-08-30 — one range-clamped scalar each). The catalog/allowlist parity
+tests named in that module are what keep the code honest as the gateway grows
+verbs; a list in prose, this one included, only goes quietly stale.
 
 #### Step 1c — the full surface, behind a field guard (2026-08-12)
 

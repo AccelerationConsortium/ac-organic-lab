@@ -637,10 +637,21 @@ every advertised action: session lifecycle (``startup`` / ``shutdown``),
 protocol execution (``setup`` / ``home`` / ``pick_up_tip`` / ``aspirate``
 / ``dispense`` / ``drop_tip`` / ``move_labware`` / ``pause`` / ``resume``),
 plate/well tracking (``plate.load`` / ``plate.unload`` / ``well.update``),
-tip tracking (``tips.reset`` — physical rack swap), and convenience
-(``lights.set`` / ``deck.declare``). ``pick_up_tip`` carries a
-cross-contamination guard (``sample_id`` / ``force`` on the args); refusals
-return HTTP 412 and never mutate ``last_error``.
+tip tracking (``tips.reset`` — a physical rack swap, every tip fresh; and
+``tips.mark`` — the partial correction, setting only the named wells or
+columns and leaving the rest alone), temperature module (``tempmod.set`` /
+``tempmod.deactivate``), and convenience (``lights.set`` / ``deck.declare``).
+``pick_up_tip`` carries a cross-contamination guard (``sample_id`` /
+``force`` on the args); refusals return HTTP 412 and never mutate
+``last_error``.
+
+``tips.mark`` exists because ``tips.reset`` is all-or-nothing: the only way
+to fix a drifted count used to be to claim a full rack, which is a lie
+whenever the rack is partly used — and a lie that sends the head onto bare
+holes. Its ``status`` is deliberately only ``new`` or ``empty``, the two
+things an operator can *see*; a touched tip carries the sample id it
+contacted, which is evidence the gateway recorded and not an operator's to
+assert.
 
 ### Tile behaviour (read-only since 2026-07-15)
 
