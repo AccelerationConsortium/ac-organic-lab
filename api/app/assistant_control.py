@@ -251,8 +251,17 @@ def _canonical_action(kind: str | None, action: str) -> str:
 # Per-kind allowlist of actions the assistant may propose. Fail-closed: a kind
 # absent from this table, or an action absent from its set, is refused — a new
 # gateway verb stays operator-only until somebody scopes it here deliberately
-# (which is why the table survives even now that it lists the OT-2's whole
-# advertised surface).
+# (which is why the table survives even where a kind's whole advertised surface
+# is scoped in).
+#
+# Do not read this table as a claim about *how much* of a device's surface is
+# covered; whether it is complete is asserted by tests, not by a comment.
+# ``test_liquid_handler_names_match_gateway_allowed_actions`` (skills/tests)
+# pins the catalog against the gateway's advertised names, and the
+# ``_OT2_SURFACE`` map in api/tests pins this allowlist against the catalog.
+# Both fail loudly when a device grows a verb — whereas a completeness claim
+# written here just goes quietly stale, which is exactly what happened between
+# ``tips.reset`` and the gateway later adding ``tips.mark`` / ``tempmod.*``.
 #
 # Nothing here actuates and the confirm card is the gate, so the bar is not
 # "is this action dangerous". Two things keep that card a real gate rather
@@ -312,12 +321,21 @@ _PROPOSABLE: dict[str, frozenset[str]] = {
             # about the deck; a wrong one silently desyncs belief from
             # reality, which is why they still confirm. ``tips.reset``
             # additionally re-arms/disarms the contamination guard's input
-            # (a physical rack swap), so its card deserves a careful read.
+            # (a physical rack swap), so its card deserves a careful read;
+            # ``tips.mark`` is the partial-rack form of the same edit — the
+            # repair for a tracker that has drifted from the bench, which
+            # ``tips.reset`` can only fix by over-claiming a full rack.
             "plate.load",
             "plate.unload",
             "well.update",
             "tips.reset",
+            "tips.mark",
             "deck.declare",
+            # Temperature module — hardware-driving (the gateway withholds
+            # both in DRY_RUN and while a run is starting), one scalar arg,
+            # range-clamped by the schema.
+            "tempmod.set",
+            "tempmod.deactivate",
         }
     ),
     # Step 1d (2026-08-12): three more bench kinds, same criterion, no new

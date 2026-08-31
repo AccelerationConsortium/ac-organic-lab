@@ -388,6 +388,9 @@ _OT2_SURFACE = {
     "plate.unload": "plate/unload",
     "well.update": "well/update",
     "tips.reset": "tips/reset",
+    "tips.mark": "tips/mark",
+    "tempmod.set": "tempmod/set",
+    "tempmod.deactivate": "tempmod/deactivate",
     "lights.set": "lights",
     "deck.declare": "deck/declare",
 }
@@ -561,6 +564,107 @@ async def test_propose_ot2_aspirate() -> None:
     assert prop["action"] == "aspirate"
     assert prop["passthrough_action"] == "aspirate"
     assert prop["args"]["volume_ul"] == 50.0
+
+
+@respx.mock
+async def test_propose_ot2_tips_mark() -> None:
+    """``tips.mark`` is the partial-rack tip-tracker repair. It used to refuse
+    as operator-only (it was advertised by the gateway but scoped in neither
+    _PROPOSABLE nor the catalog), which left the assistant recommending
+    ``tips.reset`` — an over-claim of a full rack — as the only reachable fix.
+    """
+
+    _mock_ot2_status(_OT2_ADVERTISED)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(),
+            "ot2_hte",
+            "tips.mark",
+            {"slot": "5", "wells": ["A1", "B1", "C1"], "status": "empty"},
+            "three tips were taken by hand; sync the tracker",
+        )
+    )
+    assert "code" not in out, out
+    prop = out["proposal"]
+    assert prop["action"] == "tips.mark"
+    assert prop["passthrough_action"] == "tips/mark"
+    assert prop["kind"] == "liquid_handler"
+    # The card renders generically over args, so the payload must carry them all.
+    assert prop["args"] == {"slot": "5", "wells": ["A1", "B1", "C1"], "status": "empty"}
+
+
+@respx.mock
+async def test_propose_ot2_tips_mark_by_column() -> None:
+    """The column form round-trips too — the resolver passes args through, so
+    both TipsMarkArgs shapes must reach the card."""
+
+    _mock_ot2_status(_OT2_ADVERTISED)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(),
+            "ot2_hte",
+            "tips.mark",
+            {"nickname": "tiprack_300", "columns": [1, 2], "status": "new"},
+            "restocked the first two columns",
+        )
+    )
+    prop = out["proposal"]
+    assert prop["args"] == {
+        "nickname": "tiprack_300",
+        "columns": [1, 2],
+        "status": "new",
+    }
+
+
+@respx.mock
+async def test_propose_ot2_tips_mark_bad_args_rejected() -> None:
+    """Both-wells-and-columns is a TipsMarkArgs validator error, so it never
+    reaches a confirm card."""
+
+    _mock_ot2_status(_OT2_ADVERTISED)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(),
+            "ot2_hte",
+            "tips.mark",
+            {"slot": "5", "wells": ["A1"], "columns": [1], "status": "new"},
+            "",
+        )
+    )
+    assert out["code"] == "invalid_args"
+
+
+@respx.mock
+async def test_propose_ot2_tempmod_set() -> None:
+    """``tempmod.set`` was silently unproposable for the same reason —
+    advertised by the gateway, absent from both gates."""
+
+    _mock_ot2_status(_OT2_ADVERTISED)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(), "ot2_hte", "tempmod.set", {"celsius": 37.0}, "warm the block"
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "tempmod.set"
+    assert prop["passthrough_action"] == "tempmod/set"
+    assert prop["args"] == {"celsius": 37.0}
+
+
+@respx.mock
+async def test_propose_ot2_tempmod_out_of_range_rejected() -> None:
+    _mock_ot2_status(_OT2_ADVERTISED)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(), "ot2_hte", "tempmod.set", {"celsius": 120.0}, ""
+        )
+    )
+    assert out["code"] == "invalid_args"
 
 
 @respx.mock
