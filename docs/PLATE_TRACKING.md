@@ -218,6 +218,21 @@ one exists and reports disagreement on the `started` SSE frame as a warning
 `aliases` in the registry are **observation-only**: they read a device's
 vocabulary back into ours; they are never used to infer a move.
 
+> *Update 2026-08-30:* the cross-check now also runs **per step, mid-run**
+> (`workflow.py::custody_preflight`, branch `worktree-overnight-custody-lineage`).
+> Before every custody-annotated step the executor reads the ledger fresh and
+> compares it against the run's expected-location chain
+> (`RunState.custody_expected` — seeded from the run-start check, advanced only
+> by moves the ledger accepted; an `unknown` outcome or a refused write makes
+> the plate *unverifiable* rather than falsely mismatched). Verdicts land on a
+> `custody_preflight` SSE frame; a contradiction files the same deviation Note
+> and `plate_custody_mismatch` row as the after-step check, with
+> `payload.phase: "preflight"`. Advisory by default; `CUSTODY_STRICT=1` aborts
+> the run at the gate (never in a dry run). The same rule is available to
+> project repos as an opt-in SDK interlock,
+> `lab_skills.interlocks_custody.require_plate_at` — the layer-4 consumer D1
+> promised.
+
 **D8 — lab.db events are ops audit; custody is read from AnaliticaDB only.**
 `plate_moved`, `plate_custody_mismatch`, `plate_custody_unknown` are registered
 in `LAB_MONITORING.md`'s `event_type` table (reserved until the executor
@@ -253,6 +268,25 @@ nominal `plate` when samples are minted; `ContainerContents` keeps its
 `derived | asserted | measured` flag (ELN_LIMS_V2 §3.3). The OT-2 tip tracker's
 `sample_id`-per-tip is a provenance thread "sitting in a device and connected
 to nothing" (`DATABASE_DESIGN.md`) — a later consumer of the same ledger.
+
+> *Update 2026-08-30 — first slice built* (lineage rows only; amounts,
+> `ContainerContents`, Substance/Lot still open). One planning discovery
+> reshaped it: the compiled package carries `protocol` as a *name string*, so
+> the step-level `source`/`dest`/`mapping` never reached the executor — the
+> mappings could not be consumed "at run filing" without a compiler change.
+> Rather than re-implement mapping semantics reader-side (the second-copy
+> anti-pattern §1 warns about), the D6 custody pattern was reused: bitácora's
+> compiler now expands the declared mappings into a package-level `lineage`
+> field (compiler 0.6.0, optional-when-truthy in the digest, one entry per
+> (source plate, dest well) pair with hids resolved from `plate_bindings`;
+> branch `worktree-lineage-package`), and the executor posts one `transfer`
+> row per pair whose gating compiled steps all `succeeded`
+> (`api/app/lineage.py`, child well containers resolved via
+> `parent_container_id`, `plan_id`/`step_id`-anchored, never raises; summary
+> on the run's `done` frame under `record.transfers`). Amounts are
+> deliberately null in this slice — the rows are topology, per
+> PLATES_AS_OBJECTS §7; commanded volumes sit in the gating steps' `args`
+> when a follow-up wants them.
 
 ---
 
@@ -505,7 +539,7 @@ without a second migration.
 | D1 | ac-organic-lab | `custody.py`, executor hook, front door, `seed_locations.py` (§7) | A, B, C | **shipped 2026-08-23** (see note below) |
 | D2 | ac-organic-lab | Plan-at-start (`open_run_record` / `close_run_record`) | D1 | **shipped 2026-08-23** |
 | E | bitácora + dashboard | agent tools (`register_plate`, `record_plate_move`, `where_is_plate`, `list_locations`), "Plates" views | A, D | **shipped 2026-08-23** (see note below) |
-| F | all | `transfer` lineage rows, `ContainerContents` flag, Substance/Lot; device asks (§8) | E | not started |
+| F | all | `transfer` lineage rows, `ContainerContents` flag, Substance/Lot; device asks (§8) | E | **first slice built 2026-08-30** (lineage rows, no amounts — see the D11 note; `ContainerContents` / Substance/Lot / device asks still open) |
 
 A and B are independent; C can start on B's yaml with a fixture before A
 lands; everything after needs all three.
