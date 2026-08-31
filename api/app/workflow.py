@@ -495,18 +495,27 @@ def _remember(state: RunState) -> None:
 
 
 async def _drive_run(state: RunState, request: Request, auth: Authorization,
-                     plan, connection) -> None:
-    """The background task that owns one run, start to finish."""
+                     plan, connection, *, recorder) -> None:
+    """The background task that owns one run, start to finish.
+
+    ``recorder`` is the one :class:`~app.custody.CustodyRecorder` of this run
+    attempt — the same instance :func:`custody_at_start` already read the
+    ledger with, so its name/hid resolutions are paid once per run rather than
+    once per reader. Sharing that cache is safe: the only field a move
+    invalidates is a container's ``location_id``, and every reader that cares
+    asks for it with ``refresh=True``.
+    """
     identity = state.launched_by
 
     # One recorder serves both ledger verbs. A package may declare lineage and
     # annotate no custody at all (a plate that never leaves its slot still has
-    # wells feeding wells), so it is built for either.
+    # wells feeding wells), so either is enough to keep it.
     lineage = list((auth.package or {}).get("lineage") or [])
     # Resolved before `gate` so the closure cannot be called against a
     # half-built run: the preflight below reads all three.
     custody_by_step = auth.custody_by_step
-    recorder = custody_recorder() if (custody_by_step or lineage) else None
+    if not (custody_by_step or lineage):
+        recorder = None
     locations_cfg = getattr(request.app.state, "locations_config", None)
 
     async def gate(step) -> str | None:
@@ -789,7 +798,7 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
             state.emit("custody", {**frame, "recorded": False, "reason": status})
             return
         entry = locations.by_name(to) if locations is not None else None
-        device = getattr(entry, "equipment", None) or "custody"
+        device = getattr(entry, "equipment", None) or CUSTODY_DEVICE_ID
         plan_id = state.record.get("plan_id")
         if status == "unknown":
             # The plate may or may not have arrived, so the chain can no longer
@@ -905,11 +914,14 @@ async def lineage_after_run(state: RunState, auth: Authorization, report, *,
         return {"emitted": 0, "error": str(exc)[:300]}
 
 
-async def custody_at_start(auth: Authorization, *, identity: str) -> tuple[list[dict], list[str]]:
+async def custody_at_start(auth: Authorization, *, identity: str,
+                           recorder) -> tuple[list[dict], list[str]]:
     """Run-start cross-check (D7): where the record layer says each bound plate
     is now, and warnings for any it does not know. Returns ``(plates, warnings)``.
-    Under ``CUSTODY_STRICT=1`` the caller refuses on warnings."""
-    recorder = custody_recorder() if auth.plate_bindings else None
+    Under ``CUSTODY_STRICT=1`` the caller refuses on warnings.
+
+    ``recorder`` is the run attempt's own — ``None`` when the record layer is
+    not configured, in which case there is nothing to cross-check against."""
     plates: list[dict] = []
     warnings: list[str] = []
     if recorder is None:
@@ -955,9 +967,14 @@ def build_workflow_router() -> APIRouter:
                 )
                 raise HTTPException(status_code=409, detail=str(exc)) from None
 
+        # One recorder for the whole attempt: the run-start read below and the
+        # executor's own custody / lineage writes are the same client, so a hid
+        # is resolved once instead of once per reader.
+        recorder = custody_recorder()
         # Where the bound plates are *now*, per the record layer — a warning on
         # the `started` frame, or a refusal under CUSTODY_STRICT (D7).
-        plates, custody_warnings = await custody_at_start(auth, identity=identity)
+        plates, custody_warnings = await custody_at_start(auth, identity=identity,
+                                                          recorder=recorder)
         if custody_warnings and CUSTODY_STRICT and not body.dry_run:
             reason = "custody check failed: " + "; ".join(custody_warnings)
             await _record_run_event(request, body.authorization_id, outcome="refused",
@@ -986,7 +1003,7 @@ def build_workflow_router() -> APIRouter:
             "custody_steps": sorted(auth.custody_by_step),
         })
         asyncio.get_running_loop().create_task(
-            _drive_run(state, request, auth, plan, connection)
+            _drive_run(state, request, auth, plan, connection, recorder=recorder)
         )
         return {"run_id": state.run_id, "status": state.status,
                 "authorization_id": auth.authorization_id}

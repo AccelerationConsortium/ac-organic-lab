@@ -162,8 +162,9 @@ def test_liquid_handler_tips_mark_args() -> None:
     """``tips.mark`` mirrors the gateway's TipsMarkRequest: rack addressed by
     slot (preferred) or nickname, tips by exactly one of wells / columns.
 
-    Note the shape differs from ``tips.reset`` (nickname-only) — marking part
-    of a rack is normally done by the slot the operator is looking at.
+    The rack half is shared with ``tips.reset`` (see below); what is specific
+    here is naming *which* tips, since marking part of a rack is the whole
+    point of the verb.
     """
     from pydantic import ValidationError
 
@@ -189,6 +190,28 @@ def test_liquid_handler_tips_mark_args() -> None:
         TipsMarkArgs(slot="5", columns=[13], status="new")
     with pytest.raises(ValidationError):
         TipsMarkArgs(slot="5", wells=["A1"], status="used")  # type: ignore[arg-type]
+
+
+def test_liquid_handler_tips_reset_args() -> None:
+    """``tips.reset`` addresses the rack exactly as ``tips.mark`` does — by
+    ``slot`` (preferred; the deck slot *is* a rack's identity) or by the legacy
+    ``nickname``. This model was nickname-only long after the gateway had made
+    slot the preferred form, so the SDK could not express the call the device
+    prefers. ``wells`` stays optional: omitted means the full 96-tip grid."""
+    from pydantic import ValidationError
+
+    from lab_skills.skill_catalog.liquid_handler import TipsResetArgs
+
+    assert TipsResetArgs(slot="4").wells is None
+    TipsResetArgs(nickname="tiprack_300", wells=["A1", "B1"])
+    TipsResetArgs(slot="4", nickname="tiprack_300")
+
+    # The rack must be named somehow — an unaddressed reset would silently
+    # claim a full rack somewhere.
+    with pytest.raises(ValidationError):
+        TipsResetArgs(wells=["A1"])
+    with pytest.raises(ValidationError):
+        TipsResetArgs()
 
 
 def test_liquid_handler_tempmod_args() -> None:

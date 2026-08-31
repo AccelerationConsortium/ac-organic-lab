@@ -738,7 +738,13 @@ def _custody_rig(run_rig, monkeypatch, statuses, *, dry_run=False, aggregator=No
     import app.workflow as wfmod
     from app.main import app as _app
     fake = _CustodyRecorderFake()
-    monkeypatch.setattr(wfmod, "custody_recorder", lambda: fake)
+    fake.built = 0            # how many times the run asked for a recorder
+
+    def _make():
+        fake.built += 1
+        return fake
+
+    monkeypatch.setattr(wfmod, "custody_recorder", _make)
     # Never read the live lab from a test: the real aggregator would poll the
     # real xArm and turn its empty gripper into a "mismatch".
     _app.state.aggregator = aggregator if aggregator is not None else _FakeAggregator()
@@ -827,6 +833,16 @@ def test_a_failed_or_unknown_step_writes_no_move(run_rig, monkeypatch):
     # …and the unknown outcome is filed as a note, never as a deviation
     kinds = [n["kind"] for n in done["record"]["notes"] if n.get("step_id") == "place"]
     assert "outcome_unknown" in kinds and "deviation" not in kinds
+
+
+def test_one_recorder_serves_the_whole_run(run_rig, monkeypatch):
+    """The run-start ledger read and the executor's own custody / lineage writes
+    are one client, built once in `start_run`. Two would resolve every hid
+    twice and cache neither answer for the other — and sharing one is safe
+    precisely because the field a move invalidates, `location_id`, is only ever
+    read back with `refresh=True`."""
+    fake, _events, _ = _custody_rig(run_rig, monkeypatch, ["succeeded"] * 3)
+    assert fake.built == 1
 
 
 def test_a_dry_run_records_nothing(run_rig, monkeypatch):

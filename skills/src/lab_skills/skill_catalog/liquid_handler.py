@@ -241,10 +241,35 @@ class TipsResetArgs(BaseModel):
     statuses across restarts; this endpoint is for swapping in a fresh rack or
     tracking one loaded out-of-band. Metadata only — no robot motion — so,
     like ``plate.*``, it works in ``ready`` and ``dry_run``. ``wells`` defaults
-    to the 96-tip column-major grid when omitted."""
+    to the 96-tip column-major grid when omitted.
 
-    nickname: str = Field(..., min_length=1)
+    Address the rack the same way ``tips.mark`` does (mirrors
+    ``opentrons-server`` ``TipsResetRequest``): by ``slot`` — the deck slot,
+    which *is* a rack's identity, since a rack carries no sample and what an
+    operator refills is "the rack in slot 4" — or by ``nickname``, the name it
+    was loaded under, kept as a legacy alias and resolved through the session
+    recipe. At least one is required. This args model was nickname-only while
+    the gateway had already made ``slot`` the preferred form, so the SDK could
+    not express the call the device prefers.
+    """
+
+    slot: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description='deck slot holding the rack, e.g. "5" (preferred)',
+    )
+    nickname: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="name the rack was loaded under (legacy alias for slot)",
+    )
     wells: Optional[list[str]] = None
+
+    @model_validator(mode="after")
+    def _validate_target(self) -> "TipsResetArgs":
+        if not self.slot and not self.nickname:
+            raise ValueError("Give slot (preferred) or nickname to name the tip rack.")
+        return self
 
 
 class TipsMarkArgs(BaseModel):
