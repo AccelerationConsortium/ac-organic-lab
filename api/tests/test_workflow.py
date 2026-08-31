@@ -69,6 +69,13 @@ TWO_PLATES = {
                  "role": "conditions", "wells": {"A1": {"conditions": {"acid": "acid_a"}}}},
 }
 
+#: A substance registry as bitácora's `substances:` block publishes it
+#: (COMPILER_VERSION 0.5.0). Only the shape matters here.
+SUBSTANCES = {
+    "acid_a": {"name": "benzoic acid", "cas": "65-85-0", "role": "reagent"},
+    "solvent": {"name": "acetonitrile", "cas": "75-05-8", "role": "solvent"},
+}
+
 
 def _auth(**over) -> Authorization:
     pkg = over.pop("package", _package())
@@ -230,6 +237,44 @@ def test_an_empty_plates_block_is_not_digested() -> None:
     assert digest_payload_of(_package(plates={})) == digest_payload_of(_package())
     assert digest_payload_of(_package(plates=None)) == digest_payload_of(_package())
     assert _digest(_package(plates={})) == _digest(_package())
+
+
+def test_a_package_with_a_substance_registry_verifies() -> None:
+    """The same regression `plates` had, one field later: bitácora's compiler
+    (0.5.0) added `substances` to the digest payload, and a verifier that did not
+    know the field recomputed a different digest and refused the run as tampered.
+    A false tamper report is the worst possible way to learn about drift — it
+    accuses a human of editing a package nobody touched."""
+    pkg = _package(substances=SUBSTANCES)
+    assert "substances" in digest_payload_of(pkg)
+    verify_package_digest(_auth(package=pkg))    # must not raise
+    # …and swapping a substance must change the digest: that is why the block is
+    # digested at all — the same steps run against different chemistry.
+    swapped = _package(substances={**SUBSTANCES, "acid_a": {
+        **SUBSTANCES["acid_a"], "cas": "99-96-7"}})
+    assert _digest(swapped) != _digest(pkg)
+    with pytest.raises(RunRefused, match="digest mismatch"):
+        verify_package_digest(_auth(package=swapped, package_digest=_digest(pkg)))
+
+
+def test_a_package_without_substances_digests_exactly_as_before() -> None:
+    """`substances` is optional-when-truthy, not required. A protocol that names
+    no substances has no `substances` key, and its digest must be byte-identical
+    to what it was before the field existed — otherwise adding the field would
+    invalidate every already-issued authorization."""
+    pkg = _package()
+    assert "substances" not in pkg
+    assert "substances" not in digest_payload_of(pkg)
+    verify_package_digest(_auth(package=pkg))    # not a "missing digest input"
+
+
+def test_an_empty_substances_block_is_not_digested() -> None:
+    """Mirrors bitácora's `if self.substances:` — absent, null and empty all hash
+    identically, so the two sides cannot disagree about exactly the packages that
+    carry the key but no substances."""
+    assert digest_payload_of(_package(substances={})) == digest_payload_of(_package())
+    assert digest_payload_of(_package(substances=None)) == digest_payload_of(_package())
+    assert _digest(_package(substances={})) == _digest(_package())
 
 
 # ── the one translation ────────────────────────────────────────────────

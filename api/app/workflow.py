@@ -121,8 +121,12 @@ _DIGEST_FIELDS = frozenset(
 #: part of what was authorized and must be hashed. Keeping them in a separate
 #: set, rather than adding them to `_DIGEST_FIELDS`, is what lets the
 #: missing-input check stay strict for the required set without refusing every
-#: one-plate package. `plates` since bitácora template 1.10.0 (PLATES_AS_OBJECTS).
-_OPTIONAL_DIGEST_FIELDS = frozenset({"plates"})
+#: one-plate package. `plates` since bitácora template 1.10.0 (PLATES_AS_OBJECTS);
+#: `substances` since COMPILER_VERSION 0.5.0 — a package with a substance
+#: registry was being refused as a digest mismatch, which reads as tampering
+#: and was only drift. Every optional field bitácora starts hashing has to be
+#: added here, and the failure mode when it is not is a false tamper report.
+_OPTIONAL_DIGEST_FIELDS = frozenset({"plates", "substances"})
 
 
 def digest_payload_of(package: dict) -> dict:
