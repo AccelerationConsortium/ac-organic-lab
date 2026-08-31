@@ -12,7 +12,9 @@ Pydantic ``args_schema``s:
   ``pause`` / ``resume``.
 * **Plate / well tracking** — ``plate.load`` / ``plate.unload`` /
   ``well.update`` (orchestrator-owned per-well state).
-* **Tip tracking** — ``tips.reset`` (physical rack swap; metadata only).
+* **Tip tracking** — ``tips.reset`` (whole-rack swap) and ``tips.mark``
+  (per-well / per-column correction); metadata only.
+* **Temperature module** — ``tempmod.set`` / ``tempmod.deactivate``.
 * **Convenience** — ``lights.set`` (deck light) and ``deck.declare``
   (operator/recipe deck layout, metadata only).
 
@@ -41,9 +43,9 @@ never lists in ``allowed_actions``, so a SkillDef for it would always report
 
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, Optional, Union
+from typing import Annotated, Any, Dict, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .models import SkillDef
 from .registry import register
@@ -243,6 +245,86 @@ class TipsResetArgs(BaseModel):
 
     nickname: str = Field(..., min_length=1)
     wells: Optional[list[str]] = None
+
+
+class TipsMarkArgs(BaseModel):
+    """Body for ``POST /control/tips/mark`` — set the status of *part* of a
+    tracked rack (mirrors ``opentrons-server`` ``TipsMarkRequest``).
+
+    Address the rack by ``slot`` (preferred — the deck slot it sits in) or by
+    ``nickname`` (the legacy alias, the name it was loaded under); at least one
+    is required. Address the tips by **exactly one** of ``wells`` (e.g.
+    ``["A1", "B1"]``) or ``columns`` (1-12); supplying both, or neither, is an
+    error. ``status`` says what is actually in those positions: ``"new"`` for a
+    fresh tip, ``"empty"`` for a used-or-absent one.
+
+    Metadata only — no robot motion — so, like ``tips.reset`` and ``plate.*``,
+    it works in ``ready`` and ``dry_run``.
+    """
+
+    slot: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description='deck slot holding the rack, e.g. "5" (preferred)',
+    )
+    nickname: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="name the rack was loaded under (legacy alias for slot)",
+    )
+    wells: Optional[list[str]] = Field(
+        default=None,
+        description='tip wells to mark, e.g. ["A1", "B1"]; give this or columns, not both',
+    )
+    columns: Optional[list[Annotated[int, Field(ge=1, le=12)]]] = Field(
+        default=None,
+        description="whole tip columns to mark, 1-12; give this or wells, not both",
+    )
+    status: Literal["new", "empty"] = Field(
+        ...,
+        description='"new" = a fresh tip is there, "empty" = used or absent',
+    )
+
+    @model_validator(mode="after")
+    def _validate_target(self) -> "TipsMarkArgs":
+        if not self.slot and not self.nickname:
+            raise ValueError("Give slot (preferred) or nickname to name the tip rack.")
+        if bool(self.wells) == bool(self.columns):
+            raise ValueError("Give exactly one of wells or columns.")
+        return self
+
+
+class TempmodSetArgs(BaseModel):
+    """Body for ``POST /control/tempmod/set`` — target temperature for an
+    Opentrons temperature module on the deck."""
+
+    celsius: float = Field(
+        ...,
+        ge=4.0,
+        le=95.0,
+        description="target block temperature, 4-95 °C (the module's range)",
+    )
+    module: Optional[str] = Field(
+        default=None,
+        description=(
+            "which temperature module: its recipe nickname or its deck slot. "
+            "Omit when exactly one temperature module is on the deck — the "
+            "gateway resolves it."
+        ),
+    )
+
+
+class TempmodDeactivateArgs(BaseModel):
+    """Body for ``POST /control/tempmod/deactivate`` — stop holding a
+    temperature and let the block drift to ambient."""
+
+    module: Optional[str] = Field(
+        default=None,
+        description=(
+            "which temperature module: its recipe nickname or its deck slot. "
+            "Omit when exactly one temperature module is on the deck."
+        ),
+    )
 
 
 class MoveLabwareArgs(BaseModel):
@@ -464,6 +546,61 @@ register(
             requires_states=["ready", "dry_run"],
             estimated_duration_s=0.2,
         ),
+        SkillDef(
+            name="tips.mark",
+            kind="liquid_handler",
+            description=(
+                "Correct part of a tracked tip rack: assert which tips are "
+                "actually there. tips.reset is all-or-nothing and would wrongly "
+                "claim a full rack; this sets only the named wells or columns. "
+                "The repair tool when the tracker has drifted from the bench. "
+                "Metadata only — no motion. Proposing is not asserting: the "
+                "operator approving the card is who makes the claim."
+            ),
+            endpoint="/control/tips/mark",
+            args_schema=TipsMarkArgs,
+            # Metadata only, like tips.reset: advertised in ready and dry_run.
+            requires_states=["ready", "dry_run"],
+            estimated_duration_s=0.2,
+        ),
+        # ---- temperature module ------------------------------------------
+        # Not dry_run, unlike the metadata verbs above: the gateway withholds
+        # tempmod.* in DRY_RUN (the only non-motion verbs it does) and lists
+        # both in its _RUN_STARTING_ACTIONS, so it classes them as
+        # hardware-driving — same treatment the motion verbs get here.
+        SkillDef(
+            name="tempmod.set",
+            kind="liquid_handler",
+            description=(
+                "Hold a temperature module at a target between 4 and 95 °C. "
+                "The call returns as soon as the module accepts the setpoint — "
+                "the ramp runs on afterwards, so read /status (or wait) before "
+                "treating the block as at temperature. Name the module by "
+                "nickname or deck slot when the deck carries more than one. "
+                "This drives hardware: the operator approving the card is who "
+                "commits the block to that temperature."
+            ),
+            endpoint="/control/tempmod/set",
+            args_schema=TempmodSetArgs,
+            requires_states=["ready"],
+            estimated_duration_s=1.0,
+        ),
+        SkillDef(
+            name="tempmod.deactivate",
+            kind="liquid_handler",
+            description=(
+                "Stop holding a temperature: the module powers down its "
+                "heating/cooling and the block drifts toward ambient. Returns "
+                "immediately; the drift takes as long as it takes. Name the "
+                "module by nickname or deck slot when the deck carries more "
+                "than one. This drives hardware: the operator approving the "
+                "card is who ends temperature control."
+            ),
+            endpoint="/control/tempmod/deactivate",
+            args_schema=TempmodDeactivateArgs,
+            requires_states=["ready"],
+            estimated_duration_s=1.0,
+        ),
         # ---- convenience -------------------------------------------------
         SkillDef(
             name="lights.set",
@@ -508,7 +645,10 @@ __all__ = [
     "PlateLoadArgs",
     "SetupArgs",
     "StartupArgs",
+    "TempmodDeactivateArgs",
+    "TempmodSetArgs",
     "TipArgs",
+    "TipsMarkArgs",
     "TipsResetArgs",
     "WellLocation",
     "WellUpdateArgs",
