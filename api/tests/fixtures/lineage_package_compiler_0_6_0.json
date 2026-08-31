@@ -1,0 +1,222 @@
+{
+  "_provenance": {
+    "commit": "b060cd5",
+    "compiler_version": "0.6.0",
+    "date": "2026-08-31",
+    "generated_by": "bitacora compile_protocol",
+    "package_digest": "sha256:cfb51e5b286aa8874fbfd7556133908c2fee1dae8d44400f4aea1e1e5e09cb3b",
+    "plate_bindings": {
+      "acid_stock": "PLT-0007",
+      "reaction": "PLT-0042"
+    }
+  },
+  "package": {
+    "compiler_version": "0.6.0",
+    "design": null,
+    "design_ref": null,
+    "lineage": [
+      {
+        "dest": {
+          "hid": "PLT-0042",
+          "plate": "reaction"
+        },
+        "dest_well": "A1",
+        "mapping": "identity",
+        "source": {
+          "hid": "PLT-0007",
+          "plate": "acid_stock"
+        },
+        "source_well": "A1",
+        "step_id": "transfer_acid"
+      },
+      {
+        "dest": {
+          "hid": "PLT-0042",
+          "plate": "reaction"
+        },
+        "dest_well": "B1",
+        "mapping": "identity",
+        "source": {
+          "hid": "PLT-0007",
+          "plate": "acid_stock"
+        },
+        "source_well": "B1",
+        "step_id": "transfer_acid"
+      }
+    ],
+    "parameters": {
+      "volume_ul": 50.0
+    },
+    "plate_map": null,
+    "plates": {
+      "acid_stock": {
+        "columns": 12,
+        "labware": "agilent_96_2ml_deep_square",
+        "role": "feedstock",
+        "rows": 8,
+        "wells": {
+          "A1": {
+            "contents": "acid_a"
+          },
+          "B1": {
+            "contents": "acid_b"
+          }
+        }
+      },
+      "reaction": {
+        "columns": 12,
+        "labware": "corning_96_wellplate_360ul_flat",
+        "role": "conditions",
+        "rows": 8,
+        "wells": {
+          "A1": {
+            "conditions": {
+              "acid": "acid_a"
+            }
+          },
+          "B1": {
+            "conditions": {
+              "acid": "acid_b"
+            }
+          }
+        }
+      }
+    },
+    "protocol": "lineage_fixture",
+    "steps": [
+      {
+        "args": {
+          "labware_nickname": "tips",
+          "pipette": "p300"
+        },
+        "plate": "reaction",
+        "plate_hid": "PLT-0042",
+        "protocol": "lineage_fixture",
+        "role": "liquid_handler",
+        "skill": "pick_up_tip",
+        "step_id": "transfer_acid__A1__tip",
+        "well": "A1"
+      },
+      {
+        "args": {
+          "location": {
+            "labware_nickname": "acid_stock",
+            "position": "A1"
+          },
+          "pipette": "p300",
+          "volume_ul": 50.0
+        },
+        "plate": "reaction",
+        "plate_hid": "PLT-0042",
+        "protocol": "lineage_fixture",
+        "role": "liquid_handler",
+        "skill": "aspirate",
+        "step_id": "transfer_acid__A1__aspirate",
+        "well": "A1"
+      },
+      {
+        "args": {
+          "location": {
+            "labware_nickname": "reaction",
+            "position": "A1"
+          },
+          "pipette": "p300",
+          "volume_ul": 50.0
+        },
+        "plate": "reaction",
+        "plate_hid": "PLT-0042",
+        "protocol": "lineage_fixture",
+        "role": "liquid_handler",
+        "skill": "dispense",
+        "step_id": "transfer_acid__A1__dispense",
+        "well": "A1"
+      },
+      {
+        "args": {
+          "pipette": "p300"
+        },
+        "plate": "reaction",
+        "plate_hid": "PLT-0042",
+        "protocol": "lineage_fixture",
+        "role": "liquid_handler",
+        "skill": "drop_tip",
+        "step_id": "transfer_acid__A1__drop",
+        "well": "A1"
+      },
+      {
+        "args": {
+          "labware_nickname": "tips",
+          "pipette": "p300"
+        },
+        "plate": "reaction",
+        "plate_hid": "PLT-0042",
+        "protocol": "lineage_fixture",
+        "role": "liquid_handler",
+        "skill": "pick_up_tip",
+        "step_id": "transfer_acid__B1__tip",
+        "well": "B1"
+      },
+      {
+        "args": {
+          "location": {
+            "labware_nickname": "acid_stock",
+            "position": "B1"
+          },
+          "pipette": "p300",
+          "volume_ul": 50.0
+        },
+        "plate": "reaction",
+        "plate_hid": "PLT-0042",
+        "protocol": "lineage_fixture",
+        "role": "liquid_handler",
+        "skill": "aspirate",
+        "step_id": "transfer_acid__B1__aspirate",
+        "well": "B1"
+      },
+      {
+        "args": {
+          "location": {
+            "labware_nickname": "reaction",
+            "position": "B1"
+          },
+          "pipette": "p300",
+          "volume_ul": 50.0
+        },
+        "plate": "reaction",
+        "plate_hid": "PLT-0042",
+        "protocol": "lineage_fixture",
+        "role": "liquid_handler",
+        "skill": "dispense",
+        "step_id": "transfer_acid__B1__dispense",
+        "well": "B1"
+      },
+      {
+        "args": {
+          "pipette": "p300"
+        },
+        "plate": "reaction",
+        "plate_hid": "PLT-0042",
+        "protocol": "lineage_fixture",
+        "role": "liquid_handler",
+        "skill": "drop_tip",
+        "step_id": "transfer_acid__B1__drop",
+        "well": "B1"
+      }
+    ],
+    "substances": {
+      "acid_a": {
+        "cas": "64-19-7",
+        "inchikey": "QTBSBXVTEAMEQO-UHFFFAOYSA-N",
+        "name": "acetic acid",
+        "smiles": "CC(=O)O"
+      },
+      "acid_b": {
+        "cas": "65-85-0",
+        "inchikey": "WPYMKLBDIGXBTP-UHFFFAOYSA-N",
+        "name": "benzoic acid",
+        "smiles": "OC(=O)c1ccccc1"
+      }
+    },
+    "warnings": []
+  }
+}
