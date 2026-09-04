@@ -28,7 +28,7 @@ not import ``api/`` — a workflow repo depends on ``lab-skills`` alone
 (``ARCHITECTURE.md`` decision #3) — so the ledger arrives as a function the
 caller supplies. Its contract is the shape
 ``api/app/custody.py::CustodyRecorder.current_location`` returns, which is also
-what AnaliticaDB's container read reduces to:
+what BitacoraDB's container read reduces to:
 
 ``async def lookup(hid: str) -> Mapping`` returning at least
 

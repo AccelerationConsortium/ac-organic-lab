@@ -79,12 +79,13 @@ lab data.
 > and the newer service tiles) are live and version-checked in the
 > protocol mix below, but have no migration history recorded here yet.
 
-**Web-service tile: `analytica_db`.** AnaliticaDB (the lab's record
-store, FastAPI on the data server at `100.64.254.6:8010`) is registered
-under **Web Services** (`kind: other`, `adapter: http`, `protocol: "1.0"`,
-no `open` pill) and serves a STATUS_SPEC `/status` envelope (`ready`, or
-`degraded` if its Postgres is unreachable); the tile reads `ready`. That
-repo is being generalized into the lab's ELN+LIMS record layer — see
+**Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
+lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and
+AnaliticaDB (LaAgenteAnalitica's own record store at `100.64.254.6:8010`) are
+both registered under **Web Services** (`kind: other`, `adapter: http`,
+`protocol: "1.0"`, no `open` pill) and serve a STATUS_SPEC `/status` envelope
+(`ready`, or `degraded` if their Postgres is unreachable); both tiles read
+`ready`. Only BitacoraDB is the lab's record layer — see
 [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md).
 
 **Protocol mix** (live `/status` envelopes, 2026-08-09 sweep). Registry
@@ -549,7 +550,7 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   `ot2_complexation` — `ra_67f32cb0920b4a41`, the 14-step
   `ot2-transfer-smoke` protocol, Slack-triggered by the boxed `lab-runner`
   agent, per-step claims, all steps ok in 146 s, record filed in
-  AnaliticaDB (AGENTIC_ELN_PLAN D-23; the two record-write fixes it
+  BitacoraDB (AGENTIC_ELN_PLAN D-23; the two record-write fixes it
   surfaced are commits `5d064c4` and `e5bb24c`). Both robots' network
   paths were moved off campus Wi-Fi the same night — see *Operational
   regressions*.

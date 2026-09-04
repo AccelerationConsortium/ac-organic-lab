@@ -160,12 +160,12 @@ def main() -> int:
                                "drop them via the panel and tips.reset before the run")
 
     # --- 3. Record path + Slack trigger (best-effort, warn-only) ------------
-    adb = equipment.get("analytica_db")
+    adb = equipment.get("bitacora_db")
     adb_state = ((adb or {}).get("status") or {}).get("equipment_status")
     if adb_state == "ready":
-        report("PASS", "AnaliticaDB ready (run record will file)")
+        report("PASS", "BitacoraDB ready (run record will file)")
     else:
-        report("WARN", f"AnaliticaDB is {adb_state!r} — record write is best-effort and "
+        report("WARN", f"BitacoraDB is {adb_state!r} — record write is best-effort and "
                        "won't fail the run, but the milestone wants the record filed")
     try:
         active = subprocess.run(["systemctl", "is-active", "--quiet", "hermes-slack.service"],

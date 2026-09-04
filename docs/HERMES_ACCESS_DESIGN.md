@@ -4,7 +4,7 @@
 **implemented** in `auth/`; **Phases 0 and 1 are implemented 2026-08-12** —
 the `hermes` OS user (record at the end of its section) and the
 `hermes@lab.local` roster principal (hot-reloaded and probe-verified:
-`analytica_db` allowed under the §2 path policy, `bitacora_eln` and all
+`bitacora_db` allowed under the §2 path policy, `bitacora_eln` and all
 hardware refused). Phase 3 is proposed and not yet done; **Phase 4 (the
 learning policy) is drafted 2026-08-12** — rules 4.1–4.6 in its section.
 
@@ -18,6 +18,13 @@ what order, and what was rejected. Companion to [`AUTH_DESIGN.md`](AUTH_DESIGN.m
 which owns identity and roles; this note owns only the agent-access question.
 
 ---
+
+> **2026-09-03 — record layer paths.** The lab's record layer is **BitacoraDB**
+> (`bitacora_db`, edge path `/bitacoradb/*`, loopback `127.0.0.1:8013`). Where
+> this document still shows `/analytica/*` paths they are the path-policy
+> *examples* the tests exercise; any Hermes path policy written today should
+> name `/bitacoradb/...`. AnaliticaDB / `analytica_db` is LaAgenteAnalitica's
+> separate store and is not on the lab agent's read path.
 
 ## 1. The principle
 
@@ -35,8 +42,8 @@ Verified against the live services on 2026-08-09.
 |---|---|---|
 | `lab.db` (dashboard `api/`) | uptime, `equipment_events`, sensors, dosing runs, `agent_observation` | **allow** — platform telemetry, no science. This is the corpus "learn from operation" needs |
 | Device PCs over SSH | instrument output, service logs, NSSM/uv state | **allow** — pre-ELN raw output, and the ops surface itself |
-| AnaliticaDB `:8010` — `/measurements`, `/files`, `/samples`, `/uploads/experiments` | raw data | **allow** |
-| AnaliticaDB `:8010` — `/projects`, `/experiments`, `/plans`, `/analyses`, `/analysis-files`, `/notes`, `/agent-run-graphs` | project details, background, design, analysis, agent reasoning traces | **deny** |
+| BitacoraDB `:8010` — `/measurements`, `/files`, `/samples`, `/uploads/experiments` | raw data | **allow** |
+| BitacoraDB `:8010` — `/projects`, `/experiments`, `/plans`, `/analyses`, `/analysis-files`, `/notes`, `/agent-run-graphs` | project details, background, design, analysis, agent reasoning traces | **deny** |
 | bitácora — `/projects/{id}/rooms/{id}/{designs,protocols,decisions,messages,pr,trace}` | the design-and-collaboration ELN, end to end | **deny** |
 
 Two findings that corrected the first draft of this note, both from reading the
@@ -46,7 +53,7 @@ services rather than the docs:
   `/projects/{id}/rooms/{id}/…`. It *is* the design layer; nothing in it sits on
   the allowed side. So the boundary is "all of bitácora", not a cut through it —
   and it needs no rule, because §4.2's policy defaults to deny.
-- **The cut through AnaliticaDB is real and clean.** Its 24 routes separate raw
+- **The cut through BitacoraDB is real and clean.** Its 24 routes separate raw
   data from record along precisely the wording of the requirement.
 
 ### 2.1 Two leaks this design does not close (the first has since closed)
@@ -59,7 +66,7 @@ Recorded so they are accepted knowingly rather than discovered later.
   mitigation is project-scoping the raw reads as well.
 
   **Closed since this was written (verified 2026-08-14).** `can_read` is
-  implemented in AnaliticaDB (`src/analytica_db/authz.py`) as
+  implemented in BitacoraDB (`src/bitacoradb/authz.py`) as
   `admin OR PI of the project OR active member of the (active) project`, and
   `api/deps.py::filter_readable` applies it row-by-row on the list routes —
   `/measurements`, `/files`, `/samples`, `/analyses`. ac_auth supplies the
@@ -86,7 +93,7 @@ Recorded so they are accepted knowingly rather than discovered later.
 **An edge policy cannot constrain Hermes while Hermes runs as `sdl2`.**
 
 Both record services are gated at the single Caddy edge (`/etc/caddy/Caddyfile`,
-live): `/analytica/*` is `forward_auth`'d to ac_auth and proxied to `:8010` with
+live): `/bitacoradb/*` is `forward_auth`'d to ac_auth and proxied to `127.0.0.1:8013` with
 a shared `X-Edge-Secret`, while bitácora is loopback-bound and trusts
 `X-Auth-User` from that same edge. The edge is the only *intended* path in.
 
@@ -188,7 +195,7 @@ ac_auth already has machine principals (`X-Api-Key`) and per-equipment grants,
 so no new mechanism is needed:
 
 - Add `hermes@lab.local` under `automation:` in `roster.yaml`, `approved: true`.
-- Grant `analytica_db`. **Do not grant `bitacora_eln`** — that single omission
+- Grant `bitacora_db`. **Do not grant `bitacora_eln`** — that single omission
   denies the whole design ELN, with no code.
 
 **Implemented 2026-08-12**, with the Phase-2 `paths:` block attached in the
@@ -201,7 +208,7 @@ issuance (`ac-auth issue-key`) deferred to run-trigger profile wiring.
 
 ### Phase 2 — edge-path policy — **implemented**
 
-Grants are **service-level**: a grant on `analytica_db` opens all 24 of its
+Grants are **service-level**: a grant on `bitacora_db` opens all of its
 routes, so Phase 1 alone would hand Hermes `/plans` and `/analyses` alongside
 `/measurements`. Closing that is the only new code in this design.
 
@@ -213,7 +220,7 @@ routes, so Phase 1 alone would hand Hermes `/plans` and `/analyses` alongside
 
 Three decisions worth keeping:
 
-- **Default-deny for unlisted paths.** A route added to AnaliticaDB later starts
+- **Default-deny for unlisted paths.** A route added to BitacoraDB later starts
   closed for path-scoped principals. Default-allow would silently widen every
   agent each time someone added an endpoint.
 - **Fail closed when `X-Forwarded-Uri` is absent.** If we cannot tell what is
@@ -307,7 +314,7 @@ it implies: the *stated reason* for an action is operational text, never
 project-confidential text.
 
 **4.6 The record stores stay behind people.** Standing decision, same date:
-**no API key is issued for `hermes@lab.local`** — the AnaliticaDB grant and
+**no API key is issued for `hermes@lab.local`** — the BitacoraDB grant and
 path policy (Phases 1/2) remain in the roster as defense-in-depth should a
 key ever be issued deliberately, but today the agent cannot reach the record
 store at all, and plan drafts enter bitácora through the human who approves
@@ -320,7 +327,7 @@ this section.
   no test touches, and duplicates per service. ac_auth is already on the request
   path of every gated route and is roster-driven, so policy stays in the file
   humans already review.
-- **Enforce inside AnaliticaDB.** Would have to be repeated in bitácora and in
+- **Enforce inside BitacoraDB.** Would have to be repeated in bitácora and in
   every future service, and leaves the direct-to-`:8010` bypass untouched
   anyway.
 - **Per-grant path lists** (`grants[].paths`). Needs an equipment-id → edge-path

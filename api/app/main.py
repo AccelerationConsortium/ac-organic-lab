@@ -516,7 +516,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.overrides = load_dashboard_overrides()
     app.state.platforms_config = load_platforms()
     # Third root YAML: the registry of places a container can be. Static; the
-    # record layer (AnaliticaDB) holds where things *are*. PLATE_TRACKING.md.
+    # record layer (BitacoraDB) holds where things *are*. PLATE_TRACKING.md.
     app.state.locations_config = load_locations()
     logger.info("Loaded equipment registry: %d entries", aggregator.equipment_count)
     logger.info(

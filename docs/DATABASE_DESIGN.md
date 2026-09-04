@@ -1,19 +1,32 @@
-# Database Design — AnaliticaDB as the ELN + LIMS record layer
+# Database Design — BitacoraDB as the ELN + LIMS record layer
 
 > **Status:** design analysis (2026-07-03; consolidated under this name
-> 2026-07-22, formerly `ANALITICADB_ELN_LIMS_DESIGN.md`). **Canonical copy:**
-> `AnaliticaDB/docs/eln-lims-generalization.md` — edit there; this copy lives
+> 2026-07-22, formerly `BITACORADB_ELN_LIMS_DESIGN.md`). **Canonical copy:**
+> `BitacoraDB/docs/eln-lims-generalization.md` — edit there; this copy lives
 > in `ac-organic-lab/docs/` because this repo is the central place lab-stack
-> context is kept. AnaliticaDB is a separate project (the durable record
+> context is kept. BitacoraDB is a separate project (the durable record
 > system); this platform stack remains the real-time layer. Companion note in
 > that repo: `docs/dmta-analysis-layering.md` (the analysis/report layering).
 > How this record layer is consumed by the agentic ELN is designed in
 > [`AGENTIC_ELN_DESIGN.md`](AGENTIC_ELN_DESIGN.md) and sequenced in
 > [`AGENTIC_ELN_PLAN.md`](AGENTIC_ELN_PLAN.md).
 
+> **2026-09-03 — the record layer is BitacoraDB.** Everything this document
+> says about the lab's ELN + LIMS record layer refers to **BitacoraDB**
+> (`AccelerationConsortium/BitacoraDB`, package `bitacoradb`, contract 0.14.0,
+> the `SCHEMA_VERSION` lineage this document already tracks). It runs on gaia on
+> loopback `127.0.0.1:8013` (API) / `:8014` (preview) against its own Postgres
+> database (`bitacoradb`), and is what `api/app/record.py` / `custody.py` write
+> to (`BITACORADB_URL` + `BITACORADB_EDGE_SECRET_PATH` in `.env`).
+> LaAgenteAnalitica keeps its own, separate record store on `:8010`; the two
+> hold different projects and never exchange data, so LaAgente's UPLC-MS
+> measurements do not join to samples and custody here. The schema work planned
+> below (Substance/Lot/ContainerContents, authorization linkage) lands in
+> BitacoraDB.
+
 ## The vision under analysis
 
-AnaliticaDB today is the **Test**-stage store of a DMTA cycle: instrument
+BitacoraDB today is the **Test**-stage store of a DMTA cycle: instrument
 observations (`Experiment > Sample > Measurement > MeasurementFile`), exposed
 over HTTP to an untrusted agent, with identity via OTel baggage, an
 `AgentAction` audit trail, and a versioned ontology contract. The proposal is
@@ -97,7 +110,7 @@ conversation converges on, with a link back to where it was negotiated:
 > (`planning/<session>/decisions.md` in the project repo) as the
 > human-readable rationale artifact, and a durable *interaction record* in
 > `bitacora`'s own conversation store (separate `conversations` Postgres
-> database on the AnaliticaDB instance, project-scoped rows). Transcripts are
+> database on the BitacoraDB instance, project-scoped rows). Transcripts are
 > stored **only** there — not in git (resolved), and never in this database.
 > See [`AGENTIC_ELN_DESIGN.md`](AGENTIC_ELN_DESIGN.md) §13.
 
@@ -137,7 +150,7 @@ so instrument data is step-correlated the same way notes are.
 
 ## 4. Analysis and reports — already settled
 
-Per the DMTA analysis note (`AnaliticaDB/docs/dmta-analysis-research.md`):
+Per the DMTA analysis note (`BitacoraDB/docs/dmta-analysis-research.md`):
 `Analysis` as a first-class entity (M2M to measurements, typed results,
 `supersedes`, insert-not-update), reports as experiment-level artifacts
 (`role="report"`) generated from analyses. `Analysis` additionally carries an
@@ -403,7 +416,7 @@ to the dashboard's SQLite `lab.db`).
   contract is the exported ontology, not a shared Python import.
 
 **`organic-solubility` mapping** (recorded in that repo as
-`docs/analiticadb_record_layer.md`): the campaign's operational path —
+`docs/bitacoradb_record_layer.md`): the campaign's operational path —
 `lab.db` `workflow_runs` / `well_metrics` / `well_artifacts` /
 `run_checkpoints` on the dashboard host — stays as-is for run-time state and
 dashboard rendering. This database is the *durable record layer* the same
@@ -695,7 +708,7 @@ already being observed, just not recorded.
 **A device must never become a client of this database.** Per
 [`ARCHITECTURE.md`](ARCHITECTURE.md), device services are authoritative for
 their own real-time state and nothing else; workflows and agents write records
-to AnaliticaDB. A gateway that resolved barcodes or posted `ContainerAction`
+to BitacoraDB. A gateway that resolved barcodes or posted `ContainerAction`
 rows would put the record layer on the critical path of a pipetting step and
 give one device two masters. `plate_id` travelling as an opaque string, and
 the workflow doing the joining, is what keeps the seam thin.
@@ -740,7 +753,7 @@ above, recorded here so the record-layer side does not have to look them up:
   `check_stock`) even where they compile down to ledger inserts.
 - **Relation to `ac-organic-lab`.** No overlap in responsibility: the
   dashboard/skills stack is the *real-time* layer (what can the lab do right
-  now, STATUS_SPEC, interlocks); AnaliticaDB becomes the *record* layer (what
+  now, STATUS_SPEC, interlocks); BitacoraDB becomes the *record* layer (what
   was planned, done, observed, consumed, concluded). They meet at three
   seams: `Plan` executions reference validated plans (INTERLOCKS layer 4),
   notes/measurements carry equipment ids from `equipment.yaml`, and trace

@@ -32,7 +32,7 @@ while a human stays the signing authority.
 assembly, not invention.** The capability is spread across four repos that
 were never assembled into one product:
 
-- **AnaliticaDB** — the durable record layer, with a designed ELN+LIMS
+- **BitacoraDB** — the durable record layer, with a designed ELN+LIMS
   generalization: append-only notes, versioned plans, a materials ledger, an
   agent-facing ontology contract ([`DATABASE_DESIGN.md`](DATABASE_DESIGN.md)).
 - **LaAgenteAnalitica** — a production-grade chat + workspace agent with real
@@ -45,7 +45,7 @@ were never assembled into one product:
 - **bitacora** (new) — the ELN agent platform that does the assembly: its own
   runtime, planning page, run authorizer, compiler, protocol edit service, and
   conversation store. Inspired by LaAgenteAnalitica's patterns, not
-  dependent on it; a client of AnaliticaDB (contract), `lab-skills` (SDK), and
+  dependent on it; a client of BitacoraDB (contract), `lab-skills` (SDK), and
   Undermind (literature search). Also hosts the experiment templates —
   including the **HTE template** (core structural blocks: design matrix,
   plate map, step list, QC, materials) at `bitacora/templates/hte/`, absorbed
@@ -77,7 +77,7 @@ reality: the plan that will run, and the result that becomes the record.
 | **LaAgenteAnalitica** (`graphchat/` UI + agent runtime) | human↔agent conversation, room workspace, deferred-tool approval, analysis capabilities | **the ELN front end** | ~85–95% built; production LC-MS/LC-UV; 16 AnaliticaDB CRUD tools from the versioned ontology; Yjs rooms, workspace explorer, NPZ/molecule viewers |
 | **ac-organic-lab** (`lab-skills` SDK + `api/` + MCP servers) | `validate_plan`/`execute_plan`, skill catalog, claims/interlocks, live `/status`, control-capable + read-only MCP servers | **execution engine + live-state source** | shipped through SDK v0.4 (`lab-skills mcp serve --allow-control`) |
 | **organic-solubility** (+ `bitacora/templates/hte`) | git-authored, PR/CODEOWNERS-approved **protocols**; CI-stable `step_id`s | **the reviewed procedure** a Plan instantiates | template published; first campaign slice landed 2026-07-04 |
-| **AnaliticaDB** | `Plan` (versioned, `draft→approved→executing→completed`), `Note` (append-only, step-anchored), `Measurement`, `Analysis`, reports | **the notebook itself** | ELN core shipped 2026-07-03; LIMS ledger designed, unbuilt |
+| **BitacoraDB** | `Plan` (versioned, `draft→approved→executing→completed`), `Note` (append-only, step-anchored), `Measurement`, `Analysis`, reports | **the notebook itself** | ELN core shipped 2026-07-03; LIMS ledger designed, unbuilt |
 
 **The load-bearing fact:** LaAgenteAnalitica and AnaliticaDB grew up *outside*
 the lab's SDK/claim/observability fabric — the agent reaches the Agilent
@@ -104,7 +104,7 @@ Three external reference points, in brief (full source list in §17):
 - **Standards & compliance floor**: AiiDA (provenance DAG), ESCALATE
   (template-vs-object, nominal-vs-actual), SiLA 2 / AnIML / Allotrope for
   interchange, 21 CFR Part 11 / ALCOA+ for auditability — precisely the
-  append-only + `AgentAction` + author-kind posture AnaliticaDB already
+  append-only + `AgentAction` + author-kind posture BitacoraDB already
   adopts. MCP is the de-facto agent tool protocol; the lab already uses it.
 
 Requirements-vs-stack mapping: immutable attributable record — **yes**;
@@ -121,7 +121,7 @@ one agent across design→execute→record — **gap (the assembly)**.
 2. **[BINDING] All hardware access goes through the `lab-skills` SDK** —
    never raw device `/control/*`, never bypassing interlocks, claims, or
    readiness checks. The SDK refusing a call is the safety system working.
-3. **[BINDING] Git holds authored artifacts; AnaliticaDB holds operational
+3. **[BINDING] Git holds authored artifacts; BitacoraDB holds operational
    records; no run data in git.** A commit hash on each database row ties the
    two ([`DATABASE_DESIGN.md`](DATABASE_DESIGN.md), project-repo blueprint).
 4. **[PROPOSED] One canonical protocol model.** Agent edits, chat-approved
@@ -144,7 +144,7 @@ one agent across design→execute→record — **gap (the assembly)**.
    spine of the record, but conversation is only one way to produce it. A
    chemist who runs an instrument directly, or edits a protocol in the visual
    editor without saying a word to the agent, produces exactly the same
-   record rows. No entity in AnaliticaDB may *require* a conversation to
+   record rows. No entity in BitacoraDB may *require* a conversation to
    exist, and entry mid-chain (e.g. measurements with no agent-drafted Plan)
    MUST remain possible.
 
@@ -159,7 +159,7 @@ one agent across design→execute→record — **gap (the assembly)**.
 | **Compiler** [PROPOSED] | resolution of scientific intent into concrete operations (lots, wells, volumes, device parameter sets) | change scientific intent; talk to devices |
 | **Orchestrator** | sequencing, claims, retries, operator handoffs during execution | bypass the SDK, interlocks, claims, or device readiness ([`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md) §1) |
 | **Device servers** | their own state and refusals (412/423/409), per [`STATUS_SPEC.md`](STATUS_SPEC.md) | be driven by anything other than the SDK path |
-| **AnaliticaDB** | the durable record of what actually happened and how results were produced | be edited retroactively — corrections are new records (`corrects`/`supersedes`) |
+| **BitacoraDB** | the durable record of what actually happened and how results were produced | be edited retroactively — corrections are new records (`corrects`/`supersedes`) |
 | **Dashboard** | coherent projections and controls | become a competing source of truth; hold control logic in the browser ([`UI_DESIGN.md`](UI_DESIGN.md) §3.1) |
 
 Separation of *artifacts*:
@@ -169,8 +169,8 @@ Separation of *artifacts*:
 | Scientific intent (objective, hypotheses, rationale) | protocol header + decision record, git | scientist (agent-drafted) |
 | Approved plan | `main` merge commit of the protocol | human CODEOWNER review |
 | Authorized execution package | authorization record (pins + digest) | run approver + run authorizer |
-| Actual execution | AnaliticaDB `Plan`/`Note`/`Measurement` rows | orchestrator + devices, recorded |
-| Interpretation & conclusions | AnaliticaDB `Analysis` rows + reports | scientist (agent-assisted), commit-stamped analysis code |
+| Actual execution | BitacoraDB `Plan`/`Note`/`Measurement` rows | orchestrator + devices, recorded |
+| Interpretation & conclusions | BitacoraDB `Analysis` rows + reports | scientist (agent-assisted), commit-stamped analysis code |
 
 Trust boundaries the architecture review added:
 
@@ -195,11 +195,11 @@ Two legitimate human sign-off mechanisms exist and stay distinct:
   commits.
 - **Conversational / ad-hoc plans** — negotiated in chat; *an approval card
   (human principal via `ac_auth` / PyPoe's gate) is the sign-off*, stamped
-  onto the AnaliticaDB `Plan`'s `draft → approved` transition.
+  onto the BitacoraDB `Plan`'s `draft → approved` transition.
 
 Support both; never let one masquerade as the other. GraphChat-style chat is
-the *design surface*; AnaliticaDB stays the *system of record*; the approval
-gate owns *identity*. The gate must front AnaliticaDB's own contract, not
+the *design surface*; BitacoraDB stays the *system of record*; the approval
+gate owns *identity*. The gate must front BitacoraDB's own contract, not
 re-declare the ontology.
 
 ## 5. End-to-end user journey
@@ -221,7 +221,7 @@ flowchart LR
       H --> I[Device servers<br/>STATUS_SPEC]
     end
     subgraph record [Record]
-      H --> J[AnaliticaDB<br/>Plan · Notes · Measurements]
+      H --> J[BitacoraDB<br/>Plan · Notes · Measurements]
       J --> K[Analyses · Report<br/>→ next plan]
     end
 ```
@@ -240,7 +240,7 @@ flowchart LR
    inventory/devices/readiness; records the approving user (§12).
 6. The compiler resolves the authorization into a concrete execution package (§13);
    the orchestrator executes it through the SDK (§14 of this doc's execution
-   boundary, §6 surfaces); AnaliticaDB records actuals linked to the authorization.
+   boundary, §6 surfaces); BitacoraDB records actuals linked to the authorization.
 7. Post-run analysis proceeds on the analysis surface (§6); the report seeds
    the next plan.
 
@@ -258,7 +258,7 @@ coordination panel; the workspace is the work surface.
   LaAgenteAnalitica's `AnalysisPlan`: discuss → edit → preview → approve →
   lock; run only locked plans) generalizes to the experiment plan — the agent
   composes only from implemented skills, so it *cannot invent a step with no
-  implementation*. Approval = human principal → AnaliticaDB `Plan.approved`.
+  implementation*. Approval = human principal → BitacoraDB `Plan.approved`.
   For repo-backed campaigns the agent renders the git **protocol** into the
   Plan and the sign-off is the PR merge (§4), not a UI button.
 - **Execute — "watch it run."** On approve→run, `execute_plan` runs behind
@@ -271,7 +271,7 @@ coordination panel; the workspace is the work surface.
   anchored to (`plan_id`, `step_id`). The dashboard-side runner + SSE contract
   is specified in [`UI_DESIGN.md`](UI_DESIGN.md) §3.
 - **Analyze — "what did we get."** Post-run measurements are step-correlated
-  in AnaliticaDB; the chemist stages files, runs analysis capabilities
+  in BitacoraDB; the chemist stages files, runs analysis capabilities
   conversationally, commits accepted results as `Analysis` rows via the
   existing human-gated commit, and generates an experiment-level report whose
   conclusions seed the next Plan — closing the loop in the same room.
@@ -358,13 +358,13 @@ machinery that HTE planning does not need. Pin the boundary explicitly:
 | Deferred-tool approval gate | the human-in-the-loop pattern for any actuating tool |
 | Dynamic-but-lockable plan-as-data (discuss → edit → preview → approve → lock) | generalizes directly to the experiment protocol |
 | Persistence discipline (`persistence-boundaries.md`) | one owner per datum; conversation store ≠ record layer (§13) |
-| Ontology-pinned tool generation (`ontology.json`, exact-version check) | fail-fast cross-repo contract, already how AnaliticaDB tools are built |
+| Ontology-pinned tool generation (`ontology.json`, exact-version check) | fail-fast cross-repo contract, already how BitacoraDB tools are built |
 
 | Skip | Why |
 |---|---|
 | pydantic-graph conversation engine | the protocol document + the three state machines (§15) already structure the interaction; a graph engine would duplicate them |
-| Separate graph database | the provenance graph HTE needs already exists as AnaliticaDB's relational FKs (`Plan → Experiment → Sample → Measurement → Analysis`) |
-| Per-project MongoDB instances | one conversation store with project-scoped rows (§13) — same multi-tenancy pattern as AnaliticaDB's denormalized `project_id` |
+| Separate graph database | the provenance graph HTE needs already exists as BitacoraDB's relational FKs (`Plan → Experiment → Sample → Measurement → Analysis`) |
+| Per-project MongoDB instances | one conversation store with project-scoped rows (§13) — same multi-tenancy pattern as BitacoraDB's denormalized `project_id` |
 | Free-form per-room filesystem workspace as the primary surface | the primary surface here is the versioned protocol in the git worktree; scratch space stays scratch |
 
 ### Tool domains in `bitacora`
@@ -375,7 +375,7 @@ is borrowed from LaAgenteAnalitica's `domains/` layout):
 | Domain | Client of | Purpose |
 |---|---|---|
 | `domains/lab/` | `lab-skills mcp serve` | list equipment/skills, `validate_plan`, `preflight_plan`; `execute_plan` behind `--allow-control` + human approval (Track 1 Step 1) |
-| `domains/analitica_db/` | AnaliticaDB HTTP, pinned to `ontology.json` (exact `SCHEMA_VERSION`) | read/write the record layer — Plans, Notes, Analyses, run-authorization linkage |
+| `domains/analitica_db/` | BitacoraDB HTTP, pinned to `ontology.json` (exact `SCHEMA_VERSION`) | read/write the record layer — Plans, Notes, Analyses, run-authorization linkage |
 | `domains/undermind/` | Undermind (literature search API) | research papers, synthesize prior art, cite — the capability that expands the agent beyond lab operations into experimental design informed by the literature |
 
 ### Overview layer — claims roll-up and propositions (2026-08-18 addendum)
@@ -442,7 +442,7 @@ On "create project", the platform (server-side, never the browser):
    PR-only `main`, human CODEOWNERS review, squash-merge only, required
    `protocols` CI check, no force-push, no deletion, linear history, no
    bypass actors.
-5. Creates the AnaliticaDB `Project` row if absent (unchanged; not yet
+5. Creates the BitacoraDB `Project` row if absent (unchanged; not yet
    implemented).
 
 ### Server-side workspace
@@ -487,7 +487,7 @@ second model. Schema versioning rides `TEMPLATE_VERSION` + `pins.yaml`.
 
 **Protocol ≠ Plan** (settled terminology): the *protocol* is the reusable,
 parameterized, PR-reviewed procedure (ESCALATE's template side); the
-AnaliticaDB `Plan` is one rendered run of it (concrete parameters,
+BitacoraDB `Plan` is one rendered run of it (concrete parameters,
 `source_commit`, `protocol_path` — the object side). "Workflow" means the
 execution engine. LaAgente's `AnalysisPlan` is the post-hoc analysis pipeline
 — parallel pattern, distinct object.
@@ -570,7 +570,7 @@ authorization:
 | Scientific coherence (factors×levels, objective↔design) | protocol-level rules — new |
 | Controls and replicates per design rules | protocol-level rules — new |
 | Labware and volume feasibility | protocol-level rules + labware definitions — new |
-| Material requirements vs inventory | AnaliticaDB LIMS queries (Phase 2 dependency; advisory until then) |
+| Material requirements vs inventory | BitacoraDB LIMS queries (Phase 2 dependency; advisory until then) |
 | Device capability compatibility (role/skill exists, args valid) | `lab-skills` `validate_plan` (layer 3/4) — exists |
 | Workflow completeness (no orphan steps, reachable graph) | protocol-level rules — new |
 | Human handoffs explicit | schema field + completeness rule — new |
@@ -600,14 +600,14 @@ authorizer (MAY start as an `api/` module beside the
    preflight), project interlocks.
 5. Records the **approving human user and timestamp** (`ac_auth` principal).
 6. Produces an **immutable run-authorization identity** (`authorization_id`), recorded in
-   AnaliticaDB alongside the `Plan` row it authorizes.
+   BitacoraDB alongside the `Plan` row it authorizes.
 
 Step 4 is what prevents a merged-but-stale plan from executing: merge asserted
 scientific intent; authorizing a run asserts *the lab can run it now*. Run
 authorizations SHOULD carry an expiry/TTL [OPEN — resolved D-2, ~1 working day].
 The platform executes the authorized commit/package
 — never the moving head of `main`. The `Plan` records `source_commit`
-(existing) and `authorization_id`/package digest [PROPOSED — AnaliticaDB contract
+(existing) and `authorization_id`/package digest [PROPOSED — BitacoraDB contract
 bump; see [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md) §"Run-authorization linkage"].
 
 ## 13. Protocol compilation; conversation policy
@@ -634,17 +634,17 @@ machinery unchanged).
 The record-layer decision **[BINDING as merged design]** is: *store the
 decision artifact, not the conversation* — the `Plan` version chain (v1 agent
 draft → v2 human edit → v3 approved) is the collaboration record in
-AnaliticaDB; prose transcripts never enter the record layer
+BitacoraDB; prose transcripts never enter the record layer
 ([`DATABASE_DESIGN.md`](DATABASE_DESIGN.md) §1). The interaction history
 still gets a durable home — three tiers, one owner each:
 
 1. **Interaction record — `bitacora`'s conversation store.** Every
    human–agent session is persisted in a separate `conversations` Postgres
-   database (JSONB payloads) on the AnaliticaDB instance — one engine to
+   database (JSONB payloads) on the BitacoraDB instance — one engine to
    operate, contract untouched, persistence boundary preserved. Three
    tables: `sessions`, `messages`, `tool_events`, with a `project_id` on
    every row (not one database per project — same multi-tenancy pattern as
-   AnaliticaDB's denormalized `project_id`). Contents: the user-visible
+   BitacoraDB's denormalized `project_id`). Contents: the user-visible
    stream only (§9) — messages, tool names/summaries, approval requests and
    outcomes, state-delta summaries — keyed by `session_id`, `room_id`,
    `project_id`, participants, and the protocol commits touched. **Every
@@ -653,7 +653,7 @@ still gets a durable home — three tiers, one owner each:
    rendered in the UI so a reader always knows who said what; the agent is
    never allowed to post under a human's ID. **Excluded by construction**:
    hidden chain-of-thought, system prompts, credentials, raw tool payloads
-   carrying data destined for AnaliticaDB. Retention is long (it is the audit
+   carrying data destined for BitacoraDB. Retention is long (it is the audit
    trail of who asked for what); redaction is by tombstone, never silent
    deletion. **Access:** the room's participants (all project members, by
    default) can read it; the room's owner (the starter, §6) consents to the
@@ -666,7 +666,7 @@ still gets a durable home — three tiers, one owner each:
    rejected and why, open risks, references. It cites the interaction record
    by `session_id` (a deep link, not a copy), so a reviewer can drill into
    the full conversation without git carrying it.
-3. **Record layer — AnaliticaDB.** Stays prose-free. Rows written during a
+3. **Record layer — BitacoraDB.** Stays prose-free. Rows written during a
    session carry `session_id` (already the OTel-baggage identity pattern), a
    **write-time projection**: the link from any record row back to the
    conversation that produced it is stamped when the row is written, not
@@ -701,7 +701,7 @@ Two seams need deliberate closure (not just wiring):
   through the lab claim so dashboard and agent mutually exclude (**RESOLVED
   D-9, 2026-07-22:** actuating paths go through the SDK claim — binding;
   read-only status is a documented accepted exception).
-- **Approval identity** — an AnaliticaDB `Plan` enters `approved` only via a
+- **Approval identity** — an BitacoraDB `Plan` enters `approved` only via a
   *human principal*; UI approval clicks must carry the authenticated user as
   `author_kind=human`; for git-authored protocols the approval is the merge.
 
@@ -715,7 +715,7 @@ Two seams need deliberate closure (not just wiring):
   ([`AUTH_DESIGN.md`](AUTH_DESIGN.md)); PR review/merge under the human's own
   GitHub identity; the platform maps `ac_auth` principal ↔ GitHub login.
 - **Agent identity**: commits under its bot identity; carries its own
-  `agent_id`/`session_id` (OTel baggage) into every AnaliticaDB write
+  `agent_id`/`session_id` (OTel baggage) into every BitacoraDB write
   **[BINDING]**; holds no human credentials and no App key; requests git
   operations from the workspace service, which enforces branch-only pushes.
 - **Workspace sandboxing**: filesystem limited to the session worktree; no
@@ -733,8 +733,8 @@ Three state machines, deliberately separate:
   resolved, see §6); a project spans many rooms. The branch and worktree are
   minted lazily on first edit; concurrent sessions isolated by branch;
   merges serialized by GitHub. Session ↔ branch mapping recorded on the
-  AnaliticaDB `Plan` (`session_id`).
-- **Protocol/plan record**: the AnaliticaDB `Plan` lifecycle
+  BitacoraDB `Plan` (`session_id`).
+- **Protocol/plan record**: the BitacoraDB `Plan` lifecycle
   (`draft → approved → executing → completed | abandoned`) — shipped.
 - **Run authorization**: `requested → validated → authorized → executed | expired |
   revoked`. Immutable once authorized; revocation forbids execution, never
@@ -786,7 +786,7 @@ assessment (in that repo)
 
 Related repositories (read-only references): `bitacora/templates/hte` (README,
 `pins.yaml`, `schema/protocol.schema.json`, `scripts/create_ruleset.sh`) ·
-`AnaliticaDB` (ontology contract; canonical DB design) · `organic-solubility`
+`BitacoraDB` (ontology contract; canonical DB design) · `organic-solubility`
 (first stamped campaign) · `LaAgenteAnalitica` (`graphchat` UI pattern §6;
 `architecture-considerations.md` §5 plan-as-data;
 `docs/persistence-boundaries.md`) · `opentrons-server`

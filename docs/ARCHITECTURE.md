@@ -22,7 +22,7 @@ It does **not** house:
 - Per-device drivers / REST APIs (one repo per instrument: `agilent-plateloc-server`, `filter_every_well`, `xarm_translocation`, `dose_every_well`, `fume_hood_actuator`, ...)
 - Project-specific workflow code (e.g. `solubility-screening`, `hte-screening`)
 - Agent code (LLM planners, prompts, evals — future `ac-organic-lab-agents`)
-- The experiment-data record store (**AnaliticaDB**, the ELN + LIMS results catalog) — its own service/repo on the data server, distinct from the platform's operational history DB (`data/lab.db`). See the *Layered system* section below.
+- The experiment-data record store (**BitacoraDB**, the ELN + LIMS results catalog) — its own service/repo on the data server, distinct from the platform's operational history DB (`data/lab.db`). See the *Layered system* section below.
 
 ## Layered system
 
@@ -48,7 +48,7 @@ graph TB
     end
 
     subgraph recordlayer [Experiment-data record layer]
-      analitica[("AnaliticaDB<br/>ELN + LIMS results catalog<br/>separate service · Postgres<br/>project-scoped experiment data")]
+      analitica[("BitacoraDB<br/>ELN + LIMS results catalog<br/>separate service · Postgres<br/>project-scoped experiment data")]
     end
 
     proj --> skills
@@ -74,7 +74,7 @@ Three responsibilities, three layers:
 2. **Platform layer** (this repo) — the SDK aggregates device state, provides typed control, manages claims/leases, and exposes the runtime skill catalog. The dashboard's web server is a thin SDK client for *reads*; for operator-initiated *writes* it proxies single `/control/*` actions to devices directly (per-request claim, bypassing the SDK — see design decision #1). The Next.js UI calls the dashboard server.
 3. **Application layer** — project workflows and agents consume the SDK to run experiments. Each project lives in its own repo with its own data model, recipes, and interlocks.
 
-Alongside these three sits the **experiment-data record layer — AnaliticaDB**, the lab's analytical-chemistry results catalog being generalized into an ELN + LIMS record store (a separate FastAPI service on the data server at `100.64.254.6:8010`, backed by Postgres; its data API lives under `/experiments`, `/samples`, `/measurements`, `/files`). It is deliberately **not** part of the platform monorepo and is **distinct from the platform's operational history DB** (`data/lab.db`, owned by `api/`): `lab.db` holds public lab telemetry (uptime, events, sensors, dosing runs), whereas AnaliticaDB holds **project-scoped scientific results** — application-layer workflows and agents write their results there, and reads are governed by the data-isolation `can_read(project, caller)` policy shared with `ac_auth` (see [`AUTH_DESIGN.md`](AUTH_DESIGN.md) and [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md)). Because it also serves a STATUS_SPEC `/status` envelope, the dashboard registers it (`analytica_db` in `equipment.yaml`) and the aggregator polls it for a "Services" tile like any other endpoint — the dotted edge in the diagram above.
+Alongside these three sits the **experiment-data record layer — BitacoraDB**, the lab's ELN + LIMS record store (`AccelerationConsortium/BitacoraDB`: a separate FastAPI service on this host at loopback `127.0.0.1:8013`, backed by its own Postgres database; its data API lives under `/projects`, `/experiments`, `/samples`, `/measurements`, `/files`, `/plans`, `/notes`, `/analyses` and the custody routes). It is deliberately **not** part of the platform monorepo and is **distinct from the platform's operational history DB** (`data/lab.db`, owned by `api/`): `lab.db` holds public lab telemetry (uptime, events, sensors, dosing runs), whereas BitacoraDB holds **project-scoped scientific results** — application-layer workflows and agents write their results there, and reads are governed by the data-isolation `can_read(project, caller)` policy shared with `ac_auth` (see [`AUTH_DESIGN.md`](AUTH_DESIGN.md) and [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md)). Because it also serves a STATUS_SPEC `/status` envelope, the dashboard registers it (`bitacora_db` in `equipment.yaml`) and the aggregator polls it for a "Services" tile like any other endpoint — the dotted edge in the diagram above. (LaAgenteAnalitica's own record store, AnaliticaDB on `:8010`, is registered as the `analytica_db` tile and is not part of the lab's record layer.)
 
 ## Why a monorepo
 
@@ -207,11 +207,11 @@ Owns:
   mid-run. Lives here rather than in bitácora (AGENTIC_ELN_PLAN D-20) because
   this process already owns the claim dance and the audit row; every attempt —
   including refused ones — writes a `plan_run` event. Since 2026-08-13 a
-  finished run is also **filed in AnaliticaDB** (D-23, `record.py`): the
+  finished run is also **filed in BitacoraDB** (D-23, `record.py`): the
   campaign's `Experiment` is ensured, the run lands as a `Plan` row with a
   `step_id`-anchored `Note` per non-success step, and the write's outcome is
   surfaced in the run's `done` frame — it never fails the run, and it is a
-  no-op until `ANALITICADB_URL` + `ANALITICADB_EDGE_SECRET_PATH` are set
+  no-op until `BITACORADB_URL` + `BITACORADB_EDGE_SECRET_PATH` are set
   (configured in production the same day).
 - **Operator control passthrough** (`control.py`): mirrors each device's
   `/control/*` surface for operator-initiated writes, runs the per-request
@@ -416,7 +416,7 @@ Workflow code says `lab.role("sealer").seal_start(...)`, never `lab.get("platelo
 - The SDK (`lab-skills`) parses all three — `load_registry()` for equipment, `load_platforms()` for sections, `load_locations()` for places — but `EquipmentEntry` carries no UI concerns beyond tile sizing and pill config, and no custody vocabulary at all
 - `platform` assignment is computed at API compose time, not stored on the equipment entry
 
-`locations.yaml` is a registry of *places*, never of *state*: "where is plate X now" lives in the record layer (AnaliticaDB `Container.location_id` + the `ContainerAction` ledger), which the registry seeds. It is also deliberately not a state machine — which moves are legal is device-authoritative. See [`PLATE_TRACKING.md`](PLATE_TRACKING.md).
+`locations.yaml` is a registry of *places*, never of *state*: "where is plate X now" lives in the record layer (BitacoraDB `Container.location_id` + the `ContainerAction` ledger), which the registry seeds. It is also deliberately not a state machine — which moves are legal is device-authoritative. See [`PLATE_TRACKING.md`](PLATE_TRACKING.md).
 
 ### 6. Soft maintenance over commented-out lines
 
@@ -514,8 +514,8 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 - `docs/SKILLS_CATALOG.md` — skill catalog design (`SkillDef` / `Skill`, runtime availability, evolution from hard-coded → device-declared)
 - `docs/INTERLOCKS.md` — four-layer safety model and the project interlock API (`add_interlock`, `validate_plan`, `PlanReport`)
 - `docs/LAB_MONITORING.md` — logging, events, the central history DB, and alerting (Kuma + the aggregator notifier + PyPoe; overview + runbook)
-- `docs/PLATE_TRACKING.md` — plate / container location and custody tracking: the `locations.yaml` registry, the AnaliticaDB ledger, who writes it, and why it is not a state machine
-- `docs/AUTH_DESIGN.md` — identity, authorization, and the data-isolation `can_read` policy AnaliticaDB shares
+- `docs/PLATE_TRACKING.md` — plate / container location and custody tracking: the `locations.yaml` registry, the BitacoraDB ledger, who writes it, and why it is not a state machine
+- `docs/AUTH_DESIGN.md` — identity, authorization, and the data-isolation `can_read` policy BitacoraDB shares
 - `docs/DATABASE_DESIGN.md` — the experiment-data record layer (ELN + LIMS results catalog)
 - `docs/EQUIP_GUIDE.md` — onboarding and maintenance guideline (§1–§6b)
 - `docs/EQUIP_STATUS.md` — current per-device tile implementations (§7–§11)

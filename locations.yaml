@@ -12,7 +12,7 @@
 #   Never delete an entry.
 # - This file is authoritative for WHICH PLACES EXIST (type, equipment,
 #   aliases, label). It never carries state: "where is plate X now" lives in
-#   AnaliticaDB (`Container.location_id` + the `ContainerAction` ledger), which
+#   BitacoraDB (`Container.location_id` + the `ContainerAction` ledger), which
 #   this file seeds (`Location` rows, `location_type` = `type`).
 # - It is not a state machine. Which moves are legal is device-authoritative
 #   (xArm motion graph, OT-2 deck) and is NOT encoded here.
@@ -23,7 +23,7 @@
 #   ledger.
 # - Name shape: `<equipment_id>/<position>` for device-anchored places,
 #   `<site>/<path>` otherwise. `type` ∈ storage|instrument|deck|fridge|waste
-#   (AnaliticaDB's enum; there is deliberately no `transport` — a plate in
+#   (BitacoraDB's enum; there is deliberately no `transport` — a plate in
 #   transit is in `xarm_translocation/gripper`).
 #
 # xArm node aliases come from xarm-translocation/src/settings/motion_graph.yaml

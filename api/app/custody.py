@@ -6,7 +6,7 @@ human path cannot drift:
 
 * :class:`CustodyRecorder` — the few record-layer calls custody needs: resolve
   a location *name* (``ot2_hte/slot_2``) and a container *hid* (a plate's
-  barcode, == the device's ``plate_id``) to their AnaliticaDB ids, post one
+  barcode, == the device's ``plate_id``) to their BitacoraDB ids, post one
   ``move`` row on the append-only ``ContainerAction`` ledger, and read a
   plate's current place back. Never raises into a run (record.py property 1):
   every call returns a status dict. It is also where the ledger's *other*
@@ -47,12 +47,12 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .record import ANALITICADB_URL, edge_secret
+from .record import BITACORADB_URL, edge_secret
 
 logger = logging.getLogger("custody")
 
 #: lab.db `event_type`s (LAB_MONITORING.md registry). Ops audit only — custody
-#: itself is read from AnaliticaDB, never from these rows.
+#: itself is read from BitacoraDB, never from these rows.
 PLATE_MOVED = "plate_moved"
 PLATE_CUSTODY_MISMATCH = "plate_custody_mismatch"
 PLATE_CUSTODY_UNKNOWN = "plate_custody_unknown"
@@ -468,9 +468,9 @@ def custody_recorder() -> CustodyRecorder | None:
     """A recorder for the configured record layer, or ``None`` when off —
     the same switch as ``record.write_run_record`` (property 3)."""
     secret = edge_secret()
-    if not ANALITICADB_URL or not secret:
+    if not BITACORADB_URL or not secret:
         return None
-    return CustodyRecorder(ANALITICADB_URL, secret)
+    return CustodyRecorder(BITACORADB_URL, secret)
 
 
 # ── lab.db mirror (ops audit) ────────────────────────────────────────────

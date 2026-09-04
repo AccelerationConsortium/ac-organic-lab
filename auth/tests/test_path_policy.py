@@ -81,7 +81,7 @@ def test_bitacora_is_denied_by_default_not_by_rule():
 
 
 def test_unlisted_route_defaults_closed():
-    """A route added to AnaliticaDB tomorrow must not open itself."""
+    """A route added to BitacoraDB tomorrow must not open itself."""
     assert path_permitted(HERMES, "/analytica/some-new-route") is False
     assert path_permitted(HERMES, "/dashboard") is False
 

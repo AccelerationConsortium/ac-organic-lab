@@ -397,7 +397,7 @@ This section specifies the dashboard side (execute + monitor + approve). Plan
 - **Render forms from the schema.** Drive plan authoring off
   `schema/protocol.schema.json`, so new step types need no frontend change — the
   "fields are for machines" rule from `bitacora/templates/hte`.
-- **Every run links to its record.** Deep-link each run to its AnaliticaDB
+- **Every run links to its record.** Deep-link each run to its BitacoraDB
   `Plan` / `Note` / `Analysis` rows so "what ran / what was observed" is one hop
   from "what I clicked".
 - **Auth + audit are not optional.** Run/approve endpoints sit behind `ac_auth`;
@@ -422,7 +422,7 @@ lab_skills.execute_plan(plan, session, *, owner, wait_timeout_s, dry_run)
   │   per step: layer-3 re-check (live allowed_actions) → layer-4 async
   │   interlocks → per-step ClaimManager → POST SkillDef endpoint w/ token
   ▼
-Devices (STATUS_SPEC /control/*)        AnaliticaDB (Plan/Note/Analysis rows)
+Devices (STATUS_SPEC /control/*)        BitacoraDB (Plan/Note/Analysis rows)
 ```
 
 **Architectural note worth flagging:** this endpoint makes `api/` a
@@ -485,7 +485,7 @@ Four things worth keeping when this grows a background runner and an SSE stream:
   skipped. Successful steps produce no note — the `Plan` row already describes
   them, and a note each would bury the two that matter. The write can never
   fail the run (the run is physical and already happened), is a no-op until
-  `ANALITICADB_URL` + `ANALITICADB_EDGE_SECRET_PATH` are configured, and
+  `BITACORADB_URL` + `BITACORADB_EDGE_SECRET_PATH` are configured, and
   reports its outcome in the `done` frame under `record.write`. The Experiment
   start is the run's own launch instant (`RunState.started_at_utc`), not the
   filing time.
@@ -535,7 +535,7 @@ operator saw (rendered steps + parameters). Server:
 
 1. Verifies the `ac_auth` principal (unique user; not the shared owner).
 2. Stores the *structured* approved payload (never a re-parse of free text).
-3. Transitions the AnaliticaDB `Plan` `draft → approved`, stamping the principal
+3. Transitions the BitacoraDB `Plan` `draft → approved`, stamping the principal
    and, for protocol-authored plans, the git `source_commit`.
 4. Writes an audit row (`who / plan / outcome`).
 
@@ -608,7 +608,7 @@ approved by yang · plan_id 7f3a… · source_commit a1b2c3 · owner dashboard:y
      3  stage.out         sealer      pending
      4  move              plate_mover pending
 ────────────────────────────────────────────────────────────────
-Record →  Plan 7f3a  ·  3 Notes  ·  0 Analyses            (AnaliticaDB)
+Record →  Plan 7f3a  ·  3 Notes  ·  0 Analyses            (BitacoraDB)
 ```
 
 - **State encoded in form, not just text:** a severity stripe / pill per row
@@ -620,7 +620,7 @@ Record →  Plan 7f3a  ·  3 Notes  ·  0 Analyses            (AnaliticaDB)
   operator) holds the sealer", not a mystery failure.
 - **Abort** is cooperative: it cancels the run task, which releases the
   in-flight `ClaimManager` in its `finally`.
-- **Record footer** deep-links into AnaliticaDB; live counts update as notes /
+- **Record footer** deep-links into BitacoraDB; live counts update as notes /
   analyses append under this `plan_id`.
 
 ### 3.5 Plan authoring (kept minimal here)
@@ -657,7 +657,7 @@ Plan parameters, never edits to the protocol file — same rule as
    `draft→approved` transition + audit row. Shared with PyPoe's gate — one
    mechanism, two consumers.
 4. **Authoring / parameterize view.** Schema-driven form + `preflight`.
-5. **Record links + live note/analysis counts.** Close the loop to AnaliticaDB.
+5. **Record links + live note/analysis counts.** Close the loop to BitacoraDB.
 
 ### See also (workflow UI)
 

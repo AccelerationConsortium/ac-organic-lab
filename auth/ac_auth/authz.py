@@ -139,7 +139,7 @@ def effective_device_role(
 @dataclass(frozen=True)
 class DataScope:
     """A caller's project-based data-access scope, consumed by the data plane's
-    ``can_read`` (the dashboard's lab.db reads and the AnaliticaDB catalog).
+    ``can_read`` (the dashboard's lab.db reads and the BitacoraDB catalog).
 
     ``member_projects`` = projects the caller may consume as a team member (an
     active member of an active project); ``pi_projects`` = projects they are a PI

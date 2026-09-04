@@ -48,7 +48,7 @@ situation isn't covered, stop and ask a human.
    parameters to get past the check.
 3. **Only validated, human-approved plans execute.** A run requires a
    protocol merged to its project repo's `main` (the human sign-off), a
-   registered `Plan` in AnaliticaDB, and a passing `validate_plan()`
+   registered `Plan` in BitacoraDB, and a passing `validate_plan()`
    (interlock layer 4). No ad-hoc command sequences against live hardware.
 4. **Respect claims.** Acquire equipment through the SDK's claim mechanism;
    never operate equipment claimed by another session, and release claims
@@ -60,7 +60,7 @@ situation isn't covered, stop and ask a human.
 
 ### 2. Records and data integrity
 
-1. **Every run is recorded in AnaliticaDB** through its REST API: the
+1. **Every run is recorded in BitacoraDB** through its REST API: the
    `Plan` at start, notes and measurements during, analyses after. If it
    isn't recorded, it didn't happen — and unrecorded work may not be used
    to justify decisions.
@@ -76,7 +76,7 @@ situation isn't covered, stop and ask a human.
    under another identity, and never put secrets, credentials, or personal
    data in baggage, records, or metadata.
 5. **Run data never goes into git repos.** Measurements, summary tables,
-   images → AnaliticaDB. Git holds authored artifacts only (protocols,
+   images → BitacoraDB. Git holds authored artifacts only (protocols,
    analysis code, rules).
 
 ### 3. Protocols and change control
@@ -94,7 +94,7 @@ situation isn't covered, stop and ask a human.
 
 ### 4. Chemicals and materials
 
-*(Enforced tooling lands with the AnaliticaDB LIMS phase; the rules apply
+*(Enforced tooling lands with the BitacoraDB LIMS phase; the rules apply
 now.)*
 
 1. Use only substances and lots registered in the lab inventory; record
@@ -280,7 +280,7 @@ deliberately: (1) trigger/watch/report — live, and **proven on hardware
 2026-08-14**: the fleet's first real authorized run
 (`ra_67f32cb0920b4a41`, 14 steps on `ot2_complexation`) was Slack-triggered
 by `lab-runner`, executed under per-step claims with the human
-authorization pinned underneath, and filed in AnaliticaDB — the full
+authorization pinned underneath, and filed in BitacoraDB — the full
 rung-1 loop, dry-run and live, from a phone-reachable surface; (2)
 lab-skills eyes (preflight + live state) — live; (3) plan *drafting*
 through conversation,

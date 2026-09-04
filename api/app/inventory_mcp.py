@@ -16,7 +16,7 @@ The tool names here (``search_inventory``, ``check_stock``, ``get_chemical``,
 ``inventory_stats``) are the durable agent-facing contract — they are baked
 into client allowlists via ``mcp/servers.yaml``. The *backend* is expected to
 change: DATABASE_DESIGN.md §5 plans a Substance/Lot/Container ledger inside
-AnaliticaDB, at which point this server repoints its HTTP calls and the tool
+BitacoraDB, at which point this server repoints its HTTP calls and the tool
 surface must survive unchanged. Do not name tools after the current storage
 shape.
 

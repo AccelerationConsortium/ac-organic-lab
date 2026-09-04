@@ -493,7 +493,7 @@ def create_app(
                 )
 
         # Also propagate the project-based data scope so forward_auth-fronted
-        # services (lab.db reads, AnaliticaDB) can authorize without a second call.
+        # services (lab.db reads, BitacoraDB) can authorize without a second call.
         scope = data_scope(
             user,
             member_projects=roster.member_projects(user.email),
@@ -575,7 +575,7 @@ def create_app(
     async def authz_scope(request: Request, user: str = "") -> dict:
         """Project-based data scope (member_projects / pi_projects / is_admin) for
         a principal — consumed by the data plane's ``can_read`` (lab.db reads,
-        AnaliticaDB catalog). Tailnet-only, same roster source as the role
+        BitacoraDB catalog). Tailnet-only, same roster source as the role
         resolver. ``user`` defaults to the authenticated caller. An unknown or
         inactive principal → empty scope (no access), never an error."""
         email = user or ""

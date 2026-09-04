@@ -55,7 +55,7 @@ servers:
           deliberately separate server with a different trust level (see
           ARCHITECTURE.md decision #10).
         - >-
-          Project-scoped scientific results live in AnaliticaDB, not here;
+          Project-scoped scientific results live in BitacoraDB, not here;
           answers from this server are telemetry, not experimental records.
       known_clients:
         - dashboard assistant bubble (api/app/assistant.py, via claude CLI)
@@ -209,7 +209,7 @@ servers:
 
     tools:
       # The durable agent-facing contract: these names are question-shaped
-      # (not storage-shaped) so the planned backend swap to AnaliticaDB's
+      # (not storage-shaped) so the planned backend swap to BitacoraDB's
       # Substance/Lot/Container ledger (DATABASE_DESIGN.md §5) changes
       # nothing client-side.
       include:

@@ -34,8 +34,8 @@ just the short list agents most often need):
 - Never bypass or weaken an interlock at any layer. If one blocks you, stop and
   report — do not retry with adjusted parameters to get past it.
 - Only human-approved, `main`-merged, validated plans execute against hardware.
-- Records live in AnaliticaDB, immutable and truthful. **No run data in git** —
-  measurements, tables, images go to AnaliticaDB, never into a repo.
+- Records live in BitacoraDB, immutable and truthful. **No run data in git** —
+  measurements, tables, images go to BitacoraDB, never into a repo.
 - Local machine paths, hostnames, and secrets stay in gitignored `*.local.json`
   / `.env` files, never in commits.
 - When something is irreversible, ambiguous, or not covered: stop and ask a

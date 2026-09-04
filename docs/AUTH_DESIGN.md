@@ -41,7 +41,7 @@ edge (`http://100.64.254.6`) and carry the shared central-auth surface** — the
 `ac_auth` session cookie and the shared top banner (`<script
 src="/auth/banner.js">`). There is one place a user signs in, and every UI shows
 it. This applies to all of them: the dashboard, the xArm `/web/` panel,
-AnaliticaDB, LaAgenteAnalitica, `pypoe_web`, and any future UI. A web service
+BitacoraDB, AnaliticaDB, LaAgenteAnalitica, `pypoe_web`, and any future UI. A web service
 that is only reachable on its own `host:port` origin (a second sign-in, or no
 sign-in at all) is a **non-conformance** to be migrated onto the edge.
 
@@ -568,7 +568,7 @@ Experiment data becomes **project-scoped**; lab telemetry stays public. Data is
 owned by the **project** it was produced under (and thus the project's PIs), not
 by the individual creator — a user *generates* data, the project's PIs *own* it.
 (Revised 2026-06-30 from an owner=creator + platform-admin model to this
-project model, to match the AnaliticaDB catalog; the two share one policy.)
+project model, to match the BitacoraDB catalog; the two share one policy.)
 
 - **Stamp at creation.** Each experiment-data record stamps `creator` (the
   authenticated principal that produced it, from `X-Auth-User`) and `project`
@@ -589,7 +589,7 @@ project model, to match the AnaliticaDB catalog; the two share one policy.)
 - **Scope is experiment data only.** Uptime, equipment state / errors / events,
   and environmental sensors are lab-wide situational awareness and **stay public**
   — that is the dashboard's purpose. Only scientific results are project-scoped;
-  the project-scoped store is **AnaliticaDB**. In `lab.db` that means at most the
+  the project-scoped store is **BitacoraDB**. In `lab.db` that means at most the
   per-well/result *values* if those count as experiment data — otherwise `lab.db`
   needs no gate.
 - PIs (owners) retain export/delete rights to their projects' data; deletions
@@ -1130,7 +1130,7 @@ belong to **many** projects. `authz.data_scope(user) -> {member_projects,
 pi_projects, is_admin}`, surfaced by `GET /authz/scope` and the `X-Auth-Projects` /
 `X-Auth-Pi-Projects` headers on `/auth/verify`. This is the identity/scope source
 the data-isolation `can_read` consumes (this service's `lab.db` reads **and** the
-AnaliticaDB catalog — one scope, two enforcement points). 83 auth tests.
+BitacoraDB catalog — one scope, two enforcement points). 83 auth tests.
 
 | Phase | Delivers | Behavior change |
 |---|---|---|
@@ -1140,7 +1140,7 @@ AnaliticaDB catalog — one scope, two enforcement points). 83 auth tests.
 | **2 ✅** | Scope-filter the roster (landed with 1b); admin **access-matrix** view (`GET /authz/matrix`); **gate `/api/assistant/*` behind login** (Next.js middleware, `/health` exempt; `X-Auth-User` logged per chat) | **committed 2026-07-03** (needs api+web restart) — chat needs auth; reads scoped; control unchanged |
 | **3** | Finish hard claim enforcement everywhere; device authorizes the claim against its roster (`operator`+). **Gateway half shipped 2026-07-03:** the dashboard passthrough checks `/authz/check` before the claim dance (403 + audit on denial, fail-closed if the sidecar is down; `CONTROL_AUTHZ_ENFORCE=false` dev hatch), and the UI disables unauthorized controls (`/authz/mine` → `canControl` → per-tile gating). Device-side roster authorization remains. | control needs grant **and** claim |
 | **4** | **Close the direct-device side-door** (edge / loopback+proxy); claim owner provably = identity | the linchpin |
-| **5** | `creator`+`project` stamping + identity-aware reads + `can_read(project, caller)` (**incl. the assistant's MCP reads**); operational telemetry stays public — the project-scoped store is **AnaliticaDB** | experiment data becomes project-scoped |
+| **5** | `creator`+`project` stamping + identity-aware reads + `can_read(project, caller)` (**incl. the assistant's MCP reads**); operational telemetry stays public — the project-scoped store is **BitacoraDB** | experiment data becomes project-scoped |
 | **6** | Automation approval workflow (`pending`→approve, platform-scoped + time-boxed grants; `launched_by` audited) | automation gated |
 
 **Phase 0** (storage refactor) is **shipped + deployed**. **Phases 1a, 1b, and
@@ -1199,8 +1199,9 @@ build-out only changes **how many origins** you sign into — from N to 1.
 - **Device-native panels** on other hosts are the separate logins — chiefly the
   **xArm `/web/`** panel at `sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000/web/`,
   which runs its own auth banner (its own origin ⇒ its own login).
-- **`pypoe_web`** (`100.64.254.6:8006`) and AnaliticaDB `/docs`
-  (`100.64.254.6:8010`) are the other browsable surfaces.
+- **`pypoe_web`** (`100.64.254.6:8006`) and BitacoraDB `/docs` (loopback
+  `127.0.0.1:8013`, browsable through the edge at `/bitacoradb/docs`) are the
+  other browsable surfaces.
 
 So "make login single-source" ≈ "pull the device-native panels onto the
 dashboard's origin behind the same `ac_auth`."

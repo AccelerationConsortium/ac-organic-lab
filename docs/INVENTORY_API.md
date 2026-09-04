@@ -145,7 +145,7 @@ The server is a stdio process, console script `lab-inventory-mcp` from the
 | `get_chemical(cas)` | Full record: hazards (GHS/H/P), storage class, SDS link, every bottle (vendor/lot/expiry/location). |
 | `inventory_stats()` | Totals + per-group bottle counts. |
 
-These tool names are a **frozen contract** — the backend may move to AnaliticaDB's
+These tool names are a **frozen contract** — the backend may move to BitacoraDB's
 Substance/Lot/Container ledger, but the client-facing tools must not change. Never rename
 them for a storage change.
 
@@ -179,7 +179,7 @@ in `/home/sdl2/caoyang/ac-organic-lab/mcp/servers.yaml` under `lab-inventory`.
 
 - **Don't open `data/inventory.sqlite3` directly** from a second process — it breaks the
   WAL single-writer assumption and couples callers to a storage shape that is scheduled
-  to move into AnaliticaDB. HTTP (or MCP) is the contract.
+  to move into BitacoraDB. HTTP (or MCP) is the contract.
 - **Internal vs external base.** On gaia use `/inventory` (loopback); anywhere else use
   the full `/bitacora/api/inventory` prefix through the edge.
 - **Reads are public over the edge; writes are not.** Don't add auth requirements to the

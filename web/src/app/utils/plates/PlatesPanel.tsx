@@ -20,7 +20,7 @@ import { useUserAuth } from "@/lib/user-auth";
  * move.
  *
  * Nothing here is cached or inferred: the table is a read-through to
- * AnaliticaDB (`GET /api/custody/plates`), the move form posts the SAME
+ * BitacoraDB (`GET /api/custody/plates`), the move form posts the SAME
  * `move` row the run executor writes (`POST /api/custody/move`) with the
  * signed-in user as the mover, and the place picker is the lab's registry
  * (`locations.yaml`), so a typo can never reach the ledger. An unreachable

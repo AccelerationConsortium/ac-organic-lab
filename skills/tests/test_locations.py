@@ -81,7 +81,7 @@ def test_for_equipment_keeps_file_order(committed: LocationsConfig) -> None:
 
 
 def test_types_match_the_record_layer_enum(committed: LocationsConfig) -> None:
-    """`type` seeds AnaliticaDB `Location.location_type`; the vocabulary is
+    """`type` seeds BitacoraDB `Location.location_type`; the vocabulary is
     DATABASE_DESIGN.md §6's and deliberately has no `transport`."""
     allowed = {"storage", "instrument", "deck", "fridge", "waste"}
     assert {loc.type for loc in committed.locations} <= allowed

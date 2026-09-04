@@ -3,7 +3,7 @@
  * ONE line opts a UI in:  <script src="/auth/banner.js" defer></script>
  *
  * The banner's markup, styling, and login/logout logic all live here, so every
- * UI behind the single edge (dashboard at /, xArm at /xarm5/web/, AnaliticaDB
+ * UI behind the single edge (dashboard at /, xArm at /xarm5/web/, BitacoraDB
  * at /analytica/, …) gets the same top bar and updating it once updates them
  * all. It talks only to same-origin /auth/* endpoints, so the host-only
  * ac_auth_session cookie rides along automatically — no per-UI auth code.

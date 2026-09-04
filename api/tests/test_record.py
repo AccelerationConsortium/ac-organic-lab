@@ -5,7 +5,7 @@ one is a way the record layer could quietly lie: a failed write must not fail
 the run, an unresolvable Experiment must not silently drop the notes that
 matter, and an unconfigured deployment must be a no-op rather than an error.
 
-The mocked responses mirror AnaliticaDB's own OpenAPI schemas — `ExperimentRead`
+The mocked responses mirror BitacoraDB's own OpenAPI schemas — `ExperimentRead`
 and `PlanRead` expose `experiment_id` / `plan_id`, **not** a generic `id`. An
 earlier draft of these tests mocked `{"id": ...}`, which matched the client's
 first draft and hid a KeyError that the never-raise wrapper would have turned
@@ -110,7 +110,7 @@ async def test_an_existing_experiment_is_reused_not_recreated():
 @respx.mock
 @pytest.mark.anyio
 async def test_the_runs_project_scope_rides_every_call():
-    """AnaliticaDB's can_read filter reduces a caller without X-Auth-Projects
+    """BitacoraDB's can_read filter reduces a caller without X-Auth-Projects
     to an empty scope — the ensure-GET then reads [] even when the campaign's
     Experiment exists, the create 409s, and the record is lost. The first live
     dry-run (ra_67f32cb0920b4a41, 2026-08-14) failed exactly this way."""
@@ -195,7 +195,7 @@ async def test_one_rejected_note_does_not_cost_the_others():
 
 @pytest.mark.anyio
 async def test_an_unconfigured_deployment_is_a_no_op_not_an_error(monkeypatch):
-    monkeypatch.setattr(rec, "ANALITICADB_URL", "")
+    monkeypatch.setattr(rec, "BITACORADB_URL", "")
     out = await rec.write_run_record(plan=PLAN, notes=NOTES, design_ref=None,
                                      operator="me@lab", started_at="2026-08-13T00:00:00Z")
     assert out == {"written": False, "reason": "not_configured"}
@@ -204,9 +204,9 @@ async def test_an_unconfigured_deployment_is_a_no_op_not_an_error(monkeypatch):
 @pytest.mark.anyio
 async def test_a_url_without_a_secret_stays_off(monkeypatch):
     """Half-configured is off, not a request with an empty edge secret — which
-    AnaliticaDB would reject anyway, once per run, forever."""
-    monkeypatch.setattr(rec, "ANALITICADB_URL", BASE)
-    monkeypatch.setattr(rec, "ANALITICADB_EDGE_SECRET_PATH", "")
+    BitacoraDB would reject anyway, once per run, forever."""
+    monkeypatch.setattr(rec, "BITACORADB_URL", BASE)
+    monkeypatch.setattr(rec, "BITACORADB_EDGE_SECRET_PATH", "")
     out = await rec.write_run_record(plan=PLAN, notes=NOTES, design_ref=None,
                                      operator="me@lab", started_at="2026-08-13T00:00:00Z")
     assert out["reason"] == "not_configured"
@@ -214,13 +214,13 @@ async def test_a_url_without_a_secret_stays_off(monkeypatch):
 
 # ── note kinds: the executor's vocabulary vs the record layer's enum ────
 #
-# AnaliticaDB accepts only {observation, event, deviation, comment}. The
+# BitacoraDB accepts only {observation, event, deviation, comment}. The
 # executor emits `device_fault` and `outcome_unknown` too, so without the
 # translation below every note for a FAILED or UNKNOWN step — the two that
 # matter — would be rejected 422 and lost.
 
 
-#: The enum as of 2026-08-13, used when AnaliticaDB is unreachable (CI, a dev
+#: The enum as of 2026-08-13, used when BitacoraDB is unreachable (CI, a dev
 #: laptop) so these tests never depend on the network. `adb_note_kinds` prefers
 #: the live spec, because a literal typed here is a snapshot that drifts — and
 #: the failure it would hide is a note being rejected and a step's failure
@@ -230,14 +230,14 @@ FALLBACK_NOTE_KINDS = frozenset({"observation", "event", "deviation", "comment"}
 
 @functools.lru_cache(maxsize=2)
 def _live_enum(path: str, prop: str) -> frozenset[str] | None:
-    """An enum from AnaliticaDB's own OpenAPI — the request body of `path`'s
+    """An enum from BitacoraDB's own OpenAPI — the request body of `path`'s
     POST, property `prop`.
 
     `None` when the record layer is not configured or not reachable, so the
     caller falls back to its literal. Never raises: an offline test run must
     still be a test run, just a slightly weaker one.
     """
-    base = (os.environ.get("ANALITICADB_URL") or "").rstrip("/")
+    base = (os.environ.get("BITACORADB_URL") or "").rstrip("/")
     if not base:
         return None
     try:
@@ -295,16 +295,16 @@ class TestNoteKindTranslation:
 def test_the_offline_fallback_still_matches_the_live_enum(adb_note_kinds):
     """Keep the snapshot honest.
 
-    Only meaningful where AnaliticaDB is reachable (the lab host); elsewhere the
+    Only meaningful where BitacoraDB is reachable (the lab host); elsewhere the
     fixture *is* the fallback and this is a tautology. It fails loudly rather
     than warns because a stale literal makes every other test in this class
     weaker without saying so.
     """
     live = _live_note_kinds()
     if live is None:
-        pytest.skip("AnaliticaDB unreachable — nothing to compare the snapshot against")
+        pytest.skip("BitacoraDB unreachable — nothing to compare the snapshot against")
     assert live == FALLBACK_NOTE_KINDS, (
-        f"AnaliticaDB's NoteKind enum changed: live={sorted(live)}, "
+        f"BitacoraDB's NoteKind enum changed: live={sorted(live)}, "
         f"FALLBACK_NOTE_KINDS={sorted(FALLBACK_NOTE_KINDS)}. Update the literal, "
         "and check app.record.NOTE_KIND still maps into it."
     )
@@ -313,7 +313,7 @@ def test_the_offline_fallback_still_matches_the_live_enum(adb_note_kinds):
 
 # ── plan status: a filed run must not sit in the catalog as a draft ─────
 #
-# AnaliticaDB creates a Plan as `draft`. Left there, every run we file reads as
+# BitacoraDB creates a Plan as `draft`. Left there, every run we file reads as
 # a plan nobody carried out — the row says a run happened, the status says it
 # never did.
 
@@ -354,7 +354,7 @@ class TestPlanStatus:
 @respx.mock
 @pytest.mark.anyio
 async def test_a_real_run_walks_the_lifecycle_to_completed():
-    """AnaliticaDB has no draft → completed edge, so a successful run must
+    """BitacoraDB has no draft → completed edge, so a successful run must
     walk approved → executing → completed. The first live run filed as a
     permanent draft because a single completed POST 409'd on this."""
     respx.get(f"{BASE}/experiments").mock(return_value=httpx.Response(200, json=[{"experiment_id": "e"}]))
@@ -426,9 +426,9 @@ def test_the_plan_status_fallback_still_matches_the_live_enum():
     """Same guard as the note-kind snapshot, for the same reason."""
     live = _live_plan_statuses()
     if live is None:
-        pytest.skip("AnaliticaDB unreachable — nothing to compare the snapshot against")
+        pytest.skip("BitacoraDB unreachable — nothing to compare the snapshot against")
     assert live == FALLBACK_PLAN_STATUSES, (
-        f"AnaliticaDB's PlanStatus enum changed: live={sorted(live)}, "
+        f"BitacoraDB's PlanStatus enum changed: live={sorted(live)}, "
         f"FALLBACK_PLAN_STATUSES={sorted(FALLBACK_PLAN_STATUSES)}. Update the literal, "
         "and check app.record.PLAN_STATUS still maps into it."
     )
@@ -509,6 +509,6 @@ async def test_close_without_an_open_falls_back_to_the_end_of_run_write(monkeypa
 
 @pytest.mark.anyio
 async def test_open_is_a_no_op_when_unconfigured(monkeypatch):
-    monkeypatch.setattr(rec, "ANALITICADB_URL", "")
+    monkeypatch.setattr(rec, "BITACORADB_URL", "")
     out = await rec.open_run_record(plan=PLAN, design_ref=None, operator="me", started_at="t")
     assert out == {"opened": False, "reason": "not_configured"}
