@@ -291,8 +291,10 @@ describe("AssistantBubble control mode", () => {
     installFetch([
       'data: {"type":"tool_use","name":"capture_camera_snapshot"}\n\n',
       'data: {"type":"tool_result","name":"capture_camera_snapshot"}\n\n',
-      'data: {"type":"image","image":{"url":"/api/assistant/snapshots/cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd.jpg","camera_id":"cam_hte_tapo_c245","camera_name":"HTE bench camera","lens":"wide","taken_at":"2026-09-04T18:00:00+00:00","bytes":206799}}\n\n',
-      'data: {"type":"text","delta":"The deck is empty and the sash is down."}\n\n',
+      // Exactly what the backend emits: the path under `image_url` (and `url`);
+      // the bubble must render from either.
+      'data: {"type":"image","image":{"image_url":"/api/assistant/snapshots/cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd.jpg","camera_id":"cam_hte_tapo_c245","camera_name":"HTE bench camera","lens":"wide","taken_at":"2026-09-04T18:00:00+00:00","bytes":206799}}\n\n',
+      'data: {"type":"text","delta":"The deck is empty and the sash is down. Snapshot: `/api/assistant/snapshots/cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd.jpg`."}\n\n',
       'data: {"type":"done"}\n\n',
     ]);
     await openPanel();
@@ -306,6 +308,11 @@ describe("AssistantBubble control mode", () => {
     );
     expect(screen.getByText(/HTE bench camera · wide ·/)).toBeTruthy();
     const text = await screen.findByText(/The deck is empty/);
+    // The path the model wrote in prose is a real link — the fallback when a
+    // picture does not render.
+    const links = screen.getAllByRole("link", { name: /snapshots\/cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd\.jpg/ });
+    // Neither the model's backticks nor the sentence's full stop leak into the href.
+    expect(links.some((a) => a.getAttribute("href") === "/api/assistant/snapshots/cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd.jpg")).toBe(true);
     const pill = screen.getByText(/capture camera snapshot/);
     // The pill row comes AFTER the answer text in the bubble (DOCUMENT_POSITION_FOLLOWING = 4).
     expect(text.compareDocumentPosition(pill) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

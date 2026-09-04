@@ -910,9 +910,17 @@ def _snapshot_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """The snapshot payload minus server-side keys (``_file``)."""
+    """The snapshot payload minus server-side keys (``_file``), with the
+    picture's path under BOTH ``url`` (what the bubble's ChatImage reads) and
+    ``image_url`` (what the tool result calls it). The first deploy emitted
+    only ``image_url`` and the bubble looked for ``url``; the frame was
+    captured, served, and never rendered. Both names stay so neither side
+    can strand the other again."""
 
-    return {k: v for k, v in snapshot.items() if not str(k).startswith("_")}
+    out = {k: v for k, v in snapshot.items() if not str(k).startswith("_")}
+    if "url" not in out and isinstance(out.get("image_url"), str):
+        out["url"] = out["image_url"]
+    return out
 
 
 def _translate_event(event: dict[str, Any]) -> list[dict[str, Any]]:

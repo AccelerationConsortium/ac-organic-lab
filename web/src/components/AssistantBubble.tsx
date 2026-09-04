@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   ApiError,
@@ -1027,9 +1027,13 @@ function AssistantBubbleInner() {
             );
           }
         } else if (event.type === "image" && event.image && typeof event.image === "object") {
-          const im = event.image as ChatImage;
-          if (typeof im.url === "string" && im.url.startsWith("/")) {
-            updated.images = [...(updated.images ?? []), im];
+          // The tool result names the path `image_url`; the frame carries it
+          // under `url` too. Accept either, so a payload shape drift on one
+          // side can never silently drop the picture again.
+          const raw = event.image as ChatImage & { image_url?: string };
+          const url = typeof raw.url === "string" ? raw.url : raw.image_url;
+          if (typeof url === "string" && url.startsWith("/")) {
+            updated.images = [...(updated.images ?? []), { ...raw, url }];
           }
         } else if (
           event.type === "proposal_refused" &&
@@ -2033,6 +2037,35 @@ const TOOL_PILL_TONE = {
     "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300",
 } as const;
 
+/** Absolute http(s) URLs and the API's own paths, as a model writes them. */
+// Backticks and trailing sentence punctuation are excluded: models wrap a
+// path in `code` or end a sentence with it, and either would break the link.
+const LINK_RE = /(https?:\/\/[^\s<>"'`)\]]+?(?=[.,;:!?]*(?:[\s<>"'`)\]]|$))|\/api\/[^\s<>"'`)\]]+?(?=[.,;:!?]*(?:[\s<>"'`)\]]|$)))/g;
+
+/** Plain reply text with its URLs made clickable. The bubble renders answers
+ *  as plain text (no markdown), so a `/api/assistant/snapshots/…` path or an
+ *  http link the model writes would otherwise be dead text — and the
+ *  snapshot link is the operator's fallback when a picture does not render. */
+function linkify(text: string): ReactNode {
+  const parts = text.split(LINK_RE);
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <a
+        key={i}
+        href={part}
+        target="_blank"
+        rel="noreferrer"
+        className="underline decoration-dotted underline-offset-2 hover:decoration-solid"
+      >
+        {part}
+      </a>
+    ) : (
+      part
+    )
+  );
+}
+
 function toolLabel(name: string): string {
   return name.replaceAll("_", " ");
 }
@@ -2160,7 +2193,9 @@ function Turn({
       >
         {(turn.text || !livePill) && (
           <span className="whitespace-pre-wrap">
-            {turn.text || (
+            {turn.text ? (
+              isUser ? turn.text : linkify(turn.text)
+            ) : (
               <span className="opacity-60">{isUser ? "" : "…"}</span>
             )}
           </span>

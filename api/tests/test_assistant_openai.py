@@ -926,6 +926,7 @@ async def test_snapshot_result_emits_an_image_frame_and_attaches_the_picture(mon
     )
     image = next(f for f in frames if f["type"] == "image")["image"]
     assert image["image_url"].endswith(frame_file.name)
+    assert image["url"] == image["image_url"]  # the key the bubble renders from
     assert image["camera_name"] == "HTE bench camera"
     assert "_file" not in image  # server-side path never reaches the browser
 

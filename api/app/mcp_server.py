@@ -435,11 +435,13 @@ async def _capture_camera_snapshot(camera_id: str, lens: str | None = None) -> s
                 "_file": str(path),
             },
             "note": (
-                "The picture is shown to the operator in the chat. If you can see "
-                "images it is also attached to this conversation as an image — "
-                "describe only what is actually visible, and say which camera, lens "
-                "and time it is from. This did not move the camera; aiming (PTZ, "
-                "presets) is a Control-mode proposal."
+                "The picture is shown to the operator in the chat, and they can open "
+                "it at image_url — put that exact path in your reply as well, on its "
+                "own line, so there is always a link. If you can see images it is "
+                "also attached to this conversation as an image — describe only what "
+                "is actually visible, and say which camera, lens and time it is from. "
+                "This did not move the camera; aiming (PTZ, presets) is a Control-mode "
+                "proposal."
             ),
         }
     )

@@ -1453,7 +1453,13 @@ backend the frame is also **attached to the model's context** as an
 tool round (`ASSISTANT_OPENAI_IMAGE_INPUT`, default on; set `0` for a
 text-only model, whose request an image part would fail), with the
 instruction to describe only what is actually visible. Aiming the camera
-stays a Control-mode proposal (Step 1f); the prompt says so.
+stays a Control-mode proposal (Step 1f); the prompt says so. The first
+deploy emitted the path only as `image_url` while the bubble read `url`, so
+frames were captured, served and never rendered (the browser never fetched
+them — visible in the journal); the frame now carries both names and the
+bubble accepts either. As a second fallback the tool asks the model to put
+the path in its reply, and reply text now has its URLs made clickable
+(`linkify`), backticks and sentence punctuation excluded.
 
 **"Keep the progress visible on a long reply."** The tool/phase pills moved
 from the top of the assistant bubble to its **bottom**, after the text,
