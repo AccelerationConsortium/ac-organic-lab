@@ -273,14 +273,14 @@ Three pieces:
     mcp__lab-history__*` (no Bash/file/web), `--mcp-config …
     --strict-mcp-config` (injects only the lab MCP server, ignores the
     user's other MCP config), `--no-session-persistence` (history is re-sent
-    in the prompt each turn), a 120 s wallclock cap, and a minimal cwd
+    in the prompt each turn), a 300 s wallclock cap, and a minimal cwd
     outside the repo tree so Claude Code doesn't auto-load the ~50k-token
     `CLAUDE.md` doc bundle on every turn. Per-mode models via
     `ASSISTANT_CLAUDE_MODEL` / `ASSISTANT_CLAUDE_CONTROL_MODEL`.
   - **`openai`** (`assistant_openai.py`, added 2026-08-13): speaks the
     OpenAI chat-completions protocol to any compatible endpoint (default
     OpenRouter) and runs its own tool loop over the **same** stdio MCP
-    servers with the same actor binding and the same 120 s cap. Requires
+    servers with the same actor binding and the same 300 s cap. Requires
     `ASSISTANT_OPENAI_API_KEY` in the dashboard env — see the decision #10
     note on that trade. Deployed since 2026-08-27: **both** modes on the
     `openai` backend, `deepseek/deepseek-v4-flash-0731`, Control capped at

@@ -69,6 +69,11 @@ interface ChatTurn {
    * turns persisted before this field existed; those render as Ask, which
    * matches the old behavior exactly (mode resets to Ask on reload). */
   mode?: Mode;
+  /** The operator pressed Stop while this turn was in flight: the fetch was
+   *  aborted (which cancels the API's generator), whatever the model was doing
+   *  was discarded, and no button could have been produced. Rendered as a
+   *  muted chip so a half-written answer is not mistaken for a finished one. */
+  stopped?: boolean;
   /** Control mode (Step 1j): a propose_action/propose_plan refusal surfaced
    * by the backend (`proposal_refused` frame). Rendered as an amber chip in
    * the turn, so "why is there no authorize button" is always on screen
@@ -356,6 +361,9 @@ function AssistantBubbleInner() {
   const [resizing, setResizing] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Set only by the Stop button, so the AbortError it causes can be told
+  // apart from the aborts a new question or a closed panel issue.
+  const stoppedRef = useRef(false);
   const expiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const planExpiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // True while runPlan's step loop is in flight. A running plan is never
@@ -754,6 +762,7 @@ function AssistantBubbleInner() {
       const controller = new AbortController();
       abortRef.current = controller;
       terminatedRef.current = false;
+      stoppedRef.current = false;
       // New question: drop the previous answer's buffer, and stop speaking the
       // previous answer — it is now stale.
       streamTextRef.current = "";
@@ -819,7 +828,20 @@ function AssistantBubbleInner() {
           );
         }
       } catch (e) {
-        if ((e as Error).name === "AbortError") return;
+        if ((e as Error).name === "AbortError") {
+          if (stoppedRef.current) {
+            // Deliberate stop: say so on the turn, and drop any live pill.
+            setTurns((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === "assistant") {
+                next[next.length - 1] = { ...last, phase: null, stopped: true };
+              }
+              return next;
+            });
+          }
+          return;
+        }
         setError((e as Error).message);
       } finally {
         if (abortRef.current === controller) abortRef.current = null;
@@ -828,6 +850,16 @@ function AssistantBubbleInner() {
     },
     [turns, sending, mode, clearProposal, clearPlan, stopSpeaking]
   );
+
+  /** Stop the in-flight turn. Aborting the fetch closes the SSE response,
+   *  which cancels the API's generator mid-round; the model's next token and
+   *  any pending tool call are simply never consumed. Nothing actuates from a
+   *  chat turn, so there is nothing to roll back. */
+  const stopTurn = useCallback(() => {
+    if (!abortRef.current) return;
+    stoppedRef.current = true;
+    abortRef.current.abort();
+  }, []);
 
   const speakAnswer = useCallback(
     (markdown: string) => {
@@ -1468,13 +1500,24 @@ function AssistantBubbleInner() {
                 disabled={sending}
                 className={`flex-1 resize-none rounded border border-slate-300 bg-white px-2 py-1 text-[13px] text-ink shadow-inner focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${focusClass}`}
               />
-              <button
-                type="submit"
-                disabled={sending || !input.trim()}
-                className={`self-stretch rounded px-3 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700 ${sendClass}`}
-              >
-                Send
-              </button>
+              {sending ? (
+                <button
+                  type="button"
+                  onClick={stopTurn}
+                  title="Stop this turn"
+                  className="self-stretch rounded border border-red-400 bg-red-50 px-3 text-sm font-medium text-red-700 shadow-sm transition hover:bg-red-100 dark:border-red-600 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/70"
+                >
+                  Stop
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  className={`self-stretch rounded px-3 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700 ${sendClass}`}
+                >
+                  Send
+                </button>
+              )}
             </div>
             {voice.error && (
               <p className="mt-1 text-xs text-red-600 dark:text-red-400">{voice.error}</p>
@@ -2118,6 +2161,11 @@ function Turn({
         {turn.declined && (
           <div className="mt-1.5 rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[12px] text-slate-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400">
             No action proposed — {turn.declined.explanation}
+          </div>
+        )}
+        {turn.stopped && (
+          <div className="mt-1.5 rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[12px] text-slate-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400">
+            Stopped by you — nothing further came from this turn.
           </div>
         )}
       </div>

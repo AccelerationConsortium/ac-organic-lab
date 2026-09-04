@@ -1236,6 +1236,15 @@ Step 1j makes the contract mechanical instead of rhetorical:
   timeout or the tool-round cap with no terminal outcome now emits a harness
   `declined` frame saying so *before* the `error` frame, so the operator sees
   "ran out of time before proposing" rather than nothing.
+- **A longer leash and a Stop button (2026-09-04, operator request).** The
+  wallclock cap is 300 s (`ASSISTANT_CLAUDE_TIMEOUT_S`, was 120), with the
+  Next proxy's `proxyTimeout` raised to 330 s above it. What makes a long cap
+  affordable is that the operator can now end a turn: while a turn is in
+  flight **Stop** stands where Send was; it aborts the fetch, which closes the
+  SSE response and cancels the API's generator mid-round (the turn log names
+  it `client_disconnected`), and the turn is marked "Stopped by you" so a
+  half-written answer is never mistaken for a finished one. Nothing actuates
+  from a chat turn, so there is nothing to roll back.
 
 The §5.1 commitment is untouched: none of this adds an actuating path —
 the worst a misbehaving model can now do is *visibly* fail to propose.

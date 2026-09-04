@@ -59,7 +59,7 @@ _ROBOT_ARM_CONTROL_TIMEOUT_SECONDS = 180.0
 # calibrate.flow_rate dispenses for its `duration`, and a dose is ~15 s per
 # well — dose.multiple at the assistant's 6-well cap
 # (assistant_control._ARG_CARDINALITY_LIMITS) nominally needs 90 s. Kept
-# under the Next.js proxy's 130 s cap (web/next.config proxyTimeout) so a
+# under the Next.js proxy's 330 s cap (web/next.config proxyTimeout) so a
 # slow action fails here — claim released, audit row written — not at the
 # proxy.
 _SOLID_DOSER_CONTROL_TIMEOUT_SECONDS = 120.0

@@ -92,15 +92,23 @@ function sseBody(frames: string[]) {
 }
 
 /** Like `sseBody`, but the stream never closes: the turn stays in flight,
- *  so the live progress pills stay rendered long enough to assert on. */
-function sseBodyOpen(frames: string[]) {
+ *  so the live progress pills stay rendered long enough to assert on. A
+ *  pending read rejects with AbortError when `signal` aborts — what a real
+ *  browser does when the fetch is aborted, and what the Stop button relies on. */
+function sseBodyOpen(frames: string[], signal?: AbortSignal | null) {
   const bytes = new TextEncoder().encode(frames.join(""));
   let sent = false;
   return {
     getReader() {
       return {
         read() {
-          if (sent) return new Promise<never>(() => {});
+          if (sent) {
+            return new Promise<never>((_, reject) => {
+              const abort = () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+              if (signal?.aborted) abort();
+              else signal?.addEventListener("abort", abort, { once: true });
+            });
+          }
           sent = true;
           return Promise.resolve({ value: bytes, done: false });
         },
@@ -127,7 +135,7 @@ function installFetch(chatFrames: string[], opts: { open?: boolean } = {}) {
       expect(init?.method).toBe("POST");
       return Promise.resolve({
         ok: true,
-        body: opts.open ? sseBodyOpen(chatFrames) : sseBody(chatFrames),
+        body: opts.open ? sseBodyOpen(chatFrames, init?.signal) : sseBody(chatFrames),
       });
     }
     return Promise.resolve({ ok: false, text: async () => "unexpected", json: async () => ({}) });
@@ -277,6 +285,31 @@ describe("AssistantBubble control mode", () => {
       )
     ).toBeTruthy();
     expect(screen.getByText(/Check the physical deck matches this before authorizing/)).toBeTruthy();
+  });
+
+  it("Stop aborts the in-flight turn and marks it stopped", async () => {
+    // A stream that never closes: the turn stays in flight until we stop it.
+    installFetch(['data: {"type":"status","phase":"thinking","label":"reasoning…"}\n\n'], {
+      open: true,
+    });
+    await openPanel();
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what ran today?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // While in flight, Stop stands where Send was.
+    const stop = await screen.findByRole("button", { name: "Stop" });
+    expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+    fireEvent.click(stop);
+
+    // The fetch was aborted, the composer is back, the turn says it was stopped.
+    const chatCall = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.find((c) =>
+      String(c[0]).includes("/api/assistant/chat")
+    );
+    expect((chatCall?.[1] as RequestInit).signal?.aborted).toBe(true);
+    await screen.findByRole("button", { name: "Send" });
+    expect(screen.getByText(/Stopped by you/)).toBeTruthy();
+    expect(screen.queryByText(/Connection lost/)).toBeNull();
   });
 
   it("renders a plan card, approves it by hash, then runs the steps in order (Step 1i)", async () => {

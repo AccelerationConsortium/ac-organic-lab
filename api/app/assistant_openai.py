@@ -766,6 +766,12 @@ async def run_openai_turn(
     except RuntimeError as exc:
         terminal = "error"
         yield _sse({"type": "error", "message": str(exc)})
+    except (asyncio.CancelledError, GeneratorExit):
+        # The browser went away — the operator pressed Stop, closed the panel,
+        # or asked something new. Starlette closes the response generator,
+        # which lands here. Name it in the turn log and let it propagate.
+        terminal = "client_disconnected"
+        raise
     finally:
         logger.info(
             "assistant turn done: user=%s mode=%s elapsed=%.1fs num_turns=%s "

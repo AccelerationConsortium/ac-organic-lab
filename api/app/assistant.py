@@ -32,7 +32,7 @@ Configuration
 * ``ASSISTANT_RUNTIME_DIR`` -- override the runtime dir that holds the
   generated ``mcp.json`` and serves as the default cwd
   (default ``~/.cache/lab-assistant``).
-* ``ASSISTANT_CLAUDE_TIMEOUT_S`` -- hard wallclock cap per turn
+* ``ASSISTANT_CLAUDE_TIMEOUT_S`` -- hard wallclock cap per turn (default 300 s)
   (default 120).
 
 Safety
@@ -84,7 +84,12 @@ DEFAULT_MODEL = os.environ.get("ASSISTANT_CLAUDE_MODEL", "sonnet")
 # answers are terse status lookups a faster model handles fine. Defaults to
 # the same model, so deployments opt into the split explicitly.
 CONTROL_MODEL = os.environ.get("ASSISTANT_CLAUDE_CONTROL_MODEL", DEFAULT_MODEL)
-DEFAULT_TIMEOUT_S = float(os.environ.get("ASSISTANT_CLAUDE_TIMEOUT_S", "120"))
+# 300 s since 2026-09-04 (was 120): 7 of 91 Control turns in the preceding week
+# hit the cap mid-reasoning and produced no proposal. The operator can now
+# stop a turn from the bubble, so a long cap costs nothing when a turn is
+# visibly going nowhere. The Next proxy's proxyTimeout (web/next.config.mjs)
+# must stay above this value.
+DEFAULT_TIMEOUT_S = float(os.environ.get("ASSISTANT_CLAUDE_TIMEOUT_S", "300"))
 # Backend per mode: "claude-cli" (this module's subprocess, OAuth-billed) or
 # "openai" (assistant_openai.py — an OpenAI-compatible endpoint such as
 # OpenRouter, API-key-billed). Both drive the same MCP servers and emit the
