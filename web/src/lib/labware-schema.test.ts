@@ -43,11 +43,11 @@ describe("validateSpec", () => {
 
   it("enforces the OT-2 slot envelope", () => {
     const issues = validateSpec(goodSpec({ footprintX: 300 }));
-    expect(issues.some((i) => i.field === "footprintX" && i.message.includes("127"))).toBe(true);
+    expect(issues.some((i) => i.field === "footprintX" && i.message.includes("128"))).toBe(true);
   });
 
   it("catches wells overhanging the footprint", () => {
-    // 6 columns × 25 mm spacing from x=18 runs past a 127 mm footprint.
+    // 6 columns × 25 mm spacing from x=18 runs past a 127.76 mm footprint.
     const issues = validateSpec(goodSpec({ spacingX: 25 }));
     expect(issues.some((i) => i.field === "spacingX")).toBe(true);
   });
@@ -96,7 +96,7 @@ describe("buildDefinition", () => {
     // Column-major ordering: first column is A1..D1.
     expect(defn.ordering[0]).toEqual(["A1", "B1", "C1", "D1"]);
     // A1 at the back: y = footprintY - offsetA1Y.
-    expect(defn.wells.A1.y).toBeCloseTo(85.5 - 14.24, 2);
+    expect(defn.wells.A1.y).toBeCloseTo(85.48 - 14.24, 2);
     expect(defn.wells.A1.x).toBeCloseTo(18.38, 2);
     // Row B is one spacingY toward the front (lower y).
     expect(defn.wells.B1.y).toBeCloseTo(defn.wells.A1.y - 18, 2);

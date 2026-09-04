@@ -14,6 +14,7 @@ import {
   type LabwareSummary,
 } from "@/lib/api";
 import {
+  MAX_DIMENSIONS,
   buildDefinition,
   defaultSpec,
   specFromDefinition,
@@ -446,13 +447,13 @@ export default function LabwareBuilderPage() {
             <Field label="Columns" issue={issueFor("columns")}>
               <NumberInput value={spec.columns} step={1} onChange={(v) => set("columns", v)} />
             </Field>
-            <Field label="Footprint X (mm, ≤127)" issue={issueFor("footprintX")}>
+            <Field label={`Footprint X (mm, ≤${MAX_DIMENSIONS.x})`} issue={issueFor("footprintX")}>
               <NumberInput value={spec.footprintX} onChange={(v) => set("footprintX", v)} />
             </Field>
-            <Field label="Footprint Y (mm, ≤85.5)" issue={issueFor("footprintY")}>
+            <Field label={`Footprint Y (mm, ≤${MAX_DIMENSIONS.y})`} issue={issueFor("footprintY")}>
               <NumberInput value={spec.footprintY} onChange={(v) => set("footprintY", v)} />
             </Field>
-            <Field label="Height Z (mm, ≤200)" issue={issueFor("footprintZ")}>
+            <Field label={`Height Z (mm, ≤${MAX_DIMENSIONS.z})`} issue={issueFor("footprintZ")}>
               <NumberInput value={spec.footprintZ} onChange={(v) => set("footprintZ", v)} />
             </Field>
             <Field label="A1 offset from left (mm)" issue={issueFor("offsetA1X")}>

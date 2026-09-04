@@ -14,8 +14,9 @@
  * when looking down at the deck) — the builder converts to schema coords.
  */
 
-// OT-2 slot physical limits (mm) — keep in sync with api/app/labware.py.
-export const MAX_DIMENSIONS = { x: 127, y: 85.5, z: 200 } as const;
+// OT-2 slot envelope (mm): the ANSI/SLAS footprint (127.76 × 85.48) plus
+// clearance. Keep in sync with api/app/labware.py.
+export const MAX_DIMENSIONS = { x: 128, y: 86, z: 200 } as const;
 
 export const LOAD_NAME_RE = /^[a-z0-9._]+$/;
 
@@ -71,8 +72,8 @@ export function defaultSpec(): LabwareSpec {
     displayCategory: "wellPlate",
     rows: 8,
     columns: 12,
-    footprintX: 127,
-    footprintY: 85.5,
+    footprintX: 127.76,
+    footprintY: 85.48,
     footprintZ: 14.2,
     offsetA1X: 14.38,
     offsetA1Y: 11.24,
