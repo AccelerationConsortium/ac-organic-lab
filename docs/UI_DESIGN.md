@@ -813,11 +813,14 @@ actuating:
   `current_node`, single-hop `reachable_nodes`, multi-hop `travel_targets` —
   because the xArm advertises only the current node's outgoing hops as
   `move.<node_id>` actions, so without it the assistant could not reason
-  about or explain a route. This widens what the model *sees*, never what it
-  may *propose*: the device's multi-hop `travel_to` stays outside the skill
-  catalog and `allowed_actions`, so a route is proposed one `move.<node_id>`
-  hop per confirm card, re-checking device state between hops (the prompt
-  addendum says so explicitly).
+  about or explain a route. As shipped, this widened what the model *sees*,
+  never what it may *propose*: the device's multi-hop `travel_to` stayed
+  outside the skill catalog and `allowed_actions`, so a route was proposed
+  as `move.<node_id>` hops the model had to sequence itself. **Superseded by
+  Step 1k (2026-09-01)** — the snapshot carries no edges, so the model
+  could not actually route, and every multi-hop plan died on the device's
+  409 `edge_not_allowed` at step 2. `travel.<node_id>` is now proposable
+  and the device does the routing; see Step 1k below.
 - **`propose_action(equipment_id, action, args, reason)`** — validates and
   returns a normalized proposal. It refuses unless *all* hold: the equipment
   exists and is enabled; `action ∈ status.allowed_actions` (the device is the
@@ -1220,6 +1223,19 @@ Step 1j makes the contract mechanical instead of rhetorical:
   failure instead of ending silently. The claude-cli backend cannot be
   nudged mid-loop (the CLI owns the agentic loop), so there the contract
   rests on the rewritten prompt rule 1 plus the same frame surfacing.
+- **The nudge round forces the call (2026-09-04).** A week of journal on
+  `deepseek-v4-flash` showed the nudge text is one more instruction a
+  flash-tier model can ignore, and that the larger leak was elsewhere: of 91
+  control turns, 2 ended prose-only despite the nudge, but **7 hit the 120 s
+  wallclock cap** mid-orbit and produced only a bare `error` frame — which
+  reads as the assistant ignoring the request. Two mechanical changes: the
+  nudge request now offers **only the three terminal tools** with
+  `tool_choice: "required"`, so the provider — not the prompt — makes the
+  model call one (the harness `declined` frame stays as the fallback for a
+  provider that ignores `tool_choice`); and a control turn that hits the
+  timeout or the tool-round cap with no terminal outcome now emits a harness
+  `declined` frame saying so *before* the `error` frame, so the operator sees
+  "ran out of time before proposing" rather than nothing.
 
 The §5.1 commitment is untouched: none of this adds an actuating path —
 the worst a misbehaving model can now do is *visibly* fail to propose.
@@ -1235,6 +1251,175 @@ the worst a misbehaving model can now do is *visibly* fail to propose.
   interlocks exist for, and it belongs in a workflow plan, not a chat turn.
 - **Binding rules (AGENTIC_LAB_DESIGN.md Part I).** A human still authorizes
   every hardware action, and the audit names them.
+
+#### Step 1k — device-planned multi-hop travel on the xArm (2026-09-01, operator decision)
+
+The operator complaint: the assistant cannot move the arm anywhere more than
+one hop away. Audit evidence (`equipment_events`, 2026-09-01): every
+multi-hop plan ran step 1 fine and died on step 2 with the device's 409
+`edge_not_allowed` — e.g. `[move.deck_home, move.deck_slot1_high, …]`,
+skipping the mandatory `deck_high` between them. Root cause: §5.3's original
+stance asked the model to propose a route as `move.<node_id>` hops while the
+`motion_graph` snapshot gives it **no adjacency/edge data** — `travel_targets`
+is a flat reachable set, so the intermediate hop was unguessable. The device
+refusing the guess is layer-2 doing its job; the failure was asking the model
+to plan without a map. Two aggravators: the browser rendered the structured
+409 detail as `[object Object]` (`String(detail)` on a dict in
+`web/src/lib/api.ts`), and the 15 s passthrough budget sat inside the live
+hop-duration range (13.4–23.2 s measured).
+
+What shipped, dashboard-side only (no device change — `POST
+/control/graph/travel_to` has existed on the device all along, a shortest-
+path planner that executes the whole journey under one reservation and one
+blocking call):
+
+- **`graph.travel_to` joins the skill catalog** (`skill_catalog/robot_arm.py`)
+  and `_resolve` gains a `travel.<node_id>` bridge, the same shape as
+  `move.<node_id>` / `gripper.<state>`.
+- **Startability comes from the snapshot, not `allowed_actions`**: the device
+  deliberately never enumerates multi-hop targets, so `_action_startable`
+  accepts `travel.<node>` iff the node is in the snapshot's
+  `reachable_nodes` ∪ `travel_targets` (fail-closed with no snapshot); the
+  device re-plans and re-checks the route when the call is sent — it remains
+  the authority. `list_available_actions` synthesizes one proposable
+  `travel.<node_id>` entry per target (`synthesized_from: "motion_graph"`).
+- **The prompt addendum inverts its routing rule**: travel.<destination> for
+  anything beyond one hop, never a model-sequenced `move.<node_id>` route; a
+  pick/place plan is now (travel, gripper, travel).
+- **`control.py` gives `robot_arm` a 180 s action budget** (the per-action
+  claim heartbeat already covers the wait), alongside the plate reader's 90 s.
+- **`ApiError` stringifies structured details** (prefer `error`/`reason`
+  fields, fall back to JSON), so a device refusal reads as its actual reason.
+
+What it deliberately does not change: the safety floor (stop / connect /
+clear_errors stay non-proposable), one device per plan, the confirm card as
+the only path to actuation, and the plan runner's fail-fast. The §5.1
+commitment survives — proposing travel renders a card naming the
+destination; the device still whitelists every hop it executes.
+
+#### Step 1l — solid doser (2026-09-02, operator request)
+
+The operator complaint: nothing on the solid doser (`dose_every_well`, "Dose
+Every Well", `kind: solid_doser`) could be composed in Control mode — "at
+least let it lower and raise the plate lift". Root cause: the kind was simply
+absent from `_PROPOSABLE`, so every advertised action refused as
+`unmappable_action`. A second gap sat underneath: the four single-axis loader
+moves the tile has driven since dose v1.1 (`lid.open`, `lid.close`,
+`plate.raise`, `plate.lower`) were advertised by the device but never
+cataloged, so even an allowlist entry could not have resolved them.
+
+Admitted with the Step 1d / 1g / 1h criterion and **no new resolver
+mechanism**: every admitted action is one card-evaluable act with zero or a
+few scalar, range-clamped args; no schema carries an interlock-override or
+credential field (`startup.config_name` is a profile name), so
+`_FORBIDDEN_ARG_FIELDS` gains no entries. This device has **no stop verb** —
+its motion endpoints block until the move completes — so there is no
+safety-floor row; the loader's own collision guard (it refuses raising the
+plate under a closed lid) and the device's claim/state checks remain the
+authority at execution time.
+
+| Proposable | Workflow-only |
+|---|---|
+| `startup`, `shutdown`, `home`, `tare`, `plate.set`, `plate.load`, `plate.unload`, `lid.open`, `lid.close`, `plate.raise`, `plate.lower`, `dose.well`, `dose.multiple` (≤ 6 wells per step), `calibrate.flow_rate` | `dose.row`, `dose.column`, `dose.all` |
+
+The held-back column is a **request-window** decision, not a safety one.
+Dosing is synchronous at roughly 15 s per well (catalog estimate; no dose has
+yet run through the dashboard passthrough), a row is 12 wells and a plate 96,
+and a passthrough request for this kind now lives at most 120 s
+(`control.py` `_SOLID_DOSER_CONTROL_TIMEOUT_SECONDS`, raised from the 15 s
+default that had already 504'd six doser `startup`s at 16.6 s) under the
+Next.js proxy's 130 s cap (`web/next.config` `proxyTimeout`). With no stop
+verb, a timed-out whole-plate dose would also be un-abortable from the
+dashboard. So `dose.multiple` is admitted with a per-step cap of 6 wells
+(`_ARG_CARDINALITY_LIMITS`; refusal `invalid_args`, message names the split),
+the prompt addendum tells the model to chain batches as consecutive steps of
+one plan, and whole-line / whole-plate dosing is routed to a validated
+workflow plan. The composable shape the operator asked for is one plan —
+`plate.lower` → `tare` → `dose.multiple` → `plate.raise` — approved once,
+each step re-checked live by the device.
+
+Catalog parity: `skill_catalog/solid_doser.py` gains the four loader moves
+(advertised in `ready` and `degraded`; 2.6–2.9 s each in the audit trail),
+`SolidDoserClient` gains the matching typed methods, and a skills test pins
+the catalog byte-for-byte to the device's advertised names so the next verb
+the device grows fails loudly instead of staying silently unproposable.
+
+Deploy note: `assistant_control.py` and the catalog run in the per-request
+`lab-control` subprocess from editable installs, so the allowlist is live on
+save; the prompt addendum (`assistant.py`) and the control budget
+(`control.py`) are in-process and need an API restart.
+
+#### Step 1m — deck-slot vocabulary resolver + deck check (2026-09-04, operator request)
+
+Two operator complaints with one root: the model "mistakes ot2-hte slot 2 for
+deck slot 2", and nobody is asked to look at the OT-2 deck before something
+is proposed against it.
+
+**The slot confusion is a vocabulary gap, not a model-quality problem.** One
+shelf has three names — `ot2_hte/slot_2` in `locations.yaml`, the bare key
+`"2"` in every OT-2 argument (`tips.reset`/`tips.mark` `slot`, `move_labware`
+`new_location`, `setup` `labware[].location`, the keys of `deck.declare`
+`slots`), and `opentrons_2_low` / `opentrons_2_high` in the xArm graph — and
+neither the prompt nor `lab-control` ever showed the model the mapping, so
+"slot 2" landed in whichever vocabulary it guessed. The fix is deterministic
+(`assistant_control.py`):
+
+- **A resolver, before schema validation.** `_canonicalize_locations`
+  rewrites every slot-carrying OT-2 argument to the gateway's key, accepting
+  `2`, `"slot 2"`, `slot_2`, `ot2_hte/slot_2`, or an xArm node id for the same
+  shelf. A token naming a place on a *different* device is refused by name
+  (`wrong_device_location`: `ot2_complexation/slot_2` on `ot2_hte`), a
+  registry place with several keys on this device is refused as
+  `ambiguous_location`, and a token the registry does not know passes through
+  unchanged — the resolver never invents a slot; the schema and the device
+  stay the authority. Without `locations.yaml` it runs syntax-only.
+- **The vocabulary is shown.** `list_available_actions` returns `locations`:
+  for an OT-2, each deck slot with its bare key and the names other devices
+  use for it; for the arm, each registry place it can reach with the node ids
+  that reach it. An arm `travel.ot2_hte/slot_2` refusal now names those nodes
+  (`location_nodes`) instead of only listing what is allowed.
+- **The card names the place.** Proposals and plans carry
+  `resolved_locations` (`field`, canonical `value`, registry `location`,
+  `label`, the model's `given` spelling when it differed); the card prints
+  `slot=2 (OT-2 HTE · slot 2)`. Plan labels are step-tagged and kept
+  *outside* `steps`, so the step hash the operator approves covers exactly
+  what the browser sends.
+
+This is vocabulary translation on a human-authorized proposal, not custody
+inference — PLATE_TRACKING.md's "aliases never infer a move" rule is
+untouched; nothing here decides *whether* something moves.
+
+**Moved into the SDK the same day.** The resolver first shipped inside
+`lab-control`, which protected only the assistant; a plan written through
+`lab-skills` (a workflow repo, the SDK's MCP `execute_plan`) with
+`ot2_hte/slot_2` in a `slot` field still passed the catalog's `str` schema and
+died at the gateway. It now lives in `lab_skills.deck_slots` and runs inside
+`validate_plan` (a wrong-device place is a `wrong_device_location` Violation,
+never a 4xx later) and `execute_plan` (the POST body is the canonical form);
+`LabSession(..., locations=...)` / `Lab.connect(locations=...)` select the
+registry, defaulting to `locations.yaml` loaded lazily. `lab-control` imports
+the same functions and only translates `SlotResolutionError` into a
+`ProposalRefused` with the same code. The one path still sent as written is a
+direct `EquipmentClient.command()` body, which carries no skill name.
+
+**The deck check makes "look at the deck first" mechanical.** Every proposal
+that touches an OT-2 deck — an OT-2 verb in `_DECK_ACTIONS` (`setup`,
+`deck.declare`, `move_labware`, the pipette verbs, `tips.*`, `home`), or an
+xArm `travel.`/`move.` to a node the registry maps onto an OT-2 slot — carries
+`deck_checks`: per device, `details.snapshot.labwares` by slot plus the
+per-rack available-tip count, with `touched_slots` marked (from the resolver
+for slot arguments, from the snapshot for nickname-addressed verbs). For an
+arm move the target OT-2's `/status` is read live, best-effort: a failed read
+is reported as `unreachable`, never hidden. The card renders one "Deck now"
+row per device (`2*: empty · 4: agilent_96_2ml_deep_square · 11:
+opentrons_96_tiprack_1000ul (12 tips)`) and asks the operator to check the
+physical deck before authorizing. The snapshot is the gateway's belief; the
+operator at the bench is the authority. The prompt gained the matching rule
+("CHECK THE DECK FIRST": read status, report the touched slots' contents, ask
+for a physical confirmation, and do not propose into an occupied or unknown
+slot until the operator has resolved it), so the model asks in words and the
+card asks in print even when the model forgets.
+
 
 ### 5.5 Step 2 — autonomy (not approved)
 

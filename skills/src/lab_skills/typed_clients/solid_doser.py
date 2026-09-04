@@ -16,7 +16,11 @@ from ..skill_catalog.solid_doser import (
     DoseRowArgs,
     DoseWellArgs,
     HomeArgs,
+    LidCloseArgs,
+    LidOpenArgs,
     PlateLoadArgs,
+    PlateLowerArgs,
+    PlateRaiseArgs,
     PlateSetArgs,
     PlateUnloadArgs,
     ShutdownArgs,
@@ -71,6 +75,21 @@ class SolidDoserClient(EquipmentClient):
 
     async def plate_unload(self) -> Any:
         return await self.command("/plate/unload", PlateUnloadArgs())
+
+    # Single-axis loader moves (dose v1.1). ``plate_load`` / ``plate_unload``
+    # are the device's full sequences; these drive one axis each. The loader's
+    # collision guard refuses an unsafe move (e.g. raise under a closed lid).
+    async def open_lid(self) -> Any:
+        return await self.command("/control/lid/open", LidOpenArgs())
+
+    async def close_lid(self) -> Any:
+        return await self.command("/control/lid/close", LidCloseArgs())
+
+    async def raise_plate(self) -> Any:
+        return await self.command("/control/plate/raise", PlateRaiseArgs())
+
+    async def lower_plate(self) -> Any:
+        return await self.command("/control/plate/lower", PlateLowerArgs())
 
     async def dose_well(
         self,

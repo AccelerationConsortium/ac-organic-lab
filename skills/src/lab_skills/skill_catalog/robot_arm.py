@@ -8,7 +8,10 @@ cartesian/joint targets; the device enforces ``X-Claim-Token`` on every
 
 Live control surface (``/control/graph/*``):
 
-* ``POST /control/graph/move_to``     - move to a named graph node
+* ``POST /control/graph/move_to``     - move to a named graph node (one hop)
+* ``POST /control/graph/travel_to``   - multi-hop travel to any reachable node
+                                        (device plans the shortest whitelisted
+                                        hop path and executes it, blocking)
 * ``POST /control/graph/gripper``     - change to a named catalog gripper state
 * ``POST /control/graph/recover_to``  - declare the current node (recovery)
 * ``POST /control/graph/record``      - record the last transition as an edge
@@ -46,6 +49,14 @@ class GraphMoveToArgs(BaseModel):
     speed: float | None = Field(
         default=None,
         description="Movement speed; may be capped by the edge speed in STRICT mode.",
+    )
+
+
+class GraphTravelToArgs(BaseModel):
+    node_id: str = Field(description="Graph node id to travel to (any reachable node).")
+    speed: float | None = Field(
+        default=None,
+        description="Movement speed for every hop; per-edge caps still apply.",
     )
 
 
@@ -106,6 +117,24 @@ register(
             estimated_duration_s=10.0,
         ),
         SkillDef(
+            name="graph.travel_to",
+            kind="robot_arm",
+            description=(
+                "Multi-hop travel to any reachable node in the motion graph: "
+                "the device plans the shortest whitelisted hop path from its "
+                "current node (holding the current gripper state throughout) "
+                "and executes it hop-by-hop under one reservation, blocking "
+                "until the journey completes. Refused (409) if no whitelisted "
+                "path exists from the current node."
+            ),
+            endpoint="/control/graph/travel_to",
+            args_schema=GraphTravelToArgs,
+            requires_states=["ready"],
+            # Whole-journey budget, not per hop: single hops measure ~5-25 s
+            # live and the graph is a handful of hops across.
+            estimated_duration_s=60.0,
+        ),
+        SkillDef(
             name="graph.gripper",
             kind="robot_arm",
             description=(
@@ -160,4 +189,5 @@ __all__ = [
     "GraphMoveToArgs",
     "GraphRecordArgs",
     "GraphRecoverToArgs",
+    "GraphTravelToArgs",
 ]

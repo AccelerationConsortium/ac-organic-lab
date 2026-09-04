@@ -40,15 +40,27 @@ scope for both (UI_DESIGN §5.4). In scope:
 
 * ``robot_arm`` move targets (``move.<node_id>`` -> the ``graph.move_to``
   skill -> ``POST /control/graph/move_to``) — the Step 1 surface. Each hop
-  is one action; a route is a plan of hops. For route *reasoning*,
-  ``list_available_actions`` forwards the device's read-only
-  ``details.motion_graph`` snapshot (see :func:`_list_available_actions`).
+  is one action. Since Step 1k (2026-09-01, operator decision) multi-hop
+  destinations are first-class too: ``travel.<node_id>`` -> the
+  ``graph.travel_to`` skill -> ``POST /control/graph/travel_to``, where the
+  DEVICE plans and executes the whole whitelisted hop path in one blocking
+  call. Startability for travel comes from the ``details.motion_graph``
+  snapshot (``reachable_nodes`` + ``travel_targets``) rather than
+  ``allowed_actions``, because the device deliberately does not enumerate
+  multi-hop targets; the snapshot is also forwarded verbatim for route
+  *reasoning* (see :func:`_list_available_actions`). Model-guessed
+  ``move.<node_id>`` routes are what this replaces — the model has no edge
+  data, so its step-2 hops died on the device's 409 ``edge_not_allowed``.
 * the per-kind allowlist in :data:`_PROPOSABLE` — the ``liquid_handler``
   (OT-2) control surface plus, since Step 1d, ``fume_hood`` / ``shaker`` /
   ``press``, since Step 1f, ``camera`` (PTZ nudge, presets, privacy,
   streaming), since Step 1g, the Cytation's finite plate-reader actions,
-  and since Step 1h, the PlateLoc sealer's finite surface (lifecycle,
-  stage, setpoints, ``seal.start``). The table carries the scope history
+  since Step 1h, the PlateLoc sealer's finite surface (lifecycle, stage,
+  setpoints, ``seal.start``), and since Step 1l (2026-09-02, operator
+  request) the solid doser's bounded surface — lid and plate-lift moves,
+  lifecycle, tare, plate record, single-well and small-batch dosing;
+  ``dose.row`` / ``dose.column`` / ``dose.all`` stay workflow-only as
+  unbounded synchronous calls (see the table). The table carries the scope history
   and per-kind rationale; :data:`_FORBIDDEN_ARG_FIELDS` holds the
   argument fields that are never model-settable (interlock overrides,
   device credentials). The ``hplc`` kind is deliberately absent — see
@@ -82,6 +94,16 @@ import httpx
 from pydantic import ValidationError
 
 from lab_skills import Lab, load_registry
+from lab_skills.deck_slots import (
+    DECK_TOUCHING_SKILLS,
+    SlotResolutionError,
+    canonicalize_slot_args,
+    default_locations,
+    find_location,
+    location_vocabulary,
+    set_default_locations,
+    touched_slots,
+)
 from lab_skills.exceptions import (
     EquipmentInMaintenance,
     EquipmentUnreachable,
@@ -125,6 +147,10 @@ REFUSAL_CODES = frozenset(
         "empty_plan",
         "too_many_steps",
         "invalid_step",
+        # Step 1m: a slot argument naming another device's place, or a
+        # registry place with several keys on this device.
+        "wrong_device_location",
+        "ambiguous_location",
     }
 )
 
@@ -443,6 +469,59 @@ _PROPOSABLE: dict[str, frozenset[str]] = {
             "incubator.set_temperature",
         }
     ),
+    # Step 1l (2026-09-02, operator request): the solid doser (dose_every_well,
+    # "Dose Every Well"). The complaint was that nothing on this device could
+    # be composed in Control mode — the kind was simply absent here, so every
+    # advertised action refused as unmappable — and the minimum ask was the
+    # plate lift. Admitted with the Step 1d / 1g / 1h criterion and no new
+    # resolver mechanism: every action is one card-evaluable act with zero or
+    # a few scalar, range-clamped args; no schema carries an interlock-override
+    # or credential field (startup's ``config_name`` is a profile name, not a
+    # secret), so _FORBIDDEN_ARG_FIELDS gains nothing. This device has NO stop
+    # verb — its motion endpoints block until the move completes — so there is
+    # no safety-floor row; the loader's own collision guard (it refuses raising
+    # the plate under a closed lid) and the device's claim/state checks remain
+    # the authority at execution time.
+    #
+    # Four of these names (lid.open / lid.close / plate.raise / plate.lower)
+    # were advertised by the device and driven by the dashboard tile before the
+    # catalog carried them; they join skill_catalog/solid_doser.py in the same
+    # change (the catalog-parity test would otherwise fail here).
+    #
+    # Held back as WORKFLOW-ONLY, not as a safety floor: dose.row, dose.column,
+    # dose.all. They are unbounded synchronous calls — a well is ~15 s, a row
+    # 12 wells, a plate 96 — that no single passthrough request can cover
+    # (control.py budgets this kind 120 s, under the Next.js proxy's 130 s
+    # cap) and, with no stop verb, nothing could abort them mid-plate.
+    # dose.multiple is admitted instead, bounded per step by
+    # _ARG_CARDINALITY_LIMITS, so a plan chains small batches the operator
+    # watches land one step at a time; whole-line / whole-plate dosing belongs
+    # in a validated workflow plan.
+    "solid_doser": frozenset(
+        {
+            "startup",
+            "shutdown",
+            "home",
+            "tare",
+            # Plate record + the device's full load/unload sequences
+            # (open lid + lower + close / open + raise).
+            "plate.set",
+            "plate.load",
+            "plate.unload",
+            # Single-axis loader moves — the Step 1l minimum ask. Measured
+            # 2.6–2.9 s each in the audit trail (2026-08-15).
+            "lid.open",
+            "lid.close",
+            "plate.raise",
+            "plate.lower",
+            # Dosing, bounded: one well, or a small explicit batch.
+            "dose.well",
+            "dose.multiple",
+            # Dispenses for `duration` seconds onto the balance to measure
+            # mg/s — a calibration, not a dose into a well.
+            "calibrate.flow_rate",
+        }
+    ),
 }
 
 # Argument fields the model may never set, per kind — see the rationale above.
@@ -454,6 +533,205 @@ _PROPOSABLE: dict[str, frozenset[str]] = {
 _FORBIDDEN_ARG_FIELDS: dict[str, frozenset[str]] = {
     "liquid_handler": frozenset({"force", "force_direct", "password", "host_alias"}),
 }
+
+# Per-(kind, action) cap on how many entries a collection-valued argument may
+# carry in ONE proposal step. Enforced in :func:`_resolve` (refusal code
+# ``invalid_args``, message names the split). A request-window bound, not a
+# safety rule: the device runs ``dose.multiple`` synchronously at roughly
+# ``estimated_duration_s`` (15 s) per well, and the dashboard passthrough holds
+# the request open for at most ``control.py``'s per-kind budget (120 s for this
+# kind, under the Next.js proxy's 130 s cap). Six wells nominally fit with
+# slack for balance settling; a larger job is proposed as consecutive
+# ``dose.multiple`` steps of one plan, or recommended as a validated workflow
+# plan. ``dose.row`` / ``dose.column`` / ``dose.all`` are not proposable at all
+# for the same reason (see :data:`_PROPOSABLE`).
+_ARG_CARDINALITY_LIMITS: dict[tuple[str, str], tuple[str, int]] = {
+    ("solid_doser", "dose.multiple"): ("well_targets", 6),
+}
+
+
+# ---------------------------------------------------------------------------
+# Deck-slot vocabulary (UI_DESIGN §5 Step 1m, 2026-09-04)
+# ---------------------------------------------------------------------------
+#
+# The resolver itself lives in ``lab_skills.deck_slots`` since 2026-09-04 so
+# that both writers share it — ``validate_plan`` / ``execute_plan`` on the SDK
+# path, and this server on the assistant path (ARCHITECTURE.md decision #1).
+# What stays here is the wrapping: the SDK's ``SlotResolutionError`` becomes a
+# ``ProposalRefused`` with the same code, and the registry comes from the
+# SDK's process-wide default (``locations.yaml``, loaded lazily) unless a host
+# installs one.
+
+_get_locations = default_locations
+_set_locations = set_default_locations
+_find_location = find_location
+_DECK_ACTIONS = DECK_TOUCHING_SKILLS
+_touched_slots = touched_slots
+
+
+def _canonicalize_locations(
+    entry: EquipmentEntry, action: str, args: dict[str, Any] | None
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """:func:`lab_skills.deck_slots.canonicalize_slot_args` with the SDK's
+    refusal translated into this server's (same code, same message)."""
+    try:
+        return canonicalize_slot_args(entry, action, args, _get_locations())
+    except SlotResolutionError as exc:
+        raise ProposalRefused(exc.code, exc.message) from exc
+
+
+def _location_vocabulary(entry: EquipmentEntry) -> list[dict[str, Any]]:
+    return location_vocabulary(entry, _get_locations())
+
+
+# ---------------------------------------------------------------------------
+# Deck check (operator request, 2026-09-04)
+# ---------------------------------------------------------------------------
+#
+# "The operator needs to be asked to check the OT-2 deck layout before using
+# it, or moving anything in or out of it." The prompt now says so, and this
+# makes it mechanical: every proposal that touches an OT-2 deck — an OT-2
+# verb that names or uses a slot, or an xArm travel to a node the registry
+# maps onto an OT-2 slot — carries what the gateway currently believes sits in
+# each slot, with the touched slots marked, so the confirm card can print it
+# and ask for a physical check. The snapshot is the gateway's belief, never
+# the truth: the operator at the bench is the authority on the real deck.
+
+# OT-2 verbs that use or change the deck. Lifecycle, lights, plate/well
+# bookkeeping and the temperature module do not touch a slot.
+_DECK_ACTIONS = frozenset(
+    {
+        "setup",
+        "deck.declare",
+        "move_labware",
+        "pick_up_tip",
+        "aspirate",
+        "dispense",
+        "drop_tip",
+        "move_to",
+        "tips.reset",
+        "tips.mark",
+        "home",
+    }
+)
+
+
+def _slot_sort_key(slot: str) -> tuple[int, str]:
+    return (int(slot), "") if slot.isdigit() else (99, slot)
+
+
+def _deck_slots(status: Any) -> dict[str, dict[str, Any]]:
+    """``slot -> {"labware", "id", "tips_available"?}`` from an OT-2 envelope.
+
+    Reads ``details.snapshot.labwares`` — the run engine's own view, the one
+    name source the prompt trusts — keyed by slot (the live shape) or as a
+    list with ``location.slotName`` (tolerated), plus ``details.tip_racks``
+    for the per-rack available-tip count.
+    """
+    details = status.details if isinstance(status.details, dict) else {}
+    snap = details.get("snapshot")
+    labwares = snap.get("labwares") if isinstance(snap, dict) else None
+    slots: dict[str, dict[str, Any]] = {}
+    pairs: list[tuple[Any, Any]] = []
+    if isinstance(labwares, dict):
+        pairs = list(labwares.items())
+    elif isinstance(labwares, list):
+        pairs = [
+            (((lw.get("location") or {}).get("slotName") if isinstance(lw, dict) else None), lw)
+            for lw in labwares
+        ]
+    for slot, lw in pairs:
+        if slot is None or not isinstance(lw, dict):
+            continue
+        slots[str(slot)] = {
+            "labware": lw.get("loadName") or lw.get("load_name"),
+            "id": lw.get("id"),
+        }
+    racks = details.get("tip_racks")
+    if isinstance(racks, dict):
+        for slot, rack in racks.items():
+            if isinstance(rack, dict) and isinstance(rack.get("available"), int):
+                slots.setdefault(str(slot), {"labware": None, "id": None})
+                slots[str(slot)]["tips_available"] = rack["available"]
+    return slots
+
+
+def _slot_of_nickname(slots: dict[str, dict[str, Any]], nickname: str) -> str | None:
+    """The slot holding the labware a nickname-addressed verb names, if the
+    snapshot can say (the run engine's id or load_name matches)."""
+    for slot, info in slots.items():
+        if nickname in (info.get("id"), info.get("labware")):
+            return slot
+    return None
+
+
+def _deck_check(status: Any, touched: list[str]) -> dict[str, Any]:
+    return {
+        "equipment_id": status.equipment_id,
+        "touched_slots": sorted(set(touched), key=_slot_sort_key),
+        "slots": _deck_slots(status),
+    }
+
+
+def _ot2_deck_check(status: Any, action: str, resolved_args: dict[str, Any], resolved_locations: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The deck check for one OT-2 step, or ``None`` when the verb does not
+    touch the deck. Touched slots come from the slot arguments and, for
+    nickname-addressed verbs, from the snapshot."""
+    if action not in _DECK_ACTIONS:
+        return None
+    touched = _touched_slots(action, resolved_args)
+    slots = _deck_slots(status)
+    nickname = resolved_args.get("labware_nickname")
+    if isinstance(nickname, str):
+        slot = _slot_of_nickname(slots, nickname)
+        if slot is not None:
+            touched.append(slot)
+    return _deck_check(status, touched)
+
+
+async def _arm_target_deck_check(
+    registry: Registry, entry: EquipmentEntry, node: str
+) -> dict[str, Any] | None:
+    """When an arm move targets a node the registry maps onto an OT-2 slot,
+    the deck it is about to reach into — read best-effort from that OT-2.
+    A read failure is reported, not hidden: the card then says the deck could
+    not be read and must be checked by eye."""
+    place = _find_location(_get_locations(), node)
+    if place is None or not place.equipment or place.equipment == entry.id:
+        return None
+    target = registry.by_id(place.equipment)
+    if target is None or target.kind != "liquid_handler":
+        return None
+    touched = place.alias_tokens(target.id)
+    try:
+        status = await _read_status(registry, target.id)
+    except (EquipmentInMaintenance, EquipmentUnreachable, LabError) as exc:
+        return {
+            "equipment_id": target.id,
+            "touched_slots": touched,
+            "slots": {},
+            "unreachable": str(exc),
+        }
+    return _deck_check(status, touched)
+
+
+def _merge_deck_checks(checks: list[dict[str, Any] | None]) -> list[dict[str, Any]]:
+    """One entry per device, touched slots unioned (a plan may reach the same
+    deck several times)."""
+    merged: dict[str, dict[str, Any]] = {}
+    for check in checks:
+        if not check:
+            continue
+        current = merged.get(check["equipment_id"])
+        if current is None:
+            merged[check["equipment_id"]] = dict(check)
+            continue
+        touched = set(current["touched_slots"]) | set(check["touched_slots"])
+        current["touched_slots"] = sorted(touched, key=_slot_sort_key)
+        if not current.get("slots") and check.get("slots"):
+            current["slots"] = check["slots"]
+            current.pop("unreachable", None)
+    return list(merged.values())
 
 
 def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[SkillDef, str, dict[str, Any]]:
@@ -490,6 +768,24 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
         # The node id lives in the action name; merge it into the body the
         # graph.move_to endpoint expects. Model-supplied args (e.g. speed) are
         # kept but node_id from the action name wins.
+        resolved = {**(args or {}), "node_id": node_id}
+        return sd, _passthrough_action(sd), resolved
+
+    # ``travel.<node_id>`` -> the device's own multi-hop planner (Step 1k,
+    # 2026-09-01, operator decision). Same bridging shape as ``move.<node_id>``.
+    # The device does not enumerate travel targets in ``allowed_actions`` —
+    # startability is gated on the ``details.motion_graph`` snapshot instead
+    # (see :func:`_action_startable`) and the device's own path check (409
+    # when no whitelisted path exists) is the authority at execution time.
+    if entry.kind == "robot_arm" and action.startswith("travel."):
+        node_id = action[len("travel."):]
+        if not node_id:
+            raise ProposalRefused("unmappable_action", f"malformed travel action {action!r}")
+        sd = _find_skill_def("robot_arm", "graph.travel_to")
+        if sd is None:  # pragma: no cover - catalog always registers this
+            raise ProposalRefused(
+                "unmappable_action", "graph.travel_to is not registered in the skill catalog"
+            )
         resolved = {**(args or {}), "node_id": node_id}
         return sd, _passthrough_action(sd), resolved
 
@@ -530,6 +826,18 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
                 f"{action!r} is allowlisted for kind {entry.kind!r} but is not "
                 "registered in the skill catalog",
             )
+        limit = _ARG_CARDINALITY_LIMITS.get((entry.kind or "", action))
+        if limit is not None:
+            field, cap = limit
+            value = (args or {}).get(field)
+            if isinstance(value, (dict, list, tuple, set)) and len(value) > cap:
+                raise ProposalRefused(
+                    "invalid_args",
+                    f"{action!r} may carry at most {cap} {field} entries per step "
+                    f"(got {len(value)}) so one request fits the device's control "
+                    f"window; split the work into consecutive {action!r} steps of "
+                    "one plan, or recommend a validated workflow plan",
+                )
         return sd, _passthrough_action(sd), dict(args or {})
 
     raise ProposalRefused(
@@ -538,6 +846,39 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
         "(safety-floor actions and verbs not yet scoped into the allowlist stay "
         "operator-only)",
     )
+
+
+def _travel_targets(status: Any) -> list[str]:
+    """Every node the arm's ``details.motion_graph`` snapshot says is reachable
+    right now — single-hop ``reachable_nodes`` plus multi-hop ``travel_targets``.
+    Empty when the device publishes no snapshot (no graph loaded, non-arm)."""
+
+    motion_graph = (getattr(status, "details", None) or {}).get("motion_graph")
+    if not isinstance(motion_graph, dict):
+        return []
+    nodes: set[str] = set()
+    for key in ("reachable_nodes", "travel_targets"):
+        value = motion_graph.get(key)
+        if isinstance(value, (list, tuple, set)):
+            nodes.update(str(n) for n in value)
+    return sorted(nodes)
+
+
+def _action_startable(entry: EquipmentEntry, status: Any, action: str) -> bool:
+    """Can ``action`` start right now, per the device's live signals?
+
+    ``allowed_actions`` is the normal authority (STATUS_SPEC §6.2). The one
+    exception is the arm's ``travel.<node_id>`` bridge: the device deliberately
+    does not enumerate multi-hop targets as actions, so startability comes from
+    the ``details.motion_graph`` snapshot it publishes for exactly this purpose
+    — the destination must be in ``reachable_nodes`` or ``travel_targets``. The
+    device re-plans and re-checks the route when the call is actually sent."""
+
+    if action in (status.allowed_actions or []):
+        return True
+    if entry.kind == "robot_arm" and action.startswith("travel."):
+        return action[len("travel."):] in _travel_targets(status)
+    return False
 
 
 def _validate_args(sd: SkillDef, resolved_args: dict[str, Any]) -> None:
@@ -635,10 +976,13 @@ async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
     xArm), it is forwarded verbatim under ``motion_graph`` — read-only path
     context (``current_node``, single-hop ``reachable_nodes``, multi-hop
     ``travel_targets``) so the model can reason about routes instead of seeing
-    only the current node's outgoing hops. This widens what the model can
-    *see*, never what it can *propose*: multi-hop travel is not a single
-    action. A route is a plan of ``move.<node_id>`` hops (``propose_plan``),
-    each hop whitelisted live by the device as it is sent."""
+    only the current node's outgoing hops. Since Step 1k (2026-09-01) every
+    node in that snapshot also gets a synthesized ``travel.<node_id>`` action
+    entry: it bridges to the device's own multi-hop planner
+    (``graph.travel_to``), which plans and executes the whole whitelisted hop
+    path in one blocking call — the model never has to guess intermediate
+    hops (it has no edge data to guess with, which is why guessed
+    ``move.<node_id>`` routes died on 409 ``edge_not_allowed``)."""
 
     entry = registry.by_id(equipment_id)
     if entry is None:
@@ -679,6 +1023,29 @@ async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
             info["operator_only_fields"] = stripped
         actions.append(info)
 
+    # Step 1k: the arm's multi-hop travel surface. The device enumerates only
+    # single-hop ``move.<node_id>`` actions, so the multi-hop destinations are
+    # synthesized here from its motion_graph snapshot — one ``travel.<node_id>``
+    # per reachable/travel target, all bridging to ``graph.travel_to``.
+    if entry.kind == "robot_arm":
+        sd = _find_skill_def("robot_arm", "graph.travel_to")
+        listed = {a["action"] for a in actions}
+        if sd is not None:
+            for node in _travel_targets(status):
+                name = f"travel.{node}"
+                if name in listed:
+                    continue
+                actions.append(
+                    {
+                        "action": name,
+                        "proposable": True,
+                        "passthrough_action": _passthrough_action(sd),
+                        "description": sd.description,
+                        "args_schema": sd.args_schema.model_json_schema(),
+                        "synthesized_from": "motion_graph",
+                    }
+                )
+
     payload: dict[str, Any] = {
         "equipment_id": entry.id,
         "equipment_name": entry.name,
@@ -691,6 +1058,21 @@ async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
     motion_graph = (status.details or {}).get("motion_graph")
     if isinstance(motion_graph, dict):
         payload["motion_graph"] = motion_graph
+    # Step 1m: the place vocabulary. For an OT-2, each deck slot with its bare
+    # key and the names other devices use for the same shelf; for the arm,
+    # each registry place it can reach with the node ids that reach it.
+    if entry.kind in ("liquid_handler", "robot_arm"):
+        vocabulary = _location_vocabulary(entry)
+        if vocabulary:
+            payload["locations"] = vocabulary
+            if entry.kind == "liquid_handler":
+                payload["slot_vocabulary"] = (
+                    "Deck-slot arguments (tips.reset/tips.mark slot, move_labware "
+                    "new_location, setup labware[].location, deck.declare slots keys) "
+                    "take the bare key shown under 'slot'. Other spellings of the "
+                    "same place (the registry name, 'slot 2', an xArm node id) are "
+                    "canonicalised to that key; a place on another device is refused."
+                )
     return _dumps(payload)
 
 
@@ -731,15 +1113,36 @@ async def _propose_action(
         return _err("unreachable", f"could not read /status for {equipment_id!r}: {exc}")
 
     action = _canonical_action(entry.kind, action)
-    if action not in (status.allowed_actions or []):
-        return _err(
-            "not_allowed",
-            f"{action!r} is not in {equipment_id!r}'s current allowed_actions",
-            allowed_actions=list(status.allowed_actions or []),
-        )
+    if not _action_startable(entry, status, action):
+        extra: dict[str, Any] = {"allowed_actions": list(status.allowed_actions or [])}
+        message = f"{action!r} is not in {equipment_id!r}'s current allowed_actions"
+        if entry.kind == "robot_arm" and action.startswith("travel."):
+            targets = _travel_targets(status)
+            extra["travel_targets"] = targets
+            message = (
+                f"{action!r} names a node the arm cannot reach right now; "
+                "valid travel destinations are the motion_graph's "
+                "reachable_nodes and travel_targets"
+            )
+        if entry.kind == "robot_arm" and action.startswith(("travel.", "move.")):
+            # "ot2_hte/slot_2" (or an OT-2 key) is not a graph node, but the
+            # registry knows which nodes reach that shelf — say so instead of
+            # leaving the model to guess a node name.
+            token = action.split(".", 1)[1]
+            place = _find_location(_get_locations(), token.lower())
+            if place is not None and place.equipment != entry.id:
+                nodes = place.alias_tokens(entry.id)
+                if nodes:
+                    extra["location_nodes"] = {place.name: nodes}
+                    message += (
+                        f"; {token!r} is the place {place.name!r} ({place.label}), which "
+                        f"this arm reaches via nodes {nodes!r} — propose travel.<node>"
+                    )
+        return _err("not_allowed", message, **extra)
 
     try:
-        sd, passthrough, resolved_args = _resolve(entry, action, args or {})
+        args, resolved_locations = _canonicalize_locations(entry, action, args)
+        sd, passthrough, resolved_args = _resolve(entry, action, args)
         _validate_args(sd, resolved_args)
     except ProposalRefused as exc:
         return _err(exc.code, exc.message)
@@ -747,6 +1150,14 @@ async def _propose_action(
     ok, why = await _check_authz(actor, equipment_id)
     if not ok:
         return _err("not_authorized", why or "not authorized")
+
+    deck_checks: list[dict[str, Any] | None] = []
+    if entry.kind == "liquid_handler":
+        deck_checks.append(_ot2_deck_check(status, action, resolved_args, resolved_locations))
+    elif entry.kind == "robot_arm" and action.startswith(("travel.", "move.")):
+        deck_checks.append(
+            await _arm_target_deck_check(registry, entry, action.split(".", 1)[1])
+        )
 
     proposal = {
         "equipment_id": entry.id,
@@ -764,6 +1175,11 @@ async def _propose_action(
             "message": status.message,
         },
     }
+    if resolved_locations:
+        proposal["resolved_locations"] = resolved_locations
+    merged_checks = _merge_deck_checks(deck_checks)
+    if merged_checks:
+        proposal["deck_checks"] = merged_checks
     return _dumps({"proposal": proposal})
 
 
@@ -867,6 +1283,10 @@ async def _propose_plan(
         return _err("unreachable", f"could not read /status for {equipment_id!r}: {exc}")
 
     resolved_steps: list[dict[str, Any]] = []
+    # Step-tagged place labels for the card. Kept OUTSIDE ``steps`` so the
+    # step hash the operator approves covers exactly what the browser sends.
+    plan_locations: list[dict[str, Any]] = []
+    deck_checks: list[dict[str, Any] | None] = []
     for index, raw in enumerate(steps, start=1):
         if not isinstance(raw, dict) or not isinstance(raw.get("action"), str):
             return _err(
@@ -878,7 +1298,7 @@ async def _propose_plan(
         if not isinstance(args, dict):
             return _err("invalid_step", f"step {index}: args must be an object", step=index)
         action = _canonical_action(entry.kind, raw["action"])
-        if index == 1 and action not in (status.allowed_actions or []):
+        if index == 1 and not _action_startable(entry, status, action):
             return _err(
                 "not_allowed",
                 f"step 1 {action!r} is not in {equipment_id!r}'s current "
@@ -887,10 +1307,18 @@ async def _propose_plan(
                 allowed_actions=list(status.allowed_actions or []),
             )
         try:
+            args, step_locations = _canonicalize_locations(entry, action, args)
             sd, passthrough, resolved_args = _resolve(entry, action, args)
             _validate_args(sd, resolved_args)
         except ProposalRefused as exc:
             return _err(exc.code, f"step {index} ({action}): {exc.message}", step=index)
+        plan_locations.extend({"step": index, **item} for item in step_locations)
+        if entry.kind == "liquid_handler":
+            deck_checks.append(_ot2_deck_check(status, action, resolved_args, step_locations))
+        elif entry.kind == "robot_arm" and action.startswith(("travel.", "move.")):
+            deck_checks.append(
+                await _arm_target_deck_check(registry, entry, action.split(".", 1)[1])
+            )
         resolved_steps.append(
             {"action": action, "passthrough_action": passthrough, "args": resolved_args}
         )
@@ -915,6 +1343,11 @@ async def _propose_plan(
             "message": status.message,
         },
     }
+    if plan_locations:
+        plan["resolved_locations"] = plan_locations
+    merged_checks = _merge_deck_checks(deck_checks)
+    if merged_checks:
+        plan["deck_checks"] = merged_checks
     return _dumps({"plan": plan})
 
 
@@ -941,8 +1374,16 @@ def _build_server(registry: Registry):
         fields (listed under ``operator_only_fields``) — never supply those.
         Graph-constrained arms also return a read-only ``motion_graph``
         snapshot (current_node, single-hop reachable_nodes, multi-hop
-        travel_targets) for planning and explaining routes; propose a route
-        as one plan of ``move.<node_id>`` hops (propose_plan)."""
+        travel_targets) plus one synthesized ``travel.<node_id>`` action per
+        target in it: the device plans and runs the whole multi-hop route
+        itself. To move the arm anywhere, propose ``travel.<node_id>`` for
+        the destination — never guess intermediate ``move.<node_id>`` hops
+        (the graph's edges are not visible to you, so a guessed route will
+        be refused by the device). OT-2s and the arm also return
+        ``locations`` — the deck-slot vocabulary: for an OT-2 each slot's
+        bare key (the only form its arguments take) with the names other
+        devices use for the same shelf; for the arm each shelf it can reach
+        with the node ids that reach it. Read it before naming a slot."""
 
         return await _list_available_actions(registry, equipment_id)
 
@@ -988,15 +1429,16 @@ def _build_server(registry: Registry):
         operator approves and runs as a whole. Use this instead of several
         propose_action calls whenever the user wants more than one step on
         the same device (stage.in -> seal.start -> stage.out; pick_up_tip ->
-        aspirate -> dispense -> drop_tip; a route of move.<node_id> hops).
-        Does NOT actuate hardware: it returns a validated plan that renders
-        as one card; the operator approves the step list as shown and then
-        runs it, and the browser sends the steps in order, stopping at the
-        first one the device refuses. ``steps`` is a list of
+        aspirate -> dispense -> drop_tip; the xArm's travel.<pick> ->
+        gripper.<grip> -> travel.<place>). Does NOT actuate hardware: it
+        returns a validated plan that renders as one card; the operator
+        approves the step list as shown and then runs it, and the browser
+        sends the steps in order, stopping at the first one the device
+        refuses. ``steps`` is a list of
         {"action": <name from list_available_actions>, "args": {...}} in
         execution order. Later steps may depend on earlier ones — only the
         first step must be in the device's current allowed_actions. One
-        device per plan, at most MAX_PLAN_STEPS steps; safety-floor actions
+        device per plan, at most 40 steps; safety-floor actions
         (stop verbs, the xArm's connect/clear_errors) are never proposable.
         Returns an ``error`` + ``code`` object (with the failing ``step``
         number) when refused."""
@@ -1031,9 +1473,11 @@ def run() -> None:
 
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     registry = load_registry()
+    locations = _get_locations()
     logger.info(
-        "lab-control MCP server: %d devices, actor=%s, authz_enforced=%s",
+        "lab-control MCP server: %d devices, %d locations, actor=%s, authz_enforced=%s",
         len(registry.equipment),
+        len(locations.locations),
         _actor(),
         _authz_enforced(),
     )

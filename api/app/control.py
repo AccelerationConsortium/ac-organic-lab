@@ -48,6 +48,21 @@ _CONTROL_TIMEOUT_SECONDS = 15.0
 # skill catalog budgets up to 30 s, so the dashboard needs a wider request
 # window while it keeps the per-action claim alive below.
 _PLATE_READER_CONTROL_TIMEOUT_SECONDS = 90.0
+# The xArm's graph moves block until the motion completes: single hops measure
+# 5-25 s live (audited plan runs hit 13.4 s and 23.2 s against the old 15 s
+# budget), and graph/travel_to blocks for a whole multi-hop journey. The
+# per-action claim heartbeat below keeps the claim alive throughout.
+_ROBOT_ARM_CONTROL_TIMEOUT_SECONDS = 180.0
+# The solid doser (dose_every_well) blocks for the whole action. Loader moves
+# are ~3 s, but startup brings up gantry + doser + balance (six audited 504s
+# at the 15 s default, the device still initialising at 16.6 s),
+# calibrate.flow_rate dispenses for its `duration`, and a dose is ~15 s per
+# well — dose.multiple at the assistant's 6-well cap
+# (assistant_control._ARG_CARDINALITY_LIMITS) nominally needs 90 s. Kept
+# under the Next.js proxy's 130 s cap (web/next.config proxyTimeout) so a
+# slow action fails here — claim released, audit row written — not at the
+# proxy.
+_SOLID_DOSER_CONTROL_TIMEOUT_SECONDS = 120.0
 _CLAIM_HEARTBEAT_FAILURE_BUDGET = 3
 
 
@@ -763,11 +778,11 @@ async def _proxy(
     # the device stamps/audits the real operator. Empty when unauthenticated.
     auth_candidates = _device_auth_candidates(request, entry)
     edge_headers = auth_candidates[0]
-    action_timeout = (
-        _PLATE_READER_CONTROL_TIMEOUT_SECONDS
-        if getattr(entry, "kind", None) == "plate_reader"
-        else _CONTROL_TIMEOUT_SECONDS
-    )
+    action_timeout = {
+        "plate_reader": _PLATE_READER_CONTROL_TIMEOUT_SECONDS,
+        "robot_arm": _ROBOT_ARM_CONTROL_TIMEOUT_SECONDS,
+        "solid_doser": _SOLID_DOSER_CONTROL_TIMEOUT_SECONDS,
+    }.get(getattr(entry, "kind", None) or "", _CONTROL_TIMEOUT_SECONDS)
     # Wall-clock of the whole device interaction (claim → action → release),
     # stamped into the audit payload as `duration_s`. Started here — after
     # auth, before the first device hop — so refusals that never reach the

@@ -9,6 +9,10 @@ all mutating control is under ``/control/*`` (claim-gated), per
 * ``POST /control/plate/set``              - configure plate definition + origin
 * ``POST /control/plate/load``             - load plate onto balance
 * ``POST /control/plate/unload``           - unload plate from balance
+* ``POST /control/lid/open``               - open the loader lid (single axis)
+* ``POST /control/lid/close``              - close the loader lid (single axis)
+* ``POST /control/plate/raise``            - raise the plate lift (single axis)
+* ``POST /control/plate/lower``            - lower the plate lift onto the balance
 * ``POST /control/dose/well``              - dose one well to a target mass
 * ``POST /control/dose/all``               - dose all 96 wells in serpentine order
 * ``POST /control/dose/multiple``          - dose multiple wells
@@ -56,6 +60,22 @@ class PlateLoadArgs(BaseModel):
 
 class PlateUnloadArgs(BaseModel):
     """Body for ``POST /plate/unload`` (no parameters)."""
+
+
+class LidOpenArgs(BaseModel):
+    """Body for ``POST /control/lid/open`` (no parameters)."""
+
+
+class LidCloseArgs(BaseModel):
+    """Body for ``POST /control/lid/close`` (no parameters)."""
+
+
+class PlateRaiseArgs(BaseModel):
+    """Body for ``POST /control/plate/raise`` (no parameters)."""
+
+
+class PlateLowerArgs(BaseModel):
+    """Body for ``POST /control/plate/lower`` (no parameters)."""
 
 
 class DoseWellArgs(BaseModel):
@@ -156,6 +176,55 @@ register(
             requires_states=["ready", "dry_run"],
             estimated_duration_s=8.0,
         ),
+        # Granular single-axis loader moves (dose v1.1). ``plate.load`` /
+        # ``plate.unload`` above are the device's full sequences (open lid +
+        # lower + close / open + raise); these four drive one axis each so an
+        # operator — or the dashboard assistant, one confirm card per move
+        # (UI_DESIGN §5 Step 1l) — can place or remove a plate by hand. The
+        # loader's own collision guard refuses an unsafe move (e.g. raising
+        # the plate while the lid is closed) and is the authority at execution
+        # time. The device advertises them in ``degraded`` too: a disconnected
+        # gantry or doser does not stop the lift. Measured 2.6–2.9 s per move
+        # in the dashboard audit trail (2026-08-15).
+        SkillDef(
+            name="lid.open",
+            kind="solid_doser",
+            description="Open the plate-loader lid.",
+            endpoint="/control/lid/open",
+            args_schema=LidOpenArgs,
+            requires_states=["ready", "degraded", "dry_run"],
+            estimated_duration_s=3.0,
+        ),
+        SkillDef(
+            name="lid.close",
+            kind="solid_doser",
+            description="Close the plate-loader lid.",
+            endpoint="/control/lid/close",
+            args_schema=LidCloseArgs,
+            requires_states=["ready", "degraded", "dry_run"],
+            estimated_duration_s=3.0,
+        ),
+        SkillDef(
+            name="plate.raise",
+            kind="solid_doser",
+            description=(
+                "Raise the plate lift clear of the balance for plate placement or "
+                "removal (the lid must be open; the loader refuses otherwise)."
+            ),
+            endpoint="/control/plate/raise",
+            args_schema=PlateRaiseArgs,
+            requires_states=["ready", "degraded", "dry_run"],
+            estimated_duration_s=3.0,
+        ),
+        SkillDef(
+            name="plate.lower",
+            kind="solid_doser",
+            description="Lower the plate lift so the plate rests on the balance pan.",
+            endpoint="/control/plate/lower",
+            args_schema=PlateLowerArgs,
+            requires_states=["ready", "degraded", "dry_run"],
+            estimated_duration_s=3.0,
+        ),
         SkillDef(
             name="dose.well",
             kind="solid_doser",
@@ -240,7 +309,11 @@ __all__ = [
     "DoseRowArgs",
     "DoseWellArgs",
     "HomeArgs",
+    "LidCloseArgs",
+    "LidOpenArgs",
     "PlateLoadArgs",
+    "PlateLowerArgs",
+    "PlateRaiseArgs",
     "PlateSetArgs",
     "PlateUnloadArgs",
     "ShutdownArgs",

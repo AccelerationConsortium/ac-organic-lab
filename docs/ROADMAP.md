@@ -150,9 +150,9 @@ each):
 | `plate_sealer` | 8 | Includes 412-precondition skills with `requires_components` (heater + stage) |
 | `plate_stacker` | 6 | Agilent BioStack `/control/*` surface |
 | `press` | 6 | `init`, `stop`, `press.{up,down}`, `plate.{in,out}` |
-| `robot_arm` | 5 | `graph.{move_to,gripper,recover_to,record,mode}` — xArm motion-graph control surface (v1.1, claim-gated); added 2026-05-31, `graph.gripper` 2026-08-13 |
+| `robot_arm` | 6 | `graph.{move_to,travel_to,gripper,recover_to,record,mode}` — xArm motion-graph control surface (v1.1, claim-gated); added 2026-05-31, `graph.gripper` 2026-08-13, `graph.travel_to` 2026-09-01 (device-planned multi-hop travel, UI_DESIGN §5 Step 1k) |
 | `shaker` | 6 | `startup`, `shutdown`, `shake.{start,stop,set_temperature,set_speed}` with motor/heater AND-gates so a heater-side `degraded` doesn't block shaking |
-| `solid_doser` | 13 | `dose.{well,multiple,row,column}` etc.; all endpoints moved under `/control/*` for dose v1.1 (2026-05-31) |
+| `solid_doser` | 17 | `dose.{well,multiple,row,column,all}`, `plate.{set,load,unload,raise,lower}`, `lid.{open,close}`, `home`, `tare`, `calibrate.flow_rate`, lifecycle; all endpoints moved under `/control/*` for dose v1.1 (2026-05-31); the four single-axis loader moves cataloged 2026-09-02 (UI_DESIGN §5 Step 1l) |
 
 **Cross-repo changes since the last sweep** (outcomes only; detail in the
 respective repos):

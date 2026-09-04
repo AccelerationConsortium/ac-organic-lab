@@ -131,6 +131,21 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   refusal then *latches* the gateway into `error` — recovery is the operator's
   CLEAR ERROR (`reconcile`) in the device panel, which is deliberately not
   agent-proposable.
+- **OT-2 deck slots are the bare key `"1"`..`"12"` in every argument** —
+  `tips.reset` / `tips.mark` `slot`, `move_labware` `new_location`, `setup`
+  `labware[].location`, the keys of `deck.declare` `slots`. The same shelf has
+  other names elsewhere (`ot2_hte/slot_2` in `locations.yaml`,
+  `opentrons_2_low` / `opentrons_2_high` in the xArm graph); a string in the
+  wrong vocabulary passes the catalog's schema and is refused by the gateway,
+  which latches the robot into `error` (see the previous bullet).
+  `lab_skills.deck_slots` canonicalises any spelling inside `validate_plan` /
+  `execute_plan` and in the assistant's `lab-control` (UI_DESIGN §5 Step 1m),
+  but a direct `EquipmentClient.command()` body carries no skill name and is
+  sent as written — so write the key. **Check the deck first:** before
+  any step that uses a slot or moves labware on or off the deck, read
+  `details.snapshot.labwares` (and `details.tip_racks`) and confirm with the
+  operator that the physical deck matches; the snapshot is the gateway's
+  belief, the person at the bench is the authority.
 
 ## 5. Memory & instruction policy (how agents keep notes)
 
