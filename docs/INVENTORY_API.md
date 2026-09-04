@@ -69,7 +69,8 @@ plus admin.
 | `GET /inventory?q=<name or CAS>&limit=50` | **Search** by name / CAS / synonym. `q` empty = browse first `N`. Each result includes all its bottles (availability, location, amount). |
 | `GET /inventory/<cas>` | **One chemical** by CAS with every bottle (vendor, lot, expiry, location). 404 if absent. |
 | `GET /inventory/check?cas=<cas>&needed=50&unit=mL` | **Sufficiency check**: "is 50 mL of THF on the shelf?" Sums across all bottles in the requested unit and reports `sufficient`. A unit mismatch reports what *is* in stock rather than guessing a conversion. |
-| `GET /inventory/stats` | Totals: chemicals, bottles, enriched records. |
+| `GET /inventory/stats` | Totals: chemicals, bottles, enriched records, plus `pending_enrichment` (never enriched, PubChem never asked) and `pubchem_missing` (asked, no record). |
+| `GET /inventory/enrich/status` | Progress of the current (or last) background enrichment job in this API process: `running`, `total`/`attempted`/`enriched`/`not_found`, `started_by`, `error`. `running: false` with `finished_at: null` = none has run since the service started. |
 | `GET /inventory/groups` | The lab shelves (groups) with bottle counts. |
 | `GET /inventory/match?labels=dmso,tempo` | Resolve protocol stock labels → `{cas, name}` (null = lab doesn't stock it). |
 | `GET /inventory/snapshots?group=<name>` | Import history (what each sheet covered, when, by whom). |
@@ -82,6 +83,7 @@ plus admin.
 |---|---|
 | `POST /inventory/import` | Upload a Vertere-format `.xlsx` LIMS export. Multipart fields: `file` (.xlsx), `group` (**required** — the lab name), `enrich` (bool, default off — enrichment is slow). |
 | `POST /inventory/bottles/{group}/{barcode}/tombstone` | Mark a bottle removed (tombstone, not hard delete — old records keep resolving). Form field `reason` (**required**). |
+| `POST /inventory/enrich?include_attempted=false` | **Enrich missing** (added 2026-09-04): look up formula / MW / SMILES / GHS on PubChem for every chemical that has none yet, in a background job (~1 s per CAS). Returns **202** with the job state at once; poll the status route. **409** while a job is already running. The browser upload imports with enrichment *off*, so this is the follow-up after a new sheet. Chemicals PubChem had no record for are stamped `enrich_attempted_at` and skipped next time; `include_attempted=true` re-asks about them. |
 
 Writes return 403 without a verified admin identity. Attribution comes from the
 `X-Auth-User` header, which only the edge/Caddy injects — never from a request body.
