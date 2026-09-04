@@ -81,6 +81,32 @@ interface ChatTurn {
 }
 
 /** A validated, propose-only action from the lab-control MCP server. */
+/** A slot-carrying argument lab-control canonicalised against
+ *  `locations.yaml` (UI_DESIGN §5 Step 1m): which argument, the device key it
+ *  now carries, and the registry place + human label — so the card can name
+ *  the place in words next to the bare key the device receives. `given` is
+ *  the spelling the model supplied when it differed; `step` is set on plans. */
+interface ResolvedLocation {
+  field: string;
+  value: string;
+  location: string | null;
+  label: string | null;
+  given?: string;
+  step?: number;
+}
+
+/** What an OT-2 gateway believes is on its deck at proposal time, for the
+ *  device a proposal touches (the OT-2 itself, or the OT-2 an xArm move
+ *  reaches into). `touched_slots` are the slots this action names or uses.
+ *  The snapshot is the gateway's belief; the card asks the operator to check
+ *  the physical deck against it before authorizing. */
+interface DeckCheck {
+  equipment_id: string;
+  touched_slots: string[];
+  slots: Record<string, { labware: string | null; id?: string | null; tips_available?: number }>;
+  unreachable?: string;
+}
+
 interface Proposal {
   equipment_id: string;
   equipment_name: string;
@@ -97,6 +123,8 @@ interface Proposal {
     activity: string;
     message: string | null;
   };
+  resolved_locations?: ResolvedLocation[];
+  deck_checks?: DeckCheck[];
 }
 
 /** One step of a plan: the same shape as a Proposal's action triple. */
@@ -124,6 +152,8 @@ interface Plan {
     activity: string;
     message: string | null;
   };
+  resolved_locations?: ResolvedLocation[];
+  deck_checks?: DeckCheck[];
 }
 
 type PlanPhase = "draft" | "approving" | "approved" | "running" | "executed" | "failed";
@@ -1595,6 +1625,63 @@ function isDeckClear(proposal: Proposal): boolean {
   );
 }
 
+/** "slot=2 (OT-2 HTE · slot 2)" — the place a slot argument resolved to, in
+ *  the registry's words. The operator reads the shelf, not only the key. */
+function formatLocations(items: ResolvedLocation[]): string {
+  return items
+    .map((r) => `${r.field}=${r.value} (${r.label ?? r.location ?? "unlabelled place"})`)
+    .join("; ");
+}
+
+/** "4: agilent_96_2ml_deep_square · 11: opentrons_96_tiprack_1000ul (12 tips) · 2*: empty" —
+ *  the deck as the gateway sees it, touched slots starred, empty touched
+ *  slots said out loud. Slots sort numerically. */
+function formatDeck(check: DeckCheck): string {
+  const slots = new Set([...Object.keys(check.slots), ...check.touched_slots]);
+  const order = (a: string, b: string) => {
+    const na = Number(a), nb = Number(b);
+    return Number.isNaN(na) || Number.isNaN(nb) ? a.localeCompare(b) : na - nb;
+  };
+  return [...slots]
+    .sort(order)
+    .map((slot) => {
+      const info = check.slots[slot];
+      const mark = check.touched_slots.includes(slot) ? "*" : "";
+      const what = info?.labware ?? (info?.tips_available !== undefined ? "tip rack" : "empty");
+      const tips = info?.tips_available !== undefined ? ` (${info.tips_available} tips)` : "";
+      return `${slot}${mark}: ${what}${tips}`;
+    })
+    .join(" · ");
+}
+
+/** The deck-check block shared by the proposal and plan cards: one "Deck now"
+ *  row per device plus the request to check the physical deck. An OT-2 that
+ *  could not be read is said so, not hidden — the check is then by eye. */
+function DeckCheckRows({ checks }: { checks: DeckCheck[] }) {
+  if (checks.length === 0) return null;
+  return (
+    <>
+      <dl className="mt-1 space-y-1 text-[13px] text-ink dark:text-slate-100">
+        {checks.map((c) =>
+          c.unreachable ? (
+            <Row
+              key={c.equipment_id}
+              label="Deck now"
+              value={`${c.equipment_id}: could not be read (${c.unreachable})`}
+            />
+          ) : (
+            <Row key={c.equipment_id} label="Deck now" value={`${c.equipment_id} · ${formatDeck(c)}`} />
+          )
+        )}
+      </dl>
+      <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+        Check the physical deck matches this before authorizing. Slots marked * are touched by
+        this action.
+      </p>
+    </>
+  );
+}
+
 function ProposalCard({
   proposal,
   expired,
@@ -1645,11 +1732,15 @@ function ProposalCard({
             </dd>
           </div>
         )}
+        {(proposal.resolved_locations?.length ?? 0) > 0 && (
+          <Row label="Place" value={formatLocations(proposal.resolved_locations ?? [])} />
+        )}
         <Row
           label="Device state"
           value={`${proposal.device_state.equipment_status} · ${proposal.device_state.activity}`}
         />
       </dl>
+      <DeckCheckRows checks={proposal.deck_checks ?? []} />
       {clearsDeck && (
         <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
           Clears the entire deck declaration — every slot is unset.
@@ -1756,6 +1847,7 @@ function PlanCard({
           value={`${plan.device_state.equipment_status} · ${plan.device_state.activity}`}
         />
       </dl>
+      <DeckCheckRows checks={plan.deck_checks ?? []} />
       <ol className="mt-1 flex flex-col gap-1" aria-label="plan steps">
         {plan.steps.map((s, i) => {
           const outcome = run.outcomes[i] ?? "pending";
@@ -1775,6 +1867,14 @@ function PlanCard({
                   {JSON.stringify(s.args, null, 2)}
                 </pre>
               )}
+              {(() => {
+                const places = (plan.resolved_locations ?? []).filter((r) => r.step === i + 1);
+                return places.length > 0 ? (
+                  <span className="ml-1 text-xs text-purple-800 dark:text-purple-300">
+                    [{formatLocations(places)}]
+                  </span>
+                ) : null;
+              })()}
               {run.messages[i] && (
                 <span className="ml-1 text-rose-700 dark:text-rose-400">
                   {run.messages[i]}

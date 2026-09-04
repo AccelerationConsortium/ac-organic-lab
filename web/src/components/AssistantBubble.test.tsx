@@ -235,6 +235,50 @@ describe("AssistantBubble control mode", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
   }
 
+  it("names the resolved place and the current deck on an OT-2 card (Step 1m)", async () => {
+    const ot2 = {
+      type: "proposal",
+      proposal: {
+        equipment_id: "ot2_hte",
+        equipment_name: "Opentrons OT-2 HTE",
+        kind: "liquid_handler",
+        action: "tips.reset",
+        passthrough_action: "tips/reset",
+        args: { slot: "2" },
+        reason: "refill the rack",
+        actor: "alice@example.edu",
+        expires_in_s: 120,
+        device_state: { equipment_status: "ready", activity: "idle", message: "idle" },
+        resolved_locations: [
+          { field: "slot", value: "2", location: "ot2_hte/slot_2", label: "OT-2 HTE · slot 2", given: "ot2_hte/slot_2" },
+        ],
+        deck_checks: [
+          {
+            equipment_id: "ot2_hte",
+            touched_slots: ["2"],
+            slots: {
+              "4": { labware: "agilent_96_2ml_deep_square", id: "slot_4" },
+              "11": { labware: "opentrons_96_tiprack_1000ul", id: "slot_11", tips_available: 12 },
+            },
+          },
+        ],
+      },
+    };
+    installFetch([`data: ${JSON.stringify(ot2)}\n\n`, 'data: {"type":"done"}\n\n']);
+    await sendInControlMode("refill the tips in slot 2");
+
+    await screen.findByText("Authorize action");
+    // The bare key the device receives, and the place in the registry's words.
+    expect(screen.getByText(/slot=2 \(OT-2 HTE · slot 2\)/)).toBeTruthy();
+    // The deck as the gateway sees it, touched slot starred, empty said out loud.
+    expect(
+      screen.getByText(
+        /ot2_hte · 2\*: empty · 4: agilent_96_2ml_deep_square · 11: opentrons_96_tiprack_1000ul \(12 tips\)/
+      )
+    ).toBeTruthy();
+    expect(screen.getByText(/Check the physical deck matches this before authorizing/)).toBeTruthy();
+  });
+
   it("renders a plan card, approves it by hash, then runs the steps in order (Step 1i)", async () => {
     installFetch([
       'data: {"type":"text","delta":"Proposing a route."}\n\n',
