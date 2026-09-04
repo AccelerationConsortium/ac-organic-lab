@@ -703,3 +703,169 @@ async def test_ask_mode_prose_turn_is_never_nudged(monkeypatch) -> None:
     )
     assert [f["type"] for f in frames][-1] == "done"
     assert len(route.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-04: the nudge round forces the terminal call; timeouts explain
+# themselves
+# ---------------------------------------------------------------------------
+
+
+@contextlib.asynccontextmanager
+async def _fake_control_sessions(calls: list, result_text: str):
+    """Like ``_fake_sessions_factory`` but with the control tool surface: one
+    read tool plus the three lab-control terminal tools."""
+
+    async def call(full_name: str, arguments: dict) -> str:
+        calls.append((full_name, arguments))
+        return result_text
+
+    def _def(name: str) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": "",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+
+    yield [
+        _def("mcp__lab-history__get_equipment_status"),
+        _def("mcp__lab-control__propose_action"),
+        _def("mcp__lab-control__propose_plan"),
+        _def("mcp__lab-control__decline_proposal"),
+    ], call
+
+
+def test_terminal_tool_defs_keeps_only_the_three_terminal_tools() -> None:
+    defs = [
+        {"type": "function", "function": {"name": "mcp__lab-history__query_runs"}},
+        {"type": "function", "function": {"name": "mcp__lab-control__list_available_actions"}},
+        {"type": "function", "function": {"name": "mcp__lab-control__propose_action"}},
+        {"type": "function", "function": {"name": "mcp__lab-control__propose_plan"}},
+        {"type": "function", "function": {"name": "mcp__lab-control__decline_proposal"}},
+    ]
+    names = [d["function"]["name"] for d in assistant_openai._terminal_tool_defs(defs)]
+    assert names == [
+        "mcp__lab-control__propose_action",
+        "mcp__lab-control__propose_plan",
+        "mcp__lab-control__decline_proposal",
+    ]
+
+
+@respx.mock
+async def test_control_nudge_round_forces_a_terminal_tool_call(monkeypatch) -> None:
+    """The nudge request offers only the terminal tools with
+    ``tool_choice: "required"``; the rounds before and after it are ordinary
+    (full tool list, no tool_choice)."""
+
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    declined_payload = {
+        "declined": {"reason_code": "informational", "explanation": "nothing to do"}
+    }
+    calls: list = []
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _fake_control_sessions(calls, json.dumps(declined_payload)),
+    )
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions")
+    route.side_effect = [
+        # Round 1: prose only -> nudge.
+        Response(200, content=_prose_round("The arm is at home already."), headers={"content-type": "text/event-stream"}),
+        # Round 2 (forced): the model complies with a decline.
+        Response(200, content=_tool_round("mcp__lab-control__decline_proposal", '{"reason_code":"informational","explanation":"nothing to do"}'), headers={"content-type": "text/event-stream"}),
+        # Round 3: closing prose, terminal already seen -> done.
+        Response(200, content=_prose_round("Nothing to propose."), headers={"content-type": "text/event-stream"}),
+    ]
+
+    frames = _frames(
+        [
+            f
+            async for f in assistant_openai.run_openai_turn(
+                [ChatMessage(role="user", content="is the arm home?")],
+                control=True,
+                actor="op@lab.local",
+            )
+        ]
+    )
+    types = [f["type"] for f in frames]
+    assert types[-1] == "done"
+    assert types.count("declined") == 1
+    assert [c[0] for c in calls] == ["mcp__lab-control__decline_proposal"]
+    assert len(route.calls) == 3
+
+    first, nudge, last = (json.loads(c.request.content) for c in route.calls)
+    assert "tool_choice" not in first
+    assert len(first["tools"]) == 4
+    assert nudge["tool_choice"] == "required"
+    assert sorted(t["function"]["name"].split("__")[-1] for t in nudge["tools"]) == [
+        "decline_proposal",
+        "propose_action",
+        "propose_plan",
+    ]
+    # The forcing is one round only: the follow-up is back to normal.
+    assert "tool_choice" not in last
+    assert len(last["tools"]) == 4
+
+
+@respx.mock
+async def test_control_timeout_emits_declined_frame_before_error(monkeypatch) -> None:
+    """A control turn that hits the wallclock cap with no terminal outcome
+    says so in a ``declined`` frame the bubble renders, not only in a bare
+    ``error`` frame."""
+
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    monkeypatch.setattr(assistant_openai, "DEFAULT_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _fake_control_sessions([], "{}"),
+    )
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions")
+
+    frames = _frames(
+        [
+            f
+            async for f in assistant_openai.run_openai_turn(
+                [ChatMessage(role="user", content="seal the plate")],
+                control=True,
+                actor="op@lab.local",
+            )
+        ]
+    )
+    types = [f["type"] for f in frames]
+    assert len(route.calls) == 0
+    assert types.index("declined") < types.index("error")
+    declined = next(f for f in frames if f["type"] == "declined")["declined"]
+    assert declined["reason_code"] == "other"
+    assert "ran out of time" in declined["explanation"]
+    assert "timeout" in next(f for f in frames if f["type"] == "error")["message"]
+
+
+@respx.mock
+async def test_ask_mode_timeout_is_a_plain_error(monkeypatch) -> None:
+    """Ask mode has no terminal-call contract, so a timeout there stays a
+    single error frame — no decline chip about a button that never applied."""
+
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    monkeypatch.setattr(assistant_openai, "DEFAULT_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _fake_sessions_factory([], "{}"),
+    )
+    respx.post("https://openrouter.ai/api/v1/chat/completions")
+
+    frames = _frames(
+        [
+            f
+            async for f in assistant_openai.run_openai_turn(
+                [ChatMessage(role="user", content="what ran today?")],
+            )
+        ]
+    )
+    types = [f["type"] for f in frames]
+    assert "declined" not in types
+    assert types[-1] == "error"

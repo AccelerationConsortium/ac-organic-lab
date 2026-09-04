@@ -87,6 +87,9 @@ MAX_TOOL_ROUNDS = 12
 # authorize button. The message reaches the model as a user-role turn but is
 # written by this backend, never by the operator, and is not persisted into
 # the bubble's history (the convo is rebuilt from the bubble each request).
+# Since 2026-09-04 the nudge round also FORCES the call at the protocol level
+# (see ``_terminal_tool_defs``): the text below is the explanation the model
+# reads, ``tool_choice="required"`` is what makes it comply.
 CONTROL_TERMINAL_NUDGE = (
     "[automated harness check — the operator did not write this] Your reply "
     "ended without a lab-control terminal call. Control mode requires every "
@@ -103,6 +106,35 @@ CONTROL_TERMINAL_NUDGE = (
 # tools. A control turn that never lands one of these — nor a proposal/plan/
 # refusal/decline payload from any tool — is incomplete (see the nudge above).
 _TERMINAL_TOOL_NAMES = frozenset({"propose_action", "propose_plan", "decline_proposal"})
+
+
+def _terminal_tool_defs(tool_defs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The subset of ``tool_defs`` that are lab-control terminal tools.
+
+    The nudge round offers ONLY these, with ``tool_choice="required"``, so the
+    model cannot end that round in prose a second time (2026-09-04). Asking
+    for the call in a user-role message (the nudge text) turned out to be one
+    more instruction a flash-tier model can ignore; ``tool_choice`` is a
+    protocol-level constraint the provider enforces. Reads it may have wanted
+    to make first are deliberately excluded here — by the nudge it has had a
+    full turn to read, and the honest answer if it still cannot decide is
+    ``decline_proposal``, which is in the set.
+    """
+    return [
+        d
+        for d in tool_defs
+        if (d.get("function") or {}).get("name", "").split("__")[-1] in _TERMINAL_TOOL_NAMES
+    ]
+
+
+def _no_terminal_declined(explanation: str) -> dict[str, Any]:
+    """A harness-authored ``declined`` payload for a control turn that ended
+    with no terminal outcome. The bubble renders it as the muted "No action
+    proposed" chip — the why of a missing button must always be on screen
+    (UI_DESIGN §5 Step 1j)."""
+    return {"declined": {"reason_code": "other", "explanation": explanation}}
+
+
 MCP_CALL_TIMEOUT_S = 30.0
 # How often a silent stretch may re-announce the phase: a throttle, so that
 # thinking tokens (which arrive far too fast to forward one frame each) cost
@@ -435,6 +467,9 @@ async def run_openai_turn(
     # payload? Gates the one-shot CONTROL_TERMINAL_NUDGE below.
     terminal_call_seen = False
     nudged = False
+    # Set by the nudge for exactly the next request: offer only the terminal
+    # tools and force a call. Cleared as soon as that payload is built.
+    force_terminal = False
 
     # Before anything slow happens — MCP servers spawning, the model queueing
     # — so the bubble shows a live pill from the moment the request lands
@@ -454,6 +489,18 @@ async def run_openai_turn(
                 while True:
                     if rounds >= MAX_TOOL_ROUNDS:
                         terminal = "tool_round_cap"
+                        if include_control and not terminal_call_seen:
+                            yield _sse(
+                                {
+                                    "type": "declined",
+                                    **_no_terminal_declined(
+                                        f"The assistant used all {MAX_TOOL_ROUNDS} tool "
+                                        "rounds before proposing or declining, so no "
+                                        "authorize button was produced. Ask again for "
+                                        "one named action on one device."
+                                    ),
+                                }
+                            )
                         yield _sse(
                             {
                                 "type": "error",
@@ -463,6 +510,23 @@ async def run_openai_turn(
                         return
                     if time.monotonic() > deadline:
                         terminal = "timeout"
+                        # The largest source of "understood but no button" in
+                        # the 2026-08-28 → 09-04 journal (7 of 91 control
+                        # turns): a reasoning model orbiting past the wallclock
+                        # cap. A bare error frame reads as the assistant
+                        # ignoring the request; say what happened.
+                        if include_control and not terminal_call_seen:
+                            yield _sse(
+                                {
+                                    "type": "declined",
+                                    **_no_terminal_declined(
+                                        f"The assistant ran out of time ({DEFAULT_TIMEOUT_S:.0f} s) "
+                                        "before proposing or declining, so no authorize "
+                                        "button was produced. Ask again for one named "
+                                        "action on one device."
+                                    ),
+                                }
+                            )
                         yield _sse(
                             {
                                 "type": "error",
@@ -481,6 +545,12 @@ async def run_openai_turn(
                     # when configured. Ask (flash) never sets it.
                     if include_control and OPENAI_CONTROL_REASONING_EFFORT:
                         payload["reasoning_effort"] = OPENAI_CONTROL_REASONING_EFFORT
+                    if force_terminal:
+                        force_terminal = False
+                        terminal_defs = _terminal_tool_defs(tool_defs)
+                        if terminal_defs:
+                            payload["tools"] = terminal_defs
+                            payload["tool_choice"] = "required"
                     rounds += 1
                     round_text = ""
                     tool_calls: list[dict[str, Any]] = []
@@ -558,6 +628,7 @@ async def run_openai_turn(
                                 # streamed to the bubble stays visible; the
                                 # model's next round adds the missing call.
                                 nudged = True
+                                force_terminal = True
                                 convo.append(
                                     {"role": "assistant", "content": round_text or ""}
                                 )
