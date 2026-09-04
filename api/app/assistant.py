@@ -58,6 +58,7 @@ import functools
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import time
@@ -66,7 +67,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .assistant_control import PLAN_TTL_S, REFUSAL_CODES, plan_step_hash
@@ -90,6 +91,8 @@ CONTROL_MODEL = os.environ.get("ASSISTANT_CLAUDE_CONTROL_MODEL", DEFAULT_MODEL)
 # visibly going nowhere. The Next proxy's proxyTimeout (web/next.config.mjs)
 # must stay above this value.
 DEFAULT_TIMEOUT_S = float(os.environ.get("ASSISTANT_CLAUDE_TIMEOUT_S", "300"))
+# Saved camera frames: <camera>_<lens>_<utc stamp>_<hex>.jpg, nothing else.
+_SNAPSHOT_NAME_RE = re.compile(r"^[a-z0-9_]+_[a-z0-9]+_\d{8}T\d{6}Z_[0-9a-f]{6}\.jpg$")
 # Backend per mode: "claude-cli" (this module's subprocess, OAuth-billed) or
 # "openai" (assistant_openai.py — an OpenAI-compatible endpoint such as
 # OpenRouter, API-key-billed). Both drive the same MCP servers and emit the
@@ -110,7 +113,7 @@ HISTORY_TOOLS = os.environ.get(
     "ASSISTANT_HISTORY_TOOLS",
     "list_equipment_now,get_equipment_status,record_observation,"
     "query_equipment_events,query_service_uptime,query_sensor_readings,"
-    "tail_journald",
+    "tail_journald,capture_camera_snapshot",
 )
 # Chemical stock (bitácora's /inventory API, read-only) rides its own server
 # in both modes; see app/inventory_mcp.py for the contract-stability note.
@@ -154,6 +157,16 @@ def _claude_binary() -> str | None:
         if c.is_file() and os.access(c, os.X_OK):
             return str(c)
     return None
+
+
+def _snapshot_dir() -> Path:
+    """Where camera frames captured for the chat live (served by
+    ``GET /api/assistant/snapshots/<name>``); shared with the spawned
+    lab-history server through LAB_SNAPSHOT_DIR."""
+
+    d = _runtime_dir() / "snapshots"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def _runtime_dir() -> Path:
@@ -246,12 +259,18 @@ def _history_server_env(actor: str | None) -> dict[str, str]:
     ``assistant_openai._server_specs``) so the toolsets cannot drift.
     """
 
-    env: dict[str, str] = {"LAB_HISTORY_TOOLS": HISTORY_TOOLS}
+    env: dict[str, str] = {
+        "LAB_HISTORY_TOOLS": HISTORY_TOOLS,
+        "LAB_SNAPSHOT_DIR": str(_snapshot_dir()),
+    }
     if actor:
         env["LAB_ACTOR"] = actor
     dashboard_url = os.environ.get("LAB_DASHBOARD_API_URL")
     if dashboard_url:
         env["LAB_DASHBOARD_API_URL"] = dashboard_url
+    go2rtc_url = os.environ.get("LAB_GO2RTC_URL")
+    if go2rtc_url:
+        env["LAB_GO2RTC_URL"] = go2rtc_url
     return env
 
 
@@ -333,6 +352,13 @@ lab-history:
   window for one device.
 * query_sensor_readings -- environmental sensor history (~1/min).
 * tail_journald -- last N lines of one of the dashboard's systemd units.
+* capture_camera_snapshot -- ONE still from a lab camera's live stream
+  (camera_id: an equipment id of kind "camera"; lens: one of its
+  details.lenses ids, default wide). The picture is shown to the operator in
+  the chat and, when you can see images, attached to this conversation —
+  describe only what is actually visible, and say which camera, lens and time
+  it is from. It reads the stream the dashboard already relays; it does not
+  move the camera. Aiming (PTZ, presets) is a Control-mode proposal.
 * record_observation -- append ONE operational note about a device to the
   shared journal (it comes back to future sessions via
   query_equipment_events(event_type="agent_observation")). Journal only
@@ -869,6 +895,26 @@ def _declined_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _snapshot_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
+    """A camera frame captured by ``capture_camera_snapshot``, if any:
+    ``{"snapshot": {camera_id, lens, taken_at, bytes, image_url, _file}}``.
+    The browser gets the public part as an ``image`` frame
+    (:func:`_public_snapshot`); the openai backend reads ``_file`` to attach
+    the picture to the model's context."""
+
+    for data in _json_payloads_from_tool_result(block):
+        snap = data.get("snapshot")
+        if isinstance(snap, dict) and isinstance(snap.get("image_url"), str):
+            return snap
+    return None
+
+
+def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """The snapshot payload minus server-side keys (``_file``)."""
+
+    return {k: v for k, v in snapshot.items() if not str(k).startswith("_")}
+
+
 def _translate_event(event: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert one ``claude -p --output-format stream-json`` line into zero
     or more frames suitable for the AssistantBubble SSE consumer.
@@ -936,6 +982,10 @@ def _translate_event(event: dict[str, Any]) -> list[dict[str, Any]]:
                     declined = _declined_from_tool_result(block)
                     if declined is not None:
                         out.append({"type": "declined", "declined": declined})
+                    # A captured camera frame renders inline in the turn.
+                    snapshot = _snapshot_from_tool_result(block)
+                    if snapshot is not None:
+                        out.append({"type": "image", "image": _public_snapshot(snapshot)})
 
     elif etype == "result":
         # Final wrap-up. is_error=true means a hard failure that didn't
@@ -1238,6 +1288,24 @@ def build_assistant_router() -> APIRouter:
             "allowed_tools": f"{ALLOWED_TOOL_GLOB} {INVENTORY_TOOL_GLOB}",
             "cwd": _claude_cwd(),
         }
+
+    @router.get("/snapshots/{name}")
+    async def snapshot_file(name: str) -> FileResponse:
+        """A camera frame captured for the chat by ``capture_camera_snapshot``.
+
+        Behind the same sign-in gate as every other ``/api/assistant/*`` path
+        (web/src/middleware.ts). Names are the server's own
+        ``<camera>_<lens>_<utc>_<hex>.jpg``; anything else is refused before
+        the filesystem is consulted, so this cannot be turned into a path
+        walk. Frames are pruned after 24 h, so a 404 on an old chat is normal.
+        """
+
+        if not _SNAPSHOT_NAME_RE.match(name):
+            raise HTTPException(status_code=404, detail="no such snapshot")
+        path = _snapshot_dir() / name
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="no such snapshot (frames expire after 24 h)")
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
     @router.post("/chat")
     async def chat(request: Request, body: ChatRequest) -> StreamingResponse:

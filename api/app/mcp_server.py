@@ -46,6 +46,7 @@ import asyncio
 import json
 import logging
 import os
+import pathlib
 import shutil
 from datetime import datetime, timezone
 from typing import Any
@@ -65,6 +66,25 @@ MAX_SINCE_HOURS = 24 * 7
 MAX_JOURNAL_LINES = 200
 MAX_OBSERVATION_CHARS = 1000
 DASHBOARD_API_URL = os.environ.get("LAB_DASHBOARD_API_URL", "http://127.0.0.1:8001")
+
+# Camera snapshots (2026-09-04). A still is read from go2rtc's live stream —
+# ``GET /api/frame.jpeg?src=<camera>_<lens>`` — never from the gateway's
+# ``/control/snapshot``: this server must not reach any ``/control/*`` path
+# (mcp/servers.yaml), and go2rtc is already relaying that stream to every
+# dashboard viewer, so grabbing one frame of it moves nothing and asks the
+# camera for nothing. Frames are saved under LAB_SNAPSHOT_DIR (the assistant
+# runtime dir's ``snapshots/``) and served back to the browser by
+# ``GET /api/assistant/snapshots/<name>``; the ``_file`` key in the result is
+# for the assistant backend, which attaches the picture to the model's
+# context when the model can see images.
+GO2RTC_URL = os.environ.get("LAB_GO2RTC_URL", "http://127.0.0.1:1984").rstrip("/")
+SNAPSHOT_DIR = os.environ.get("LAB_SNAPSHOT_DIR") or str(
+    pathlib.Path(os.environ.get("ASSISTANT_RUNTIME_DIR", str(pathlib.Path.home() / ".cache" / "lab-assistant")))
+    / "snapshots"
+)
+SNAPSHOT_TTL_S = 24 * 3600
+SNAPSHOT_MIN_BYTES = 1_000
+SNAPSHOT_FETCH_TIMEOUT_S = 12.0
 
 ALLOWED_UNITS = frozenset(
     {
@@ -89,6 +109,7 @@ ALL_TOOLS = frozenset(
         "query_runs",
         "query_well_results",
         "tail_journald",
+        "capture_camera_snapshot",
     }
 )
 
@@ -286,6 +307,144 @@ async def _record_observation(equipment_id: str, observation: str) -> str:
     return json.dumps({"recorded": True, "device_id": equipment_id, "actor": actor})
 
 
+def _prune_snapshots(directory: "pathlib.Path", *, now: float) -> None:
+    """Drop frames older than SNAPSHOT_TTL_S. Best-effort housekeeping on
+    every capture; a failure to delete is never a failure to capture."""
+    try:
+        for f in directory.glob("*.jpg"):
+            try:
+                if now - f.stat().st_mtime > SNAPSHOT_TTL_S:
+                    f.unlink()
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
+async def _capture_camera_snapshot(camera_id: str, lens: str | None = None) -> str:
+    """One JPEG frame from a lab camera's live stream, saved for the chat.
+
+    Read-only by construction: the frame comes from go2rtc, which is already
+    relaying the stream to the dashboard; the camera is not commanded and the
+    gateway's ``/control/*`` surface is never touched. Refuses (instead of
+    silently returning a stale or black frame) when the camera reports privacy
+    mode on or streaming disabled, because the stream is then not the room.
+    """
+    import pathlib as _pathlib
+    import secrets
+    import time
+    from datetime import datetime, timezone
+
+    try:
+        data = await _fetch_equipment()
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"could not reach dashboard API: {exc}"})
+
+    cameras = [e for e in data.get("equipment", []) if e.get("kind") == "camera"]
+    entry = next((e for e in cameras if e.get("id") == camera_id), None)
+    if entry is None:
+        return json.dumps(
+            {
+                "error": f"no camera with id {camera_id!r}",
+                "cameras": [{"id": e.get("id"), "name": e.get("name")} for e in cameras],
+            }
+        )
+    status = entry.get("status") or {}
+    details = status.get("details") or {}
+    lenses = [
+        item.get("id")
+        for item in (details.get("lenses") or [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    ]
+    if lens is None:
+        lens = "wide" if "wide" in lenses else (lenses[0] if lenses else None)
+    if lens is None:
+        return json.dumps({"error": f"camera {camera_id!r} reports no lenses; cannot pick a stream"})
+    if lenses and lens not in lenses:
+        return json.dumps({"error": f"camera {camera_id!r} has no lens {lens!r}", "lenses": lenses})
+    if entry.get("fetch_error") or status.get("equipment_status") == "unknown":
+        return json.dumps(
+            {
+                "error": f"camera {camera_id!r} is unreachable right now; no live frame to capture",
+                "fetch_error": entry.get("fetch_error"),
+            }
+        )
+    if details.get("privacy_mode") is True:
+        return json.dumps(
+            {
+                "error": f"camera {camera_id!r} has privacy mode ON; its stream is off and no frame can be captured",
+                "code": "privacy_mode_on",
+            }
+        )
+    if details.get("streaming_enabled") is False:
+        return json.dumps(
+            {
+                "error": f"camera {camera_id!r} has streaming disabled; no frame can be captured",
+                "code": "streaming_disabled",
+            }
+        )
+
+    src = f"{camera_id}_{lens}"
+    frame: bytes | None = None
+    last_error = "no response"
+    async with httpx.AsyncClient(timeout=SNAPSHOT_FETCH_TIMEOUT_S) as client:
+        # go2rtc needs a keyframe from the producer; the first request after a
+        # quiet spell can come back empty, the second almost never does.
+        for _attempt in range(2):
+            try:
+                r = await client.get(f"{GO2RTC_URL}/api/frame.jpeg", params={"src": src})
+            except httpx.HTTPError as exc:
+                last_error = f"go2rtc unreachable: {exc}"
+                continue
+            ctype = r.headers.get("content-type", "")
+            if r.status_code == 200 and ctype.startswith("image/jpeg") and len(r.content) >= SNAPSHOT_MIN_BYTES:
+                frame = r.content
+                break
+            last_error = f"go2rtc returned HTTP {r.status_code} {ctype or 'no content-type'} ({len(r.content)} bytes)"
+    if frame is None:
+        return json.dumps(
+            {
+                "error": (
+                    f"no live frame available for {camera_id}/{lens}: {last_error}. "
+                    "The stream may be idle; opening the camera tile on the dashboard "
+                    "starts it, then retry."
+                )
+            }
+        )
+
+    directory = _pathlib.Path(SNAPSHOT_DIR)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        taken = datetime.now(timezone.utc)
+        name = f"{camera_id}_{lens}_{taken.strftime('%Y%m%dT%H%M%SZ')}_{secrets.token_hex(3)}.jpg"
+        path = directory / name
+        path.write_bytes(frame)
+    except OSError as exc:
+        return json.dumps({"error": f"captured the frame but could not save it: {exc}"})
+    _prune_snapshots(directory, now=time.time())
+
+    return json.dumps(
+        {
+            "snapshot": {
+                "camera_id": camera_id,
+                "camera_name": entry.get("name"),
+                "lens": lens,
+                "taken_at": taken.isoformat(),
+                "bytes": len(frame),
+                "image_url": f"/api/assistant/snapshots/{name}",
+                "_file": str(path),
+            },
+            "note": (
+                "The picture is shown to the operator in the chat. If you can see "
+                "images it is also attached to this conversation as an image — "
+                "describe only what is actually visible, and say which camera, lens "
+                "and time it is from. This did not move the camera; aiming (PTZ, "
+                "presets) is a Control-mode proposal."
+            ),
+        }
+    )
+
+
 async def _query_equipment_events(
     device_id: str | None, limit: int, event_type: str | None = None
 ) -> str:
@@ -432,6 +591,22 @@ def _build_server():
         in — list_equipment_now only returns one summary row per device."""
 
         return await _get_equipment_status(equipment_id)
+
+    @tool
+    async def capture_camera_snapshot(camera_id: str, lens: str | None = None) -> str:
+        """Capture ONE still image from a lab camera's live stream and show it
+        to the operator in the chat (it is also attached to your context as an
+        image when the model can see images — describe what is actually
+        visible, and name the camera, lens and time). camera_id is an
+        equipment id of kind "camera" from list_equipment_now; lens is one of
+        that camera's details.lenses ids (default: "wide", else the first
+        lens). Read-only: the frame is read from the stream the dashboard is
+        already relaying, the camera is not commanded, and nothing moves — to
+        aim a camera (PTZ, presets) propose it in Control mode instead.
+        Refuses when the camera is unreachable, in privacy mode, or has
+        streaming disabled."""
+
+        return await _capture_camera_snapshot(camera_id, lens)
 
     @tool
     async def record_observation(equipment_id: str, observation: str) -> str:

@@ -1430,6 +1430,38 @@ slot until the operator has resolved it), so the model asks in words and the
 card asks in print even when the model forgets.
 
 
+#### Camera frames in the chat, and progress pills at the bottom (2026-09-04, operator request)
+
+Two things the operator asked for the same afternoon the assistant moved to a
+vision-capable model (`deepseek-v4-flash-vision-exp`).
+
+**"Use the camera and show me."** `lab-history` gained
+`capture_camera_snapshot(camera_id, lens)`, a read tool in both modes. It
+reads one JPEG frame from **go2rtc's live relay** (`GET /api/frame.jpeg?src=
+<camera>_<lens>`) — the stream every dashboard viewer already receives — and
+deliberately not from the gateway's `POST /cameras/<id>/control/snapshot`:
+`mcp/servers.yaml` forbids this server any `/control/*` path, and a frame off
+the relay commands nothing. It refuses when the camera is unreachable, in
+privacy mode, or has streaming disabled, so the same toggle that blanks the
+tile blanks the assistant. The frame is saved under the assistant runtime
+dir (`snapshots/`, pruned after 24 h), served back only behind the sign-in
+gate at `GET /api/assistant/snapshots/<name>` (a strict filename shape, no
+path walk), and surfaced as an **`image` SSE frame** the bubble renders inline
+in the turn with camera · lens · time and a full-size link. On the openai
+backend the frame is also **attached to the model's context** as an
+`image_url` data-URL part in a harness-authored user message right after the
+tool round (`ASSISTANT_OPENAI_IMAGE_INPUT`, default on; set `0` for a
+text-only model, whose request an image part would fail), with the
+instruction to describe only what is actually visible. Aiming the camera
+stays a Control-mode proposal (Step 1f); the prompt says so.
+
+**"Keep the progress visible on a long reply."** The tool/phase pills moved
+from the top of the assistant bubble to its **bottom**, after the text,
+images and chips. The chat auto-scrolls to its end, so on a long answer the
+pills now stay where the eye is instead of scrolling off with the first
+paragraph.
+
+
 ### 5.5 Step 2 — autonomy (not approved)
 
 The target is **not** to give this assistant an actuating tool. It is to

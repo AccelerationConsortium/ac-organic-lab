@@ -49,6 +49,20 @@ interface ToolCall {
   startedAt?: number;
 }
 
+/** A camera frame the assistant captured during this turn
+ *  (`capture_camera_snapshot` → an `image` SSE frame). `url` is the API's
+ *  own copy of the frame (`/api/assistant/snapshots/…`, pruned after 24 h),
+ *  so the picture in the chat is the moment that was captured, not a live
+ *  re-grab on every render. */
+interface ChatImage {
+  url: string;
+  camera_id: string;
+  camera_name?: string;
+  lens?: string;
+  taken_at?: string;
+  bytes?: number;
+}
+
 interface ChatTurn {
   role: Role;
   /** Plain text content. For assistants, accumulates as `text` deltas arrive. */
@@ -74,6 +88,8 @@ interface ChatTurn {
    *  was discarded, and no button could have been produced. Rendered as a
    *  muted chip so a half-written answer is not mistaken for a finished one. */
   stopped?: boolean;
+  /** Camera frames captured during this turn, oldest first. */
+  images?: ChatImage[];
   /** Control mode (Step 1j): a propose_action/propose_plan refusal surfaced
    * by the backend (`proposal_refused` frame). Rendered as an amber chip in
    * the turn, so "why is there no authorize button" is always on screen
@@ -1009,6 +1025,11 @@ function AssistantBubbleInner() {
             updated.tools = updated.tools.map((t, i) =>
               i === realIdx ? { ...t, ok: true } : t
             );
+          }
+        } else if (event.type === "image" && event.image && typeof event.image === "object") {
+          const im = event.image as ChatImage;
+          if (typeof im.url === "string" && im.url.startsWith("/")) {
+            updated.images = [...(updated.images ?? []), im];
           }
         } else if (
           event.type === "proposal_refused" &&
@@ -2137,15 +2158,6 @@ function Turn({
             : "bg-slate-100 text-ink dark:bg-slate-800 dark:text-slate-100"
         }`}
       >
-        <ToolPills
-          tools={turn.tools}
-          phase={live ? turn.phase : null}
-          phaseSince={turn.phaseSince}
-          phaseLabel={live ? turn.phaseLabel : undefined}
-          now={now}
-          live={live}
-          className="mb-1.5"
-        />
         {(turn.text || !livePill) && (
           <span className="whitespace-pre-wrap">
             {turn.text || (
@@ -2153,6 +2165,24 @@ function Turn({
             )}
           </span>
         )}
+        {turn.images?.map((im, i) => (
+          <figure key={`${im.url}-${i}`} className="mt-1.5">
+            <a href={im.url} target="_blank" rel="noreferrer" title="Open full size">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={im.url}
+                alt={`${im.camera_name ?? im.camera_id}${im.lens ? ` (${im.lens})` : ""} snapshot`}
+                loading="lazy"
+                className="max-h-64 w-auto max-w-full rounded border border-slate-300 dark:border-slate-600"
+              />
+            </a>
+            <figcaption className="mt-0.5 text-[11px] text-ink-subtle dark:text-slate-400">
+              {im.camera_name ?? im.camera_id}
+              {im.lens ? ` · ${im.lens}` : ""}
+              {im.taken_at ? ` · ${new Date(im.taken_at).toLocaleTimeString()}` : ""}
+            </figcaption>
+          </figure>
+        ))}
         {turn.refusal && (
           <div className="mt-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[12px] text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
             Proposal refused ({turn.refusal.code}): {turn.refusal.message}
@@ -2168,6 +2198,18 @@ function Turn({
             Stopped by you — nothing further came from this turn.
           </div>
         )}
+        {/* Progress last, at the bottom of the bubble: the chat auto-scrolls
+            to its end, so on a long reply the pills stay in view where the
+            eye is instead of scrolling off with the top of the answer. */}
+        <ToolPills
+          tools={turn.tools}
+          phase={live ? turn.phase : null}
+          phaseSince={turn.phaseSince}
+          phaseLabel={live ? turn.phaseLabel : undefined}
+          now={now}
+          live={live}
+          className={turn.text || turn.images?.length ? "mt-1.5" : ""}
+        />
       </div>
     </div>
   );

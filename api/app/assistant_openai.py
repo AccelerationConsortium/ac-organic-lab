@@ -34,11 +34,13 @@ Backend *selection* (which mode uses this module at all) lives in
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 import httpx
@@ -54,7 +56,9 @@ from .assistant import (
     _mcp_server_command,
     _plan_from_tool_result,
     _proposal_from_tool_result,
+    _public_snapshot,
     _refusal_from_tool_result,
+    _snapshot_from_tool_result,
     _sse,
 )
 
@@ -136,6 +140,21 @@ def _no_terminal_declined(explanation: str) -> dict[str, Any]:
 
 
 MCP_CALL_TIMEOUT_S = 30.0
+
+# Camera frames captured by lab-history's capture_camera_snapshot are attached
+# to the model's context as an image_url part (base64 data URL) in a
+# harness-authored user message right after the tool round, so a
+# vision-capable model can describe what it sees. Set
+# ASSISTANT_OPENAI_IMAGE_INPUT=0 when running a text-only model — an image
+# part would then fail the whole request. The frame is shown to the operator
+# regardless; only the model's copy is gated.
+OPENAI_IMAGE_INPUT = os.environ.get("ASSISTANT_OPENAI_IMAGE_INPUT", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "",
+}
+MAX_IMAGE_BYTES = 2_000_000
 # How often a silent stretch may re-announce the phase: a throttle, so that
 # thinking tokens (which arrive far too fast to forward one frame each) cost
 # at most one status frame per second.
@@ -416,6 +435,47 @@ async def _call_tool(
         return json.dumps({"error": f"invalid tool arguments: {exc}"})
 
 
+def _image_parts(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chat-completions content parts that hand captured frames to the model.
+
+    One text part explains where the pictures come from (harness-authored,
+    never the operator's words), then one ``image_url`` data-URL part per
+    frame that exists and is under MAX_IMAGE_BYTES. A frame that cannot be
+    read is described instead of attached, so the model never assumes it saw
+    something it did not."""
+
+    parts: list[dict[str, Any]] = []
+    lines: list[str] = []
+    for snap in snapshots:
+        label = f"{snap.get('camera_name') or snap.get('camera_id')} ({snap.get('lens')}, {snap.get('taken_at')})"
+        file_path = snap.get("_file")
+        try:
+            raw = Path(str(file_path)).read_bytes() if file_path else b""
+        except OSError:
+            raw = b""
+        if not raw:
+            lines.append(f"- {label}: the frame could not be read back; do not describe it.")
+            continue
+        if len(raw) > MAX_IMAGE_BYTES:
+            lines.append(f"- {label}: {len(raw)} bytes, too large to attach; describe it only from the operator's words.")
+            continue
+        lines.append(f"- {label}: attached below.")
+        parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")},
+            }
+        )
+    if not lines:
+        return []
+    text = (
+        "[automated harness note — the operator did not write this] The camera "
+        "frame(s) captured by your capture_camera_snapshot call:\n" + "\n".join(lines)
+        + "\nDescribe only what is actually visible in them."
+    )
+    return [{"type": "text", "text": text}, *parts]
+
+
 # ---------------------------------------------------------------------------
 # The turn driver (same contract as assistant._run_claude)
 # ---------------------------------------------------------------------------
@@ -689,6 +749,9 @@ async def run_openai_turn(
                             ],
                         }
                     )
+                    # Frames captured this round, attached to the convo after
+                    # the tool results so the next request can look at them.
+                    round_snapshots: list[dict[str, Any]] = []
                     for i, tc in enumerate(tool_calls):
                         pretty = tc["name"].split("__")[-1]
                         # Already shown live via a tool_name frame; only emit a
@@ -756,6 +819,10 @@ async def run_openai_turn(
                         if declined is not None:
                             terminal_call_seen = True
                             yield _sse({"type": "declined", "declined": declined})
+                        snapshot = _snapshot_from_tool_result({"content": result_text})
+                        if snapshot is not None:
+                            yield _sse({"type": "image", "image": _public_snapshot(snapshot)})
+                            round_snapshots.append(snapshot)
                         convo.append(
                             {
                                 "role": "tool",
@@ -763,6 +830,10 @@ async def run_openai_turn(
                                 "content": result_text,
                             }
                         )
+                    if round_snapshots and OPENAI_IMAGE_INPUT:
+                        parts = _image_parts(round_snapshots)
+                        if parts:
+                            convo.append({"role": "user", "content": parts})
     except RuntimeError as exc:
         terminal = "error"
         yield _sse({"type": "error", "message": str(exc)})

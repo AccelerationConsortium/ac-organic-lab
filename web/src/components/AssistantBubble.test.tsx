@@ -287,6 +287,30 @@ describe("AssistantBubble control mode", () => {
     expect(screen.getByText(/Check the physical deck matches this before authorizing/)).toBeTruthy();
   });
 
+  it("shows a captured camera frame in the turn, with the progress pills at the bottom", async () => {
+    installFetch([
+      'data: {"type":"tool_use","name":"capture_camera_snapshot"}\n\n',
+      'data: {"type":"tool_result","name":"capture_camera_snapshot"}\n\n',
+      'data: {"type":"image","image":{"url":"/api/assistant/snapshots/cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd.jpg","camera_id":"cam_hte_tapo_c245","camera_name":"HTE bench camera","lens":"wide","taken_at":"2026-09-04T18:00:00+00:00","bytes":206799}}\n\n',
+      'data: {"type":"text","delta":"The deck is empty and the sash is down."}\n\n',
+      'data: {"type":"done"}\n\n',
+    ]);
+    await openPanel();
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what does the HTE camera see?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const img = (await screen.findByAltText(/HTE bench camera \(wide\) snapshot/)) as HTMLImageElement;
+    expect(img.getAttribute("src")).toBe(
+      "/api/assistant/snapshots/cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd.jpg"
+    );
+    expect(screen.getByText(/HTE bench camera · wide ·/)).toBeTruthy();
+    const text = await screen.findByText(/The deck is empty/);
+    const pill = screen.getByText(/capture camera snapshot/);
+    // The pill row comes AFTER the answer text in the bubble (DOCUMENT_POSITION_FOLLOWING = 4).
+    expect(text.compareDocumentPosition(pill) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("Stop aborts the in-flight turn and marks it stopped", async () => {
     // A stream that never closes: the turn stays in flight until we stop it.
     installFetch(['data: {"type":"status","phase":"thinking","label":"reasoning…"}\n\n'], {

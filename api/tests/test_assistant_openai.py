@@ -869,3 +869,106 @@ async def test_ask_mode_timeout_is_a_plain_error(monkeypatch) -> None:
     types = [f["type"] for f in frames]
     assert "declined" not in types
     assert types[-1] == "error"
+
+
+
+# ---------------------------------------------------------------------------
+# Camera frames (2026-09-04): image frame to the browser, picture to the model
+# ---------------------------------------------------------------------------
+
+
+def _snapshot_result(frame_file) -> str:
+    return json.dumps(
+        {
+            "snapshot": {
+                "camera_id": "cam_hte_tapo_c245",
+                "camera_name": "HTE bench camera",
+                "lens": "wide",
+                "taken_at": "2026-09-04T18:00:00+00:00",
+                "bytes": frame_file.stat().st_size,
+                "image_url": f"/api/assistant/snapshots/{frame_file.name}",
+                "_file": str(frame_file),
+            },
+            "note": "shown to the operator",
+        }
+    )
+
+
+def _snapshot_routes(frame_file):
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions")
+    route.side_effect = [
+        Response(200, content=_tool_round("mcp__lab-history__capture_camera_snapshot", '{"camera_id":"cam_hte_tapo_c245"}'), headers={"content-type": "text/event-stream"}),
+        Response(200, content=_prose_round("The bench is clear."), headers={"content-type": "text/event-stream"}),
+    ]
+    return route
+
+
+@respx.mock
+async def test_snapshot_result_emits_an_image_frame_and_attaches_the_picture(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    monkeypatch.setattr(assistant_openai, "OPENAI_IMAGE_INPUT", True)
+    frame_file = tmp_path / "cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd.jpg"
+    frame_file.write_bytes(b"\xff\xd8\xff\xe0" + b"\x01" * 200)
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _fake_sessions_factory([], _snapshot_result(frame_file)),
+    )
+    route = _snapshot_routes(frame_file)
+
+    frames = _frames(
+        [
+            f
+            async for f in assistant_openai.run_openai_turn(
+                [ChatMessage(role="user", content="what does the HTE camera see?")]
+            )
+        ]
+    )
+    image = next(f for f in frames if f["type"] == "image")["image"]
+    assert image["image_url"].endswith(frame_file.name)
+    assert image["camera_name"] == "HTE bench camera"
+    assert "_file" not in image  # server-side path never reaches the browser
+
+    second = json.loads(route.calls[1].request.content)
+    roles = [m["role"] for m in second["messages"]]
+    assert roles[-3:] == ["assistant", "tool", "user"]
+    parts = second["messages"][-1]["content"]
+    assert parts[0]["type"] == "text" and "capture_camera_snapshot" in parts[0]["text"]
+    assert parts[1]["type"] == "image_url"
+    assert parts[1]["image_url"]["url"].startswith("data:image/jpeg;base64,/9j/")
+    assert [f["type"] for f in frames][-1] == "done"
+
+
+@respx.mock
+async def test_snapshot_picture_is_not_attached_when_image_input_is_off(monkeypatch, tmp_path) -> None:
+    """A text-only model would fail the whole request on an image part, so the
+    gate keeps the frame for the operator only."""
+
+    monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "sk-or-test")
+    monkeypatch.setattr(assistant_openai, "OPENAI_IMAGE_INPUT", False)
+    frame_file = tmp_path / "cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd.jpg"
+    frame_file.write_bytes(b"\xff\xd8\xff\xe0" + b"\x01" * 200)
+    monkeypatch.setattr(
+        assistant_openai,
+        "_mcp_sessions",
+        lambda control, actor: _fake_sessions_factory([], _snapshot_result(frame_file)),
+    )
+    route = _snapshot_routes(frame_file)
+
+    frames = _frames(
+        [f async for f in assistant_openai.run_openai_turn([ChatMessage(role="user", content="look")])]
+    )
+    assert any(f["type"] == "image" for f in frames)
+    second = json.loads(route.calls[1].request.content)
+    assert all(not isinstance(m["content"], list) for m in second["messages"] if m["role"] == "user")
+
+
+def test_image_parts_describe_an_unreadable_or_oversized_frame_instead_of_attaching(monkeypatch, tmp_path) -> None:
+    missing = {"camera_id": "cam", "lens": "wide", "taken_at": "t", "_file": str(tmp_path / "gone.jpg")}
+    big = tmp_path / "big.jpg"
+    big.write_bytes(b"\xff" * 10)
+    monkeypatch.setattr(assistant_openai, "MAX_IMAGE_BYTES", 5)
+    parts = assistant_openai._image_parts([missing, {"camera_id": "cam", "lens": "tele", "taken_at": "t", "_file": str(big)}])
+    assert len(parts) == 1 and parts[0]["type"] == "text"
+    assert "could not be read back" in parts[0]["text"]
+    assert "too large to attach" in parts[0]["text"]

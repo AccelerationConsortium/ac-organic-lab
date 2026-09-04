@@ -291,7 +291,7 @@ Three pieces:
   `assistant turn done:` — elapsed, rounds, tokens, backend, model) so
   latency and account burn are observable per backend.
 - **`api/app/mcp_server.py`** — the `lab-history` MCP server (stdio,
-  `lab-history-mcp` entry point). Exposes **eight read-only tools plus one
+  `lab-history-mcp` entry point). Exposes **nine read-only tools plus one
   append-only journal write** (`record_observation` — an actor-stamped
   `agent_observation` row through `/api/ingest/events`, failing closed
   without a verified operator; the HERMES_ACCESS_DESIGN Phase 4 learning
@@ -301,7 +301,12 @@ Three pieces:
   metrics — where `list_equipment_now` returns only a summary row),
   `query_equipment_events`, `query_service_uptime`, `query_sensor_readings`,
   `query_runs`, `query_well_results` (all over `data/lab.db`), and
-  `tail_journald` (last N lines of a **whitelisted** dashboard systemd unit).
+  `tail_journald` (last N lines of a **whitelisted** dashboard systemd unit). Since 2026-09-04 also `capture_camera_snapshot`: one JPEG frame
+  read from go2rtc's live relay of a lab camera (never the gateway's
+  `/control/snapshot`), saved under the assistant runtime dir, shown inline in
+  the chat as an `image` frame, and — on the openai backend with a
+  vision-capable model (`ASSISTANT_OPENAI_IMAGE_INPUT`, default on) — attached
+  to the model's context so it can describe what it sees.
   Row counts and lookback are capped. The same server can be registered
   directly with a developer's own Claude Code via `claude mcp add` — the
   chat bubble is just one of its two consumers. Since 2026-08-15 the server
