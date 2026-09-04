@@ -33,6 +33,7 @@ from .exceptions import (
 )
 from .typed_clients import client_for
 from .models import EquipmentStatus
+from .locations import LocationsConfig
 from .registry import EquipmentEntry, Registry
 
 
@@ -46,10 +47,17 @@ class LabSession:
         binding: Mapping[str, str] | None = None,
         http_timeout: float = 5.0,
         headers: Mapping[str, str] | None = None,
+        locations: "LocationsConfig | None" = None,
     ) -> None:
         self._registry = registry
         self._binding: dict[str, str] = dict(binding or {})
         self._http_timeout = http_timeout
+        #: The location registry the deck-slot resolver reads when a plan
+        #: names a place (``ot2_hte/slot_2``) where a device wants its own key
+        #: (``"2"``). ``None`` means the process-wide default
+        #: (:func:`lab_skills.deck_slots.default_locations`, lazily loaded
+        #: from ``locations.yaml``).
+        self._locations = locations
         #: Sent on every device request this session makes. Exists because a
         #: device may require a verified identity to be claimed at all: the
         #: OT-2 gateway answers `POST /control/claim` with 401 `login_required`
@@ -70,6 +78,15 @@ class LabSession:
     @property
     def binding(self) -> Mapping[str, str]:
         return dict(self._binding)
+
+    @property
+    def locations(self) -> "LocationsConfig":
+        """The location registry this session resolves place names against."""
+        if self._locations is not None:
+            return self._locations
+        from .deck_slots import default_locations
+
+        return default_locations()
 
     async def __aenter__(self) -> "LabSession":
         self._http = httpx.AsyncClient(

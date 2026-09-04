@@ -119,7 +119,14 @@ class LabwareSpec(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     nickname: str
-    location: str
+    location: str = Field(
+        ...,
+        description=(
+            'deck slot as the bare key, "1".."11" — never a registry name '
+            "(ot2_hte/slot_2) or an xArm node id (opentrons_2_low), which the "
+            "gateway refuses"
+        ),
+    )
     ot_default: bool = True
     loadname: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
