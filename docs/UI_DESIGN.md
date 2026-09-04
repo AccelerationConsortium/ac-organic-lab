@@ -163,7 +163,7 @@ Three tiers of custom-labware support, added 2026-07-16 and **retained**:
    and `brand.links[]` fields, so they survive load-to-edit round trips and
    remain valid input to robot-server.
    Validation ports `opentrons-server`'s `LabwareGenerator` limits (footprint
-   127 × 85.5 mm, height 200 mm, wells inside the footprint). Anyone can build
+   128 × 86 mm, height 200 mm, wells inside the footprint). Anyone can build
    + **download** the JSON; building never touches a robot.
 3. **Central definition store** (`/api/labware`, `api/app/labware.py`) — two
    merged sources:
