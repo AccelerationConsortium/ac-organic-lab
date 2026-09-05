@@ -554,3 +554,23 @@ def test_open_falls_back_to_read_only_when_file_not_writable(tmp_path):
         ro.close()
     finally:
         os.chmod(path, 0o644)  # let pytest clean tmp_path up
+
+
+def test_default_db_path_sits_inside_this_repo(monkeypatch):
+    """The no-env default must resolve to THIS repo's ``data/lab.db``.
+
+    Regression for the ``parents[3]`` off-by-one (fixed 2026-09-05): the
+    default landed one directory *above* the repo, so every default-path
+    consumer — a developer's ``claude mcp add`` of lab-history, pytest in the
+    deploy tree — silently read and wrote a parallel ``../data/lab.db`` while
+    the deployed service was saved only by its pinned ``LAB_DB_PATH``.
+    """
+    from app.db import resolve_db_path
+
+    monkeypatch.delenv("LAB_DB_PATH", raising=False)
+    p = resolve_db_path()
+    assert p.name == "lab.db" and p.parent.name == "data"
+    repo_root = p.parent.parent
+    assert (repo_root / "api" / "app" / "db.py").is_file(), (
+        f"default {p} does not live in the repo that owns app/db.py"
+    )
