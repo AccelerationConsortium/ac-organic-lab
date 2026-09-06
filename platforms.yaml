@@ -55,8 +55,8 @@ sections:
       - ot2_complexation
 
   - id: sample_prep
-    title: Multi-Phase Reaction Platform (Gibbie)
-    description: Solid dosing, liquid handling and reaction setup bench -- UR arm, XPR balance, Opentrons Flex, IKA hotplate. Monitoring only; the bench is driven by sdl2_sampleprep_platform.
+    title: Gibbie Platform
+    description: Multi-phase Reaction Platform based on Opentrons Flex
     href: /platforms/sample_prep
     kind: platform
     # Last on purpose (operator decision 2026-09-06): the Overview card and

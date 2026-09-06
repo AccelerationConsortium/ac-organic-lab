@@ -81,7 +81,7 @@ lab data.
 
 **Sample-prep bench ("Gibbie") — monitoring-only, 2026-09-06.** Six entries
 added: `gibbie_workflow`, `gibbie_flex`, `gibbie_ur_arm`, `gibbie_balance`,
-`gibbie_hotplate` (a new *Multi-Phase Reaction Platform (Gibbie)* section, last on the
+`gibbie_hotplate` (a new *Gibbie Platform* section, last on the
 Overview — renamed from *Sample Prep* the same day) and the monitor itself,
 `gibbie_server` (Services). All are served by
 [`sdl2-gibbie-server`](https://github.com/AccelerationConsortium/sdl2-gibbie-server)
