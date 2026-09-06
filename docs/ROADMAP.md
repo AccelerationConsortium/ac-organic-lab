@@ -559,21 +559,29 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   `eth0` *is* the USB-B cable). The robot's Wi-Fi radio wedges on its own
   (2026-08-30, 2026-09-04: `wlan0` disconnected, empty scan, only a hard
   reboot restores it), so since 2026-09-05 control rides the UPLC PC's
-  `netsh` bridge (`100.64.254.19:31951`). That works but puts a second PC and
-  its `iphlpsvc` bind-order quirk in the control path. Once wired, give the
+  `netsh` bridge (`100.64.254.19:31951`). That works but puts a second PC in
+  the control path (the `iphlpsvc` bind-order quirk itself was removed
+  2026-09-06 by binding both bridge rules to `0.0.0.0`). Once wired, give the
   adapter a DHCP reservation, repoint `ot2-gateway-complexation` at the lab
   address (`tools/ot2-set-robot-url.ps1`), retire the bridge, and update
   DEVICE_BRINGUP.md *Network paths* in the device repo. Same shape as HTE's
   `192.168.254.50`.
-- [ ] **Device repo: self-heal the stale-run 409.** After the robot
-  rebooted mid-outage, the gateway kept POSTing commands at its cached run
-  id, got 409 `Run … is not the current run`, and latched `error`; recovery
-  needed an operator `shutdown` → `startup` cycle. That 409 is a definitive
-  signal the cached run died with the robot — the gateway should drop the
-  reference and recreate instead of latching. Related: `/status`'s
-  `details.robot` block served hours-stale `reachable: true` during the
-  outage (it fooled the run preflight); publish a readback age alongside
-  it, like the Cytation's `readback_age_s`.
+- [x] **Device repo: self-heal the stale-run 409 + stop lying about
+  reachability** (opentrons-server, 2026-09-06). A 409 `not the current run`
+  now drops the session and the existing `requires_init` self-heal rebuilds
+  it; the same check runs when a robot comes back from an outage (a rebooted
+  robot has forgotten the run). Separately, a reachability monitor rides the
+  5 s refresh loop: three failed probes flip `/status` to `unknown` (§2.1),
+  `components.robot` reads `unreachable`, `details.robot` gains
+  `readback_age_s` / `last_seen_at` / `unreachable_since`, robot-touching
+  actions are refused up front (§6.2/§6.3), and `robot_unreachable` /
+  `robot_reachable` events bracket the outage. Both gateways had read `ready`
+  for hours on 2026-09-05 with a robot nobody could reach. **Dashboard side
+  (this repo, same day): `gateway_fronted: true` on both OT-2 registry
+  entries** — `snapshot_reachable` now honours the flag as well as the kind
+  set, so that `unknown` counts as *unreachable* for uptime and fires the
+  PyPoe unreachable/recovered alerts; STATUS_SPEC §2.1 item 2 amended.
+  Needs a deploy of both gateway checkouts to take effect on the wire.
 - [ ] Verify + record the SSH grant on `ot2-complexation`: the
   `lab-agents@sdl2-server-gaia` key (`id_ed25519_lab_pi`) was planted in
   the robot's `authorized_keys` during the 2026-08-14 outage but never
@@ -894,10 +902,12 @@ Pi 3B+ points at the Broadcom driver wedging rather than DHCP or the AP. On
 **`100.64.254.19:31951`** → `169.254.40.81:31950` and
 `ot2-gateway-complexation` repointed at it (`OT2_HOST_ALIAS=169.254.40.81`,
 via `tools/ot2-set-robot-url.ps1`); the robot answered in ~70 ms and the
-session came up. **This is now the standing path.** Its dependency: the
-UPLC PC staying up — after a reboot there, `Restart-Service iphlpsvc` and
-confirm `http://100.64.254.19:31951/health` answers before blaming the
-robot. (`ot2-gateway-hte` remains on the wired Pi Ethernet path exactly as
+session came up. **This is now the standing path.** Its dependency is the
+UPLC PC staying up. The bind-order failure that killed the first bridge is
+gone: since 2026-09-06 both rules (`31951` → Complexation USB, `31952` →
+HTE's wired `192.168.254.50`) listen on `0.0.0.0`, so they come back on
+their own after a reboot. If `31951` stops answering anyway,
+`Restart-Service iphlpsvc` there before blaming the robot. (`ot2-gateway-hte` remains on the wired Pi Ethernet path exactly as
 listed.) Durable fix unchanged: lab-owned wired Ethernet to the robot.
 
 **All of this is config, not code.** Robot addresses live in each gateway

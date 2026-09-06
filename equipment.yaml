@@ -162,6 +162,10 @@ equipment:
   - id: ot2_hte
     name: Opentrons OT-2 (HTE)
     kind: liquid_handler
+    # The gateway process answers /status even when the robot behind it is
+    # gone; it then reports `unknown` (STATUS_SPEC §2.1). This flag makes the
+    # dashboard treat that as unreachable for uptime and PyPoe alerts.
+    gateway_fronted: true
     adapter: http
     protocol: "1.2"
     edge_secret_env: OT2_EDGE_SECRET
@@ -392,6 +396,10 @@ equipment:
   - id: ot2_complexation
     name: Opentrons OT-2 (Complexation)
     kind: liquid_handler
+    # The gateway process answers /status even when the robot behind it is
+    # gone; it then reports `unknown` (STATUS_SPEC §2.1). This flag makes the
+    # dashboard treat that as unreachable for uptime and PyPoe alerts.
+    gateway_fronted: true
     adapter: http
     protocol: "1.2"
     edge_secret_env: OT2_EDGE_SECRET

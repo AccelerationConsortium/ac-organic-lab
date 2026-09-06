@@ -187,6 +187,15 @@ class EquipmentEntry(BaseModel):
     # validated plan steps remain governed by live allowed_actions, claims,
     # and interlocks; this flag is not a blanket control prohibition.
     do_not_call_connect: bool = False
+    #: The service at ``base_url`` is a *gateway*: its own process answers
+    #: ``/status`` (HTTP 200, no ``fetch_error``) while the hardware sits behind
+    #: a secondary link it may not be able to reach. STATUS_SPEC §2.1 keys the
+    #: "``unknown`` means unreachable" rule on ``equipment_kind`` for the shared
+    #: multi-device gateways (camera / plug / strip); this flag extends it to a
+    #: single-device gateway of any kind -- the OT-2 gateways front a robot over
+    #: a wired or USB link and report ``unknown`` when it is gone. Readers fold
+    #: it into reachability (uptime, alerts) exactly like the kind rule.
+    gateway_fronted: bool = False
 
     tiles: dict[str, Tile] = Field(default_factory=dict)
     pills: PillConfig = Field(default_factory=PillConfig)
