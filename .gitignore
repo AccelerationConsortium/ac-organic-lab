@@ -80,3 +80,13 @@ LAAGENTEANALITICA_ASSESSMENT.md
 
 # Stray service-topology diagram (not project source — kept local only)
 ac-organic-lab-service-topology.pptx
+
+# Local-only deploy artifacts
+# SWAP.sh swaps a staged web build into place and restarts the dashboard
+# services; it hardcodes this machine's repo path and uses sudo/systemd, so
+# it stays local.
+SWAP.sh
+# Old Next.js bundles kept around by SWAP.sh until the site looks right.
+web/.next.old-*
+# Claude Code local git worktree state (settings.local.json already ignored).
+.claude/worktrees/
