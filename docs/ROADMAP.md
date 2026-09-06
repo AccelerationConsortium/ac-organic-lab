@@ -145,9 +145,29 @@ HPLC .11, EasyMax .12, MT balance .13 (TCP 8000 only, like Gibbie's), and the
 UR5-CB3 at .16 (dashboard 29999 / 30002 / 30004 open). Nothing on that PC
 serves a STATUS_SPEC envelope yet (no answer on the usual ports over the
 tailnet), and the HPLC and EasyMax expose none of the common web/TCP ports
-from the switch. Onboarding it the Gibbie way means a monitoring gateway on
-that PC (a second `sdl2-gibbie-server`-style instance, or that repo made
-multi-bench) plus a platform section here. Steps taken 2026-09-06 at the
+from the switch. **Onboarded the Gibbie way, 2026-09-06**: `sdl2-gibbie-server`
+was made multi-bench rather than forked (its devices were already
+config-driven), and a second instance runs on that PC as NSSM
+`process-chem-monitor` on :8070, feeding a new *Process Chemistry Platform*
+section — `lle_ur5_arm`, `lle_xpr_balance`, `lle_easymax`, `lle_hplc`,
+`lle_ph_unit`, all `gateway_fronted: true`, with the monitor itself as
+`lle_server` under Services. First live probe: arm `ready`, balance `ready`,
+reactor service `ready`, pH Pi `ready`, ChemStation data service stopped.
+
+Two of those tiles observe the bench PC rather than the instrument, which the
+recon above forced and which the tiles say plainly. The **HPLC** answers on
+none of its ports, so `lle_hplc` reports the Agilent ChemStation data service's
+state; a stopped service reads `requires_init`, never `error`, because the
+instrument may be running perfectly well from its own front end. The
+**EasyMax** answers on nothing of its own either, so `lle_easymax` observes
+Mettler's Reactor Device Server on that PC's loopback (OPC UA :50008), the
+endpoint `automated-lle` connects to. Two new probes carry this: `windows_service`
+(`sc query` only, never a mutating verb) and `tcp_port` (connect and close, no
+bytes sent, so it cannot disturb whatever owns the socket). The UR probe also
+learned to fall back from `safetystatus` to `safetymode` for CB3 controllers;
+this arm answers the newer command anyway. The balance tile opens no SOAP
+session, so it cannot collide with the LLE workflow's own, and
+`mt-xpr-balance-server` replaces it when deployed here. Steps taken 2026-09-06 at the
 operator's request: the PC (`SDL2Win02`) and the pH Pi are on the **PCs &
 Servers** page as `lle-pc` and `lle-pi` (console hosts + `HOST_ALIASES`),
 both key grants are in (LLE PC: lab-ops key; Pi: lab Pi key under user
