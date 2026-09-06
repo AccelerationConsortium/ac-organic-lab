@@ -234,9 +234,7 @@ const PANEL_W = 460;
 const PANEL_H = 520;
 const MIN_PANEL_W = 360;
 const MIN_PANEL_H = 400;
-// How much of the header must stay on screen so the user can always grab it
-// to drag the panel back into view.
-const MIN_VISIBLE = 80;
+const PANEL_MARGIN = 8;
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
@@ -254,11 +252,21 @@ function viewport(): { w: number; h: number } {
 
 function clampSize(w: number, h: number): { w: number; h: number } {
   const view = viewport();
-  const maxW = Math.max(16, view.w - 16);
-  const maxH = Math.max(16, view.h - 16);
+  const maxW = Math.max(1, view.w - PANEL_MARGIN * 2);
+  const maxH = Math.max(1, view.h - PANEL_MARGIN * 2);
   return {
     w: clamp(Math.round(w), Math.min(MIN_PANEL_W, maxW), maxW),
     h: clamp(Math.round(h), Math.min(MIN_PANEL_H, maxH), maxH),
+  };
+}
+
+function clampPanelPos(x: number, y: number, w: number, h: number) {
+  const view = viewport();
+  const marginX = Math.min(PANEL_MARGIN, Math.max(0, (view.w - w) / 2));
+  const marginY = Math.min(PANEL_MARGIN, Math.max(0, (view.h - h) / 2));
+  return {
+    x: clamp(x, marginX, Math.max(marginX, view.w - w - marginX)),
+    y: clamp(y, marginY, Math.max(marginY, view.h - h - marginY)),
   };
 }
 
@@ -567,8 +575,17 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
     }
   >(null);
 
-  const panelSize = size ?? defaultSize();
-  const panelPos = position ?? defaultPosition(panelSize);
+  // Re-render on viewport changes, retaining preferred geometry so enlarging
+  // the window restores it rather than permanently shrinking the panel.
+  const [, setViewportRevision] = useState(0);
+  useEffect(() => {
+    const onResize = () => setViewportRevision((revision) => revision + 1);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const panelSize = clampSize(size?.w ?? PANEL_W, size?.h ?? PANEL_H);
+  const preferredPos = position ?? defaultPosition(panelSize);
+  const panelPos = clampPanelPos(preferredPos.x, preferredPos.y, panelSize.w, panelSize.h);
 
   const controlMode = mode === "control";
   const planMode = mode === "plan";
@@ -765,7 +782,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (typeof parsed?.w === "number" && typeof parsed?.h === "number") {
-          setSize(clampSize(parsed.w, parsed.h));
+          setSize(parsed);
         }
       }
     } catch {
@@ -781,17 +798,6 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
     }
   }, [size]);
 
-  const clampPanelPos = useCallback(
-    (x: number, y: number, w: number) => {
-      const view = viewport();
-      const maxX = Math.max(0, view.w - MIN_VISIBLE);
-      const maxY = Math.max(0, view.h - 40);
-      const minX = -(w - MIN_VISIBLE);
-      return { x: clamp(x, minX, maxX), y: clamp(y, 0, maxY) };
-    },
-    []
-  );
-
   // Pointer drag handlers. Attaches global pointermove/pointerup on
   // pointerdown so the drag keeps tracking even if the pointer leaves the
   // header element.
@@ -802,7 +808,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
       if ((e.target as HTMLElement).closest("button")) return;
       if ((e.target as HTMLElement).closest("[data-resize]")) return;
       e.preventDefault();
-      const base = position ?? defaultPosition(panelSize);
+      const base = panelPos;
       dragStartRef.current = {
         px: e.clientX,
         py: e.clientY,
@@ -816,7 +822,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
         if (!start) return;
         const dx = ev.clientX - start.px;
         const dy = ev.clientY - start.py;
-        setPosition(clampPanelPos(start.bx + dx, start.by + dy, panelSize.w));
+        setPosition(clampPanelPos(start.bx + dx, start.by + dy, panelSize.w, panelSize.h));
       };
       const onUp = () => {
         dragStartRef.current = null;
@@ -827,14 +833,14 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [position, panelSize, clampPanelPos]
+    [panelPos, panelSize]
   );
 
   const onResizeStart = useCallback(
     (corner: "nw" | "se") => (e: React.PointerEvent<HTMLDivElement>) => {
       e.preventDefault();
       e.stopPropagation();
-      const pos = position ?? defaultPosition(panelSize);
+      const pos = panelPos;
       resizeStartRef.current = {
         px: e.clientX,
         py: e.clientY,
@@ -871,7 +877,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
           nextY = start.y + start.h - clamped.h;
         }
         setSize(clamped);
-        setPosition(clampPanelPos(nextX, nextY, clamped.w));
+        setPosition(clampPanelPos(nextX, nextY, clamped.w, clamped.h));
       };
       const onUp = () => {
         resizeStartRef.current = null;
@@ -882,7 +888,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [position, panelSize, clampPanelPos]
+    [panelPos, panelSize]
   );
 
   // Auto-scroll to bottom when content lands.

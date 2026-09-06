@@ -968,6 +968,44 @@ describe("AssistantBubble control mode", () => {
 });
 
 describe("AssistantBubble resize", () => {
+  function expectInsideWindow(panel: HTMLElement) {
+    const x = Number.parseFloat(panel.style.left);
+    const y = Number.parseFloat(panel.style.top);
+    expect(x).toBeGreaterThanOrEqual(8);
+    expect(y).toBeGreaterThanOrEqual(8);
+    expect(x + Number.parseFloat(panel.style.width)).toBeLessThanOrEqual(window.innerWidth - 8);
+    expect(y + Number.parseFloat(panel.style.height)).toBeLessThanOrEqual(window.innerHeight - 8);
+  }
+
+  it("keeps the whole panel visible after shrinking and restores its preferred size on growth", async () => {
+    sessionStorage.setItem("ac-assistant-position-v1", JSON.stringify({ x: 550, y: 140 }));
+    sessionStorage.setItem("ac-assistant-size-v1", JSON.stringify({ w: 700, h: 640 }));
+    installFetch([]);
+    await openPanel();
+    const panel = screen.getByRole("dialog", { name: "SDL Assistant" });
+    window.innerWidth = 320;
+    window.innerHeight = 300;
+    fireEvent(window, new Event("resize"));
+    expectInsideWindow(panel);
+    expect(panel.style.width).toBe("304px");
+    expect(panel.style.height).toBe("284px");
+    window.innerWidth = 1280;
+    window.innerHeight = 800;
+    fireEvent(window, new Event("resize"));
+    expectInsideWindow(panel);
+    expect(panel.style.width).toBe("700px");
+    expect(panel.style.height).toBe("640px");
+    expect(panel.style.left).toBe("550px");
+    expect(panel.style.top).toBe("140px");
+  });
+
+  it("brings a saved off-screen position fully into view on opening", async () => {
+    sessionStorage.setItem("ac-assistant-position-v1", JSON.stringify({ x: -600, y: 1800 }));
+    installFetch([]);
+    await openPanel();
+    expectInsideWindow(screen.getByRole("dialog", { name: "SDL Assistant" }));
+  });
+
   it("exposes corner handles and restores a saved size", async () => {
     sessionStorage.setItem(
       "ac-assistant-size-v1",
