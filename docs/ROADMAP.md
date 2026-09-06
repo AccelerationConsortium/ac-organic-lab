@@ -126,10 +126,13 @@ with `192.168.1.100` / `192.168.1.1` from an older layout, and the UR at
 config was corrected on the PC (arm `host = 192.168.254.89`, name "UR-3e Arm
 (Gibbie)", balance `url = http://192.168.254.83:8002/…`) and `gibbie-server`
 restarted through the new host-ops instance; the arm now reads `ready`
-("Arm powered, brakes released, no program playing"). The balance still reads
-`unknown`: port 8002 — the XPR web service `mt_balance.py` also uses — is
-refused at the instrument (only TCP 8000 answers, and not with HTTP), so the
-web service is off at the balance; enable it there and the tile follows. The
+("Arm powered, brakes released, no program playing"). The balance read
+`unknown` for a few more hours on a second wrong assumption — that the XPR web
+service is on port 8002 because the workflow's `mt_balance.py` says so. It is
+on **port 81** on both lab balances (a GET answers HTTP 400, the SOAP endpoint
+refusing GET; 8002 is refused; TCP 8000 is not HTTP), which is also the default
+in the lab's fork of Telescope's `mt_xpr_balance` client. Repointed the same
+evening; the balance tile follows. The
 PC's second onboard NIC ("Ethernet", `E8-FF-1E-DF-1F-08`) remains unplugged
 and is not needed. The upstream `sdl2-gibbie-server` `config.example.toml`
 still carries the old 192.168.1.x addresses.
@@ -162,8 +165,8 @@ client for the XPR with automated-dosing support, WSDL vendored) that a
 Debian 12 / Python 3.11 running **PiZeroCam** (camera + LED + motor,
 colorimetric pH estimation; `image_server` on the Pi, a client elsewhere) —
 not yet a systemd unit, so nothing is whitelisted there. Both MT balances
-(.83 Gibbie, .13 here) refuse the XPR web-service port 8002 and answer only on
-TCP 8000; the operator has to enable the web service at each balance.
+(.83 Gibbie, .13 here) serve the XPR web service on **port 81** (8002, the
+port the Gibbie workflow's `mt_balance.py` assumes, is refused).
 
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and

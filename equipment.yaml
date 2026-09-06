@@ -861,9 +861,9 @@ equipment:
   # the UR-3e .89, the XPR balance .83 — matching the workflow's own .env
   # (ROBOT_IP / BALANCE_IP). The monitor's config had shipped with
   # 192.168.1.100 / 192.168.1.1 from an older bench layout; fixed on the PC
-  # the same day and the arm reads `ready`. The balance tile stays `unknown`
-  # until the XPR's web service (port 8002, what the workflow uses) is
-  # switched on at the instrument — nothing network-side is missing.
+  # the same day and the arm reads `ready`. The XPR web service is on port
+  # 81 (both lab balances; 8002, which the Gibbie workflow's mt_balance.py
+  # assumes, is refused) — the monitor was repointed there the same day.
   # Neighbours on the same switch that are NOT Gibbie: the Process Chemistry
   # platform's UR5-CB3 (.16) and MT balance (.13), a third UR at .49, and a
   # separate 192.168.1.x segment behind the Cytation PC's USB adapter (a UR at
