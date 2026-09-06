@@ -168,6 +168,23 @@ not yet a systemd unit, so nothing is whitelisted there. Both MT balances
 (.83 Gibbie, .13 here) serve the XPR web service on **port 81** (8002, the
 port the Gibbie workflow's `mt_balance.py` assumes, is refused).
 
+**First modular piece, 2026-09-06:**
+[`AccelerationConsortium/mt-xpr-balance-server`](https://github.com/AccelerationConsortium/mt-xpr-balance-server)
+(private) — a STATUS_SPEC v1.2 control service for one XPR balance, wrapping
+Telescope Innovations' `mt_xpr_balance` SOAP client (MIT; the LLE PC already
+holds an older fork of it at `C:\Users\sdl2\Projects\mt_xpr_balance` with
+lab defaults baked in). Claims hard-enforced; weigh / tare / zero / doors /
+cancel / `dose.start`; `activity` from the in-flight request; one 412
+(`dose.start` without a head) mirrored in `allowed_actions`; a mock driver
+runs the whole 20-test suite without hardware. Registered as `kind: other`
+(no `balance` kind in the spec yet) with `gateway_fronted: true`. **Not yet
+deployed** — first instance planned for the LLE PC as NSSM `mt-xpr-balance`
+on :8081 (`lle_xpr_balance`); Gibbie's balance follows as a second instance
+and retires the Gibbie monitor's reachability-only tile. Deploying opens a
+SOAP session on a shared instrument, so it waits for a moment when the LLE
+workflow is not using the balance. The EasyMax server (`mt-easymax-server`)
+is the next piece and needs the interface decision first.
+
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and
 AnaliticaDB (LaAgenteAnalitica's own record store at `100.64.254.6:8010`) are

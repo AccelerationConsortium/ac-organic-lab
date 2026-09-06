@@ -253,6 +253,7 @@ Planned, not yet deployed (placeholder names/ports — confirm at install time):
 | Repo                      | Service name   | Port | Tailnet host        |
 |---------------------------|----------------|------|---------------------|
 | `bmg_platereader`         | `platereader`  | 8001 | `platereader-pc.<tailnet>` |
+| `mt-xpr-balance-server`   | `mt-xpr-balance` | 8081 | `sdl2-pc-00-lle.<tailnet>` (Process Chemistry XPR at 192.168.254.13; `XPR_PASSWORD` in the service env; a second instance on `sdl2-pc-04` for Gibbie's .83) |
 | `agilent_platestacker`    | `platestacker` | 8002 | `platestacker-pc.<tailnet>` |
 
 > **Windows quirk:** after every `nssm start <svc>`, run `sc continue <svc>` to clear
