@@ -271,6 +271,56 @@ def test_bare_unknown_on_a_directly_polled_device_counts_as_up():
     assert snapshot_reachable(snap, None) is True
 
 
+def test_gateway_reporting_robot_unreachable_is_down():
+    """OT-2 gateways answer HTTP 200 while the robot is off the network.
+
+
+
+    The gateway itself reports the robot's reachability (`details.robot.reachable`),
+    and an explicit False must count as down — no fetch_error exists to key on.
+    Applies to any kind publishing the flag, while an absent/True flag leaves
+    existing semantics untouched (a booting robot stays reachable).
+
+    """
+    from app.events import snapshot_reachable
+
+    snap = _Snap(_status(equipment_kind="liquid_handler", equipment_status="requires_init",
+                         details={"robot": {"reachable": False}}))
+    assert snap.fetch_error is None
+    for kind in ("liquid_handler", "robot_arm"):
+        assert snapshot_reachable(snap, _Entry(kind)) is False, kind
+    assert snapshot_reachable(snap, None) is True  # unregistered stays up
+
+
+def test_robot_reachable_true_or_absent_keeps_semantics():
+    from app.events import snapshot_reachable
+
+    for robot in ({"reachable": True}, {}, None):
+        details = {} if robot is None else {"robot": robot}
+        snap = _Snap(_status(equipment_kind="liquid_handler", equipment_status="requires_init",
+                             details=details))
+        assert snapshot_reachable(snap, _Entry("liquid_handler"))is True
+
+
+def test_flagged_gateway_does_not_mask_explicit_robot_outage():
+    """The registry flag and explicit robot probe are independent down signals."""
+    from app.events import snapshot_reachable
+
+    for state in ("ready", "requires_init", "unknown"):
+        snap = _Snap(_status(
+            equipment_kind="liquid_handler", equipment_status=state,
+            details={"robot": {"reachable": False}},
+        ))
+        assert snapshot_reachable(snap, _Entry("liquid_handler", gateway_fronted=True)) is False, state
+
+    # A positive probe cannot undo the gateway's own unknown/down report.
+    unknown = _Snap(_status(
+        equipment_kind="liquid_handler", equipment_status="unknown",
+        details={"robot": {"reachable": True}},
+    ))
+    assert snapshot_reachable(unknown, _Entry("liquid_handler", gateway_fronted=True)) is False
+
+
 def test_gateway_fronted_kinds_match_the_spec_list():
     """§2.1 keys the rule on equipment_kind, so the set is contract."""
     from app.events import GATEWAY_FRONTED_KINDS

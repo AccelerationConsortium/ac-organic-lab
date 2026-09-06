@@ -207,9 +207,25 @@ def snapshot_reachable(snap, reg_entry) -> bool:
     # thing: a 200 from the service says nothing about the hardware.
     if kind in GATEWAY_FRONTED_KINDS or getattr(reg_entry, "gateway_fronted", False):
         try:
-            return snap.status.equipment_status != "unknown"
+            if snap.status.equipment_status == "unknown":
+                return False
         except AttributeError:
-            return True
+            pass
+        # A non-unknown gateway state cannot override an explicit failed
+        # robot probe below; both sources can establish an outage.
+    # OT-2 gateways can speak plainly about their backing robot: the
+    # gateway process answers HTTP 200 even while the robot is off the
+    # network, and it reports exactly that via `details.robot.reachable`.
+    # Trust an explicit False as unreachable — this is the §2.1 “asked and
+    # couldn't reach it” rule applied to the gateway's own robot probe (an
+    # absent / True flag leaves the existing semantics untouched, so non-OT-2
+    # devices that publish no such flag are unaffected).
+    try:
+        robot = snap.status.details.get("robot") or {}
+        if robot.get("reachable") is False:
+            return False
+    except AttributeError:
+        pass
     return True
 
 

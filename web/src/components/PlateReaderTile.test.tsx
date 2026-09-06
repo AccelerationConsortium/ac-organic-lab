@@ -17,8 +17,8 @@ vi.mock("@/lib/use-control-lock", () => ({
   }),
 }));
 
-const postPlateReaderSetTemperature = vi.fn(async () => ({ ok: true }));
-const postPlateReaderStopTemperature = vi.fn(async () => ({ ok: true }));
+const postPlateReaderSetTemperature = vi.fn<(id: string, celsius: number) => Promise<{ ok: boolean }>>(async () => ({ ok: true }));
+const postPlateReaderStopTemperature = vi.fn<(id: string) => Promise<{ ok: boolean }>>(async () => ({ ok: true }));
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   postPlateReaderSetTemperature: (id: string, celsius: number) =>

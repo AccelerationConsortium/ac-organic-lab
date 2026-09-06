@@ -79,7 +79,10 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
 - **Dashboard server (local):** `uv run uvicorn api.app.main:app`.
 - **Web (`web/`):** `pnpm dev` / `pnpm test` (vitest) / `pnpm typecheck`
   (`tsc --noEmit`) / `pnpm lint`. Regenerate API types with `pnpm gen:api-types`
-  against a running `:8001`.
+  against a running `:8001`. Component tests have **no jest-dom**: assert
+  `(el as HTMLButtonElement).disabled`, not `toBeDisabled()`. The bubble tests
+  mock `@/lib/api` wholesale, so a new browser-side API client that must work
+  under them uses plain `fetch` (see `lib/assistant-sessions.ts`).
 - **Prefer reading source in `.venv/` over searching online** when you need a
   usage example for a dependency.
 - **Fail-fast style.** Don't add defensive code that swallows exceptions and

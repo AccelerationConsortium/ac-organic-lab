@@ -734,6 +734,14 @@ export interface components {
         ChatRequest: {
             /** Messages */
             messages: components["schemas"]["ChatMessage"][];
+            /** Conversation Owner */
+            conversation_owner?: string | null;
+            /**
+             * Mode
+             * @default ask
+             * @enum {string}
+             */
+            mode: "ask" | "control";
         };
         /** ComponentStatus */
         ComponentStatus: {

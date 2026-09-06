@@ -32,9 +32,15 @@ import { STATE_META, effectiveState } from "@/lib/state-meta";
  * A host with an ops entry additionally renders a **host-ops panel** from the
  * agent's live `/status.details`: its service-control backend, the NSSM
  * service whitelist (restartable subset marked ↻), and the loopback ports it
- * probes. Registry hostnames outside the whitelist (the device Pis) are
- * grouped under "Other device hosts" so every service's port and domain the
- * registry knows is on this page.
+ * probes.
+ *
+ * The second block, **"Other device hosts"**, is the Pis that carry one
+ * instrument each, plus any registry hostname no whitelisted machine claims.
+ * The split is presentation, not capability: a device host on the whitelist
+ * carries its console id and gets the same SSH terminal link. Those tiles lead
+ * with the machine's name and put the **address** in the chip
+ * (`100.64.254.100:5000`), because on a single-instrument host the service
+ * name is already the title.
  *
  * The SSH terminal link is admin-only, matching the gate in
  * `web/src/middleware.ts`; a non-admin sees no link at all. Host ids come
@@ -78,6 +84,18 @@ function chipLabel(service: LabHostService): string {
   return suffix ? `${name} ${suffix}` : name;
 }
 
+const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+/** "100.64.254.100:5000" — the address as the registry spells it. An FQDN is
+ *  shortened to its first label so the chip stays readable; an IP literal is
+ *  left whole, since every part of it carries meaning. Used on device-host
+ *  tiles, whose title already carries the service's name. */
+function addressChipLabel(service: LabHostService): string {
+  const raw = service.host;
+  const host = IPV4.test(raw) || raw.includes(":") ? raw : raw.split(".")[0];
+  return `${host}${addressSuffix(service)}`;
+}
+
 function chipTitle(service: LabHostService, snapshot: EquipmentSnapshot | undefined): string {
   const lines = [
     service.role === "ops" ? HOSTOPS_TITLE : `${service.kind} · spec v${service.protocol}`,
@@ -94,9 +112,12 @@ function chipTitle(service: LabHostService, snapshot: EquipmentSnapshot | undefi
 function CapChip({
   service,
   snapshot,
+  address = false,
 }: {
   service: LabHostService;
   snapshot: EquipmentSnapshot | undefined;
+  /** Label the chip with the address rather than the service name. */
+  address?: boolean;
 }) {
   return (
     <span
@@ -104,7 +125,7 @@ function CapChip({
       data-kind={service.role}
       className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${CAP_STYLE[service.role]}`}
     >
-      {chipLabel(service)}
+      {address ? addressChipLabel(service) : chipLabel(service)}
     </span>
   );
 }
@@ -281,21 +302,45 @@ function OtherHostTile({
   group: LabHostGroup;
   snapshotById: Map<string, EquipmentSnapshot>;
 }) {
+  // A whitelisted device host leads with its name and shows the address in the
+  // chip; an unclaimed hostname has no name to lead with, so it keeps the old
+  // shape (hostname as title, service name in the chip).
+  const named = Boolean(group.label);
   return (
     <article className={TILE_CARD}>
       <header className="flex min-w-0 flex-col gap-0.5">
-        <h3 className="truncate font-mono text-sm font-semibold text-ink dark:text-slate-100">
-          {group.hostname}
+        <h3
+          className={`truncate text-sm font-semibold text-ink dark:text-slate-100 ${named ? "" : "font-mono"}`}
+        >
+          {group.label ?? group.hostname}
         </h3>
-        <p className="text-xs text-ink-subtle dark:text-slate-400">
-          <span className="uppercase">device host</span> · from equipment.yaml
+        <p className="truncate text-xs text-ink-subtle dark:text-slate-400">
+          <span className="uppercase">{group.kind ?? "device host"}</span> ·{" "}
+          <span className="font-mono">{named ? group.hostname : "from equipment.yaml"}</span>
         </p>
       </header>
       <div className="flex flex-wrap content-start gap-1">
         {sortedServices(group.services).map((service) => (
-          <CapChip key={service.id} service={service} snapshot={snapshotById.get(service.id)} />
+          <CapChip
+            key={service.id}
+            service={service}
+            snapshot={snapshotById.get(service.id)}
+            address={named}
+          />
         ))}
       </div>
+      {group.id && (
+        <AuthGatedLink
+          href={`/utils/computers/ssh/${group.id}`}
+          external
+          adminOnly
+          hideUnauthorized
+          title={`Open an SSH terminal on ${group.hostname} (admins only, audited)`}
+          className="mt-auto w-fit rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-ink transition-colors hover:border-slate-400 hover:bg-surface-subtle dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+        >
+          SSH terminal ↗
+        </AuthGatedLink>
+      )}
     </article>
   );
 }
@@ -362,8 +407,9 @@ export function HostsPanel({
               Other device hosts
             </h2>
             <p className="text-xs text-ink-subtle dark:text-slate-400">
-              Machines the registry reaches that are not on the SSH console
-              whitelist — mostly the device Pis.
+              The Pis that carry one instrument each, plus any host the registry
+              reaches that is not one of the machines above. Most have a
+              terminal too.
             </p>
           </header>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

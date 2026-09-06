@@ -81,7 +81,8 @@ lab data.
 
 **Sample-prep bench ("Gibbie") — monitoring-only, 2026-09-06.** Six entries
 added: `gibbie_workflow`, `gibbie_flex`, `gibbie_ur_arm`, `gibbie_balance`,
-`gibbie_hotplate` (a new *Sample Prep* section) and the monitor itself,
+`gibbie_hotplate` (a new *Gibbie Platform* section, last on the
+Overview — renamed from *Sample Prep* the same day) and the monitor itself,
 `gibbie_server` (Services). All are served by
 [`sdl2-gibbie-server`](https://github.com/AccelerationConsortium/sdl2-gibbie-server)
 on the Gibbie PC `sdl2-pc-04` (NSSM `gibbie-server`, :8070), a read-only
@@ -96,9 +97,130 @@ position reads exist only through the REPL's hardware controller, which the
 robot-server HTTP run engine does not expose, and only one process may hold
 the Flex's hardware — so robot-server stays stopped during Gibbie sessions
 (since 2026-03-30) and the monitor observes the robot from outside. Day-one
-state: the UR arm and balance read `unknown` because the USB Ethernet adapter
-carrying their 192.168.1.x subnet is unplugged on that PC; the Flex reads
-`unknown` until the SSH probe's key passphrase is set in the service env.
+state: the UR arm and balance read `unknown`; the Flex reads `unknown` until
+the SSH probe's key passphrase is set in the service env.
+
+**Why the arm and balance are unreachable (traced 2026-09-06).** The Gibbie PC
+is on the lab switch at **192.168.254.79** (wired; the same segment as the Flex
+at .81, the HTE OT-2 at .50 and the Cytation PC at .54 — confirmed from the
+Cytation PC, which reaches the monitor at `192.168.254.79:8070`). The arm and
+balance are addressed on a *different* segment, 192.168.1.x, and the Gibbie PC
+has no interface on it — its probes time out rather than refuse. The "USB
+Ethernet adapter" that carries that segment is not unplugged: it is a **Realtek
+USB GbE adapter on the Cytation PC**, up at 1 Gbps with a manual
+`192.168.1.100/24` — the exact address the Gibbie `config.toml` assumes for the
+arm. From there a full sweep of 192.168.1.0/24 finds exactly one other host,
+**192.168.1.237**, with TCP 29999 (UR Dashboard Server) and 30002 (secondary
+client) open — the UR-3e, alive and answering. The balance's configured
+`192.168.1.1:8002` gives no answer and nothing else is on that wire, so the
+XPR is either powered off or not on that network. **Resolved
+the same day, and the first guess was wrong.** Once the lab-ops key was
+granted and the PC could be inspected, a sweep of the lab switch from it found
+three hosts greeting as "Universal Robots Dashboard Server" (192.168.254.16,
+.49, .89) and two Mettler-Toledo devices (.13, .83). The operator identified
+Gibbie's as the **UR-3e at .89** and the **XPR at .83**, and the workflow's own
+`sdl2_solid_dose/.env` agrees (`ROBOT_IP`, `BALANCE_IP`). So the instruments
+*were* on the lab switch all along; the monitor's `config.toml` had shipped
+with `192.168.1.100` / `192.168.1.1` from an older layout, and the UR at
+192.168.1.237 behind the Cytation PC's USB adapter is a *different* arm. The
+config was corrected on the PC (arm `host = 192.168.254.89`, name "UR-3e Arm
+(Gibbie)", balance `url = http://192.168.254.83:8002/…`) and `gibbie-server`
+restarted through the new host-ops instance; the arm now reads `ready`
+("Arm powered, brakes released, no program playing"). The balance read
+`unknown` for a few more hours on a second wrong assumption — that the XPR web
+service is on port 8002 because the workflow's `mt_balance.py` says so. It is
+on **port 81** on both lab balances (a GET answers HTTP 400, the SOAP endpoint
+refusing GET; 8002 is refused; TCP 8000 is not HTTP), which is also the default
+in the lab's fork of Telescope's `mt_xpr_balance` client. Repointed the same
+evening; the balance tile follows. The
+PC's second onboard NIC ("Ethernet", `E8-FF-1E-DF-1F-08`) remains unplugged
+and is not needed. The upstream `sdl2-gibbie-server` `config.example.toml`
+still carries the old 192.168.1.x addresses.
+
+**Process Chemistry platform (not yet on the dashboard, noted 2026-09-06).**
+Same lab switch: its PC `sdl2-pc-00-lle` (192.168.254.5 / 172.31.35.241 /
+tailnet 100.64.254.13, Windows 10), a Pi Zero 2W pH unit
+`sdl2-pi0-lle-pizerocam` (172.31.60.3 / 100.64.254.98, offline at the time),
+HPLC .11, EasyMax .12, MT balance .13 (TCP 8000 only, like Gibbie's), and the
+UR5-CB3 at .16 (dashboard 29999 / 30002 / 30004 open). Nothing on that PC
+serves a STATUS_SPEC envelope yet (no answer on the usual ports over the
+tailnet), and the HPLC and EasyMax expose none of the common web/TCP ports
+from the switch. **Onboarded the Gibbie way, 2026-09-06**: `sdl2-gibbie-server`
+was made multi-bench rather than forked (its devices were already
+config-driven), and a second instance runs on that PC as NSSM
+`process-chem-monitor` on :8070, feeding a new *Process Chemistry Platform*
+section — `lle_ur5_arm`, `lle_xpr_balance`, `lle_easymax`, `lle_hplc`,
+`lle_ph_unit`, all `gateway_fronted: true`, with the monitor itself as
+`lle_server` under Services. First live probe: arm `ready`, balance `ready`,
+reactor service `ready`, pH Pi `ready`, ChemStation data service stopped.
+
+Two of those tiles observe the bench PC rather than the instrument, which the
+recon above forced and which the tiles say plainly. The **HPLC** answers on
+none of its ports, so `lle_hplc` reports the Agilent ChemStation data service's
+state; a stopped service reads `requires_init`, never `error`, because the
+instrument may be running perfectly well from its own front end. The
+**EasyMax** answers on nothing of its own either, so `lle_easymax` observes
+Mettler's Reactor Device Server on that PC's loopback (OPC UA :50008), the
+endpoint `automated-lle` connects to. Two new probes carry this: `windows_service`
+(`sc query` only, never a mutating verb) and `tcp_port` (connect and close, no
+bytes sent, so it cannot disturb whatever owns the socket). The UR probe also
+learned to fall back from `safetystatus` to `safetymode` for CB3 controllers;
+this arm answers the newer command anyway. The balance tile opens no SOAP
+session, so it cannot collide with the LLE workflow's own, and
+`mt-xpr-balance-server` replaces it when deployed here. Steps taken 2026-09-06 at the
+operator's request: the PC (`SDL2Win02`) and the pH Pi are on the **PCs &
+Servers** page as `lle-pc` and `lle-pi` (console hosts + `HOST_ALIASES`),
+both key grants are in (LLE PC: lab-ops key; Pi: lab Pi key under user
+`caoyang`), and **host-ops is installed on both** — an NSSM service on the PC
+(`hostops_lle_pc`, read-only until there is something to whitelist) and the
+daemonless stdio-over-SSH lite mode on the Pi (`hostops_pi0_lle`). What the
+recon found, for the platform design: the PC has the same two-onboard-NIC
+layout as the Gibbie PC ("Ethernet 3" on the lab switch at .5, "Ethernet"
+unplugged), no WSL, runs the **Agilent ChemStation Data Service** and OpenLAB
+license services (so the HPLC is ChemStation-driven, not OpenLab CDS — the
+existing `agilent-hplcms-server` sidecar does not apply as-is), and already
+holds a checkout of **`mt_xpr_balance`** (gitlab.com/telescopeinn — a SOAP
+client for the XPR with automated-dosing support, WSDL vendored), one of the
+two lineages the new server's client is built from (see below). The Pi is
+Debian 12 / Python 3.11 running **PiZeroCam** (camera + LED + motor,
+colorimetric pH estimation; `image_server` on the Pi, a client elsewhere) —
+not yet a systemd unit, so nothing is whitelisted there. Both MT balances
+(.83 Gibbie, .13 here) serve the XPR web service on **port 81** (8002, which
+a stale comment in Gibbie's deployed `config.toml` claims, is refused;
+Gibbie's runtime itself uses 81 via `BALANCE_PORT`).
+
+**First modular piece, 2026-09-06:**
+[`AccelerationConsortium/mt-xpr-balance-server`](https://github.com/AccelerationConsortium/mt-xpr-balance-server)
+(private) — a STATUS_SPEC v1.2 control service for one XPR balance. Claims
+hard-enforced; weigh / tare / zero / doors / cancel / `dose.start`;
+`activity` from the in-flight request; one 412 (`dose.start` without a head)
+mirrored in `allowed_actions`; a mock driver runs the service suite without
+hardware.
+
+The SOAP client is **in-house** (`xpr_client.py`, 2026-09-06), not a
+dependency. The lab has four copies of two MIT lineages — Telescope
+Innovations / Hein Lab's `mt_xpr_balance` (upstream, plus an older fork on
+the LLE PC with lab defaults and a password baked in) and Matter Lab's
+`matterlab_balances` (which Gibbie's `sdl2_solid_dose` vendors verbatim, one
+default changed, and which Gibbie's runtime imports) — and neither is
+serviceable as-is: no request timeout in either, site facts in code and
+discarded error text in Telescope's, and Matter Lab renders its WSDL *into
+the package directory*, which a service-account install cannot write and two
+instances on one PC would collide over. The new client keeps Matter Lab's
+structured errors, full `GetWeight` form, door verification and dosing-job
+handling, and Telescope's temp-file WSDL and session-reopen retry, then adds
+a timeout on every request, `XprLinkError` for unreachable (§2.1, never a
+device fault), and no re-dosing loop. Mettler's WSDL template is vendored
+(byte-identical in both lineages), so the `xpr` extra is suds-py3 + pprp +
+jinja2 rather than a git dependency. 99 tests, including a tier that drives
+real suds over the vendored WSDL with a canned transport. Registered as `kind: other`
+(no `balance` kind in the spec yet) with `gateway_fronted: true`. **Not yet
+deployed** — first instance planned for the LLE PC as NSSM `mt-xpr-balance`
+on :8081 (`lle_xpr_balance`); Gibbie's balance follows as a second instance
+and retires the Gibbie monitor's reachability-only tile. Deploying opens a
+SOAP session on a shared instrument, so it waits for a moment when the LLE
+workflow is not using the balance. The EasyMax server (`mt-easymax-server`)
+is the next piece and needs the interface decision first.
 
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and

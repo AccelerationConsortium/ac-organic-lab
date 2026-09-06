@@ -234,6 +234,26 @@ A missing section key defaults to `{ w: 2, h: 1 }`.
 
 Responsive behaviour: on mobile (< sm) every card is full-width; from sm to lg the grid is 2 columns and `w` is capped at 2; from lg+ the full 4-column grid applies.
 
+### Monitoring-only devices get the generic card
+
+The grid picks a tile by `kind` — a `robot_arm` gets the xArm tile with its
+STOP / CLEAR / INIT buttons and "Open control panel" link, a `liquid_handler`
+gets the OT-2 tile with its panel link and deck layout. Those are that kind's
+*control* surface, and a device that is only **observed** from this dashboard
+has none of it: every button would 404. So a device whose `/status` carries
+`details.monitoring_only: true` is rendered with the generic
+`EquipmentStatusCard` regardless of `kind`, and the card drops its lock chip
+(there is nothing to gate). The rule lives in `web/src/lib/tile-policy.ts`
+(`isMonitoringOnly`) and is applied in `EquipmentGrid.tsx`.
+
+The first such devices are the Gibbie sample-prep bench (2026-09-06): a UR arm
+and an Opentrons Flex observed by the read-only `sdl2-gibbie-server` gateway,
+which sets the flag on every envelope it serves. A read-only device that wants
+the generic card should do the same — the flag is a `details` convention for
+presentation, not part of the STATUS_SPEC contract, and the generic card still
+shows everything such a device does publish (state, message, components,
+metrics).
+
 ### "Open ↗" link on the Overview pill row
 
 Set `pills: { open: true }` on any equipment entry to render an "Open ↗" link to its `base_url` in the Overview platform card. Intended for web-service entries (e.g. `pypoe_web`). All other equipment should have `pills: {}`.

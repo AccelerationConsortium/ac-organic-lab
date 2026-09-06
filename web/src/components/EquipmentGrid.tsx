@@ -1,4 +1,5 @@
 import type { EquipmentSnapshot } from "@/types/api";
+import { isMonitoringOnly } from "@/lib/tile-policy";
 import { CameraTile } from "./CameraTile";
 import { EquipmentStatusCard } from "./EquipmentStatusCard";
 import { FumeHoodTile } from "./FumeHoodTile";
@@ -31,6 +32,15 @@ import { SolidDoserTile } from "./SolidDoserTile";
  * (live video, PTZ pad, presets, privacy/streaming toggles); everything
  * else uses the generic `EquipmentStatusCard`. Adding a new specialised
  * tile type in the future is a matter of growing this dispatch.
+ *
+ * One exception precedes the kind dispatch: a device whose envelope says
+ * `details.monitoring_only: true` always gets the generic card. The
+ * kind-specific tiles carry that kind's *control* surface — the xArm tile's
+ * STOP / CLEAR / INIT and "Open control panel", the OT-2 tile's panel link
+ * and deck layout — and a read-only observer of a UR arm or a Flex (the
+ * Gibbie bench, `sdl2-gibbie-server`) has none of it: every one of those
+ * affordances would 404. The generic card shows what such a device does
+ * publish — state, message, components, metrics — and nothing it cannot do.
  */
 const ROW_HEIGHT_PX = 232;
 
@@ -66,7 +76,9 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
             // span:4 on a 2-col grid just becomes full-width.
             style={{ gridColumn: `span ${w}`, gridRow: `span ${h}` }}
           >
-            {snapshot.kind === "camera" ? (
+            {isMonitoringOnly(snapshot) ? (
+              <EquipmentStatusCard snapshot={snapshot} />
+            ) : snapshot.kind === "camera" ? (
               <CameraTile snapshot={snapshot} />
             ) : snapshot.kind === "power_strip" || snapshot.kind === "smart_plug" ? (
               <PowerStripTile snapshot={snapshot} />

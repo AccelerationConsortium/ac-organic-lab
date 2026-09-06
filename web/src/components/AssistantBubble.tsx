@@ -12,6 +12,21 @@ import {
 import { speakableFromMarkdown } from "@/lib/speech";
 import { useVoiceInput } from "@/lib/use-voice-input";
 import { useUserAuth } from "@/lib/user-auth";
+import { downloadConversation, type ControlHistoryEvent } from "@/lib/assistant-transcript";
+import {
+  SessionsApiError,
+  createSession,
+  deleteSession,
+  getSession,
+  listSessions,
+  renameSession,
+  sessionExportUrl,
+  sessionTurnsUrl,
+  type SavedMessage,
+  type SavedSession,
+  type SeedMessage,
+} from "@/lib/assistant-sessions";
+import { AssistantSessionRail, CarryOverDialog } from "./AssistantSessionRail";
 
 /**
  * Floating bottom-right chat bubble that talks to the dashboard's
@@ -24,15 +39,21 @@ import { useUserAuth } from "@/lib/user-auth";
  *   data: {"type":"done"}
  *   data: {"type":"error","message":"..."}
  *
- * Two modes (UI_DESIGN §5):
+ * Three modes (UI_DESIGN §5, §5.10; ASSISTANT_PERSISTENCE.md):
  *  - Ask (default): read-only. The backend tools only query the history DB and
- *    tail whitelisted systemd units, never actuate hardware.
+ *    tail whitelisted systemd units, never actuate hardware. Temporary.
  *  - Control: adds the propose-only `lab-control` server. The model can PROPOSE
  *    one equipment action; a `proposal` frame renders a confirm card the
  *    operator must click *Authorize* on. Nothing actuates until that click,
  *    which runs the existing control passthrough as the human. The model never
  *    holds an actuating tool — the safety property is the toolset, not the
- *    prompt.
+ *    prompt. Temporary.
+ *  - Plan: Ask's toolset, but the conversation is a named, owner-private
+ *    session saved on the dashboard (`/api/assistant/sessions/*`). Turns post
+ *    to the session; the server rebuilds the model's context from what it
+ *    stored, so this tab never sends history. Saved messages restore inertly —
+ *    no card from a saved session is ever approvable — and saving files
+ *    nothing: protocols are registered in bitácora, not here.
  */
 
 type Role = "user" | "assistant";
@@ -64,6 +85,10 @@ interface ChatImage {
 }
 
 interface ChatTurn {
+  id?: string;
+  completion?: "streaming" | "completed" | "interrupted" | "failed";
+  error?: string;
+  control_events?: ControlHistoryEvent[];
   role: Role;
   /** Plain text content. For assistants, accumulates as `text` deltas arrive. */
   text: string;
@@ -129,6 +154,8 @@ interface DeckCheck {
 }
 
 interface Proposal {
+  /** Local transcript association; never sent as authorization. */
+  turn_id?: string;
   equipment_id: string;
   equipment_name: string;
   kind: string;
@@ -159,6 +186,7 @@ interface PlanStep {
  *  `propose_plan` (UI_DESIGN §5 Step 1i). Approved as a whole — by the hash
  *  of exactly these steps — then run by this browser one step at a time. */
 interface Plan {
+  turn_id?: string;
   plan_id: string;
   equipment_id: string;
   equipment_name: string;
@@ -190,9 +218,12 @@ interface PlanRun {
   expired: boolean;
 }
 
-type Mode = "ask" | "control";
+type Mode = "ask" | "control" | "plan";
 
-const STORAGE_KEY = "ac-assistant-history-v1";
+const STORAGE_KEY = "ac-assistant-history-v2";
+// Which saved Plan session this owner had open, so re-entering Plan (the mode
+// itself is never persisted) lands back on it. Owner-scoped like STORAGE_KEY.
+const PLAN_SESSION_KEY = "ac-assistant-plan-session-v1";
 const POSITION_KEY = "ac-assistant-position-v1";
 const SIZE_KEY = "ac-assistant-size-v1";
 // Read-aloud is a per-person preference, not per-conversation, so unlike the
@@ -252,14 +283,130 @@ function defaultPosition(size: { w: number; h: number } = defaultSize()): {
   };
 }
 
-export function AssistantBubble() {
-  return <AssistantBubbleInner />;
+/** A stored Plan message as a display-only turn. Tool pills, image links and
+ *  imported control history come back; approval state never does — there is
+ *  none in the store, and nothing here rebuilds a card (D-2, D-9). */
+function turnFromSaved(m: SavedMessage): ChatTurn {
+  const events = Array.isArray(m.events) ? m.events : [];
+  const tools: ToolCall[] = events
+    .filter((e) => e.type === "tool")
+    .map((e) => ({ name: String(e.name ?? "tool"), ok: Boolean(e.ok) }));
+  const images: ChatImage[] = events
+    .filter((e) => e.type === "image" && typeof e.url === "string")
+    .map((e) => ({
+      url: String(e.url),
+      camera_id: String(e.camera_id ?? ""),
+      camera_name: typeof e.camera_name === "string" ? e.camera_name : undefined,
+      lens: typeof e.lens === "string" ? e.lens : undefined,
+      taken_at: typeof e.taken_at === "string" ? e.taken_at : undefined,
+    }));
+  const controlEvents: ControlHistoryEvent[] = events
+    .filter((e) => e.type === "control" && typeof e.event === "string")
+    .map((e) => ({
+      event: String(e.event),
+      occurred_at: typeof e.occurred_at === "string" ? e.occurred_at : m.created_at,
+      detail: (e.detail && typeof e.detail === "object" ? e.detail : {}) as Record<string, unknown>,
+    }));
+  const refusal = events.find((e) => e.type === "refusal");
+  const declined = events.find((e) => e.type === "declined");
+  const mode: Mode = m.mode === "plan" ? "plan" : m.mode === "control" ? "control" : "ask";
+  return {
+    id: m.id,
+    role: m.role,
+    text: m.text,
+    tools,
+    images: images.length ? images : undefined,
+    control_events: controlEvents.length ? controlEvents : undefined,
+    mode,
+    completion: m.state === "running" ? "interrupted" : m.state,
+    error: m.error ?? undefined,
+    refusal: refusal ? { code: String(refusal.code ?? ""), message: String(refusal.message ?? "") } : undefined,
+    declined: declined
+      ? { reason_code: String(declined.reason_code ?? "other"), explanation: String(declined.explanation ?? "") }
+      : undefined,
+    phase: null,
+  };
 }
 
-function AssistantBubbleInner() {
+/** The temporary conversation as the seed the owner previewed: text plus the
+ *  same display-only projections `turnFromSaved` reads back. Bounded like the
+ *  server's cap. */
+function seedFromTurns(turns: readonly ChatTurn[]): SeedMessage[] {
+  return turns
+    .filter((t) => t.role === "user" || t.text || t.tools.length > 0)
+    .slice(-40)
+    .map((t) => ({
+      role: t.role,
+      text: t.text,
+      mode: t.mode ?? "ask",
+      completion:
+        t.stopped || t.completion === "streaming" ? "interrupted" : (t.completion ?? "completed"),
+      error: t.error,
+      events: [
+        ...t.tools.map((x) => ({ type: "tool", name: x.name, ok: x.ok })),
+        ...(t.images ?? []).map((im) => ({
+          type: "image",
+          url: im.url,
+          camera_id: im.camera_id,
+          camera_name: im.camera_name,
+          lens: im.lens,
+          taken_at: im.taken_at,
+        })),
+        ...(t.control_events ?? []).map((ev) => ({
+          type: "control",
+          event: ev.event,
+          occurred_at: ev.occurred_at,
+          detail: ev.detail,
+        })),
+        ...(t.refusal ? [{ type: "refusal", ...t.refusal }] : []),
+        ...(t.declined ? [{ type: "declined", ...t.declined }] : []),
+      ],
+    }));
+}
+
+function rememberPlanSession(owner: string | null, id: string | null) {
+  try {
+    if (!owner || !id) sessionStorage.removeItem(PLAN_SESSION_KEY);
+    else sessionStorage.setItem(PLAN_SESSION_KEY, JSON.stringify({ owner, id }));
+  } catch {
+    /* storage disabled */
+  }
+}
+
+function recallPlanSession(owner: string | null): string | null {
+  if (!owner) return null;
+  try {
+    const raw = sessionStorage.getItem(PLAN_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.owner === owner && typeof parsed?.id === "string" ? parsed.id : null;
+  } catch {
+    return null;
+  }
+}
+
+export function AssistantBubble() {
+  const { loading, authenticated, identity } = useUserAuth();
+  if (loading) return null;
+  const owner = authenticated ? identity?.email ?? null : null;
+  // Remount clears messages, pending approvals, and speech when identity changes.
+  return <AssistantBubbleInner key={owner ?? "anonymous"} owner={owner} />;
+}
+
+function AssistantBubbleInner({ owner }: { owner: string | null }) {
   const { authenticated, identity } = useUserAuth();
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [cacheReady, setCacheReady] = useState(false);
+  const activeTurnIdRef = useRef<string>();
+  const disposedRef = useRef(false);
+  const recordControl = useCallback((turnId: string | undefined, event: string, detail: Record<string, unknown>) => {
+    if (!turnId) return;
+    const entry = { event, detail, occurred_at: new Date().toISOString() };
+    setTurns((prev) => prev.map((turn) => turn.id === turnId
+      ? { ...turn, control_events: [...(turn.control_events ?? []), entry] }
+      : turn));
+  }, []);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   // Drives the elapsed counter on in-flight pills. One interval for the
@@ -280,10 +427,21 @@ function AssistantBubbleInner() {
   // The text of the last user message sent, so a Retry can re-submit it
   // without the user retyping.
   const lastInputRef = useRef("");
-  // Ask (read-only) vs Control (propose-only). Deliberately NOT persisted:
-  // resets to Ask on reload / panel close (UI_DESIGN §5.2). The server decides
-  // the real toolset from the verified identity regardless of this value.
+  // Ask (read-only) vs Control (propose-only) vs Plan (saved sessions).
+  // Deliberately NOT persisted: resets to Ask on reload / panel close
+  // (UI_DESIGN §5.2). The server decides the real toolset from the verified
+  // identity regardless of this value; Plan has its own route entirely.
   const [mode, setMode] = useState<Mode>("ask");
+  // Plan mode (UI_DESIGN §5.10). `planSession` is the open saved session;
+  // `planSessions` the owner's list (null while loading); `carryOver` the
+  // preview shown before a temporary conversation is saved into one.
+  const [planSession, setPlanSession] = useState<SavedSession | null>(null);
+  const [planSessions, setPlanSessions] = useState<SavedSession[] | null>(null);
+  const [planReadOnly, setPlanReadOnly] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planBusy, setPlanBusy] = useState(false);
+  const [savedSessionsAvailable, setSavedSessionsAvailable] = useState(false);
+  const [carryOver, setCarryOver] = useState<ChatTurn[] | null>(null);
   // null = not yet resolved. True when the signed-in user holds a role on at
   // least one equipment (operator+), from /api/auth/mine + identity role.
   const [controlEligible, setControlEligible] = useState<boolean | null>(null);
@@ -413,6 +571,9 @@ function AssistantBubbleInner() {
   const panelPos = position ?? defaultPosition(panelSize);
 
   const controlMode = mode === "control";
+  const planMode = mode === "plan";
+  // Plan needs a signed-in owner and the server's saved-session store.
+  const planAvailable = authenticated && savedSessionsAvailable;
 
   // One-shot health check on mount. Fail closed -- if the endpoint is
   // missing or we can't parse a JSON body, just hide the bubble.
@@ -429,6 +590,7 @@ function AssistantBubbleInner() {
         if (!cancelled) {
           setConfigured(Boolean(body?.configured));
           setBackendInfo({ model: body?.model, backend: body?.backend });
+          setSavedSessionsAvailable(Boolean(body?.saved_sessions));
         }
       } catch {
         if (!cancelled) setConfigured(false);
@@ -529,29 +691,49 @@ function AssistantBubbleInner() {
     };
   }, [stopSpeaking]);
 
-  // Restore prior conversation on mount (per-tab; sessionStorage clears on close).
+  // Only the verified owner may recover this tab's cache. Legacy unowned
+  // history is discarded; anonymous chats remain in memory only.
   useEffect(() => {
     try {
+      sessionStorage.removeItem("ac-assistant-history-v1");
       const raw = sessionStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setTurns(parsed);
+        if (owner && parsed?.owner === owner && Array.isArray(parsed.turns) &&
+            parsed.turns.every((turn: ChatTurn) => turn &&
+              (turn.role === "user" || turn.role === "assistant") &&
+              typeof turn.text === "string" && Array.isArray(turn.tools) &&
+              turn.tools.every((tool) => tool && typeof tool.name === "string" && typeof tool.ok === "boolean") &&
+              (turn.images === undefined || (Array.isArray(turn.images) && turn.images.every((img) => img && typeof img.url === "string"))) &&
+              (turn.control_events === undefined || Array.isArray(turn.control_events)))) {
+          setTurns(parsed.turns.map((turn: ChatTurn) => ({
+            ...turn, phase: null,
+            completion: turn.completion === "streaming" ? "interrupted" : turn.completion,
+          })));
+        } else {
+          sessionStorage.removeItem(STORAGE_KEY);
+        }
       }
     } catch {
       /* ignore corrupt cache */
     }
-  }, []);
+    setCacheReady(true);
+  }, [owner]);
 
   useEffect(() => {
+    if (!cacheReady || !owner) return;
+    // A saved session's messages live on the server; they must never be
+    // mirrored into the temporary cache and resurface as a temporary chat.
+    if (mode === "plan") return;
     try {
       sessionStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify(turns.slice(-MAX_STORED_TURNS))
+        JSON.stringify({ owner, turns: turns.slice(-MAX_STORED_TURNS) })
       );
     } catch {
       /* quota / private mode */
     }
-  }, [turns]);
+  }, [turns, cacheReady, owner, mode]);
 
   // Restore last drag position on mount; persist on each change. Like the
   // chat history, this is per-tab — closing the tab resets the position.
@@ -730,8 +912,200 @@ function AssistantBubbleInner() {
     setPlanRun(null);
   }, []);
 
+  // ---- Plan mode: saved sessions (UI_DESIGN §5.10) -------------------------
+  // Every call here is a metadata read/write on /api/assistant/sessions; the
+  // only model-facing request is the turn in sendMessage below.
+
+  const planSessionRef = useRef<SavedSession | null>(null);
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      const sessions = await listSessions();
+      setPlanSessions(sessions);
+      // The open session's summary (count, updated_at, revision) rides the
+      // list; an admin's read-only view of someone else's is not in it.
+      setPlanSession((prev) => (prev ? sessions.find((x) => x.id === prev.id) ?? prev : prev));
+      setPlanError(null);
+    } catch (e) {
+      setPlanSessions((prev) => prev ?? []);
+      setPlanError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  const openPlanSession = useCallback(
+    async (id: string) => {
+      setPlanBusy(true);
+      try {
+        const detail = await getSession(id);
+        setPlanSession(detail.session);
+        setPlanReadOnly(detail.read_only);
+        // Inert restore: text, pills, links. No card, no approval state.
+        setTurns(detail.messages.map(turnFromSaved));
+        setPlanError(null);
+        setError(null);
+        setRetryable(false);
+        rememberPlanSession(owner, detail.read_only ? null : id);
+      } catch (e) {
+        setPlanError(e instanceof Error ? e.message : String(e));
+        if (e instanceof SessionsApiError && e.status === 404) rememberPlanSession(owner, null);
+      } finally {
+        setPlanBusy(false);
+      }
+    },
+    [owner]
+  );
+
+  const createPlanSession = useCallback(
+    async (title: string, seed: SeedMessage[]) => {
+      setPlanBusy(true);
+      try {
+        const session = await createSession(title, seed);
+        setPlanSessions((prev) => [session, ...(prev ?? []).filter((x) => x.id !== session.id)]);
+        await openPlanSession(session.id);
+      } catch (e) {
+        setPlanError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setPlanBusy(false);
+      }
+    },
+    [openPlanSession]
+  );
+
+  const renamePlanSession = useCallback(
+    async (title: string) => {
+      const current = planSessionRef.current;
+      if (!current) return;
+      try {
+        const updated = await renameSession(current.id, title, current.revision);
+        setPlanSession(updated);
+        setPlanSessions((prev) => (prev ?? []).map((x) => (x.id === updated.id ? updated : x)));
+        setPlanError(null);
+      } catch (e) {
+        setPlanError(e instanceof Error ? e.message : String(e));
+        // Another tab changed it first: show their version rather than fight.
+        if (e instanceof SessionsApiError && e.status === 409) void openPlanSession(current.id);
+      }
+    },
+    [openPlanSession]
+  );
+
+  const deletePlanSession = useCallback(async () => {
+    const current = planSessionRef.current;
+    if (!current) return;
+    try {
+      await deleteSession(current.id);
+      setPlanSessions((prev) => (prev ?? []).filter((x) => x.id !== current.id));
+      setPlanSession(null);
+      setTurns([]);
+      setPlanError(null);
+      rememberPlanSession(owner, null);
+    } catch (e) {
+      setPlanError(e instanceof Error ? e.message : String(e));
+    }
+  }, [owner]);
+
+  /** Leaving Plan: the saved session stays on the server; this tab gets a new,
+   *  empty temporary conversation. No approvals or claims carry over (there
+   *  are none in Plan to begin with). */
+  const leavePlan = useCallback(() => {
+    setPlanSession(null);
+    setPlanReadOnly(false);
+    setPlanError(null);
+    setCarryOver(null);
+    setTurns([]);
+    setError(null);
+    setRetryable(false);
+  }, []);
+
+  /** Entering Plan. With `seed`, the previewed temporary conversation becomes
+   *  a new saved session; without it, the picker opens (on the last session
+   *  this owner had open, when there is one). Either way the temporary
+   *  conversation ends here — never silently persisted. */
+  const enterPlan = useCallback(
+    async (seed: { title: string; messages: SeedMessage[] } | null) => {
+      setCarryOver(null);
+      clearProposal();
+      clearPlan();
+      setAuthorizeResult(null);
+      setAuthorizeResponse(null);
+      setError(null);
+      setRetryable(false);
+      setTurns([]);
+      setPlanSession(null);
+      setPlanReadOnly(false);
+      setMode("plan");
+      // The temporary conversation ends here (§0): drop its tab cache too, or
+      // a reload during Plan would resurrect a chat the owner already left.
+      try {
+        sessionStorage.removeItem(STORAGE_KEY);
+      } catch {
+        /* storage disabled */
+      }
+      void refreshSessions();
+      if (seed) {
+        await createPlanSession(seed.title, seed.messages);
+      } else {
+        const remembered = recallPlanSession(owner);
+        if (remembered) void openPlanSession(remembered);
+      }
+    },
+    [clearProposal, clearPlan, refreshSessions, createPlanSession, openPlanSession, owner]
+  );
+
+  const switchMode = useCallback(
+    (next: Mode) => {
+      if (next === mode) return;
+      // A running turn or action must conclude before the session changes.
+      if (sending || planRunningRef.current || authorizing) return;
+      if (next === "plan") {
+        if (turns.length > 0) {
+          // Preview what would be saved before anything is (§0).
+          setCarryOver(turns);
+          return;
+        }
+        void enterPlan(null);
+        return;
+      }
+      if (mode === "plan") leavePlan();
+      setCarryOver(null);
+      setMode(next);
+      if (next === "ask") clearProposal();
+    },
+    [mode, sending, authorizing, turns, enterPlan, leavePlan, clearProposal]
+  );
+
+  // Concurrent tabs: when this one regains focus, pick up a rename, a delete,
+  // or a turn another tab ran in the open session instead of overwriting it.
+  useEffect(() => {
+    if (mode !== "plan") return;
+    const onFocus = () => {
+      if (sending || planBusy) return;
+      void refreshSessions();
+      const current = planSessionRef.current;
+      if (!current) return;
+      getSession(current.id)
+        .then((detail) => {
+          if (detail.session.revision === current.revision) return;
+          setPlanSession(detail.session);
+          setPlanReadOnly(detail.read_only);
+          setTurns(detail.messages.map(turnFromSaved));
+        })
+        .catch((e: unknown) => {
+          if (e instanceof SessionsApiError && e.status === 404) {
+            setPlanError("This session was deleted in another tab.");
+            setPlanSession(null);
+            setTurns([]);
+            rememberPlanSession(owner, null);
+          }
+        });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [mode, sending, planBusy, refreshSessions, owner]);
+
   // Cancel any in-flight stream when the panel closes or the component
-  // unmounts, and reset control mode + drop any outstanding proposal.
+  // unmounts, and reset control mode + drop any outstanding proposal. A saved
+  // Plan session is left on the server; the tab returns to a temporary chat.
   useEffect(() => {
     if (!open && abortRef.current) {
       abortRef.current.abort();
@@ -739,13 +1113,16 @@ function AssistantBubbleInner() {
       setSending(false);
     }
     if (!open) {
+      if (modeRef.current === "plan") leavePlan();
       setMode("ask");
       clearProposal();
       clearPlan();
     }
-  }, [open, clearProposal, clearPlan]);
+  }, [open, clearProposal, clearPlan, leavePlan]);
   useEffect(() => {
+    disposedRef.current = false;
     return () => {
+      disposedRef.current = true;
       abortRef.current?.abort();
       if (expiryRef.current) clearTimeout(expiryRef.current);
       if (planExpiryRef.current) clearTimeout(planExpiryRef.current);
@@ -756,6 +1133,10 @@ function AssistantBubbleInner() {
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || sending) return;
+      // Plan: the turn belongs to the open saved session, and an admin's
+      // read-only view of someone else's session takes no turns at all.
+      const planTarget = mode === "plan" ? planSession : null;
+      if (mode === "plan" && (!planTarget || planReadOnly)) return;
       setError(null);
       setRetryable(false);
       lastInputRef.current = trimmed;
@@ -766,10 +1147,12 @@ function AssistantBubbleInner() {
       setAuthorizeResult(null);
       setAuthorizeResponse(null);
 
+      const turnId = crypto.randomUUID();
+      activeTurnIdRef.current = turnId;
       const nextTurns: ChatTurn[] = [
         ...turns,
-        { role: "user", text: trimmed, tools: [], mode },
-        { role: "assistant", text: "", tools: [], mode },
+        { id: crypto.randomUUID(), role: "user", text: trimmed, tools: [], mode, completion: "completed" },
+        { id: turnId, role: "assistant", text: "", tools: [], mode, completion: "streaming" },
       ];
       setTurns(nextTurns);
       setInput("");
@@ -786,21 +1169,38 @@ function AssistantBubbleInner() {
       stopSpeaking();
 
       try {
-        const res = await fetch("/api/assistant/chat", {
+        const res = await fetch(planTarget ? sessionTurnsUrl(planTarget.id) : "/api/assistant/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
-          body: JSON.stringify({
-            mode,
-            messages: nextTurns
-              .filter((t) => t.role === "user" || (t.role === "assistant" && t.text))
-              .map((t) => ({ role: t.role, content: t.text })),
-          }),
+          body: JSON.stringify(
+            planTarget
+              ? // The server rebuilds context from the session; this tab
+                // sends only its new text and an idempotency key (a retry
+                // replays the stored turn instead of running it twice).
+                { request_id: crypto.randomUUID(), text: trimmed }
+              : {
+                  mode,
+                  conversation_owner: owner,
+                  messages: nextTurns
+                    .filter((t) => t.role === "user" || (t.role === "assistant" && t.text))
+                    // Context is bounded separately from the downloadable history.
+                    .slice(-40)
+                    .map((t) => ({ role: t.role, content: t.text })),
+                }
+          ),
         });
 
         if (!res.ok) {
           const detail = await res.text();
-          throw new Error(`HTTP ${res.status}: ${detail.slice(0, 300)}`);
+          let message = detail.slice(0, 300);
+          try {
+            const parsed = JSON.parse(detail);
+            if (typeof parsed?.detail === "string") message = parsed.detail;
+          } catch {
+            /* not JSON — keep the raw excerpt */
+          }
+          throw new Error(`HTTP ${res.status}: ${message}`);
         }
         if (!res.body) throw new Error("response has no body");
 
@@ -810,6 +1210,7 @@ function AssistantBubbleInner() {
 
         while (true) {
           const { value, done } = await reader.read();
+          if (controller.signal.aborted || disposedRef.current) return;
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
           // SSE frames are separated by a blank line.
@@ -838,13 +1239,17 @@ function AssistantBubbleInner() {
         // instead of leaving a frozen pill. Deliberate user aborts throw
         // AbortError and return earlier, so they never hit this.
         if (!terminatedRef.current) {
+          setTurns((prev) => prev.map((turn) => turn.id === turnId ? { ...turn, completion: "interrupted" } : turn));
           setRetryable(true);
           setError(
             "Connection lost — the assistant stopped responding before it finished. Check the service, then try again."
           );
         }
+        // The session's count / updated_at moved; refresh the summary.
+        if (planTarget) void refreshSessions();
       } catch (e) {
         if ((e as Error).name === "AbortError") {
+          setTurns((prev) => prev.map((turn) => turn.id === turnId ? { ...turn, completion: "interrupted" } : turn));
           if (stoppedRef.current) {
             // Deliberate stop: say so on the turn, and drop any live pill.
             setTurns((prev) => {
@@ -859,12 +1264,14 @@ function AssistantBubbleInner() {
           return;
         }
         setError((e as Error).message);
+        setTurns((prev) => prev.map((turn) => turn.id === turnId
+          ? { ...turn, completion: "failed", error: (e as Error).message } : turn));
       } finally {
         if (abortRef.current === controller) abortRef.current = null;
         setSending(false);
       }
     },
-    [turns, sending, mode, clearProposal, clearPlan, stopSpeaking]
+    [turns, sending, mode, owner, planSession, planReadOnly, clearProposal, clearPlan, stopSpeaking, refreshSessions]
   );
 
   /** Stop the in-flight turn. Aborting the fetch closes the SSE response,
@@ -922,6 +1329,7 @@ function AssistantBubbleInner() {
 
   modeRef.current = mode;
   sendMessageRef.current = sendMessage;
+  planSessionRef.current = planSession;
 
   const applyEvent = useCallback(
     (event: { type: string; [k: string]: unknown }) => {
@@ -943,15 +1351,19 @@ function AssistantBubbleInner() {
         // Already spoken mid-stream: the rest of the turn is for the eyes.
         if (!spokeThisTurnRef.current) speakAnswer(streamTextRef.current);
       }
-      // A control proposal is not part of an assistant text turn — surface it
-      // as a confirm card rather than folding it into the transcript.
+      // Keep a display-only projection in history; the live card is separate
+      // and is never reconstructed from storage or downloads.
       if (event.type === "proposal" && event.proposal && typeof event.proposal === "object") {
         const p = event.proposal as Proposal;
         setAuthorizeError(null);
         setAuthorizeResult(null);
         setAuthorizeResponse(null);
         setProposalExpired(false);
-        setProposal(p);
+        setProposal({ ...p, turn_id: activeTurnIdRef.current });
+        recordControl(activeTurnIdRef.current, "action_proposed", {
+          equipment_id: p.equipment_id, action: p.action, args: p.args, reason: p.reason,
+          device_state: p.device_state, deck_checks: p.deck_checks,
+        });
         if (expiryRef.current) clearTimeout(expiryRef.current);
         const ttlMs = Math.max(5, Number(p.expires_in_s) || 120) * 1000;
         expiryRef.current = setTimeout(() => setProposalExpired(true), ttlMs);
@@ -963,7 +1375,12 @@ function AssistantBubbleInner() {
         const p = event.plan as Plan;
         if (!Array.isArray(p.steps) || p.steps.length === 0) return;
         if (planRunningRef.current) return; // never displace a plan mid-run
-        setPlan(p);
+        setPlan({ ...p, turn_id: activeTurnIdRef.current });
+        recordControl(activeTurnIdRef.current, "sequence_proposed", {
+          equipment_id: p.equipment_id, reason: p.reason,
+          steps: p.steps.map(({ action, args }) => ({ action, args })),
+          device_state: p.device_state, deck_checks: p.deck_checks,
+        });
         setPlanRun({
           phase: "draft",
           outcomes: p.steps.map(() => "pending"),
@@ -1070,22 +1487,34 @@ function AssistantBubbleInner() {
           // Natural end of a completed turn. Marks the run as terminated so
           // the stream-end check below knows it finished, not got cut.
           terminatedRef.current = true;
+          if (updated.completion !== "failed") updated.completion = "completed";
+          updated.phase = null;
+          updated.phaseLabel = undefined;
+        } else if (event.type === "interrupted") {
+          // Plan: the server says the engine stopped without finishing (live,
+          // or a replayed turn that was cut off). Truthful end, not a lost
+          // connection — so no retry banner.
+          terminatedRef.current = true;
+          updated.completion = "interrupted";
           updated.phase = null;
           updated.phaseLabel = undefined;
         } else if (event.type === "error" && typeof event.message === "string") {
           terminatedRef.current = true;
           setError(event.message);
+          updated.completion = "failed";
+          updated.error = event.message;
         }
         return [...prev.slice(0, -1), updated];
       });
     },
-    [speakAnswer]
+    [speakAnswer, recordControl]
   );
 
   const authorizeProposal = useCallback(async () => {
     if (!proposal || authorizing || proposalExpired) return;
     setAuthorizing(true);
     setAuthorizeError(null);
+    recordControl(proposal.turn_id, "action_submitted", { action: proposal.action });
     try {
       const response = await authorizeAssistantAction(
         proposal.equipment_id,
@@ -1095,6 +1524,7 @@ function AssistantBubbleInner() {
       setAuthorizeResult(
         `Authorized ${proposal.action} on ${proposal.equipment_name}.`
       );
+      recordControl(proposal.turn_id, "action_response", { action: proposal.action, outcome: "ok" });
       // Read/imaging responses are the useful output of operating a plate
       // reader. Keep them browser-side and visible; the assistant model's turn
       // has already ended, so scientific values are not fed back to it.
@@ -1114,10 +1544,11 @@ function AssistantBubbleInner() {
           ? `${e.status}: ${e.message}`
           : (e as Error).message;
       setAuthorizeError(msg);
+      recordControl(proposal.turn_id, "action_response", { action: proposal.action, outcome: "failed", message: msg });
     } finally {
       setAuthorizing(false);
     }
-  }, [proposal, authorizing, proposalExpired, clearProposal]);
+  }, [proposal, authorizing, proposalExpired, clearProposal, recordControl]);
 
   // ---- Plan card: approve (by hash) → run (this browser, step by step) ----
 
@@ -1130,16 +1561,18 @@ function AssistantBubbleInner() {
       // silently re-approved.
       await approveAssistantPlan(plan.plan_id, plan.step_hash);
       setPlanRun((r) => r && { ...r, phase: "approved" });
+      recordControl(plan.turn_id, "sequence_approved", {});
     } catch (e) {
       const msg =
         e instanceof ApiError ? `${e.status}: ${e.message}` : (e as Error).message;
       setPlanRun((r) => r && { ...r, phase: "draft", error: msg });
     }
-  }, [plan, planRun]);
+  }, [plan, planRun, recordControl]);
 
   const runPlan = useCallback(async () => {
-    if (!plan || !planRun || planRun.phase !== "approved") return;
+    if (!plan || !planRun || planRun.phase !== "approved" || planRunningRef.current || disposedRef.current) return;
     planRunningRef.current = true;
+    recordControl(plan.turn_id, "sequence_started", {});
     const outcomes: StepOutcome[] = plan.steps.map(() => "pending");
     const messages: (string | null)[] = plan.steps.map(() => null);
     const results: AssistantPlanStepResult[] = [];
@@ -1156,9 +1589,20 @@ function AssistantBubbleInner() {
         }
     );
     for (let i = 0; i < plan.steps.length; i++) {
+      // Signing out or changing accounts must not launch the next command
+      // under a new identity. A command already submitted can still finish.
+      if (disposedRef.current) {
+        haltReason = "Assistant session ended; remaining steps were not submitted.";
+        for (let j = i; j < plan.steps.length; j++) {
+          outcomes[j] = "skipped";
+          results.push({ index: j + 1, outcome: "skipped" });
+        }
+        break;
+      }
       const step = plan.steps[i];
       outcomes[i] = "running";
       setPlanRun((r) => r && { ...r, outcomes: [...outcomes] });
+      recordControl(plan.turn_id, "sequence_step_submitted", { index: i + 1 });
       try {
         // The same passthrough a tile click or a single Authorize uses —
         // per-equipment authz, the device's own 412/423, and the audit row
@@ -1177,7 +1621,7 @@ function AssistantBubbleInner() {
           e instanceof ApiError ? `${e.status}: ${e.message}` : (e as Error).message;
         outcomes[i] = "failed";
         messages[i] = msg;
-        results.push({ index: i + 1, outcome: "failed", status_code: status, message: msg });
+        results.push({ index: i + 1, outcome: "failed", status_code: status, message: msg.slice(0, 500) });
         // Fail-fast, never continue-past-error: the later steps of a
         // sequence assume the earlier ones happened.
         for (let j = i + 1; j < plan.steps.length; j++) {
@@ -1187,34 +1631,42 @@ function AssistantBubbleInner() {
         haltReason = `step ${i + 1} (${step.action}) failed: ${msg}`;
       }
       setPlanRun((r) => r && { ...r, outcomes: [...outcomes], messages: [...messages] });
+      recordControl(plan.turn_id, "sequence_step_response", {
+        index: i + 1, outcome: outcomes[i], message: messages[i],
+      });
       if (haltReason) break;
     }
     const phase: PlanPhase = haltReason ? "failed" : "executed";
     setPlanRun((r) => r && { ...r, phase, haltReason });
+    recordControl(plan.turn_id, "sequence_finished", { status: phase, results, halt_reason: haltReason });
     planRunningRef.current = false;
     try {
       await finishAssistantPlan(plan.plan_id, {
         status: phase,
         results,
-        halt_reason: haltReason,
+        halt_reason: haltReason?.slice(0, 500) ?? null,
       });
-    } catch {
-      // Audit is best-effort here: the per-step control_action rows already
-      // exist, stamped with the plan ref.
+    } catch (e) {
+      const message = `Completion report could not be saved: ${(e as Error).message}`;
+      setPlanRun((r) => r && { ...r, error: message });
+      recordControl(plan.turn_id, "completion_report_failed", { message });
     }
-  }, [plan, planRun]);
+  }, [plan, planRun, recordControl]);
 
   const dismissPlan = useCallback(() => {
     if (!plan || !planRun || planRun.phase === "running") return;
+    recordControl(plan.turn_id, "sequence_dismissed", { phase: planRun.phase });
     if (planRun.phase === "draft" || planRun.phase === "approved") {
       void finishAssistantPlan(plan.plan_id, { status: "aborted", results: [] }).catch(
         () => undefined
       );
     }
     clearPlan();
-  }, [plan, planRun, clearPlan]);
+  }, [plan, planRun, clearPlan, recordControl]);
 
   const clearHistory = useCallback(() => {
+    if (planRunningRef.current || authorizing) return;
+    if (modeRef.current === "plan") return; // a saved session is deleted from the rail, not cleared
     abortRef.current?.abort();
     abortRef.current = null;
     setTurns([]);
@@ -1222,7 +1674,8 @@ function AssistantBubbleInner() {
     clearProposal();
     clearPlan();
     setAuthorizeResult(null);
-  }, [clearProposal, clearPlan]);
+    setAuthorizeResponse(null);
+  }, [clearProposal, clearPlan, authorizing]);
 
   // Suppress the launcher entirely if the dashboard host has no API key.
   // The MCP path (Claude Code) is the supported alternative; see the deploy
@@ -1230,16 +1683,39 @@ function AssistantBubbleInner() {
   if (configured !== true) return null;
 
   // Mode-driven accent. Purple must be unmistakable and panel-wide in Control
-  // mode (UI_DESIGN §5.2), not a small badge.
-  const launcherClass = controlMode
-    ? "bg-purple-600 hover:bg-purple-700 focus-visible:ring-purple-400"
-    : "bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-400";
-  const sendClass = controlMode
-    ? "bg-purple-600 hover:bg-purple-700"
-    : "bg-emerald-600 hover:bg-emerald-700";
-  const focusClass = controlMode
-    ? "focus:border-purple-500"
-    : "focus:border-emerald-500";
+  // mode (UI_DESIGN §5.2), not a small badge; Plan is sky so a saved session
+  // never reads as either temporary mode.
+  const accent = planMode
+    ? {
+        launcher: "bg-sky-600 hover:bg-sky-700 focus-visible:ring-sky-400",
+        send: "bg-sky-600 hover:bg-sky-700",
+        focus: "focus:border-sky-500",
+        panel: "border-sky-300 dark:border-sky-800",
+        header: "border-sky-200 bg-sky-50/60 dark:border-sky-900 dark:bg-sky-950/30",
+        form: "border-sky-200 dark:border-sky-900",
+      }
+    : controlMode
+      ? {
+          launcher: "bg-purple-600 hover:bg-purple-700 focus-visible:ring-purple-400",
+          send: "bg-purple-600 hover:bg-purple-700",
+          focus: "focus:border-purple-500",
+          panel: "border-purple-300 dark:border-purple-800",
+          header: "border-purple-200 bg-purple-50/60 dark:border-purple-800 dark:bg-purple-950/30",
+          form: "border-purple-200 dark:border-purple-800",
+        }
+      : {
+          launcher: "bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-400",
+          send: "bg-emerald-600 hover:bg-emerald-700",
+          focus: "focus:border-emerald-500",
+          panel: "border-slate-200 dark:border-slate-700",
+          header: "border-slate-200 dark:border-slate-700",
+          form: "border-slate-200 dark:border-slate-700",
+        };
+  const launcherClass = accent.launcher;
+  const sendClass = accent.send;
+  const focusClass = accent.focus;
+  // The composer is inert until a session is open (and writable).
+  const planLocked = planMode && (!planSession || planReadOnly);
 
   return (
     <>
@@ -1291,24 +1767,12 @@ function AssistantBubbleInner() {
             width: panelSize.w,
             height: panelSize.h,
           }}
-          className={`fixed z-50 flex flex-col overflow-hidden rounded-xl border bg-surface-raised shadow-2xl dark:bg-slate-900 ${
-            controlMode
-              ? "border-purple-300 dark:border-purple-800"
-              : "border-slate-200 dark:border-slate-700"
-          } ${resizing ? "select-none" : ""}`}
+          className={`fixed z-50 flex flex-col overflow-hidden rounded-xl border bg-surface-raised shadow-2xl dark:bg-slate-900 ${accent.panel} ${resizing ? "select-none" : ""}`}
         >
-          <ResizeHandle
-            corner="nw"
-            controlMode={controlMode}
-            onPointerDown={onResizeStart("nw")}
-          />
+          <ResizeHandle corner="nw" mode={mode} onPointerDown={onResizeStart("nw")} />
           <header
             onPointerDown={onDragStart}
-            className={`flex items-center justify-between gap-2 border-b px-3 py-2 ${
-              controlMode
-                ? "border-purple-200 bg-purple-50/60 dark:border-purple-800 dark:bg-purple-950/30"
-                : "border-slate-200 dark:border-slate-700"
-            } ${dragging ? "cursor-grabbing" : "cursor-grab"} select-none touch-none`}
+            className={`flex items-center justify-between gap-2 border-b px-3 py-2 ${accent.header} ${dragging ? "cursor-grabbing" : "cursor-grab"} select-none touch-none`}
             title="Drag to move · corners resize"
           >
             <div className="flex flex-col pl-3">
@@ -1316,19 +1780,19 @@ function AssistantBubbleInner() {
                 SDL Assistant
               </span>
               <span className="text-xs text-ink-subtle dark:text-slate-400">
-                {controlMode
-                  ? "Control · proposes actions you authorize"
-                  : "Read-only · history + journald"}
+                {planMode
+                  ? "Plan · saved session · no hardware actions"
+                  : controlMode
+                    ? "Control · proposes actions you authorize"
+                    : "Read-only · history + journald"}
               </span>
             </div>
             <div className="flex items-center gap-1">
               <ModeToggle
                 mode={mode}
                 eligible={controlEligible === true}
-                onChange={(m) => {
-                  setMode(m);
-                  if (m === "ask") clearProposal();
-                }}
+                planAvailable={planAvailable}
+                onChange={switchMode}
               />
               {speechSupported && (
                 <button
@@ -1355,8 +1819,12 @@ function AssistantBubbleInner() {
               <button
                 type="button"
                 onClick={clearHistory}
-                disabled={turns.length === 0}
-                title="Clear the conversation (proposals and authorized actions stay in the audit trail)"
+                disabled={planMode || turns.length === 0 || authorizing || planRun?.phase === "running"}
+                title={
+                  planMode
+                    ? "Saved session — delete it from the session list instead"
+                    : "Clear the conversation (proposals and authorized actions stay in the audit trail)"
+                }
                 className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-ink-subtle transition hover:bg-slate-100 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
                 Clear
@@ -1375,13 +1843,76 @@ function AssistantBubbleInner() {
             </div>
           </header>
 
+          <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-3 py-2 text-xs text-ink-subtle dark:border-slate-700 dark:text-slate-400">
+            <p className="flex-1">
+              {planMode
+                ? "Saved planning session, stored on the dashboard and private to you. Nothing here runs hardware or registers a protocol; protocols are edited and registered in bitácora."
+                : "Temporary chat. Download before closing this tab. Proposals and control actions remain in the audit trail."}
+            </p>
+            {(["md", "json"] as const).map((format) => (
+              <button key={format} type="button" disabled={planMode ? !planSession : turns.length === 0}
+                aria-label={`Download conversation as ${format === "md" ? "Markdown" : "JSON"}`}
+                className="rounded border border-slate-300 px-2 py-1 disabled:opacity-40 dark:border-slate-600"
+                onClick={() => {
+                  if (planMode) {
+                    // The server's export carries the same non-executable notice.
+                    if (planSession) window.open(sessionExportUrl(planSession.id, format), "_blank", "noopener");
+                    return;
+                  }
+                  try { downloadConversation(turns, format); }
+                  catch (e) { setError(`Download failed: ${(e as Error).message}`); }
+                }}>
+                {format === "md" ? "MD" : "JSON"}
+              </button>
+            ))}
+          </div>
+          {planMode && (
+            <AssistantSessionRail
+              sessions={planSessions}
+              current={planSession}
+              readOnly={planReadOnly}
+              busy={sending || planBusy}
+              error={planError}
+              onOpen={(id) => void openPlanSession(id)}
+              onCreate={(title) => void createPlanSession(title, [])}
+              onRename={(title) => void renamePlanSession(title)}
+              onDelete={() => void deletePlanSession()}
+              onRefresh={() => void refreshSessions()}
+            />
+          )}
+
           <div
             ref={scrollerRef}
             className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3 text-base"
           >
-            {turns.length === 0 && (
+            {carryOver && (
+              <CarryOverDialog
+                count={carryOver.length}
+                controlCount={carryOver.filter((t) => t.mode === "control").length}
+                preview={carryOver.slice(0, 6).map((t) => `${t.role === "user" ? "You" : "Assistant"}: ${(t.text || "(no text)").split("\n")[0].slice(0, 120)}`)}
+                busy={planBusy}
+                onSave={(title) => void enterPlan({ title, messages: seedFromTurns(carryOver) })}
+                onStartEmpty={() => void enterPlan(null)}
+                onCancel={() => setCarryOver(null)}
+              />
+            )}
+            {turns.length === 0 && !carryOver && (
               <div className="text-xs text-ink-subtle dark:text-slate-400">
-                {controlMode ? (
+                {planMode ? (
+                  planSession ? (
+                    <>
+                      Planning in “{planSession.title}”. Draft a reusable protocol with me — for example:
+                      <ul className="mt-2 list-disc space-y-1 pl-4">
+                        <li>Draft a sealing protocol for a 96-well plate on the PlateLoc.</li>
+                        <li>Which OT-2 labware do we have for a 50 µL transfer?</li>
+                        <li>Turn yesterday&apos;s Control session into numbered steps.</li>
+                      </ul>
+                      Nothing here runs hardware; register the finished protocol in bitácora.
+                    </>
+                  ) : (
+                    <>Pick a saved session above, or start a new one. Plan sessions are private to you and stay on the dashboard.</>
+                  )
+                ) : controlMode ? (
                   <>
                     Control mode. Ask me to operate a device — I&apos;ll propose
                     a single action for you to authorize. For example:
@@ -1466,11 +1997,7 @@ function AssistantBubbleInner() {
           </div>
 
           <form
-            className={`border-t px-3 py-2 ${
-              controlMode
-                ? "border-purple-200 dark:border-purple-800"
-                : "border-slate-200 dark:border-slate-700"
-            }`}
+            className={`border-t px-3 py-2 ${accent.form}`}
             onSubmit={(e) => {
               e.preventDefault();
               void sendMessage(input);
@@ -1481,7 +2008,7 @@ function AssistantBubbleInner() {
                 <button
                   type="button"
                   onClick={() => void voice.start()}
-                  disabled={sending || voice.state === "transcribing"}
+                  disabled={sending || planLocked || voice.state === "transcribing"}
                   aria-label={
                     voice.state === "recording"
                       ? "Stop recording"
@@ -1492,8 +2019,8 @@ function AssistantBubbleInner() {
                       ? "Listening — click to stop (stops by itself when you pause)"
                       : voice.state === "transcribing"
                         ? "Transcribing…"
-                        : controlMode
-                          ? "Ask by voice (fills the box — review before sending in Control mode)"
+                        : controlMode || planMode
+                          ? "Ask by voice (fills the box — review before it is sent or saved)"
                           : "Ask by voice (sends when you stop talking)"
                   }
                   className={`self-stretch rounded border px-2.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -1517,12 +2044,18 @@ function AssistantBubbleInner() {
                 placeholder={
                   sending
                     ? "Working…"
-                    : controlMode
-                      ? "Ask me to operate a device…"
-                      : "Ask about the lab…"
+                    : planMode
+                      ? planReadOnly
+                        ? "Read-only: this is someone else's session"
+                        : planSession
+                          ? "Plan with me — this conversation is saved…"
+                          : "Open or create a session to start planning"
+                      : controlMode
+                        ? "Ask me to operate a device…"
+                        : "Ask about the lab…"
                 }
                 rows={2}
-                disabled={sending}
+                disabled={sending || planLocked}
                 className={`flex-1 resize-none rounded border border-slate-300 bg-white px-2 py-1 text-[13px] text-ink shadow-inner focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${focusClass}`}
               />
               {sending ? (
@@ -1537,7 +2070,7 @@ function AssistantBubbleInner() {
               ) : (
                 <button
                   type="submit"
-                  disabled={!input.trim()}
+                  disabled={!input.trim() || planLocked}
                   className={`self-stretch rounded px-3 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700 ${sendClass}`}
                 >
                   Send
@@ -1553,11 +2086,7 @@ function AssistantBubbleInner() {
               </p>
             )}
           </form>
-          <ResizeHandle
-            corner="se"
-            controlMode={controlMode}
-            onPointerDown={onResizeStart("se")}
-          />
+          <ResizeHandle corner="se" mode={mode} onPointerDown={onResizeStart("se")} />
         </div>
       )}
     </>
@@ -1566,11 +2095,11 @@ function AssistantBubbleInner() {
 
 function ResizeHandle({
   corner,
-  controlMode,
+  mode,
   onPointerDown,
 }: {
   corner: "nw" | "se";
-  controlMode: boolean;
+  mode: Mode;
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
 }) {
   const pos =
@@ -1581,7 +2110,8 @@ function ResizeHandle({
     corner === "se"
       ? "Resize assistant panel"
       : "Resize assistant panel from top left";
-  const stroke = controlMode ? "stroke-purple-400" : "stroke-slate-400";
+  const stroke =
+    mode === "control" ? "stroke-purple-400" : mode === "plan" ? "stroke-sky-400" : "stroke-slate-400";
   return (
     <div
       data-resize={corner}
@@ -1609,10 +2139,14 @@ function ResizeHandle({
 function ModeToggle({
   mode,
   eligible,
+  planAvailable,
   onChange,
 }: {
   mode: Mode;
   eligible: boolean;
+  /** Signed in and the dashboard has its saved-session store (health
+   *  `saved_sessions`). Without it the Plan button is not offered at all. */
+  planAvailable: boolean;
   onChange: (m: Mode) => void;
 }) {
   const disabled = !eligible;
@@ -1624,7 +2158,7 @@ function ModeToggle({
       title={
         disabled
           ? "Control mode requires an operator role on at least one device"
-          : "Switch between read-only and propose-only control"
+          : "Ask (read-only) · Control (propose-only) · Plan (saved sessions)"
       }
     >
       <button
@@ -1653,6 +2187,20 @@ function ModeToggle({
       >
         Control
       </button>
+      {planAvailable && (
+        <button
+          type="button"
+          onClick={() => onChange("plan")}
+          title="Plan: a saved, private planning session — Ask's tools, no hardware actions"
+          className={`px-2 py-1 ${
+            mode === "plan"
+              ? "bg-sky-600 text-white"
+              : "text-ink-subtle hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+          }`}
+        >
+          Plan
+        </button>
+      )}
     </div>
   );
 }
@@ -2181,7 +2729,9 @@ function Turn({
   const userBg =
     turn.mode === "control"
       ? "bg-purple-600 text-white"
-      : "bg-emerald-600 text-white";
+      : turn.mode === "plan"
+        ? "bg-sky-600 text-white"
+        : "bg-emerald-600 text-white";
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
@@ -2231,6 +2781,11 @@ function Turn({
         {turn.stopped && (
           <div className="mt-1.5 rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[12px] text-slate-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400">
             Stopped by you — nothing further came from this turn.
+          </div>
+        )}
+        {!isUser && !live && !turn.stopped && turn.completion === "interrupted" && (
+          <div className="mt-1.5 rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[12px] text-slate-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400">
+            Interrupted — this answer did not finish.
           </div>
         )}
         {/* Progress last, at the bottom of the bubble: the chat auto-scrolls

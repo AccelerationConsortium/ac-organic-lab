@@ -70,7 +70,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .assistant_control import PLAN_TTL_S, REFUSAL_CODES, plan_step_hash
+from .assistant_control import MAX_PLAN_STEPS, PLAN_TTL_S, REFUSAL_CODES, plan_step_hash
 
 logger = logging.getLogger(__name__)
 
@@ -718,15 +718,21 @@ class PlanFinishRequest(BaseModel):
     to what and how far it got."""
 
     status: Literal["executed", "failed", "aborted"]
-    results: list[PlanStepResult] = Field(default_factory=list, max_length=64)
+    results: list[PlanStepResult] = Field(default_factory=list, max_length=MAX_PLAN_STEPS)
     halt_reason: str | None = Field(default=None, max_length=500)
 
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+    # A stale browser tab must not send one person's history using a session
+    # cookie another tab has since changed. Attribution still comes from auth.
+    conversation_owner: str | None = Field(default=None, max_length=320)
     # UI_DESIGN §5: "ask" (default, read-only) or "control" (propose-only).
     # The server decides the actual toolset from the verified identity — a
-    # client that lies about its mode gains nothing.
+    # client that lies about its mode gains nothing. The third mode, Plan
+    # (saved sessions), has its own route: POST /api/assistant/sessions/{id}/turns
+    # (assistant_sessions.py) — it is not a value here because its history is
+    # rebuilt server-side, never sent by the client.
     mode: Literal["ask", "control"] = "ask"
 
 
@@ -1030,6 +1036,7 @@ async def _run_claude(
     actor: str | None = None,
     on_proposal: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
     on_plan: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
+    extra_system_prompt: str | None = None,
 ) -> AsyncIterator[bytes]:
     binary = _claude_binary()
     if binary is None:
@@ -1048,7 +1055,14 @@ async def _run_claude(
     model = CONTROL_MODEL if include_control else DEFAULT_MODEL
     prompt = _format_prompt(messages)
     mcp_config_path = _write_mcp_config(include_control=include_control, actor=actor)
-    system_prompt = SYSTEM_PROMPT + (CONTROL_PROMPT_ADDENDUM if include_control else "")
+    # ``extra_system_prompt`` is how Plan mode (assistant_sessions.py) adds
+    # its addendum without touching the toolset: it rides the same read-only
+    # servers Ask uses.
+    system_prompt = (
+        SYSTEM_PROMPT
+        + (CONTROL_PROMPT_ADDENDUM if include_control else "")
+        + (extra_system_prompt or "")
+    )
     allowed_tools = f"{ALLOWED_TOOL_GLOB} {INVENTORY_TOOL_GLOB}"
     if include_control:
         allowed_tools = f"{allowed_tools} {CONTROL_TOOL_GLOB}"
@@ -1273,7 +1287,7 @@ def build_assistant_router() -> APIRouter:
         return rec
 
     @router.get("/health")
-    async def health() -> dict[str, Any]:
+    async def health(request: Request) -> dict[str, Any]:
         from . import assistant_openai
 
         binary = _claude_binary()
@@ -1295,6 +1309,9 @@ def build_assistant_router() -> APIRouter:
             ),
             "allowed_tools": f"{ALLOWED_TOOL_GLOB} {INVENTORY_TOOL_GLOB}",
             "cwd": _claude_cwd(),
+            # Plan mode (saved sessions, assistant_sessions.py) needs its
+            # store; the bubble hides the Plan toggle when this is false.
+            "saved_sessions": getattr(request.app.state, "assistant_sessions", None) is not None,
         }
 
     @router.get("/snapshots/{name}")
@@ -1321,6 +1338,12 @@ def build_assistant_router() -> APIRouter:
         # after verifying the session — never client-supplied. The backend
         # Claude account is shared, so who-asked lives in this log line.
         actor = request.headers.get("x-auth-user")
+
+        if body.conversation_owner is not None and body.conversation_owner != actor:
+            raise HTTPException(
+                status_code=409,
+                detail="The signed-in account changed. Refresh before continuing this conversation.",
+            )
 
         # Control mode is only honoured for a verified actor, and never under
         # the DASHBOARD_CONTROL_OPEN dev bypass (which has no identity to bind

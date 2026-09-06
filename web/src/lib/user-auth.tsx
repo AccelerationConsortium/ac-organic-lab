@@ -16,6 +16,17 @@ export interface Identity {
   role: string;
 }
 
+// Carries no identity or credential; other tabs re-check the server session.
+const SESSION_CHANGED_KEY = "ac-auth-session-changed";
+
+function announceSessionChange() {
+  try {
+    localStorage.setItem(SESSION_CHANGED_KEY, crypto.randomUUID());
+  } catch {
+    // Storage may be disabled. Focus still refreshes identity from the server.
+  }
+}
+
 export interface UserSummary {
   /** Opaque login handle (the dropdown option value) — not an email. */
   id: string;
@@ -93,22 +104,48 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
   > | null>(null);
 
   const loginHintRef = useRef<(() => void) | null>(null);
+  const identityRequestRef = useRef(0);
+  const invalidateIdentity = useCallback(() => { identityRequestRef.current++; }, []);
 
-  // Resolve current identity + the allow-list once on mount.
+  const refreshIdentity = useCallback(async () => {
+    const request = ++identityRequestRef.current;
+    try {
+      const response = await fetch("/api/auth/me", { cache: "no-store" });
+      if (!response.ok) return;
+      const data: { authenticated?: boolean; identity?: Identity | null } = await response.json();
+      if (request !== identityRequestRef.current) return;
+      setAuthenticated(Boolean(data.authenticated));
+      setIdentity(data.identity ?? null);
+    } catch {
+      // An unavailable identity service cannot create a new authenticated state.
+    } finally {
+      if (request === identityRequestRef.current) setLoading(false);
+    }
+  }, []);
+
+  // Resolve identity on mount/focus and invalidate it immediately when a
+  // different tab signs in or out. Cookies are shared across tabs.
+  useEffect(() => {
+    void refreshIdentity();
+    const onFocus = () => { void refreshIdentity(); };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== SESSION_CHANGED_KEY) return;
+      setAuthenticated(false);
+      setIdentity(null);
+      void refreshIdentity();
+    };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      invalidateIdentity();
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [refreshIdentity, invalidateIdentity]);
+
+  // Resolve the allow-list once on mount.
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/auth/me", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d: { authenticated?: boolean; identity?: Identity | null }) => {
-        if (cancelled) return;
-        setAuthenticated(Boolean(d.authenticated));
-        setIdentity(d.identity ?? null);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
     fetch("/api/auth/users", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : { users: [] }))
       .then((d: { users?: UserSummary[] }) => {
@@ -140,7 +177,7 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [authenticated]);
+  }, [authenticated, identity?.email]);
 
   const canControl = useCallback(
     (equipmentId: string): boolean => {
@@ -181,8 +218,11 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
       });
       if (r.ok) {
         const d = await r.json().catch(() => null);
+        identityRequestRef.current++;
+        setLoading(false);
         setAuthenticated(true);
         setIdentity({ email: d?.email ?? "", role: d?.role ?? "user" });
+        announceSessionChange();
         return { ok: true };
       }
       const d = await r.json().catch(() => null);
@@ -193,6 +233,7 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    identityRequestRef.current++;
     try {
       await fetch("/api/auth/logout", { method: "POST" });
     } catch {
@@ -200,6 +241,9 @@ export function UserAuthProvider({ children }: { children: ReactNode }) {
     }
     setAuthenticated(false);
     setIdentity(null);
+    setLoading(false);
+    identityRequestRef.current++;
+    announceSessionChange();
   }, []);
 
   const requestLogin = useCallback(() => {

@@ -217,6 +217,12 @@ export interface LabHostMachine {
 export interface LabHostGroup {
   hostname: string;
   services: LabHostService[];
+  /** Present when the host is on the SSH console whitelist: its console id,
+   *  human label and machine kind. Absent for a hostname the registry reaches
+   *  that no whitelisted machine claims. */
+  id?: string;
+  label?: string;
+  kind?: string;
 }
 
 export interface LabHostsResponse {

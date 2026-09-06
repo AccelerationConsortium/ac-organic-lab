@@ -164,7 +164,6 @@ export function AccountsActivitiesTile({
   return (
     <AdminTile
       title="Accounts & Activities"
-      sub="Headline numbers — the roster, who is signed in, what is claimed, how much has been done."
       frame={false}
       className={className}
       controls={

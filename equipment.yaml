@@ -172,6 +172,15 @@ equipment:
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020
     tailscale_ip: 100.64.254.16
     status_path: /status
+    # Robot transport (changed 2026-09-04): the OT-2 (HTE) robot
+    # (`ot2cytation`, board rev A)is reachable over **instrument-LAN Ethernet** at
+    # **192.168.254.50:31950** — the gateway on sdl2-pc-03 reaches it directly
+    # over that wired path (OT2_HTTP_BASE_URL=http://192.168.254.50:31950), NOT
+    # via Tailscale. The old tailnet node `100.64.254.90` (`sdl2-ot2-hte`)
+    # is offline/legacy (the robot no longer runs Tailscale); if the robot ever
+    # drops off the LAN, NO fallback exists — the dashboard tile shows the robot's
+    # own reachability flag (`details.robot.reachable`), which the gateway reports
+    # truthfully even when it answers HTTP 200 itself.
     # The OT-2 gateway builds /status from an SSH snapshot, so it is slower than
     # other devices — but 8s is plenty and keeps one slow/dead device from
     # stalling the dashboard. The aggregator also hard-caps every fetch at
@@ -408,6 +417,21 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 8.0
     do_not_call_connect: true
+    # Robot transport (standing since 2026-09-05, confirmed 2026-09-06): the
+    # OT-2 (Complexation) robot (`ot2training`, serial `weathered-dream`, board
+    # rev 2.1) is reached over its **USB link** — the gateway on sdl2-pc-03
+    # points at the UPLC PC's portproxy, OT2_HTTP_BASE_URL=
+    # http://100.64.254.19:31951 -> 169.254.40.81:31950 (the robot's USB-B
+    # cable into sdl2-pc-06-uplc). This stays the path until a USB-to-Ethernet
+    # adapter puts the robot on the lab switch (ROADMAP → ot2_hte sub-tasks);
+    # then repoint the gateway with tools/ot2-set-robot-url.ps1 and retire the
+    # bridge. Do NOT repoint to the robot's own Tailscale/Wi-Fi address
+    # (`sdl2-ot2-complexation`, 100.64.254.91): the Pi 3B+ radio wedges on its
+    # own (2026-08-30, 2026-09-04) and only a hard reboot restores it. If the
+    # bridge port stops answering, `Restart-Service iphlpsvc` on the UPLC PC
+    # before blaming the robot. Identity rule (robot_serial + board_revision +
+    # api/fw) still applies: 172.31.60.10 (`ot2cytation`, board rev A) is a
+    # DIFFERENT OT-2.
     tiles:
       complexation: { w: 2, h: 3 }
     # "Open" pill -> the edge-gated OT-2 gateway operator SPA at
@@ -723,6 +747,40 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills: {}
 
+  - id: hostops_gibbie_pc
+    name: Gibbie PC
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    # sdl-lab-hostops on the Gibbie PC (sdl2-pc-04): NSSM `sdl-lab-hostops`,
+    # LocalSystem, whitelist = restartable = [gibbie-server]. Installed and
+    # verified 2026-09-06 (AGENTIC_LAB_DESIGN deployed-instances table).
+    base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8060
+    tailscale_ip: 100.64.254.17
+    status_path: /status
+    poll_timeout_seconds: 5.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
+  - id: hostops_lle_pc
+    name: LLE PC (Process Chemistry)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    # sdl-lab-hostops on the Process Chemistry PC (sdl2-pc-00-lle, SDL2Win02):
+    # NSSM `sdl-lab-hostops`, LocalSystem, read-only (empty whitelist) until the
+    # platform's STATUS_SPEC servers are deployed there. Installed 2026-09-06.
+    # The pH Pi's host-ops is stdio-over-SSH and has no HTTP /status, so it
+    # has no entry here (same as the other Pi instances).
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8060
+    tailscale_ip: 100.64.254.13
+    status_path: /status
+    poll_timeout_seconds: 5.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
   # Environmental sensor stations. Add one entry per physical sensor unit.
   # The lab map is rotated 90° clockwise from the building plan, so on screen
   # north is up and south is down. Zones (in % of map width × height):
@@ -798,8 +856,18 @@ equipment:
   # its SSH REPL, XPR balance over SOAP), which this service never touches.
   # `gateway_fronted: true` so a device the monitor cannot reach (reported as
   # `unknown`, §2.1) counts as unreachable for uptime and PyPoe alerts.
-  # UR arm + balance sit on a USB Ethernet adapter of that PC (192.168.1.x);
-  # both `unknown` at once usually means the adapter, not the instruments.
+  # Network (resolved 2026-09-06): everything Gibbie is on the lab switch
+  # 192.168.254.x — the PC at .79 (second onboard NIC, wired), the Flex .81,
+  # the UR-3e .89, the XPR balance .83 — matching the workflow's own .env
+  # (ROBOT_IP / BALANCE_IP). The monitor's config had shipped with
+  # 192.168.1.100 / 192.168.1.1 from an older bench layout; fixed on the PC
+  # the same day and the arm reads `ready`. The XPR web service is on port
+  # 81 (both lab balances; 8002, which the Gibbie workflow's mt_balance.py
+  # assumes, is refused) — the monitor was repointed there the same day.
+  # Neighbours on the same switch that are NOT Gibbie: the Process Chemistry
+  # platform's UR5-CB3 (.16) and MT balance (.13), a third UR at .49, and a
+  # separate 192.168.1.x segment behind the Cytation PC's USB adapter (a UR at
+  # 192.168.1.237) — see ROADMAP.
   # ---------------------------------------------------------------------
 
   - id: gibbie_workflow
@@ -836,7 +904,7 @@ equipment:
     pills: {}
 
   - id: gibbie_ur_arm
-    name: UR Arm (Gibbie)
+    name: UR-3e Arm (Gibbie)
     kind: robot_arm
     adapter: http
     protocol: "1.2"
@@ -893,6 +961,120 @@ equipment:
     # The monitor process itself (permanently idle; metrics.devices_unreachable).
     base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.17
+    status_path: /status
+    poll_timeout_seconds: 5.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
+  # -------------------------------------------------------------------------
+  # Process Chemistry (LLE) bench — monitoring only, 2026-09-06.
+  # A second instance of sdl2-gibbie-server, on the bench PC sdl2-pc-00-lle
+  # (NSSM `process-chem-monitor`, :8070). Same code as Gibbie's monitor, a
+  # different config file; it has no /control/* surface, so every entry here is
+  # `gateway_fronted: true` and an unreachable device reads `unknown` (§2.1)
+  # and alerts as unreachable. The bench is driven by automated-lle and by
+  # ChemStation on that PC, never from here.
+  # -------------------------------------------------------------------------
+
+  - id: lle_ur5_arm
+    name: UR5-CB3 Arm (LLE)
+    kind: robot_arm
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # UR Dashboard Server queries only, never RTDE (connecting the control
+    # interface uploads and runs a program, which would seize the arm).
+    # busy/running == a program playing on the controller.
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.13
+    status_path: /devices/lle_ur5_arm/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      process_chemistry: { w: 2, h: 1 }
+    pills: {}
+
+  - id: lle_xpr_balance
+    name: XPR Balance (LLE)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # Reachability of the Mettler XPR SOAP endpoint (port 81) only. The monitor
+    # opens no SOAP session, so it cannot collide with the LLE workflow's own.
+    # mt-xpr-balance-server replaces this tile with a real control surface when
+    # it is deployed on this PC (planned NSSM `mt-xpr-balance` :8081).
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.13
+    status_path: /devices/lle_xpr_balance/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      process_chemistry: { w: 2, h: 1 }
+    pills: {}
+
+  - id: lle_easymax
+    name: EasyMax (Process Chemistry)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # The EasyMax answers on no network port of its own. What is observed is
+    # Mettler's Reactor Device Server on the bench PC's loopback (OPC UA :50008),
+    # the same endpoint automated-lle connects to. So `ready` means the reactor
+    # service is up, not that the reactor is fine; the tile's message says so.
+    # A real state read needs an OPC UA session (mt-easymax-server, later).
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.13
+    status_path: /devices/lle_easymax/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      process_chemistry: { w: 2, h: 1 }
+    pills: {}
+
+  - id: lle_hplc
+    name: HPLC (Process Chemistry)
+    kind: hplc
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # ChemStation-driven from the bench PC, not OpenLab-CDS-driven like
+    # agilent_uplc_ms, so the sidecar there does not apply and the instrument
+    # answers on none of its ports. The observable is the Agilent ChemStation
+    # data service's state on that PC. A stopped service reads `requires_init`,
+    # never `error`: the instrument may be running fine from its own front end.
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.13
+    status_path: /devices/lle_hplc/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      process_chemistry: { w: 2, h: 1 }
+    pills: {}
+
+  - id: lle_ph_unit
+    name: pH Unit (LLE)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # Pi Zero 2W running PiZeroCam (camera + LED + motor, colorimetric pH).
+    # The camera software is not a service yet, so SSH answering is all this
+    # observes; it proves the Pi is up and nothing more.
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.13
+    status_path: /devices/lle_ph_unit/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      process_chemistry: { w: 2, h: 1 }
+    pills: {}
+
+  - id: lle_server
+    name: Process Chemistry Monitor
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    # The monitor process itself (permanently idle; metrics.devices_unreachable).
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.13
     status_path: /status
     poll_timeout_seconds: 5.0
     tiles:

@@ -488,6 +488,7 @@ async def run_openai_turn(
     actor: str | None = None,
     on_proposal: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
     on_plan: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
+    extra_system_prompt: str | None = None,
 ) -> AsyncIterator[bytes]:
     key = api_key()
     include_control = control and bool(actor)
@@ -501,7 +502,11 @@ async def run_openai_turn(
         )
         return
 
-    system_prompt = SYSTEM_PROMPT + (CONTROL_PROMPT_ADDENDUM if include_control else "")
+    system_prompt = (
+        SYSTEM_PROMPT
+        + (CONTROL_PROMPT_ADDENDUM if include_control else "")
+        + (extra_system_prompt or "")  # Plan mode's addendum (assistant_sessions.py)
+    )
     # Identity is templated from the same config var that selects the model
     # (ASSISTANT_OPENAI_MODEL / ASSISTANT_OPENAI_CONTROL_MODEL), so it stays
     # truthful without any hardcoded model name to edit when the model changes:

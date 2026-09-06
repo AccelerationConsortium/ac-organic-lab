@@ -5,9 +5,20 @@ sections:
   #   kind: environmental_map
   #   equipment: [env_hte, env_storage, env_lab499_west, env_lab499_east]
 
-  # Overview / Nav order: HTE → Services → Complexation. The headline
-  # "Accounts & Activities" tile is rendered by the Overview page ahead of
-  # every section, so the full page order is Accounts & Activities → these.
+  # Overview order (operator decision 2026-09-06): Services → HTE →
+  # Complexation → Process Chemistry → Gibbie. The headline "Accounts &
+  # Activities" tile is rendered by the Overview page ahead of every section,
+  # so the full page order is Accounts & Activities → these. Nav tabs follow
+  # the same order but list only sections with an `href`, so Services (which
+  # has none) does not appear there.
+  - id: web_services
+    title: Services
+    description: Lab web UIs and dashboards
+    kind: platform
+    # hostops_* stay registered + polled in equipment.yaml but render on
+    # /utils/devices (the PCs & Servers panel), not on this card.
+    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, bitacora_db, bitacora_eln, pypoe_web, kasa_tapo_gateway, bambu_gateway, gibbie_server, lle_server, uptime_kuma, hermes_web]
+
   - id: hte
     title: HTE Platform
     description: High-throughput platform for chemistry
@@ -32,26 +43,6 @@ sections:
       - plug_hte_strip_right
       - plug_hte_strip_left
 
-  - id: sample_prep
-    title: Sample Prep (Gibbie)
-    description: Solid dosing, liquid handling and reaction setup bench -- UR arm, XPR balance, Opentrons Flex, IKA hotplate. Monitoring only; the bench is driven by sdl2_sampleprep_platform.
-    href: /platforms/sample_prep
-    kind: platform
-    equipment:
-      - gibbie_workflow
-      - gibbie_flex
-      - gibbie_ur_arm
-      - gibbie_balance
-      - gibbie_hotplate
-
-  - id: web_services
-    title: Services
-    description: Lab web UIs and dashboards
-    kind: platform
-    # hostops_* stay registered + polled in equipment.yaml but render on
-    # /utils/devices (the PCs & Servers panel), not on this card.
-    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, bitacora_db, bitacora_eln, pypoe_web, kasa_tapo_gateway, bambu_gateway, uptime_kuma, hermes_web]
-
   - id: complexation
     title: Complexation Platform
     description: Electrochemistry platform
@@ -65,3 +56,31 @@ sections:
       # OT-2 camera is now the one that streams.
       - cam_echem_tapo_c100
       - ot2_complexation
+
+  - id: process_chemistry
+    title: Process Chemistry Platform
+    description: Reaction, workup and analysis bench driven by automated-lle
+    href: /platforms/process_chemistry
+    kind: platform
+    # Monitoring only (2026-09-06): the tiles come from a read-only gateway on
+    # the bench PC, and the bench is driven by automated-lle and ChemStation.
+    equipment:
+      - lle_ur5_arm
+      - lle_easymax
+      - lle_hplc
+      - lle_xpr_balance
+      - lle_ph_unit
+
+  - id: sample_prep
+    title: Gibbie Platform
+    description: Multi-phase Reaction Platform based on Opentrons Flex
+    href: /platforms/sample_prep
+    kind: platform
+    # Last on purpose (operator decision 2026-09-06): the Overview card and
+    # the Nav tab both follow this order, and the bench is monitoring-only.
+    equipment:
+      - gibbie_workflow
+      - gibbie_flex
+      - gibbie_ur_arm
+      - gibbie_balance
+      - gibbie_hotplate

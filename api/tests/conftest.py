@@ -30,4 +30,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _isolated_lab_db(tmp_path, monkeypatch):
     monkeypatch.setenv("LAB_DB_PATH", str(tmp_path / "lab-test.db"))
+    # The assistant's saved-session store (Plan mode) defaults to a sibling of
+    # lab.db; pin it too, for the same reason.
+    monkeypatch.setenv("ASSISTANT_DB_PATH", str(tmp_path / "assistant-test.db"))
     monkeypatch.delenv("PYPOE_ALERT_URL", raising=False)
