@@ -284,6 +284,26 @@ SSH_HOSTS: tuple[SshHost, ...] = (
             _PROFILE_WSL_TMUX,
         ),
     ),
+    SshHost(
+        id="gibbie-pc",
+        label="Gibbie PC",
+        kind="Windows PC",
+        hostname="sdl2-pc-04.tail6a1dd7.ts.net",
+        user="sdl2",
+        target="gibbie-pc",
+        shell="cmd.exe (Windows OpenSSH)",
+        note=(
+            "Drives the Gibbie multi-phase reaction bench (UR-3e arm, XPR "
+            "balance, Opentrons Flex, IKA hotplate) and hosts the read-only "
+            "sdl2-gibbie-server monitor (:8070). On the lab switch at "
+            "192.168.254.79. The arm and balance are addressed on 192.168.1.x, "
+            "a segment this PC has no interface on yet (see ROADMAP). Only "
+            "cmd is offered until WSL is confirmed present."
+        ),
+        profiles=(
+            SshProfile(id="cmd", label="cmd", args=(), description="Windows cmd.exe (the OpenSSH default shell)."),
+        ),
+    ),
 )
 
 HOSTS_BY_ID: dict[str, SshHost] = {h.id: h for h in SSH_HOSTS}

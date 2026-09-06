@@ -46,6 +46,8 @@ HOST_ALIASES: dict[str, frozenset[str]] = {
     "gaia": frozenset({"localhost", "127.0.0.1", "100.64.254.6"}),
     "cytation-pc": frozenset({"100.64.254.16"}),
     "uplc-pc": frozenset({"100.64.254.19"}),
+    # Tailnet IP and the lab-switch address (192.168.254.79, wired).
+    "gibbie-pc": frozenset({"100.64.254.17", "192.168.254.79"}),
 }
 
 #: Registry-id convention marking a ``sdl-lab-hostops`` agent entry. Its live

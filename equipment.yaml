@@ -747,6 +747,23 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills: {}
 
+  - id: hostops_gibbie_pc
+    name: Gibbie PC
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    # sdl-lab-hostops on the Gibbie PC (sdl2-pc-04). Registered 2026-09-06 ahead
+    # of the install, so the PCs & Servers panel shows the host-ops slot; it
+    # reads unreachable until the service is deployed there (needs the lab-ops
+    # SSH key authorized on that PC first — DEVICE_PC_SETUP §2.4).
+    base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8060
+    tailscale_ip: 100.64.254.17
+    status_path: /status
+    poll_timeout_seconds: 5.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
   # Environmental sensor stations. Add one entry per physical sensor unit.
   # The lab map is rotated 90° clockwise from the building plan, so on screen
   # north is up and south is down. Zones (in % of map width × height):

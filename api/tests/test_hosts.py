@@ -134,3 +134,27 @@ def test_committed_registry_groups_cleanly():
     unlisted_hosts = {g["hostname"] for g in payload["other_hosts"]}
     assert not unlisted_hosts & {"127.0.0.1", "localhost", "100.64.254.6"}
     assert not any(h.startswith("sdl2-pc-") for h in unlisted_hosts)
+
+
+def test_gibbie_pc_groups_its_bench_monitor_and_hostops_by_name_and_lab_switch_ip():
+    registry = Registry(
+        equipment=[
+            # The bench monitor's per-device envelopes, all served by the Gibbie PC.
+            _entry("gibbie_ur_arm", "robot_arm", "http://sdl2-pc-04.tail6a1dd7.ts.net:8070", name="UR-3e Arm (Gibbie)"),
+            _entry("gibbie_server", "other", "http://sdl2-pc-04.tail6a1dd7.ts.net:8070"),
+            # The host-ops agent slot, registered ahead of the install.
+            _entry("hostops_gibbie_pc", "other", "http://sdl2-pc-04.tail6a1dd7.ts.net:8060"),
+            # The same machine under its lab-switch address (HOST_ALIASES).
+            _entry("gibbie_flex", "liquid_handler", "http://192.168.254.79:8070"),
+        ]
+    )
+    payload = group_hosts(registry)
+    gibbie = _by_id(payload, "gibbie-pc")
+    assert gibbie["kind"] == "Windows PC"
+    assert [s["id"] for s in gibbie["services"]] == [
+        "gibbie_ur_arm", "gibbie_server", "hostops_gibbie_pc", "gibbie_flex",
+    ]
+    roles = {s["id"]: s["role"] for s in gibbie["services"]}
+    assert roles["hostops_gibbie_pc"] == "ops"
+    assert roles["gibbie_ur_arm"] == "equipment" and roles["gibbie_server"] == "service"
+    assert payload["other_hosts"] == []

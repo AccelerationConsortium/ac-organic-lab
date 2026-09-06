@@ -93,7 +93,7 @@ Granted keys (one per line, keep this list current):
 
 | Key comment | Purpose | Granted on |
 |---|---|---|
-| `lab-ops@sdl2-server-gaia` (ed25519) | central ops agent — deploy/maintain `sdl-lab-hostops`, incident diagnosis | `sdl2-pc-03-cytation`, 2026-08-11; `sdl2-pc-06-uplc`, 2026-08-11 |
+| `lab-ops@sdl2-server-gaia` (ed25519) | central ops agent — deploy/maintain `sdl-lab-hostops`, incident diagnosis | `sdl2-pc-03-cytation`, 2026-08-11; `sdl2-pc-06-uplc`, 2026-08-11; `sdl2-pc-04` (Gibbie PC) **pending** — requested 2026-09-06 so host-ops can be installed and the `gibbie-pc` console host (already whitelisted) can open |
 
 Routine host operations should go through the `sdl-lab-hostops` MCP surface
 (whitelisted, audited — see [`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md)); SSH is the
