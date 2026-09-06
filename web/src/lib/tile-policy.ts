@@ -42,6 +42,20 @@ const DESTRUCTIVE_KINDS: ReadonlySet<Kind> = new Set<Kind>([
 // The set is the implicit complement of DESTRUCTIVE_KINDS; this comment is
 // the natural place to revisit when a new kind joins the enum.
 
+/**
+ * A device whose envelope says `details.monitoring_only: true` is observed,
+ * never operated, from this dashboard (STATUS_SPEC §9 read-only devices — the
+ * Gibbie bench monitor is the first). Two consequences, both presentation:
+ * `EquipmentGrid` gives it the generic card instead of its kind's control
+ * tile, and the generic card drops the lock chip, since there is nothing the
+ * chip would ever gate. The flag is a `details` convention, not contract.
+ */
+export function isMonitoringOnly(snapshot: {
+  status?: { details?: Record<string, unknown> | null } | null;
+}): boolean {
+  return snapshot.status?.details?.["monitoring_only"] === true;
+}
+
 export function kindHasDestructiveControls(kind: Kind | string | undefined): boolean {
   if (!kind) return false;
   return DESTRUCTIVE_KINDS.has(kind as Kind);

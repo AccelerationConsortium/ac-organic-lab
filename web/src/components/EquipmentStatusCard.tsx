@@ -5,7 +5,7 @@ import { kindLabel } from "@/lib/format";
 import { postGenericStartup } from "@/lib/api";
 import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
-import { kindHasDestructiveControls } from "@/lib/tile-policy";
+import { isMonitoringOnly, kindHasDestructiveControls } from "@/lib/tile-policy";
 import { LockButton } from "./ControlLock";
 import { StatusPill } from "./StatusPill";
 import { MetricList } from "./MetricList";
@@ -24,8 +24,9 @@ export function EquipmentStatusCard({ snapshot }: { snapshot: EquipmentSnapshot 
   // destructive controls, even before kind-specific buttons are wired
   // up. Once they are, they should respect `locked` from this hook.
   // See lib/tile-policy.ts for the policy and EQUIP_GUIDE.md
-  // §6b for the operator-facing explanation.
-  const showsLock = kindHasDestructiveControls(snapshot.kind);
+  // §6b for the operator-facing explanation. A monitoring-only envelope
+  // (a read-only observer of a robot arm, say) has nothing to gate.
+  const showsLock = kindHasDestructiveControls(snapshot.kind) && !isMonitoringOnly(snapshot);
   const { locked, countdown, toggle } = useControlLock(snapshot.id);
   const { actionError, exec, isPending } = useActionError();
 
