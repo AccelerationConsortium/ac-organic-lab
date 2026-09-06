@@ -752,10 +752,9 @@ equipment:
     kind: other
     adapter: http
     protocol: "1.2"
-    # sdl-lab-hostops on the Gibbie PC (sdl2-pc-04). Registered 2026-09-06 ahead
-    # of the install, so the PCs & Servers panel shows the host-ops slot; it
-    # reads unreachable until the service is deployed there (needs the lab-ops
-    # SSH key authorized on that PC first — DEVICE_PC_SETUP §2.4).
+    # sdl-lab-hostops on the Gibbie PC (sdl2-pc-04): NSSM `sdl-lab-hostops`,
+    # LocalSystem, whitelist = restartable = [gibbie-server]. Installed and
+    # verified 2026-09-06 (AGENTIC_LAB_DESIGN deployed-instances table).
     base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8060
     tailscale_ip: 100.64.254.17
     status_path: /status

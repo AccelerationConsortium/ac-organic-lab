@@ -113,17 +113,19 @@ arm. From there a full sweep of 192.168.1.0/24 finds exactly one other host,
 **192.168.1.237**, with TCP 29999 (UR Dashboard Server) and 30002 (secondary
 client) open — the UR-3e, alive and answering. The balance's configured
 `192.168.1.1:8002` gives no answer and nothing else is on that wire, so the
-XPR is either powered off or not on that network. Fix options, all outside
-this repo: (a) move the USB adapter (or the instruments' cable) to the Gibbie
-PC and give it a 192.168.1.x address other than .100, then set the arm's
-`host` to `192.168.1.237` and confirm the balance's real address on its
-display; (b) if the adapter's cable is in fact on the lab switch, a secondary
-`192.168.1.x` address on the Gibbie PC's lab-switch NIC reaches the arm with
-no cable moved — test with one `ping 192.168.1.237` after
-`New-NetIPAddress`; (c) re-address the arm and balance onto 192.168.254.x.
-Shell access to the Gibbie PC is by password only so far (no lab-ops key
-authorized, no `sdl-lab-hostops`), which is why this was traced from next
-door.
+XPR is either powered off or not on that network. Fix, once the
+lab-ops key was granted later that day and the PC could be inspected: it has
+**two onboard Realtek PCIe GbE ports** — "Ethernet 2" is the lab-switch link
+(192.168.254.79, static, gateway .231) and **"Ethernet" (MAC
+`E8-FF-1E-DF-1F-08`) is enabled but has no cable**. Run the arm-and-balance
+segment (the cable now feeding the Cytation PC's USB adapter, or a second
+drop from that instrument switch) into that free port and give it a static
+192.168.1.x other than .100; then set the arm's `host` to `192.168.1.237` in
+the monitor's `config.toml` and confirm the balance's real address on its
+display. Its Wi-Fi (`compsci`, 172.31.34.122) carries the tailnet and the
+default route. Host-ops (`hostops_gibbie_pc`) and the `gibbie-pc` console
+host were installed the same day, so the next step needs no more tracing
+from next door.
 
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and
