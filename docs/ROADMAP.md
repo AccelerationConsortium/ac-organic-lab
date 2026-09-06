@@ -144,14 +144,26 @@ serves a STATUS_SPEC envelope yet (no answer on the usual ports over the
 tailnet), and the HPLC and EasyMax expose none of the common web/TCP ports
 from the switch. Onboarding it the Gibbie way means a monitoring gateway on
 that PC (a second `sdl2-gibbie-server`-style instance, or that repo made
-multi-bench) plus a platform section here. First step taken 2026-09-06 at the
-operator's request: the PC is on the **PCs & Servers** page as `lle-pc`
-(console host + `HOST_ALIASES` for all three of its addresses), so its future
-services group under it. The lab-ops key is not yet authorized there (nor the
-lab Pi key on the pH Pi, which answers ping and tailscale at 172.31.60.3 /
-100.64.254.98), so host-ops and the console wait on those two grants. The
-HPLC is driven by the Agilent software on this PC, so its status would come
-from a probe of that software, not from the instrument.
+multi-bench) plus a platform section here. Steps taken 2026-09-06 at the
+operator's request: the PC (`SDL2Win02`) and the pH Pi are on the **PCs &
+Servers** page as `lle-pc` and `lle-pi` (console hosts + `HOST_ALIASES`),
+both key grants are in (LLE PC: lab-ops key; Pi: lab Pi key under user
+`caoyang`), and **host-ops is installed on both** — an NSSM service on the PC
+(`hostops_lle_pc`, read-only until there is something to whitelist) and the
+daemonless stdio-over-SSH lite mode on the Pi (`hostops_pi0_lle`). What the
+recon found, for the platform design: the PC has the same two-onboard-NIC
+layout as the Gibbie PC ("Ethernet 3" on the lab switch at .5, "Ethernet"
+unplugged), no WSL, runs the **Agilent ChemStation Data Service** and OpenLAB
+license services (so the HPLC is ChemStation-driven, not OpenLab CDS — the
+existing `agilent-hplcms-server` sidecar does not apply as-is), and already
+holds a checkout of **`mt_xpr_balance`** (gitlab.com/telescopeinn — a SOAP
+client for the XPR with automated-dosing support, WSDL vendored) that a
+`mt-xpr-balance` STATUS_SPEC server can wrap rather than rewrite. The Pi is
+Debian 12 / Python 3.11 running **PiZeroCam** (camera + LED + motor,
+colorimetric pH estimation; `image_server` on the Pi, a client elsewhere) —
+not yet a systemd unit, so nothing is whitelisted there. Both MT balances
+(.83 Gibbie, .13 here) refuse the XPR web-service port 8002 and answer only on
+TCP 8000; the operator has to enable the web service at each balance.
 
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and

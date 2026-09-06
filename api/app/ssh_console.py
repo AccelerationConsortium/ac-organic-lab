@@ -324,6 +324,25 @@ SSH_HOSTS: tuple[SshHost, ...] = (
             SshProfile(id="cmd", label="cmd", args=(), description="Windows cmd.exe (the OpenSSH default shell)."),
         ),
     ),
+    SshHost(
+        id="lle-pi",
+        label="pH Pi (Process Chemistry)",
+        kind="Raspberry Pi",
+        hostname="sdl2-pi0-lle-pizerocam.tail6a1dd7.ts.net",
+        user="caoyang",
+        target="lle-pi",
+        shell="bash",
+        note=(
+            "Pi Zero 2W running PiZeroCam: camera + LED + motor for colorimetric "
+            "pH reads (image_server). Campus Wi-Fi 172.31.60.3, tailnet "
+            "100.64.254.98. Login is `caoyang` (the account the lab Pi key was "
+            "granted under, like the doser Pi). Host-ops runs here in the "
+            "daemonless stdio-over-SSH lite mode. No tmux installed yet."
+        ),
+        profiles=(
+            SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
+        ),
+    ),
 )
 
 HOSTS_BY_ID: dict[str, SshHost] = {h.id: h for h in SSH_HOSTS}

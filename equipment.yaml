@@ -763,6 +763,24 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills: {}
 
+  - id: hostops_lle_pc
+    name: LLE PC (Process Chemistry)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    # sdl-lab-hostops on the Process Chemistry PC (sdl2-pc-00-lle, SDL2Win02):
+    # NSSM `sdl-lab-hostops`, LocalSystem, read-only (empty whitelist) until the
+    # platform's STATUS_SPEC servers are deployed there. Installed 2026-09-06.
+    # The pH Pi's host-ops is stdio-over-SSH and has no HTTP /status, so it
+    # has no entry here (same as the other Pi instances).
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8060
+    tailscale_ip: 100.64.254.13
+    status_path: /status
+    poll_timeout_seconds: 5.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
   # Environmental sensor stations. Add one entry per physical sensor unit.
   # The lab map is rotated 90° clockwise from the building plan, so on screen
   # north is up and south is down. Zones (in % of map width × height):
