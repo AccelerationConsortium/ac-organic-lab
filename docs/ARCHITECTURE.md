@@ -128,6 +128,7 @@ ac-organic-lab/
 │       ├── workflow.py             # Phase F: authorized-run executor (SSE, abort)
 │       ├── assistant.py            # /api/assistant/chat — claude-cli backend + backend dispatch (SSE)
 │       ├── assistant_openai.py     # OpenAI-compatible backend (OpenRouter) over the same MCP servers
+│       ├── assistant_sessions.py   # Plan mode: assistant.db + /api/assistant/sessions/* (saved planning sessions)
 │       ├── mcp_server.py           # lab-history MCP server (read-only tools over lab.db)
 │       └── presentation.py        # dashboard snapshot types + location
 └── web/                            # Next.js UI
@@ -265,7 +266,22 @@ Three pieces:
   with display-only proposals/outcomes; downloaded history cannot restore an
   approval. Chat requests include the expected owner so a stale tab cannot send
   another user's history after a shared-cookie change. It only renders if `GET /api/assistant/health`
-  reports `configured: true`.
+  reports `configured: true`. Its third mode, **Plan** (UI_DESIGN §5.10,
+  ASSISTANT_PERSISTENCE.md step 2), swaps the temporary conversation for a
+  named, owner-private session saved on this host: turns post to
+  `/api/assistant/sessions/{id}/turns` with only the new text and an
+  idempotency key, and the server rebuilds the model's context from what it
+  stored. Saved messages restore as display-only history — never a card.
+- **`api/app/assistant_sessions.py`** — the Plan-mode store and routes.
+  `assistant.db` (SQLite WAL, one serialised writer, migrations, bounded
+  retention) beside `lab.db` — deliberately neither the telemetry DB nor
+  BitacoraDB, because a chat transcript is neither telemetry nor a scientific
+  record. Owner full access; global admins read-only (list/open/export);
+  everyone else 404. Plan turns run the **Ask** engine and toolset with a Plan
+  addendum — `lab-control` is never registered — and close with a truthful
+  `completed` / `failed` / `interrupted` state, so a disconnect or restart can
+  never promote an unfinished answer. Saving files nothing: there is no route
+  here that registers a protocol or starts a run.
 - **`api/app/assistant.py`** — `POST /api/assistant/chat`. Two selectable
   backends behind one SSE contract (per-mode via `ASSISTANT_BACKEND` /
   `ASSISTANT_CONTROL_BACKEND`); the bubble cannot tell them apart:

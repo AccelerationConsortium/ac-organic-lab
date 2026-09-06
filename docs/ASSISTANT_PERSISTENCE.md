@@ -213,12 +213,76 @@ action need truthful outcomes and durable recovery, never automatic replay.
 
 ## 3. Build order
 
-**Implemented locally on `design/assistant-modes` (not deployed):** the temporary
-chat notice and Markdown/JSON downloads, inert proposal/outcome history, and
-owner-scoped tab caches. Only the latest 20 messages survive a reload; downloads
-include all messages still available in the current tab. Model context is
-bounded separately to 40 messages. Raw device responses and image binaries are
-not included in transcript downloads; camera references expire.
+**Step 1 — deployed 2026-09-06 00:54 EDT** (from `design/assistant-modes`): the
+temporary chat notice and Markdown/JSON downloads, inert proposal/outcome
+history, and owner-scoped tab caches. Only the latest 20 messages survive a
+reload; downloads include all messages still available in the current tab.
+Model context is bounded separately to 40 messages. Raw device responses and
+image binaries are not included in transcript downloads; camera references
+expire.
+
+**Step 2 — implemented 2026-09-06 on `design/assistant-modes` (not yet
+deployed):** saved Plan sessions, per D-1/D-2. What shipped, against the list
+D-2 asked for before saved sessions could:
+
+- **Store.** `api/app/assistant_sessions.py` — `assistant.db` (SQLite WAL,
+  one serialised writer, `PRAGMA user_version` migrations) beside the resolved
+  `lab.db`, or at `ASSISTANT_DB_PATH`. Never `lab.db`'s schema, never
+  BitacoraDB. Opened in the API lifespan; if it cannot open, the routes answer
+  503, the health probe reports `saved_sessions: false`, the bubble hides the
+  Plan toggle, and Ask/Control are untouched.
+- **Routes** (`/api/assistant/sessions`, behind the same sign-in gate as every
+  `/api/assistant/*` path): list (`?scope=all` for admins), create (with an
+  optional carried-over `seed`), read, rename, delete, export (`json` / `md`,
+  same non-executable notice as the temporary download), and
+  `POST …/{id}/turns` — one chat turn *inside* a session, streamed like `/chat`.
+- **Ownership.** Identity is the middleware's `X-Auth-User`/`X-Auth-Role`; no
+  identity, no saved sessions — even under `DASHBOARD_CONTROL_OPEN`. Owner:
+  everything. Global admin: list, read, export; rename/delete/turn are 403 (an
+  admin never acts as the owner). Anyone else: 404, so ids leak nothing.
+- **Server-issued ids and ordered events; idempotent retries.** Session,
+  message and turn ids are minted server-side. A turn carries a client
+  `request_id`; repeating it replays the stored turn's frames and never reruns
+  tools.
+- **One active turn per session; revisions.** A concurrent turn is 409; a
+  rename with a stale `revision` is 409 (the bubble then reloads the other
+  tab's version). Each turn and rename bumps the revision; the bubble
+  re-reads the open session on window focus when the revision moved.
+- **Truthful states.** `completed` / `running` / `interrupted` / `failed` per
+  message. The answer is written `running` before the engine starts and closed
+  in a `finally` — synchronously, so a client disconnect still lands. An engine
+  that stops without a terminal frame is `interrupted` and the browser gets an
+  `interrupted` frame (no "connection lost" retry banner). Reopening the store
+  after a restart marks every `running` answer `interrupted` and unlocks its
+  session; a turn still `running` past the wallclock cap plus slack is
+  reclaimed the same way.
+- **Server-built context.** The model sees the last 40 stored messages plus the
+  new one, rebuilt from the store; the client sends only `text` and
+  `request_id`. Retention (below) and context size are independent.
+- **Toolset.** Plan runs the **Ask** engine and servers (`lab-history`,
+  `lab-inventory`) with a Plan addendum to the system prompt; `lab-control` is
+  never registered, so no proposal card can be produced in a saved session.
+- **Inert restore.** Stored per message: text, and display-only projections
+  (tool names + finished flag, camera-frame links, imported control-history
+  entries, refusal/decline chips). No approval state exists to restore; a
+  carried-over Control conversation shows its cards as history and nothing on
+  it is clickable. Camera links are links — a saved URL is not a saved image.
+- **Retention and quotas.** `ASSISTANT_SESSION_RETENTION_DAYS` (180) purges
+  untouched sessions on open and on create; `ASSISTANT_MAX_SESSIONS_PER_OWNER`
+  (200) and `ASSISTANT_MAX_MESSAGES_PER_SESSION` (2000) refuse with 409.
+- **UX** (`AssistantBubble.tsx`, `AssistantSessionRail.tsx`): a third toggle,
+  sky accent. Entering Plan from a non-empty temporary chat shows the §0
+  preview — save into a new named session (the seed), start Plan without
+  saving, or stay; nothing is persisted before that click and the temporary
+  tab cache is dropped when Plan opens. Leaving Plan (toggle, or minimising
+  the panel) keeps the session on the server and opens a new temporary chat.
+  Saving never reports anything filed; the Plan notice says so.
+
+Not part of step 2, unchanged: the routine-action exception, sandbox
+provisioning, protocol handoff, and any bitácora write. Attachment quotas and
+backup retention for saved sessions are still open (D-2's last bullet):
+today camera frames are linked from the shared 24 h snapshot dir and nothing
+else is attached.
 
 Logout/account changes clear the visible conversation and live cards. Shared
 cookie changes notify other tabs, identity refreshes on focus, and the chat
@@ -227,15 +291,17 @@ An in-flight sequence stops submitting new steps if its component unmounts.
 Completion reports accept the same step count as proposals; a report failure
 remains visible without changing the reported physical outcome.
 
-Saved Plan sessions, the routine-action exception, sandbox provisioning, and
-protocol handoff remain proposed. Part I is unchanged.
+The routine-action exception, sandbox provisioning, and protocol handoff
+remain proposed. Part I is unchanged.
 
 1. **Temporary convenience:** truthful notice, Markdown/JSON downloads,
    identity-scoped browser caches, and completion-report sizing. No expansion
    of hardware permissions.
-2. **Saved Plan sessions:** D-1/D-2, with ownership isolation, idempotency,
-   concurrent-tab, interrupted-stream, retention, and inert-restore checks.
-   Saving a conversation must never report that a protocol was filed.
+2. **Saved Plan sessions** — implemented (above): D-1/D-2, with ownership
+   isolation, idempotency, concurrent-tab, interrupted-stream, retention, and
+   inert-restore checks (`api/tests/test_assistant_sessions.py`, the Plan
+   block of `AssistantBubble.test.tsx`). Saving a conversation never reports
+   that a protocol was filed.
 3. **Routine-control policy:** settle §2, explicitly amend the binding
    contract through human review, implement the allowlist and test refusals.
 4. **Sandbox handoff:** access controls and D-7 first, then the pilot and one

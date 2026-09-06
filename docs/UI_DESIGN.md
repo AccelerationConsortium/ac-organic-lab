@@ -730,7 +730,7 @@ single-glyph surfaces; rendering pre-tracking time as zero usage.
 
 ---
 
-## 5. Assistant control mode [IMPLEMENTED — Steps 1, 1b–1j]
+## 5. Assistant control mode [IMPLEMENTED — Steps 1, 1b–1m; Plan mode §5.10]
 
 **Drafted 2026-08-07** on branch `actionable-assistant`; **Step 1 implemented
 2026-08-11**. Extends the tier-2 dashboard assistant (§2) from a purely
@@ -750,14 +750,14 @@ carry an ordered multi-step *plan* on one device, approved as a whole and run
 step by step from the browser — see §5.3b. Step 2 (autonomy) is sketched at
 the end and is **not** approved.
 
-**Temporary conversation update (2026-09-06, implemented locally):** the bubble
-warns that chat is temporary and offers Markdown/JSON downloads. Exports include
-available messages and historical proposals/control outcomes, with no reusable
-approvals. The latest 20 messages are cached for the signed-in owner in this
-tab; logout/account changes clear the chat and live cards. Audit records remain.
-Saved **Plan** mode and the proposed routine-control exception are described in
-[ASSISTANT_PERSISTENCE.md](ASSISTANT_PERSISTENCE.md); neither is enabled by this
-UI update.
+**Temporary conversation update (deployed 2026-09-06):** the bubble warns that
+chat is temporary and offers Markdown/JSON downloads. Exports include available
+messages and historical proposals/control outcomes, with no reusable approvals.
+The latest 20 messages are cached for the signed-in owner in this tab;
+logout/account changes clear the chat and live cards. Audit records remain.
+**Plan mode** — the third toggle, a saved and owner-private planning session —
+is implemented as §5.10 below (ASSISTANT_PERSISTENCE.md step 2). The proposed
+routine-control exception (that document's §2) is still not enabled.
 
 ### 5.1 The commitment: the assistant proposes, the browser executes
 
@@ -1603,8 +1603,90 @@ which move its trust tier:
   cleared asyncio's 64 KiB default — `readline()` answered with "Separator
   is found, but chunk is longer than limit" and killed the turn.
 
+### 5.10 Plan mode — saved planning sessions (2026-09-06, operator decision)
+
+**Status: implemented on `design/assistant-modes`; not yet deployed.** The
+design is [`ASSISTANT_PERSISTENCE.md`](ASSISTANT_PERSISTENCE.md) (§0 UX, D-1
+… D-3, D-9; build-order step 2). This section records the shipped shape.
+
+**What it is.** Ask and Control are temporary: the conversation lives in the
+tab. Plan is the mode for developing a reusable protocol over days — the
+conversation is a **named, owner-private session saved on the dashboard**
+(`assistant.db`, `api/app/assistant_sessions.py`), reopened from a rail under
+the mode notice. It has **Ask's toolset**: the read-only `lab-history` and
+`lab-inventory` servers plus a Plan addendum to the system prompt. It never
+registers `lab-control`, so no proposal card can be produced in a saved
+session, and nothing in one can actuate hardware (D-9). Saving files nothing —
+protocols are edited and registered in bitácora through project review; the
+notice bar and the export say so in words.
+
+**Trust story, unchanged.** Identity is the middleware's verified
+`X-Auth-User` / `X-Auth-Role` (every `/api/assistant/*` path is already behind
+sign-in). The owner has full access; a **global admin may read** — list with
+`?scope=all`, open, export — but rename, delete and turns are **403**: an
+admin never acts as the owner. Anyone else gets **404**, so the id space leaks
+nothing. There is no identity under `DASHBOARD_CONTROL_OPEN`, so there are no
+saved sessions in that dev mode either.
+
+**The turn** (`POST /api/assistant/sessions/{id}/turns`, SSE like `/chat`):
+the client sends only `text` and a `request_id`. The server stores the user
+message, rebuilds the model's context from the **stored** session (last 40
+messages), runs the Ask engine with the Plan addendum, and closes the answer in
+a `finally` with its true state — `completed`, `failed`, or **`interrupted`**
+when the engine stopped short or the browser went away. A repeated
+`request_id` **replays** the stored frames instead of running again. One
+active turn per session (409 otherwise); a rename with a stale `revision` is
+409 and the bubble reloads the other tab's version; on window focus the open
+session is re-read when its revision moved. A restart marks every `running`
+answer `interrupted` and unlocks its session — an unfinished answer never
+becomes a finished one.
+
+**Inert restore.** A stored message is text plus display-only projections:
+tool names with a finished flag, camera-frame **links** (a saved URL is not a
+saved image; the shared 24 h snapshot dir still governs), imported
+control-history entries, refusal/decline chips. No approval state exists to
+restore, and `turnFromSaved` in the bubble rebuilds turns, never cards.
+
+**Switching.** Entering Plan from a non-empty temporary chat shows the §0
+preview (`CarryOverDialog`): save it into a **new named session** (the
+messages travel as the create request's `seed`, marked `imported`), start Plan
+without saving, or stay. Nothing is persisted before that click, and the
+temporary tab cache is dropped when Plan opens — the temporary conversation
+ends either way, and the download buttons are still on screen for it. Leaving
+Plan (the toggle, or minimising the panel — mode still resets to Ask on close,
+§5.7 Q1) keeps the session on the server and opens a new temporary chat. A
+streaming turn or a running plan blocks the switch until it concludes.
+
+**Limits.** `ASSISTANT_SESSION_RETENTION_DAYS` (180) purges untouched sessions
+on open and on create; `ASSISTANT_MAX_SESSIONS_PER_OWNER` (200) and
+`ASSISTANT_MAX_MESSAGES_PER_SESSION` (2000) refuse with 409. `ASSISTANT_DB_PATH`
+moves the file (default: beside the resolved `lab.db`, inside the unit's
+writable `data/`). If the store cannot open, `/api/assistant/health` reports
+`saved_sessions: false`, the bubble hides the Plan toggle, and Ask/Control are
+untouched.
+
+**Accent.** Sky, panel-wide, the way Control is purple — a saved session must
+never read as either temporary mode; each turn keeps the accent of the mode it
+was sent under, so a carried-over Control exchange stays purple inside a Plan
+session.
+
+**Verification.** `api/tests/test_assistant_sessions.py` (17): identity
+required; owner/admin/stranger matrix; server-built context and `control=False`
+on every Plan turn; idempotent replay; one active turn; interrupted vs failed
+vs completed across an engine that stops short, an engine error, a store
+reopen, and a stale lock; revision conflicts; retention and both caps; seeded
+history imported inertly and an export with `executable: false`. Bubble
+(`AssistantBubble.test.tsx`, Plan block, 9): the toggle's availability, picker
+→ new session → a turn that posts only `text` + `request_id`, the carry-over
+preview (nothing saved until the click, tab cache dropped), start-without-
+saving and leaving Plan, inert restore of a carried-over Control card, the
+`interrupted` frame with no connection-lost banner, server exports, rename
+by revision + delete, and the switch refused mid-turn.
+
 ### See also (assistant control mode)
 
+- [`ASSISTANT_PERSISTENCE.md`](ASSISTANT_PERSISTENCE.md) — the three-mode
+  design behind §5.10; its §2 (routine-control exception) is still open.
 - §2 — assistant tiering; this section changes tier 2's *tool surface*, not
   its trust level.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) decision #10 (read-only assistant),

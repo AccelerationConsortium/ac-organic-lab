@@ -25,6 +25,7 @@ shares the repo-root `.venv` with `skills/` and `auth/`.
 | `assistant.py` | `POST /api/assistant/chat` (SSE): backend dispatch + the `claude` CLI engine; per-turn journald observability lines. |
 | `assistant_openai.py` | The second chat engine: OpenAI-compatible endpoint (default OpenRouter) with its own tool loop over the same MCP servers. |
 | `assistant_control.py` | The `lab-control` MCP server: propose-only — validates one action against live `allowed_actions` + per-equipment authz and returns a proposal card; never POSTs to a device. |
+| `assistant_sessions.py` | Plan mode: `assistant.db` (owner-private saved planning sessions, WAL, migrations, bounded retention) and `/api/assistant/sessions/*` — list/create/read/rename/delete/export plus `POST …/turns`, a chat turn run on the Ask toolset with server-rebuilt context and truthful `interrupted`/`failed` states. Owner full, admin read-only, everyone else 404. `docs/ASSISTANT_PERSISTENCE.md` step 2. |
 | `mcp_server.py` | The `lab-history` MCP server: eight read-only tools over `lab.db` / the live aggregator / whitelisted journald, plus the append-only `record_observation` journal write. |
 | `alert_notifier.py` | Debounced device alerts (unreachable / error / e_stop / recovered) → PyPoe's `/alerts/device` webhook. |
 | `record.py` | D-23 record layer: files finished runs in BitacoraDB (Experiment ensured, run as `Plan`, non-success steps as `Note`s). |

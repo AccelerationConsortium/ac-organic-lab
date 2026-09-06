@@ -121,24 +121,100 @@ function sseBodyOpen(frames: string[], signal?: AbortSignal | null) {
 
 let mineEquipment: Record<string, string | null>;
 
-function installFetch(chatFrames: string[], opts: { open?: boolean } = {}) {
+// --- in-memory stand-in for /api/assistant/sessions (Plan mode) ---------------
+
+interface MockSavedMessage {
+  id: string; seq: number; turn_id: string; role: "user" | "assistant";
+  state: string; text: string; events: Record<string, unknown>[]; error: string | null;
+  mode: string; imported: boolean; created_at: string; updated_at: string;
+}
+interface MockSavedSession {
+  id: string; owner: string; title: string; created_at: string; updated_at: string;
+  revision: number; message_count: number; active_turn: boolean;
+}
+let savedSessions: MockSavedSession[];
+let savedMessages: Record<string, MockSavedMessage[]>;
+let sessionSeq = 0;
+
+function seedSavedSession(title: string, messages: Partial<MockSavedMessage>[]): MockSavedSession {
+  const id = `ps_${++sessionSeq}`;
+  const now = new Date().toISOString();
+  const session: MockSavedSession = {
+    id, owner: "alice@example.edu", title, created_at: now, updated_at: now,
+    revision: 1, message_count: messages.length, active_turn: false,
+  };
+  savedSessions.unshift(session);
+  savedMessages[id] = messages.map((m, i) => ({
+    id: `pm_${id}_${i}`, seq: i + 1, turn_id: `pt_${id}_${i}`, role: m.role ?? "user",
+    state: m.state ?? "completed", text: m.text ?? "", events: m.events ?? [], error: m.error ?? null,
+    mode: m.mode ?? "plan", imported: m.imported ?? false, created_at: now, updated_at: now,
+  }));
+  return session;
+}
+
+function json(status: number, body: unknown) {
+  return Promise.resolve({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
+}
+
+function installFetch(chatFrames: string[], opts: { open?: boolean; savedSessions?: boolean } = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    const method = init?.method ?? "GET";
     if (url.includes("/api/assistant/health")) {
       return Promise.resolve({
         ok: true,
-        json: async () => ({ configured: true, model: "sonnet", backend: "claude-code-cli" }),
+        json: async () => ({
+          configured: true, model: "sonnet", backend: "claude-code-cli",
+          saved_sessions: opts.savedSessions ?? true,
+        }),
       });
     }
     if (url.includes("/api/auth/mine")) {
       return Promise.resolve({ ok: true, json: async () => ({ equipment: mineEquipment }) });
     }
     if (url.includes("/api/assistant/chat")) {
-      expect(init?.method).toBe("POST");
+      expect(method).toBe("POST");
       return Promise.resolve({
         ok: true,
         body: opts.open ? sseBodyOpen(chatFrames, init?.signal) : sseBody(chatFrames),
       });
+    }
+    const turns = url.match(/\/api\/assistant\/sessions\/([^/?]+)\/turns$/);
+    if (turns) {
+      expect(method).toBe("POST");
+      if (!savedSessions.some((s) => s.id === turns[1])) return json(404, { detail: "no such saved session" });
+      return Promise.resolve({
+        ok: true, status: 200,
+        body: opts.open ? sseBodyOpen(chatFrames, init?.signal) : sseBody(chatFrames),
+      });
+    }
+    const one = url.match(/\/api\/assistant\/sessions\/([^/?]+)$/);
+    if (one) {
+      const session = savedSessions.find((s) => s.id === one[1]);
+      if (!session) return json(404, { detail: "no such saved session" });
+      if (method === "GET") return json(200, { session, messages: savedMessages[session.id] ?? [], read_only: false });
+      if (method === "PATCH") {
+        const body = JSON.parse(String(init?.body));
+        if (body.revision !== session.revision) return json(409, { detail: "this session changed in another tab" });
+        session.title = body.title; session.revision += 1;
+        return json(200, session);
+      }
+      if (method === "DELETE") {
+        savedSessions = savedSessions.filter((s) => s.id !== session.id);
+        return json(204, null);
+      }
+    }
+    if (/\/api\/assistant\/sessions(\?.*)?$/.test(url)) {
+      if (method === "GET") return json(200, { sessions: savedSessions, owner: "alice@example.edu", scope: "mine" });
+      if (method === "POST") {
+        const body = JSON.parse(String(init?.body));
+        const seed = (body.seed ?? []) as Partial<MockSavedMessage>[];
+        const session = seedSavedSession(body.title, seed.map((m) => ({
+          role: m.role, text: m.text, mode: m.mode, imported: true,
+          state: (m as { completion?: string }).completion ?? "completed", events: m.events ?? [],
+        })));
+        return json(201, session);
+      }
     }
     return Promise.resolve({ ok: false, text: async () => "unexpected", json: async () => ({}) });
   });
@@ -146,10 +222,19 @@ function installFetch(chatFrames: string[], opts: { open?: boolean } = {}) {
   return fetchMock;
 }
 
+function sessionCalls(fetchMock: ReturnType<typeof vi.fn>, method: string, pattern: RegExp) {
+  return fetchMock.mock.calls.filter(
+    (call) => pattern.test(String(call[0])) && ((call[1] as RequestInit | undefined)?.method ?? "GET") === method,
+  );
+}
+
 beforeEach(() => {
   auth.authenticated = true;
   auth.identity = { email: "alice@example.edu", role: "operator" };
   mineEquipment = { xarm: "user" };
+  savedSessions = [];
+  savedMessages = {};
+  sessionSeq = 0;
   (authorizeAssistantAction as unknown as ReturnType<typeof vi.fn>).mockClear();
   (approveAssistantPlan as unknown as ReturnType<typeof vi.fn>).mockClear();
   (finishAssistantPlan as unknown as ReturnType<typeof vi.fn>).mockClear();
@@ -955,5 +1040,193 @@ describe("AssistantBubble Step 1j refusal/decline chips", () => {
     await sendInControlMode("what is the shaker doing?");
     await screen.findByText(/The shaker is idle\./);
     expect(screen.queryByText(/No action proposed/)).toBeNull();
+  });
+});
+
+describe("AssistantBubble plan mode (saved sessions)", () => {
+  async function send(text: string) {
+    const box = screen.getByRole("textbox");
+    fireEvent.change(box, { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).toBeNull());
+  }
+  const DONE = 'data: {"type":"done"}\n\n';
+  const PLAN_REPLY = [
+    'data: {"type":"session","session_id":"ps_1","turn_id":"pt_x"}\n\n',
+    'data: {"type":"text","delta":"1. Home the arm."}\n\n',
+    DONE,
+  ];
+
+  it("offers Plan only when the dashboard has its saved-session store", async () => {
+    installFetch([]);
+    await openPanel();
+    expect(screen.getByRole("button", { name: "Plan" })).toBeTruthy();
+    cleanup();
+    vi.unstubAllGlobals();
+    installFetch([], { savedSessions: false });
+    await openPanel();
+    expect(screen.queryByRole("button", { name: "Plan" })).toBeNull();
+  });
+
+  it("opens the picker on an empty chat; a new session unlocks the composer and turns post to it", async () => {
+    const fetchMock = installFetch(PLAN_REPLY);
+    await openPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    expect(await screen.findByText(/Saved planning session/)).toBeTruthy();
+    expect(screen.getByText(/Nothing here runs hardware or registers a protocol/)).toBeTruthy();
+    await screen.findByText("No saved sessions yet");
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.change(screen.getByLabelText("New session title"), { target: { value: "Sealing v1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).disabled).toBe(false));
+    expect(screen.getByText(/Planning in “Sealing v1”/)).toBeTruthy();
+
+    await send("draft the sealing protocol");
+    const turnCalls = sessionCalls(fetchMock, "POST", /\/sessions\/ps_1\/turns$/);
+    expect(turnCalls).toHaveLength(1);
+    const body = JSON.parse(String((turnCalls[0][1] as RequestInit).body));
+    expect(body.text).toBe("draft the sealing protocol");
+    expect(typeof body.request_id).toBe("string");
+    expect(body.messages).toBeUndefined(); // history is rebuilt server-side
+    expect(sessionCalls(fetchMock, "POST", /\/api\/assistant\/chat/)).toHaveLength(0);
+    expect(await screen.findByText("1. Home the arm.")).toBeTruthy();
+  });
+
+  it("previews a carry-over before saving a temporary conversation and never saves it silently", async () => {
+    const fetchMock = installFetch(['data: {"type":"text","delta":"the plateloc is ready"}\n\n', DONE]);
+    await openPanel();
+    await send("is the plateloc ready?");
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    const dialog = await screen.findByRole("dialog", { name: "Save this conversation into a Plan session?" });
+    expect(dialog).toBeTruthy();
+    expect(screen.getByText(/2 messages would be saved as history/)).toBeTruthy();
+    expect(sessionCalls(fetchMock, "POST", /\/api\/assistant\/sessions$/)).toHaveLength(0);
+    // Still in the temporary chat until a choice is made.
+    expect(screen.getByText(/Temporary chat/)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Title for the new session"), { target: { value: "From today's chat" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save into a new session" }));
+    await screen.findByText(/Saved planning session/);
+    const creates = sessionCalls(fetchMock, "POST", /\/api\/assistant\/sessions$/);
+    expect(creates).toHaveLength(1);
+    const seed = JSON.parse(String((creates[0][1] as RequestInit).body)).seed;
+    expect(seed.map((m: { role: string; text: string }) => [m.role, m.text])).toEqual([
+      ["user", "is the plateloc ready?"],
+      ["assistant", "the plateloc is ready"],
+    ]);
+    // The carried-over history is shown from the server's copy.
+    expect(await screen.findByText("is the plateloc ready?")).toBeTruthy();
+    // And the temporary tab cache is gone — the temporary conversation ended.
+    expect(sessionStorage.getItem("ac-assistant-history-v2")).toBeNull();
+  });
+
+  it("can enter Plan without saving, and leaving Plan starts a fresh temporary chat", async () => {
+    const fetchMock = installFetch(['data: {"type":"text","delta":"yes"}\n\n', DONE]);
+    await openPanel();
+    await send("quick question");
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start Plan without saving this chat" }));
+    await screen.findByText(/Saved planning session/);
+    expect(screen.queryByText("quick question")).toBeNull();
+    expect(sessionCalls(fetchMock, "POST", /\/api\/assistant\/sessions$/)).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(await screen.findByText(/Temporary chat/)).toBeTruthy();
+    expect(screen.queryByText("quick question")).toBeNull();
+    expect(sessionCalls(fetchMock, "DELETE", /\/api\/assistant\/sessions\//)).toHaveLength(0);
+  });
+
+  it("restores a saved session inertly — history only, nothing approvable", async () => {
+    const session = seedSavedSession("Carried over", [
+      { role: "user", text: "stage the plate", mode: "control", imported: true },
+      {
+        role: "assistant", text: "Proposed move.uplc_draw_home; you authorized it.", mode: "control", imported: true,
+        events: [
+          { type: "tool", name: "propose_action", ok: true },
+          { type: "control", event: "action_proposed", detail: { action: "move.uplc_draw_home" } },
+          { type: "control", event: "action_response", detail: { outcome: "ok" } },
+        ],
+      },
+      { role: "user", text: "and the cooling step?", mode: "plan" },
+      { role: "assistant", text: "half an ans", mode: "plan", state: "interrupted" },
+    ]);
+    installFetch([]);
+    await openPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    const select = await screen.findByLabelText("Saved session");
+    fireEvent.change(select, { target: { value: session.id } });
+    expect(await screen.findByText(/Proposed move.uplc_draw_home/)).toBeTruthy();
+    expect(screen.getByText("✓ propose action")).toBeTruthy();
+    expect(screen.getByText(/Interrupted — this answer did not finish/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Authorize" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Approve these/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
+    expect(authorizeAssistantAction).not.toHaveBeenCalled();
+    expect(screen.getByText(/4 messages · updated/)).toBeTruthy();
+    // Clear is not how a saved session ends.
+    expect((screen.getByRole("button", { name: "Clear" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("ends a turn as interrupted, without a connection-lost banner, when the server says so", async () => {
+    seedSavedSession("Draft", []);
+    installFetch(['data: {"type":"text","delta":"partial"}\n\n', 'data: {"type":"interrupted"}\n\n']);
+    await openPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    fireEvent.change(await screen.findByLabelText("Saved session"), { target: { value: "ps_1" } });
+    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).disabled).toBe(false));
+    await send("go on");
+    expect(await screen.findByText(/Interrupted — this answer did not finish/)).toBeTruthy();
+    expect(screen.queryByText(/Connection lost/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("downloads a saved session through the server export", async () => {
+    seedSavedSession("Draft", [{ role: "user", text: "hi", mode: "plan" }]);
+    installFetch([]);
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    await openPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    fireEvent.change(await screen.findByLabelText("Saved session"), { target: { value: "ps_1" } });
+    await screen.findByText("hi");
+    fireEvent.click(screen.getByRole("button", { name: "Download conversation as Markdown" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download conversation as JSON" }));
+    expect(open.mock.calls.map((c) => c[0])).toEqual([
+      "/api/assistant/sessions/ps_1/export?format=md",
+      "/api/assistant/sessions/ps_1/export?format=json",
+    ]);
+  });
+
+  it("renames and deletes through the rail, honouring the server's revision", async () => {
+    const session = seedSavedSession("Old name", []);
+    const fetchMock = installFetch([]);
+    await openPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    fireEvent.change(await screen.findByLabelText("Saved session"), { target: { value: session.id } });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Rename" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    fireEvent.change(screen.getByLabelText("Session title"), { target: { value: "New name" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+    await waitFor(() => expect(screen.getByText(/Planning in “New name”/)).toBeTruthy());
+    const patch = sessionCalls(fetchMock, "PATCH", /\/sessions\/ps_1$/);
+    expect(JSON.parse(String((patch[0][1] as RequestInit).body))).toEqual({ title: "New name", revision: 1 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete session" }));
+    await waitFor(() => expect(sessionCalls(fetchMock, "DELETE", /\/sessions\/ps_1$/)).toHaveLength(1));
+    expect(await screen.findByText(/Pick a saved session above/)).toBeTruthy();
+  });
+
+  it("refuses to switch modes while a turn is streaming", async () => {
+    installFetch(['data: {"type":"status","phase":"thinking"}\n\n'], { open: true });
+    await openPanel();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "long question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByRole("button", { name: "Stop" });
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    expect(screen.queryByRole("dialog", { name: /Save this conversation/ })).toBeNull();
+    expect(screen.getByText(/Temporary chat/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
   });
 });

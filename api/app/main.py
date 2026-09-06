@@ -33,6 +33,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .agent_bugs import build_agent_bugs_router
 from .assistant import build_assistant_router
+from .assistant_sessions import (
+    AssistantSessionStore,
+    build_assistant_sessions_router,
+    resolve_sessions_db_path,
+)
 from .voice import build_voice_router
 from .alert_notifier import AlertNotifier
 from .control import build_control_router
@@ -542,6 +547,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         db = None  # type: ignore[assignment]
     app.state.db = db
 
+    # Saved planning sessions (assistant Plan mode) — its own SQLite file, kept
+    # apart from the public telemetry above. Optional: Ask and Control keep
+    # working without it; the routes answer 503 and the bubble hides Plan.
+    sessions_path = resolve_sessions_db_path()
+    sessions_store: AssistantSessionStore | None = AssistantSessionStore(sessions_path)
+    try:
+        sessions_store.open()
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Could not open assistant sessions store at %s: %s — Plan mode disabled",
+            sessions_path, exc,
+        )
+        sessions_store = None
+    app.state.assistant_sessions = sessions_store
+
     # Background uptime poll (+ device-alert notifier, enabled only when
     # PYPOE_ALERT_URL is set — see alert_notifier.py).
     poll_task = None
@@ -566,6 +586,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await app.state.control_client.aclose()
         if db is not None:
             db.close()
+        if sessions_store is not None:
+            sessions_store.close()
 
 
 app = FastAPI(
@@ -609,6 +631,8 @@ app.include_router(build_history_router())
 # Read-only Claude assistant -- streams chat over SSE, has tool access to
 # the history DB and a whitelisted set of systemd journals. See assistant.py.
 app.include_router(build_assistant_router())
+# Plan mode: named, owner-private saved planning sessions (assistant_sessions.py).
+app.include_router(build_assistant_sessions_router())
 app.include_router(build_voice_router())
 # Agent error-reporting bridge: a remote lab agent POSTs an error with its
 # ac_auth X-Api-Key and gets a Hermes diagnosis back in the response.
