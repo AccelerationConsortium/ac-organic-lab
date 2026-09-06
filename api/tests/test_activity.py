@@ -203,8 +203,9 @@ def test_record_cycles_total_ignores_absent_or_non_numeric():
 class _Entry:
     """Minimal stand-in for a registry EquipmentEntry."""
 
-    def __init__(self, kind: str):
+    def __init__(self, kind: str, gateway_fronted: bool = False):
         self.kind = kind
+        self.gateway_fronted = gateway_fronted
 
 
 def test_transport_failure_is_unreachable_for_any_kind():
@@ -236,6 +237,24 @@ def test_gateway_fronted_healthy_states_stay_reachable():
     for state in ("ready", "busy", "degraded", "error"):
         snap = _Snap(_status(equipment_kind="power_strip", equipment_status=state))
         assert snapshot_reachable(snap, _Entry("power_strip")) is True, state
+
+
+def test_registry_flagged_gateway_unknown_is_unreachable_for_any_kind():
+    """§2.1's rule extended per entry: an OT-2 *gateway* answers 200 while the
+    robot behind it is gone and reports `unknown`. Flagged `gateway_fronted`,
+    that reads as unreachable (uptime + PyPoe); unflagged, a liquid_handler's
+    `unknown` stays the unattributable cold-start case and counts as up.
+    """
+    from app.events import snapshot_reachable
+
+    snap = _Snap(_status(equipment_kind="liquid_handler", equipment_status="unknown",
+                         message="Robot unreachable at http://100.64.254.19:31951"))
+    assert snap.fetch_error is None
+    assert snapshot_reachable(snap, _Entry("liquid_handler", gateway_fronted=True)) is False
+    assert snapshot_reachable(snap, _Entry("liquid_handler")) is True
+    # A flagged gateway that *can* reach its hardware is reachable like anyone.
+    ok = _Snap(_status(equipment_kind="liquid_handler", equipment_status="ready"))
+    assert snapshot_reachable(ok, _Entry("liquid_handler", gateway_fronted=True)) is True
 
 
 def test_bare_unknown_on_a_directly_polled_device_counts_as_up():
@@ -281,6 +300,25 @@ def test_robot_reachable_true_or_absent_keeps_semantics():
         snap = _Snap(_status(equipment_kind="liquid_handler", equipment_status="requires_init",
                              details=details))
         assert snapshot_reachable(snap, _Entry("liquid_handler"))is True
+
+
+def test_flagged_gateway_does_not_mask_explicit_robot_outage():
+    """The registry flag and explicit robot probe are independent down signals."""
+    from app.events import snapshot_reachable
+
+    for state in ("ready", "requires_init", "unknown"):
+        snap = _Snap(_status(
+            equipment_kind="liquid_handler", equipment_status=state,
+            details={"robot": {"reachable": False}},
+        ))
+        assert snapshot_reachable(snap, _Entry("liquid_handler", gateway_fronted=True)) is False, state
+
+    # A positive probe cannot undo the gateway's own unknown/down report.
+    unknown = _Snap(_status(
+        equipment_kind="liquid_handler", equipment_status="unknown",
+        details={"robot": {"reachable": True}},
+    ))
+    assert snapshot_reachable(unknown, _Entry("liquid_handler", gateway_fronted=True)) is False
 
 
 def test_gateway_fronted_kinds_match_the_spec_list():

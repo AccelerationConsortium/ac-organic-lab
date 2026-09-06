@@ -169,7 +169,9 @@ def derive_v2_fields(
 #: Kinds reached over a secondary link behind a shared gateway service
 #: (`kasa-tapo-services` today). STATUS_SPEC §2.1 keys the "unknown means
 #: unreachable" rule on `equipment_kind`, so this set is the contract, not a
-#: convenience list — extend it when a new multi-device proxy appears.
+#: convenience list — extend it when a new multi-device proxy appears. A
+#: single-device gateway of some other kind opts in per entry instead, with
+#: `gateway_fronted: true` in `equipment.yaml` (see `snapshot_reachable`).
 GATEWAY_FRONTED_KINDS = frozenset({"camera", "smart_plug", "power_strip"})
 
 
@@ -198,11 +200,19 @@ def snapshot_reachable(snap, reg_entry) -> bool:
     if reg_entry is None:
         return True
     kind = getattr(reg_entry, "kind", None)
-    if kind in GATEWAY_FRONTED_KINDS:
+    # Two ways an entry is gateway-fronted: by kind (the shared multi-device
+    # gateways the spec enumerates) or by an explicit `gateway_fronted: true`
+    # on the registry entry (a single-device gateway of any kind -- the OT-2
+    # gateways, whose robot sits behind a wired/USB link). Both mean the same
+    # thing: a 200 from the service says nothing about the hardware.
+    if kind in GATEWAY_FRONTED_KINDS or getattr(reg_entry, "gateway_fronted", False):
         try:
-            return snap.status.equipment_status != "unknown"
+            if snap.status.equipment_status == "unknown":
+                return False
         except AttributeError:
-            return True
+            pass
+        # A non-unknown gateway state cannot override an explicit failed
+        # robot probe below; both sources can establish an outage.
     # OT-2 gateways can speak plainly about their backing robot: the
     # gateway process answers HTTP 200 even while the robot is off the
     # network, and it reports exactly that via `details.robot.reachable`.
