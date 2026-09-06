@@ -113,19 +113,38 @@ arm. From there a full sweep of 192.168.1.0/24 finds exactly one other host,
 **192.168.1.237**, with TCP 29999 (UR Dashboard Server) and 30002 (secondary
 client) open — the UR-3e, alive and answering. The balance's configured
 `192.168.1.1:8002` gives no answer and nothing else is on that wire, so the
-XPR is either powered off or not on that network. Fix, once the
-lab-ops key was granted later that day and the PC could be inspected: it has
-**two onboard Realtek PCIe GbE ports** — "Ethernet 2" is the lab-switch link
-(192.168.254.79, static, gateway .231) and **"Ethernet" (MAC
-`E8-FF-1E-DF-1F-08`) is enabled but has no cable**. Run the arm-and-balance
-segment (the cable now feeding the Cytation PC's USB adapter, or a second
-drop from that instrument switch) into that free port and give it a static
-192.168.1.x other than .100; then set the arm's `host` to `192.168.1.237` in
-the monitor's `config.toml` and confirm the balance's real address on its
-display. Its Wi-Fi (`compsci`, 172.31.34.122) carries the tailnet and the
-default route. Host-ops (`hostops_gibbie_pc`) and the `gibbie-pc` console
-host were installed the same day, so the next step needs no more tracing
-from next door.
+XPR is either powered off or not on that network. **Resolved
+the same day, and the first guess was wrong.** Once the lab-ops key was
+granted and the PC could be inspected, a sweep of the lab switch from it found
+three hosts greeting as "Universal Robots Dashboard Server" (192.168.254.16,
+.49, .89) and two Mettler-Toledo devices (.13, .83). The operator identified
+Gibbie's as the **UR-3e at .89** and the **XPR at .83**, and the workflow's own
+`sdl2_solid_dose/.env` agrees (`ROBOT_IP`, `BALANCE_IP`). So the instruments
+*were* on the lab switch all along; the monitor's `config.toml` had shipped
+with `192.168.1.100` / `192.168.1.1` from an older layout, and the UR at
+192.168.1.237 behind the Cytation PC's USB adapter is a *different* arm. The
+config was corrected on the PC (arm `host = 192.168.254.89`, name "UR-3e Arm
+(Gibbie)", balance `url = http://192.168.254.83:8002/…`) and `gibbie-server`
+restarted through the new host-ops instance; the arm now reads `ready`
+("Arm powered, brakes released, no program playing"). The balance still reads
+`unknown`: port 8002 — the XPR web service `mt_balance.py` also uses — is
+refused at the instrument (only TCP 8000 answers, and not with HTTP), so the
+web service is off at the balance; enable it there and the tile follows. The
+PC's second onboard NIC ("Ethernet", `E8-FF-1E-DF-1F-08`) remains unplugged
+and is not needed. The upstream `sdl2-gibbie-server` `config.example.toml`
+still carries the old 192.168.1.x addresses.
+
+**Process Chemistry platform (not yet on the dashboard, noted 2026-09-06).**
+Same lab switch: its PC `sdl2-pc-00-lle` (192.168.254.5 / 172.31.35.241 /
+tailnet 100.64.254.13, Windows 10), a Pi Zero 2W pH unit
+`sdl2-pi0-lle-pizerocam` (172.31.60.3 / 100.64.254.98, offline at the time),
+HPLC .11, EasyMax .12, MT balance .13 (TCP 8000 only, like Gibbie's), and the
+UR5-CB3 at .16 (dashboard 29999 / 30002 / 30004 open). Nothing on that PC
+serves a STATUS_SPEC envelope yet (no answer on the usual ports over the
+tailnet), and the HPLC and EasyMax expose none of the common web/TCP ports
+from the switch. Onboarding it the Gibbie way means a monitoring gateway on
+that PC (a second `sdl2-gibbie-server`-style instance, or that repo made
+multi-bench) plus a platform section here — pending the operator's call.
 
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and

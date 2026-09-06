@@ -838,17 +838,18 @@ equipment:
   # its SSH REPL, XPR balance over SOAP), which this service never touches.
   # `gateway_fronted: true` so a device the monitor cannot reach (reported as
   # `unknown`, §2.1) counts as unreachable for uptime and PyPoe alerts.
-  # Network, as found 2026-09-06 (not as first assumed): the Gibbie PC is on
-  # the lab switch at 192.168.254.79 (wired; same segment as the Flex .81, the
-  # HTE OT-2 .50 and the Cytation PC .54). The UR arm + XPR balance live on a
-  # SEPARATE 192.168.1.x segment that the Gibbie PC has no interface on — the
-  # "Realtek USB GbE" adapter carrying it is plugged into the CYTATION PC,
-  # statically 192.168.1.100 (the address this monitor's config wrongly
-  # assumes is the arm). From that segment the UR-3e answers at 192.168.1.237
-  # (dashboard 29999 / secondary 30002 open); the balance's configured
-  # 192.168.1.1:8002 does not answer and nothing else is on the wire. Until
-  # the adapter or the instruments move onto a network the Gibbie PC has, both
-  # tiles read `unknown` (unreachable) — see ROADMAP's Gibbie note.
+  # Network (resolved 2026-09-06): everything Gibbie is on the lab switch
+  # 192.168.254.x — the PC at .79 (second onboard NIC, wired), the Flex .81,
+  # the UR-3e .89, the XPR balance .83 — matching the workflow's own .env
+  # (ROBOT_IP / BALANCE_IP). The monitor's config had shipped with
+  # 192.168.1.100 / 192.168.1.1 from an older bench layout; fixed on the PC
+  # the same day and the arm reads `ready`. The balance tile stays `unknown`
+  # until the XPR's web service (port 8002, what the workflow uses) is
+  # switched on at the instrument — nothing network-side is missing.
+  # Neighbours on the same switch that are NOT Gibbie: the Process Chemistry
+  # platform's UR5-CB3 (.16) and MT balance (.13), a third UR at .49, and a
+  # separate 192.168.1.x segment behind the Cytation PC's USB adapter (a UR at
+  # 192.168.1.237) — see ROADMAP.
   # ---------------------------------------------------------------------
 
   - id: gibbie_workflow
