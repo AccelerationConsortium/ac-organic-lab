@@ -236,15 +236,70 @@ describe("HostsPanel", () => {
     expect(uplc.textContent).toContain("No live details");
   });
 
-  it("lists registry hosts outside the SSH whitelist under Other device hosts", () => {
+  it("falls back to the hostname for a host no whitelisted machine claims", () => {
     render(<HostsPanel hosts={HOSTS} snapshots={[]} />);
 
     expect(screen.getByText("Other device hosts")).toBeTruthy();
     const pi = screen.getByText("100.64.254.100").closest("article")!;
     const hood = within(pi).getByText("Fume Hood Actuator :5000");
     expect(hood.getAttribute("data-kind")).toBe("equipment");
-    // No SSH link — the host is not on the console whitelist.
+    // No SSH link: without a console id there is no terminal to offer.
     expect(pi.querySelector("a[href^='/utils/computers/ssh/']")).toBeNull();
+  });
+
+  it("gives a named device host its name, its address, and a terminal", () => {
+    // What the server sends once the host is on the console whitelist: the
+    // machine's name leads, the address moves into the chip (the service name
+    // would only repeat the title), and the SSH link is offered like any
+    // machine's.
+    const named = {
+      ...HOSTS,
+      other_hosts: [
+        {
+          id: "fumehood-pi",
+          label: "Fume Hood Actuator",
+          kind: "Raspberry Pi",
+          hostname: "sdl2-pi0-fumehood3-actuator.tail6a1dd7.ts.net",
+          services: HOSTS.other_hosts[0].services,
+        },
+      ],
+    };
+    render(<HostsPanel hosts={named} snapshots={[]} />);
+
+    const pi = screen.getByText("Fume Hood Actuator").closest("article")!;
+    expect(within(pi).getByText("100.64.254.100:5000")).toBeTruthy();
+    expect(pi.textContent).toContain("Raspberry Pi");
+    expect(pi.textContent).toContain("sdl2-pi0-fumehood3-actuator.tail6a1dd7.ts.net");
+    const ssh = pi.querySelector("a[href='/utils/computers/ssh/fumehood-pi']");
+    expect(ssh).not.toBeNull();
+  });
+
+  it("shortens an FQDN in a device host's address chip", () => {
+    const named = {
+      ...HOSTS,
+      other_hosts: [
+        {
+          id: "doser-pi",
+          label: "Dose Every Well",
+          kind: "Raspberry Pi",
+          hostname: "sdl2-pi5-minicnc.tail6a1dd7.ts.net",
+          services: [
+            service({
+              id: "dose_every_well",
+              name: "Dose Every Well",
+              kind: "solid_doser",
+              role: "equipment",
+              base_url: "http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000",
+              host: "sdl2-pi5-minicnc.tail6a1dd7.ts.net",
+              port: 8000,
+            }),
+          ],
+        },
+      ],
+    };
+    render(<HostsPanel hosts={named} snapshots={[]} />);
+
+    expect(screen.getByText("sdl2-pi5-minicnc:8000")).toBeTruthy();
   });
 
   it("explains the chip colors in a legend", () => {

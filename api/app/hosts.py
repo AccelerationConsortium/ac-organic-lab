@@ -12,9 +12,12 @@ hand-maintaining a copy:
   hostname names the machine. Registering a new service there puts its port on
   the host tile with no code change here or in ``web/``.
 
-Entries whose hostname matches no whitelisted machine are grouped under
-``other_hosts`` (the device Pis, mostly) so the page still shows every
-service's port and domain the registry knows about.
+The response has two blocks, and the split is **presentation, not
+capability**: ``hosts`` are the servers and bench PCs, ``other_hosts`` the
+device hosts — the Pis that carry one instrument each, plus any registry
+hostname no whitelisted machine claims. A device host is on the console
+whitelist like any other (it carries its ``id``, and the page offers a
+terminal for it); it is simply not a machine anyone works on directly.
 
 This endpoint is deliberately **ungated**, unlike the admin-only
 ``/api/ssh/hosts`` (console banner facts): it exposes nothing
@@ -52,6 +55,9 @@ HOST_ALIASES: dict[str, frozenset[str]] = {
     "lle-pc": frozenset({"100.64.254.13", "192.168.254.5", "172.31.35.241"}),
     # The Process Chemistry pH Pi: tailnet IP and its campus Wi-Fi address.
     "lle-pi": frozenset({"100.64.254.98", "172.31.60.3"}),
+    # Device Pis the registry reaches by tailnet IP rather than by name.
+    "fumehood-pi": frozenset({"100.64.254.100"}),
+    "press-pi": frozenset({"100.64.254.104"}),
 }
 
 #: Registry-id convention marking a ``sdl-lab-hostops`` agent entry. Its live
@@ -102,6 +108,7 @@ def group_hosts(registry: Registry) -> dict[str, Any]:
     """Group every reachable registry entry by the machine its ``base_url``
     points at. Pure — no I/O — so it is directly testable."""
     hosts: list[dict[str, Any]] = []
+    devices: list[dict[str, Any]] = []
     keys_to_host: dict[str, dict[str, Any]] = {}
     for ssh_host in SSH_HOSTS:
         info = {
@@ -111,7 +118,7 @@ def group_hosts(registry: Registry) -> dict[str, Any]:
             "hostname": ssh_host.hostname,
             "services": [],
         }
-        hosts.append(info)
+        (devices if ssh_host.group == "device" else hosts).append(info)
         for key in _name_keys(ssh_host.hostname) | {
             alias.lower() for alias in HOST_ALIASES.get(ssh_host.id, frozenset())
         }:
@@ -135,9 +142,11 @@ def group_hosts(registry: Registry) -> dict[str, Any]:
             )
             group["services"].append(service)
 
+    # Device hosts first (whitelisted, so they carry a label and a terminal),
+    # then anything the registry reaches that no machine here claims.
     return {
         "hosts": hosts,
-        "other_hosts": [unlisted[h] for h in sorted(unlisted)],
+        "other_hosts": devices + [unlisted[h] for h in sorted(unlisted)],
     }
 
 

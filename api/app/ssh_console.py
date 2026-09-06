@@ -195,6 +195,11 @@ class SshHost:
     target: str
     shell: str
     note: str
+    #: Which block of *Utils → Computers and Servers* this machine belongs in:
+    #: ``"machine"`` for the servers and bench PCs, ``"device"`` for the Pis
+    #: that carry one instrument each. It decides presentation only — every
+    #: host here is equally on the console whitelist.
+    group: str = "machine"
     #: First entry is the default (plain login shell).
     profiles: tuple[SshProfile, ...] = ()
 
@@ -326,8 +331,9 @@ SSH_HOSTS: tuple[SshHost, ...] = (
     ),
     SshHost(
         id="lle-pi",
-        label="pH Pi (Process Chemistry)",
+        label="pH Unit (LLE)",
         kind="Raspberry Pi",
+        group="device",
         hostname="sdl2-pi0-lle-pizerocam.tail6a1dd7.ts.net",
         user="caoyang",
         target="lle-pi",
@@ -338,6 +344,83 @@ SSH_HOSTS: tuple[SshHost, ...] = (
             "100.64.254.98. Login is `caoyang` (the account the lab Pi key was "
             "granted under, like the doser Pi). Host-ops runs here in the "
             "daemonless stdio-over-SSH lite mode. No tmux installed yet."
+        ),
+        profiles=(
+            SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
+        ),
+    ),
+    SshHost(
+        id="fumehood-pi",
+        label="Fume Hood Actuator",
+        kind="Raspberry Pi",
+        hostname="sdl2-pi0-fumehood3-actuator.tail6a1dd7.ts.net",
+        user="sdl2",
+        target="fumehood-pi",
+        shell="bash",
+        group="device",
+        note=(
+            "Pi Zero driving the fume hood sash actuator (100.64.254.100:5000, "
+            "STATUS_SPEC v1.1 with claims). The sensor service in the same repo "
+            "is still on its pre-spec Flask shape and migrates separately. "
+            "Campus Wi-Fi, so it goes down with the campus network. No tmux."
+        ),
+        profiles=(
+            SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
+        ),
+    ),
+    SshHost(
+        id="press-pi",
+        label="Waters Filtration",
+        kind="Raspberry Pi",
+        hostname="sdl2-pi0-waters-filtration.tail6a1dd7.ts.net",
+        user="sdl2",
+        target="press-pi",
+        shell="bash",
+        group="device",
+        note=(
+            "Pi Zero driving the filtration press (100.64.254.104:8000). "
+            "**The lab Pi key is not authorized here yet** — sshd closes the "
+            "connection, so the console cannot open until the key is granted "
+            "(DEVICE_PC_SETUP §2.4). Everything else on this tile is live."
+        ),
+        profiles=(
+            SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
+        ),
+    ),
+    SshHost(
+        id="doser-pi",
+        label="Dose Every Well",
+        kind="Raspberry Pi",
+        hostname="sdl2-pi5-minicnc.tail6a1dd7.ts.net",
+        user="caoyang",
+        target="doser-pi",
+        shell="bash",
+        group="device",
+        note=(
+            "Pi 5 driving the solid doser (CNC gantry + dosing head + balance). "
+            "Login is `caoyang`. Its install is **editable**, so the checked-out "
+            "branch IS the deploy: `develop-modular`, never `main` (see "
+            "ROADMAP). No tmux."
+        ),
+        profiles=(
+            SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
+        ),
+    ),
+    SshHost(
+        id="environ-01",
+        label="HTE Sensors",
+        kind="Raspberry Pi",
+        hostname="sdl2-pi0-environ-01.tail6a1dd7.ts.net",
+        user="sdl2",
+        target="environ-01",
+        shell="bash",
+        group="device",
+        note=(
+            "Pi Zero running sense-every-zone for the HTE zone (SEN55 + PiSugar "
+            "3 UPS, :8030). **sshd listens on port 2222**, not 22 — the console "
+            "uses the ~/.ssh/config alias, which carries that. Reachable only "
+            "about half the time: the campus DHCP lease expires and is not "
+            "re-acquired (ROADMAP). No tmux."
         ),
         profiles=(
             SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
