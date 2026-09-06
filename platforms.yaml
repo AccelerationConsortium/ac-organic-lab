@@ -5,9 +5,20 @@ sections:
   #   kind: environmental_map
   #   equipment: [env_hte, env_storage, env_lab499_west, env_lab499_east]
 
-  # Overview / Nav order: HTE → Services → Complexation. The headline
-  # "Accounts & Activities" tile is rendered by the Overview page ahead of
-  # every section, so the full page order is Accounts & Activities → these.
+  # Overview order (operator decision 2026-09-06): Services → HTE →
+  # Complexation → Process Chemistry → Gibbie. The headline "Accounts &
+  # Activities" tile is rendered by the Overview page ahead of every section,
+  # so the full page order is Accounts & Activities → these. Nav tabs follow
+  # the same order but list only sections with an `href`, so Services (which
+  # has none) does not appear there.
+  - id: web_services
+    title: Services
+    description: Lab web UIs and dashboards
+    kind: platform
+    # hostops_* stay registered + polled in equipment.yaml but render on
+    # /utils/devices (the PCs & Servers panel), not on this card.
+    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, bitacora_db, bitacora_eln, pypoe_web, kasa_tapo_gateway, bambu_gateway, gibbie_server, lle_server, uptime_kuma, hermes_web]
+
   - id: hte
     title: HTE Platform
     description: High-throughput platform for chemistry
@@ -31,14 +42,6 @@ sections:
       # Power strips last — pinned to the bottom of the HTE grid.
       - plug_hte_strip_right
       - plug_hte_strip_left
-
-  - id: web_services
-    title: Services
-    description: Lab web UIs and dashboards
-    kind: platform
-    # hostops_* stay registered + polled in equipment.yaml but render on
-    # /utils/devices (the PCs & Servers panel), not on this card.
-    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, bitacora_db, bitacora_eln, pypoe_web, kasa_tapo_gateway, bambu_gateway, gibbie_server, lle_server, uptime_kuma, hermes_web]
 
   - id: complexation
     title: Complexation Platform

@@ -978,7 +978,7 @@ equipment:
   # -------------------------------------------------------------------------
 
   - id: lle_ur5_arm
-    name: UR5-CB3 Arm (Process Chemistry)
+    name: UR5-CB3 Arm (LLE)
     kind: robot_arm
     adapter: http
     protocol: "1.2"
@@ -995,7 +995,7 @@ equipment:
     pills: {}
 
   - id: lle_xpr_balance
-    name: XPR Balance (Process Chemistry)
+    name: XPR Balance (LLE)
     kind: other
     adapter: http
     protocol: "1.2"
@@ -1051,7 +1051,7 @@ equipment:
     pills: {}
 
   - id: lle_ph_unit
-    name: pH Unit (Process Chemistry)
+    name: pH Unit (LLE)
     kind: other
     adapter: http
     protocol: "1.2"
