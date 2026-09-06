@@ -172,6 +172,15 @@ equipment:
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020
     tailscale_ip: 100.64.254.16
     status_path: /status
+    # Robot transport (changed 2026-09-04): the OT-2 (HTE) robot
+    # (`ot2cytation`, board rev A)is reachable over **instrument-LAN Ethernet** at
+    # **192.168.254.50:31950** — the gateway on sdl2-pc-03 reaches it directly
+    # over that wired path (OT2_HTTP_BASE_URL=http://192.168.254.50:31950), NOT
+    # via Tailscale. The old tailnet node `100.64.254.90` (`sdl2-ot2-hte`)
+    # is offline/legacy (the robot no longer runs Tailscale); if the robot ever
+    # drops off the LAN, NO fallback exists — the dashboard tile shows the robot's
+    # own reachability flag (`details.robot.reachable`), which the gateway reports
+    # truthfully even when it answers HTTP 200 itself.
     # The OT-2 gateway builds /status from an SSH snapshot, so it is slower than
     # other devices — but 8s is plenty and keeps one slow/dead device from
     # stalling the dashboard. The aggregator also hard-caps every fetch at
@@ -408,6 +417,21 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 8.0
     do_not_call_connect: true
+    # Robot transport (standing since 2026-09-05, confirmed 2026-09-06): the
+    # OT-2 (Complexation) robot (`ot2training`, serial `weathered-dream`, board
+    # rev 2.1) is reached over its **USB link** — the gateway on sdl2-pc-03
+    # points at the UPLC PC's portproxy, OT2_HTTP_BASE_URL=
+    # http://100.64.254.19:31951 -> 169.254.40.81:31950 (the robot's USB-B
+    # cable into sdl2-pc-06-uplc). This stays the path until a USB-to-Ethernet
+    # adapter puts the robot on the lab switch (ROADMAP → ot2_hte sub-tasks);
+    # then repoint the gateway with tools/ot2-set-robot-url.ps1 and retire the
+    # bridge. Do NOT repoint to the robot's own Tailscale/Wi-Fi address
+    # (`sdl2-ot2-complexation`, 100.64.254.91): the Pi 3B+ radio wedges on its
+    # own (2026-08-30, 2026-09-04) and only a hard reboot restores it. If the
+    # bridge port stops answering, `Restart-Service iphlpsvc` on the UPLC PC
+    # before blaming the robot. Identity rule (robot_serial + board_revision +
+    # api/fw) still applies: 172.31.60.10 (`ot2cytation`, board rev A) is a
+    # DIFFERENT OT-2.
     tiles:
       complexation: { w: 2, h: 3 }
     # "Open" pill -> the edge-gated OT-2 gateway operator SPA at
