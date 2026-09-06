@@ -144,7 +144,14 @@ serves a STATUS_SPEC envelope yet (no answer on the usual ports over the
 tailnet), and the HPLC and EasyMax expose none of the common web/TCP ports
 from the switch. Onboarding it the Gibbie way means a monitoring gateway on
 that PC (a second `sdl2-gibbie-server`-style instance, or that repo made
-multi-bench) plus a platform section here — pending the operator's call.
+multi-bench) plus a platform section here. First step taken 2026-09-06 at the
+operator's request: the PC is on the **PCs & Servers** page as `lle-pc`
+(console host + `HOST_ALIASES` for all three of its addresses), so its future
+services group under it. The lab-ops key is not yet authorized there (nor the
+lab Pi key on the pH Pi, which answers ping and tailscale at 172.31.60.3 /
+100.64.254.98), so host-ops and the console wait on those two grants. The
+HPLC is driven by the Agilent software on this PC, so its status would come
+from a probe of that software, not from the instrument.
 
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and

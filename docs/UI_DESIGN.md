@@ -1781,7 +1781,7 @@ The audit rows record which profile a session used.
 
 **Credentials stay in ssh's own config.** The server-side whitelist
 (`api/app/ssh_console.py::SSH_HOSTS`) names an alias from the service user's
-`~/.ssh/config` (`cytation-pc`, `uplc-pc`, `gibbie-pc`, `localhost`) — the key file, login
+`~/.ssh/config` (`cytation-pc`, `uplc-pc`, `gibbie-pc`, `lle-pc`, `localhost`) — the key file, login
 user and hostname live there, not in this app, and the browser never supplies
 a host. `BatchMode=yes` means no password prompt can appear in a terminal the
 server could never answer, and `StrictHostKeyChecking=yes` means a web

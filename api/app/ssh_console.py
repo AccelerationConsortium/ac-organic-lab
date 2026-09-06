@@ -304,6 +304,26 @@ SSH_HOSTS: tuple[SshHost, ...] = (
             SshProfile(id="cmd", label="cmd", args=(), description="Windows cmd.exe (the OpenSSH default shell)."),
         ),
     ),
+    SshHost(
+        id="lle-pc",
+        label="LLE PC (Process Chemistry)",
+        kind="Windows PC",
+        hostname="sdl2-pc-00-lle.tail6a1dd7.ts.net",
+        user="sdl2",
+        target="lle-pc",
+        shell="cmd.exe (Windows OpenSSH)",
+        note=(
+            "Drives the Process Chemistry platform: the HPLC through the "
+            "Agilent software on this PC, plus the EasyMax, the MT balance and "
+            "the UR5-CB3 on the lab switch (192.168.254.5 here; campus "
+            "172.31.35.241). Lab-ops key not yet authorized on it, so the "
+            "console cannot open until it is (DEVICE_PC_SETUP §2.4). Only cmd "
+            "is offered until WSL is confirmed present."
+        ),
+        profiles=(
+            SshProfile(id="cmd", label="cmd", args=(), description="Windows cmd.exe (the OpenSSH default shell)."),
+        ),
+    ),
 )
 
 HOSTS_BY_ID: dict[str, SshHost] = {h.id: h for h in SSH_HOSTS}

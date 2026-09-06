@@ -48,6 +48,8 @@ HOST_ALIASES: dict[str, frozenset[str]] = {
     "uplc-pc": frozenset({"100.64.254.19"}),
     # Tailnet IP and the lab-switch address (192.168.254.79, wired).
     "gibbie-pc": frozenset({"100.64.254.17", "192.168.254.79"}),
+    # Tailnet, lab-switch and campus addresses of the Process Chemistry PC.
+    "lle-pc": frozenset({"100.64.254.13", "192.168.254.5", "172.31.35.241"}),
 }
 
 #: Registry-id convention marking a ``sdl-lab-hostops`` agent entry. Its live

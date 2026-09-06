@@ -158,3 +158,19 @@ def test_gibbie_pc_groups_its_bench_monitor_and_hostops_by_name_and_lab_switch_i
     assert roles["hostops_gibbie_pc"] == "ops"
     assert roles["gibbie_ur_arm"] == "equipment" and roles["gibbie_server"] == "service"
     assert payload["other_hosts"] == []
+
+
+def test_lle_pc_groups_by_tailnet_lab_switch_and_campus_addresses():
+    registry = Registry(
+        equipment=[
+            _entry("lle_hplc", "hplc", "http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8090"),
+            _entry("lle_balance", "other", "http://192.168.254.5:8090/devices/lle_balance/status"),
+            _entry("lle_easymax", "other", "http://172.31.35.241:8090"),
+            _entry("hostops_lle_pc", "other", "http://100.64.254.13:8060"),
+        ]
+    )
+    payload = group_hosts(registry)
+    lle = _by_id(payload, "lle-pc")
+    assert [s["id"] for s in lle["services"]] == ["lle_hplc", "lle_balance", "lle_easymax", "hostops_lle_pc"]
+    assert {s["id"]: s["role"] for s in lle["services"]}["hostops_lle_pc"] == "ops"
+    assert payload["other_hosts"] == []
