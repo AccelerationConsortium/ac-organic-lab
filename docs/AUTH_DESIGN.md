@@ -643,9 +643,16 @@ Three requirements follow:
    the proposal itself is journaled as an `assistant_proposal` event — so the
    trail shows both the click and what proposed it.
 
-**Memory:** keep it **stateless for now** — no conversation content at rest (chats
-can carry sensitive lab detail); the browser-held transcript suffices for a
-glance panel. *If* persistent per-user memory is wanted later, store it as
+**Memory:** conversations remain temporary on the dashboard server (chats can
+carry sensitive lab detail). The browser caches only the current verified
+owner's recent messages in this tab, clears them on logout/account change, and
+offers Markdown/JSON downloads. Unowned legacy caches are discarded. Other tabs
+re-check identity after a login/logout notification and on focus; chat requests
+also bind the expected owner to the verified actor before invoking a backend.
+Proposal/control audit events, explicit journal observations, camera captures,
+and provider retention remain separate; this is not a promise of no records.
+The saved Plan proposal in [ASSISTANT_PERSISTENCE.md](ASSISTANT_PERSISTENCE.md)
+would store conversations as
 **owner-private runtime data in SQLite** under the same `can_read` policy (owner +
 admin; user can clear; bounded retention) — **never** in `roster.yaml`, which is
 config, not user data.

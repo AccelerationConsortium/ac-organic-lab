@@ -1,224 +1,262 @@
-# Assistant persistence — saved sessions, draft filing, and sandbox projects
+# Assistant modes — temporary Control and saved Plan work
 
-**Status: PROPOSED (2026-09-05). Design only — nothing in this document is
-built.** Drafted after a two-model consult (Claude proposal, Codex read-only
-review against the repo docs; deltas the review changed are marked). Decisions
-are numbered D-1…D-10 so review can address them individually; genuinely open
-items are OPEN-1…OPEN-5. Doc-first per ARCHITECTURE decision #8 — no code
-until a human has reviewed this.
+**Status: revised proposal (2026-09-06).** The user chose convenient temporary
+Control sessions plus a separate mode for saved planning. The routine-action
+scope and binding-contract amendment in §2 still need a human decision; this
+document grants no execution exception. Original proposal: checkpoint dfc59ca.
 
-## 0. The need
+## 0. User experience
 
-Dashboard users want two things the assistant deliberately does not have
-today:
+| Mode | Purpose | Conversation | Hardware |
+|---|---|---|---|
+| **Ask** | Explain status and investigate problems | Temporary; downloadable | Read-only |
+| **Control** | Perform permitted routine tasks while the operator is present | Temporary; downloadable; no automatic ELN filing | Reviewed actions through the authorized SDK path |
+| **Plan** | Develop reusable protocols | Named, owner-private saved sessions; protocols edited in bitácora | No hardware actions from chat; project review and authorization apply |
 
-1. **Saved sessions.** The chat bubble holds ~20 turns in `sessionStorage`
-   and the backend is stateless by design (AUTH_DESIGN → *Assistant chat*:
-   "no conversation content at rest"). Close the tab, lose the conversation.
-2. **Saved, iterable "scripts."** Control mode now drafts multi-step plans,
-   and people want to keep, refine, and reuse them. Context that forced the
-   question: `MAX_PLAN_STEPS` was raised 40 → 256 (2026-09-04, uncommitted at
-   time of writing) to fit ~96-well plans onto one confirm card — the
-   pressure of "where do big drafted plans live?" leaking into the one place
-   it doesn't belong, the human-review surface.
+Control must work without creating an experiment, provisioning a sandbox, or
+visiting bitácora. A download is a conversation export, not a registered Plan,
+proof of execution, or permission to replay commands.
 
-The design constraint everything below serves: **the lab already has exactly
-one home for a script that runs** — a bitácora protocol, compiled, authorized,
-executed with digest pinning, claims, revocation, and custody recording. A
-"save and rerun my chat plan" feature inside the assistant would be the start
-of a shadow authoring path around that. So: save freely, iterate in the ELN,
-execute only through the existing gate.
+The immediate notice, accurate for the current implementation, is:
 
-## 1. The shape in one paragraph
+> Temporary conversation. Download before closing this tab. Proposals and
+> control actions remain in the audit trail.
 
-Chat sessions persist **server-side** in an owner-private store the auth
-design already reserves for exactly this. Drafted plans are **filed into a
-per-user sandbox project in bitácora** through one narrow, actor-bound,
-path-locked tool, and all iteration happens in bitácora's real editor and
-compiler — the assistant never grows a second protocol editor, never writes
-into shared projects, and never executes anything saved. Sandboxes are
-**admin-provisioned** (no self-service roster writes), classified
-**authoring-only** (dry-run authorizations at most), and a draft reaches
-hardware only by **human-initiated promotion** into a shared project through
-the normal PR → CODEOWNER merge → compile → authorize path.
+Once the routine-control exception is approved and enforced, Control may add:
 
-## 2. Decisions proposed
+> Routine controls are not filed as experiments. Use Plan for recorded work.
 
-**D-1 — Sessions live server-side, in a new owner-private SQLite store.**
-A small `assistant.db` owned by `api/` (WAL, one writer — the lab.db
-pattern), keyed by the verified `X-Auth-User`: list / resume / rename /
-delete, owner + admin visibility, user-clearable, bounded retention.
-This is not a new idea — AUTH_DESIGN's assistant section already reserves it
-verbatim: "*owner-private runtime data in SQLite under the same `can_read`
-policy (owner + admin; user can clear; bounded retention) — never in
-`roster.yaml`*". It goes in neither existing store: `lab.db` is public
-telemetry, BitacoraDB rows are immutable project records and a growing chat
-maps badly onto them. `localStorage` demotes to an optional cache — lab
-computers are shared, so the browser must never be the only copy *or* an
-identity bypass. *(Codex review reversed the original localStorage-first
-phasing; adopted.)*
+Never promise "no record is kept": device logs, proposal/control audit events,
+explicit journal observations, and short-lived camera captures still exist.
+Deleting a chat does not delete these records. Provider retention is separate.
 
-**D-2 — A restored session reopens in Ask mode with historical cards inert.**
-No confirm card ever comes back live from storage: no restored approvals, no
-claims, no execution continuation. Re-arming a proposal requires proposing it
-again against live device state. *(From the review; adopted — this is the
-session-store analog of "the authorization's stored verdict is never
-clearance to run now".)*
+Changing from temporary work to Plan previews the content to save; it never
+silently persists prior Control messages. Leaving Plan preserves that saved
+session and opens a new temporary conversation. No switch carries approvals,
+claims, or execution continuation. A running action must conclude or reach
+its existing stop boundary before changing sessions.
 
-**D-3 — Snapshots at any point, filed as immutable BitacoraDB files.**
-"Save this conversation" names a snapshot and files it (file/note under the
-user's sandbox project, provenance attached); later snapshots reference
-earlier ones. Snapshots go to **BitacoraDB, never into the sandbox's git
-repo** — transcripts can carry run observations and camera frames, and Part I
-§2.5 is categorical that run data never enters git. *(Review sharpened
-"finished conversations only" into "any point"; adopted.)*
+## 1. Decisions
 
-**D-4 — Sandbox projects are admin-provisioned; no auto roster writes.**
-The original proposal auto-created `sandbox-<user>` on first save. The review
-is right that this collides with AUTH_DESIGN's core posture: `roster.yaml` is
-human-edited, schema-validated, fail-closed, deliberately without
-self-registration — a first-save write path into it is a new auth surface, not
-a convenience. So: a **small pre-provisioned set** of sandboxes for the users
-who want this, created by an admin (roster entry + bitácora project init +
-BitacoraDB project row). Self-service provisioning, if ever, is its own
-AUTH_DESIGN change with a narrowly-privileged provisioning service. Because
-provisioning spans three systems and is not atomic, the eventual mechanism
-needs: a stable principal id, a unique user↔sandbox mapping, resumable
-provisioning states, and fail-closed behavior until roster, ELN, and record
-store all agree.
+### D-1 — Saved planning sessions belong to the dashboard service
 
-**D-5 — One filing tool, actor-bound and path-locked.**
-`file_draft_protocol` on the `lab-control` server: the actor arrives in the
-server's environment (the existing `LAB_ACTOR` pattern — never a tool
-argument), the destination is locked to the **caller's own sandbox**, and —
-the review's sharpest catch — locked to **draft protocol paths/branches
-only**. A tool scoped merely "to the repo" could write `compile/actions.yaml`,
-CI config, or rules files, which are executable surfaces; protocols are the
-only thing the assistant may file. Both the requesting human and the drafting
-agent are attributed on the commit. One boundary rule rides along:
-**personal storage must not launder project data** — read access to a shared
-project is not permission to copy its results into a personal project
-(mechanism: OPEN-3).
+Use assistant.db, owned by api/, with SQLite WAL, serialized writes, migrations,
+and bounded retention. Keep it separate from public lab.db telemetry and
+BitacoraDB scientific records. Ask and Control do not automatically write
+conversations to this store and remain usable if it is unavailable.
 
-**D-6 — The plan→protocol conversion is explicit and honest.**
-A `propose_plan` step list is device commands (skill + args), not a
-compilable protocol — bitácora protocols are action names resolved through a
-project's `compile/actions.yaml`, with plates, wells, and parameters. The
-conversion must preserve the exact steps, map only what has a defined
-mapping, and **surface missing parameters and unmapped actions as refusals**
-rather than inventing chemistry. The first slice supports one conversion
-shape end-to-end; everything else renders as "cannot convert yet, exported
-verbatim instead."
+Every list/read/rename/delete/export/turn request checks the verified current
+principal. Owner and global admins may read; an admin never acts as the owner.
+Ownership comes from auth, never a JSON field. Account renames or ownership
+transfers need an explicit migration.
 
-**D-7 — Sandboxes are authoring-only, enforced twice.**
-A project-level classification (admin-controlled, default `authoring_only`
-for sandboxes) that **both** bitácora's authorization issuance **and** the
-run executor check independently: a sandbox protocol can compile and dry-run,
-never authorize a live run. A filename convention, prompt text, or hidden UI
-is not enforcement. Dry runs must remain incapable of hardware writes.
-Real execution requires promotion (D-8). One honest note from the review:
-the binding contract requires a human CODEOWNER merge, a registered Plan,
-and validation — it does not literally require the reviewer to differ from
-the author, so solo-sandbox authorization is a governance gap rather than a
-textual contract violation. Authoring-only is proposed as the *policy*
-answer to that gap, not as a contract quotation.
+Temporary browser caches must be scoped to the verified principal and cleared
+on logout/account change. An old cache with no owner is not adopted by the next
+person using a shared computer.
 
-**D-8 — Promotion is a human-initiated import, and approvals never travel.**
-Promoting a draft = a human imports a **pinned draft revision** into a
-destination project branch, then the normal machinery applies: PR, CODEOWNER
-merge, compile against the destination's own action mappings, Plan
-registration, authorization. Provenance (which sandbox draft, which chat
-snapshot) is carried; approvals are not. Destination bindings, materials,
-and project rules are re-resolved from scratch. The assistant plays no part
-in promotion and needs no shared-project write capability, ever.
+### D-2 — Store structured history and restore inertly
 
-**D-9 — Nothing saved is runnable from the assistant.**
-No replay button, no "run saved script," no execution semantics in the
-session store. Transcripts are not the iteration substrate; protocols are.
-(Unchanged from the original proposal; the review concurred.)
+Persist messages, projected tool events, historical proposal contents/outcomes,
+and attachment references. Do not serialize React state or restore the approval
+cache. Exclude hidden reasoning, system prompts, credentials, claim tokens, and
+arbitrary raw tool payloads.
 
-**D-10 — The confirm-card cap comes back down once filing ships.**
-The honest answer to a 200-step chat plan becomes "it is a draft protocol
-now — iterate and authorize it properly," so `MAX_PLAN_STEPS` returns toward
-its review-ability rationale (target value: OPEN-4). Never split an
-oversized plan across successive cards to evade the cap — that defeats the
-bound's purpose while pretending to honor it.
+Saved sessions reopen in Ask for read-only review; continuing planning uses
+Plan's non-actuating toolset. All historical cards are display-only.
 
-## 3. A pre-existing contract conflict this design must not inherit
+Before saved sessions ship, define:
 
-Surfaced by the consult, bigger than the feature, and needing its own
-resolution: **UI_DESIGN §5 Step 1i (multi-step confirm-card plans) sits in
-tension with AGENTIC_LAB_DESIGN Part I** — §1.3 says only validated,
-`main`-merged, human-approved plans execute against hardware, and §3.1 says
-only `main` executes; Step 1i executes operator-approved ad-hoc sequences
-under a claimed carve-out, without layer-4 validation. Per AGENTS.md §1 the
-binding contract wins over any working convention, and the quiet 40 → 256
-cap raise widened exactly this gap. Resolving it is a **human decision with
-two honest exits**: amend the contract to define the operator-attended
-confirm-card exception explicitly (a deliberate, human-owned contract
-change), or bound/retire the Step 1i carve-out. **This design takes no
-position on that resolution — it only refuses to extend the carve-out:
-nothing saved under this design executes except through D-7/D-8.**
+- Server-issued session/message/turn ids and ordered events. Retrying a client
+  request id returns the same turn, without rerunning tools.
+- A session revision and one active turn per session; concurrent edits conflict
+  rather than overwrite.
+- Running/completed/interrupted/failed states. Restart or disconnection never
+  changes an unfinished answer into success.
+- Server reconstruction of model context from session id plus the new message.
+  Retained history and context limits are independent; clients cannot replace
+  stored history or assert authorship.
+- Attachment lifetime, quotas, deletion, and backup retention. Current camera
+  URLs expire after about 24 hours; a saved URL is not a saved image.
 
-## 4. Smallest first slice (when approved)
+### D-3 — Conversation snapshots stay in conversation storage
 
-1. **Named server-stored sessions** (`assistant.db`): save / list / resume /
-   rename / delete, Ask-mode reopen with inert cards (D-1, D-2), plus plain
-   export buttons (markdown/JSON download) on the bubble.
-2. **Two or three admin pre-provisioned sandboxes** for the users asking,
-   and the **"Save draft / Open in bitácora"** action with one validated
-   conversion shape, refusal states rendered honestly (D-4, D-5, D-6).
-3. Verification gates before calling it shipped: ownership isolation
-   (user A cannot list/resume user B), duplicate-save handling, inert
-   restored cards, and a live-run authorization attempt against a sandbox
-   being refused at both enforcement points (D-7).
+Named snapshots are versioned views of interaction history with explicit
+retention/deletion rules. Transcripts enter neither git nor BitacoraDB.
+This follows AGENTIC_ELN_DESIGN §13 and DATABASE_DESIGN §1.
 
-Deferred by design: auto-provisioning, promotion tooling, snapshot filing
-(D-3 is slice two), and the cap change (D-10 — after the handoff proves out).
+This reverses original D-3. BitacoraDB lacks generic project attachments:
+Notes require an Experiment, measurement files a Measurement, and analysis
+files an Analysis. Do not invent those parents to archive chat. Actual
+observations and scientific artifacts use their real project's record entities.
 
-## 5. Open questions
+A protocol retains its reviewed decision artifact and source revision even if
+a disposable chat expires. A private chat link does not replace reviewable
+protocol content.
 
-- **OPEN-1** — Sandbox representation in `roster.yaml`: ordinary project
-  entries vs a distinct section with the `authoring_only` classification;
-  where the classification lives so both enforcement points (D-7) read one
-  source.
-- **OPEN-2** — Session retention length, and the token-cost policy on resume
-  (history is re-sent per turn on the openai backend: cap, truncate, or
-  summarize).
-- **OPEN-3** — Mechanism for the data-laundering rule (D-5): how a snapshot
-  or draft carrying project-scoped content gets source-project access checks
-  on filing and on later reuse as model context.
-- **OPEN-4** — `MAX_PLAN_STEPS` target after filing ships, and the fate of
-  the current uncommitted 256 (commit with an updated rationale comment, or
-  revert) — coupled to the §3 resolution.
-- **OPEN-5** — Sandbox lifecycle: quotas, archival, account offboarding,
-  ownership succession, and template drift across per-user repos.
+### D-4 — Access controls precede sandbox provisioning
 
-## 6. Consult record
+Admin-provision two or three sandboxes initially. Join auth project, bitácora
+registry/repository, and BitacoraDB project through a unique principal-to-sandbox
+mapping and resumable provisioning states. Remain unavailable until required
+components agree. No self-service roster writes.
 
-2026-09-05: proposal drafted in-session (Claude); independent read-only
-review by Codex (`gpt-6-astra`, codex-cli 0.153.4) over ARCHITECTURE,
-AUTH_DESIGN, AGENTIC_LAB_DESIGN Part I, UI_DESIGN §5, and the bitácora
-plans. Adopted from the review: admin provisioning (D-4), server-side
-sessions (D-1), inert restored cards (D-2), anytime snapshots to BitacoraDB
-(D-3), the path-locked tool and laundering rule (D-5), conversion validation
-(D-6), dual-point authoring-only enforcement (D-7), pinned-revision
-promotion (D-8), and the §3 conflict flag. The review transcript lived in
-the session scratchpad; this section is the durable record.
+An ordinary bitácora project is not owner-private today: chat is member-gated,
+but protocol reads and several edits are lab-wide. BitacoraDB also defers
+membership-based write authorization. Gate existing protocol/raw reads, edits,
+diffs, validation, compile configuration, authorizations, and record mutations
+before personal drafts land. Restricting only the new filing tool is insufficient.
 
-## See also
+### D-5 — Bitácora owns draft import
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) decisions #8 (spec before code) and
-  #10 (the assistant is a proposer, not an actuator) — the invariants this
-  design extends and must not weaken.
-- [`UI_DESIGN.md`](UI_DESIGN.md) §5 — assistant Control mode; §5 Step 1i is
-  the carve-out discussed in §3 above.
-- [`AUTH_DESIGN.md`](AUTH_DESIGN.md) — the roster model D-4 defers to; the
-  *Assistant chat* section whose "owner-private runtime data" note D-1
-  implements; the `can_read` data-isolation policy.
-- `docs/AGENTIC_LAB_DESIGN.md` Part I — the binding contract (§1.3, §2.5,
-  §3.1 are the load-bearing rules here).
-- [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md) — BitacoraDB, where snapshots
-  (D-3) and sandbox project rows (D-4) land.
-- `bitácora` — the ELN whose projects, compiler, and authorization gate are
-  the destination for everything iterable.
+The dashboard's file_draft_protocol is a narrow HTTP client of a bitácora-owned
+operation. Bitácora owns validation, worktree serialization, and commits. The
+dashboard/MCP process gains no GitHub credential or direct workspace writes.
+
+Derive the human from verified server identity and attribute the drafting agent
+separately. Resolve the destination from the sandbox mapping; accept no arbitrary
+repo/path. Permit draft protocol paths on draft branches only, with traversal
+and symlink confinement. No action-map, binding, CI, rule, or default-branch edits.
+
+Include source artifact/version, idempotency key, and expected destination
+revision. Retries return the same import result; partial failures remain visible.
+
+Start with platform-only content. Project-bearing content stays disabled until
+source scopes are carried and checked before filing, export, and model reuse.
+Messages, attachments, and summaries inherit those scopes. Personal ownership
+and a model's assertion that copying is safe cannot replace source permissions.
+
+### D-6 — Convert one supported shape and verify equivalence
+
+Device skills and scientific protocol actions differ. Start with one reviewed
+mapping; the standard HTE template's empty action map is not a usable converter.
+
+Preserve step order and stable identifiers. Pin converter, schema, and template
+revisions. Recompile and compare normalized commands, arguments, and resolved
+equipment bindings with the source proposal. Missing information and unmapped
+actions produce findings; never infer chemistry or silently drop steps.
+
+Incomplete proposals remain downloadable as non-executable drafts. Draft input
+has a separate bounded contract: the live confirm-card cap must not prevent
+larger drafts from reaching Plan. Promotion recompiles against destination
+mappings and presents resulting differences for review.
+
+### D-7 — Sandboxes receive validation, never run authorizations
+
+Initially issue no sandbox run authorizations, including "dry-run authorizations".
+Reuse bitácora's draft validation endpoint: it compiles/preflights without claims,
+control POSTs, or authorization.
+
+Keep execution policy in one admin-controlled auth/project configuration source,
+outside project repositories. Issuer and executor independently resolve it;
+missing policy or authoring_only refuses live work. Recheck current policy
+between steps like revocation. Existing projects need an explicit migration.
+
+Today executable tests only expiry/revocation and the runner accepts dry_run=false
+from its caller. Neither enforces sandbox policy. Refusal must also cover stale
+or erroneously issued authorizations and direct runner requests.
+
+### D-8 — Promotion imports a pinned revision through human review
+
+A human imports into a destination project branch. Resolve destination schemas,
+action mappings, equipment/material bindings, and rules afresh. Normal PR →
+human CODEOWNER merge → compilation/validation → Plan registration →
+authorization applies. Provenance travels; approvals do not. The dashboard
+assistant receives no shared-project write capability.
+
+### D-9 — Storage grants no execution authority
+
+Never replay saved cards, imported exports, or saved proposal ids. Plan is an
+authoring mode. Authorized runs use the existing run surface and record layer.
+Calling work "routine" or switching modes cannot exempt an experiment from its
+project or scientific-record rules.
+
+### D-10 — Separate review limits from completion reporting
+
+The checkpoint preserves MAX_PLAN_STEPS=256, but the finish API caps results
+at 64. Fix reporting to accept every producible step, including skipped steps;
+that fix does not approve larger unrecorded workflows.
+
+The proposed routine-Control cap is 40 per reviewed single-device sequence,
+subject to §2. Never split work across cards to evade it. Duration, fan-out
+inside one action, and attendance also matter; step count alone is insufficient.
+
+## 2. Binding-contract decision
+
+Part I §1.3/§3.1 require merged, registered, validated plans for hardware.
+UI_DESIGN §5's claimed exception does not amend them. The proposed human-owned
+exception for routine manual operations would require all of:
+
+1. A reviewed routine-action allowlist with argument bounds, enforced on both
+   proposal and execution paths; no model-selected "routine" exemption.
+2. A signed-in human with the target equipment grant reviewing the exact
+   action/sequence and remaining present.
+3. SDK-only hardware access, claims, live device checks, applicable skill and
+   interlock checks, deck confirmation, and existing stop/escalation rules.
+   The model still has no actuating tool.
+4. Routine operations may omit a project protocol/Plan and automatic ELN
+   filing; proposal, human approval, and observed control outcomes remain
+   operational audit records. Downloads grant no execution authority.
+5. Experiments, reusable workflows, unattended work, and non-allowlisted
+   operations retain the existing project and scientific-record requirements.
+
+**Routine scope awaiting the user's answer:** setup/positioning only, or also
+short liquid transfers and dosing. The latter needs explicit limits and
+material/lot recording semantics; omitting an experiment record cannot remove
+an applicable inventory or custody obligation. This document authorizes neither
+an expanded scope nor a contract amendment. Apply the accepted exception
+explicitly to Part I §1.3/§3.1 and reference it from §2.1; preserve §1.1/§1.2.
+
+Independently, the existing authorized runner proceeds when opening its
+BitacoraDB Plan fails. A live run must not send its first hardware command
+without its required registered Plan. Record-write failures after physical
+action need truthful outcomes and durable recovery, never automatic replay.
+
+## 3. Build order
+
+**Implemented locally on `design/assistant-modes` (not deployed):** the temporary
+chat notice and Markdown/JSON downloads, inert proposal/outcome history, and
+owner-scoped tab caches. Only the latest 20 messages survive a reload; downloads
+include all messages still available in the current tab. Model context is
+bounded separately to 40 messages. Raw device responses and image binaries are
+not included in transcript downloads; camera references expire.
+
+Logout/account changes clear the visible conversation and live cards. Shared
+cookie changes notify other tabs, identity refreshes on focus, and the chat
+API refuses a history whose stated owner differs from the authenticated actor.
+An in-flight sequence stops submitting new steps if its component unmounts.
+Completion reports accept the same step count as proposals; a report failure
+remains visible without changing the reported physical outcome.
+
+Saved Plan sessions, the routine-action exception, sandbox provisioning, and
+protocol handoff remain proposed. Part I is unchanged.
+
+1. **Temporary convenience:** truthful notice, Markdown/JSON downloads,
+   identity-scoped browser caches, and completion-report sizing. No expansion
+   of hardware permissions.
+2. **Saved Plan sessions:** D-1/D-2, with ownership isolation, idempotency,
+   concurrent-tab, interrupted-stream, retention, and inert-restore checks.
+   Saving a conversation must never report that a protocol was filed.
+3. **Routine-control policy:** settle §2, explicitly amend the binding
+   contract through human review, implement the allowlist and test refusals.
+4. **Sandbox handoff:** access controls and D-7 first, then the pilot and one
+   validated conversion/import. Test cross-user access, unsafe paths, stale
+   revisions, duplicate saves, and direct live execution attempts.
+5. **Promotion tooling and named snapshots:** after the handoff proves out.
+
+Saved sessions do not depend on sandbox provisioning. Temporary Control does
+not depend on the saved-session service. External-repo edits follow AGENTS §6;
+no release validation starts laboratory hardware.
+
+## 4. Consult and sources
+
+- 2026-09-05: original Claude proposal and Codex consult; D-1…D-10 preserved
+  in checkpoint dfc59ca.
+- 2026-09-06: revised after cross-repo source review and the user's temporary
+  Control / saved Plan decision. Corrected D-3; made sandbox access, source
+  scope, and execution policy prerequisites; separated the releases.
+- [AGENTIC_LAB_DESIGN.md Part I](AGENTIC_LAB_DESIGN.md) — binding rules.
+- [AUTH_DESIGN.md](AUTH_DESIGN.md) — identity and runtime storage.
+- [AGENTIC_ELN_DESIGN.md §13](AGENTIC_ELN_DESIGN.md) and
+  [DATABASE_DESIGN.md §1](DATABASE_DESIGN.md) — conversation/record boundaries.
+- [UI_DESIGN.md §5](UI_DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md) —
+  assistant tools and execution seams.

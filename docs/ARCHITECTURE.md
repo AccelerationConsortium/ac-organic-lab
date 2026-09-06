@@ -260,7 +260,11 @@ Three pieces:
   bubble mounted in the root layout. It POSTs the conversation to
   `/api/assistant/chat`, consumes the Server-Sent Events stream (`text` /
   `tool_use` / `tool_result` / `done` / `error` frames), and persists ~20
-  turns in `sessionStorage`. It only renders if `GET /api/assistant/health`
+  turns in an owner-scoped `sessionStorage` cache. Account changes clear the
+  conversation and live cards. Markdown/JSON exports contain available history
+  with display-only proposals/outcomes; downloaded history cannot restore an
+  approval. Chat requests include the expected owner so a stale tab cannot send
+  another user's history after a shared-cookie change. It only renders if `GET /api/assistant/health`
   reports `configured: true`.
 - **`api/app/assistant.py`** — `POST /api/assistant/chat`. Two selectable
   backends behind one SSE contract (per-mode via `ASSISTANT_BACKEND` /

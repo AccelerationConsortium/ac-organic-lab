@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -9,6 +10,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AssistantBubble } from "./AssistantBubble";
+import * as transcript from "@/lib/assistant-transcript";
 import {
   approveAssistantPlan,
   authorizeAssistantAction,
@@ -165,6 +167,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
   sessionStorage.clear();
@@ -176,6 +179,110 @@ async function openPanel() {
   const launcher = await screen.findByLabelText("Open SDL Assistant");
   fireEvent.click(launcher);
 }
+
+describe("temporary assistant conversations", () => {
+  async function send(text: string) {
+    const box = screen.getByRole("textbox");
+    fireEvent.change(box, { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).toBeNull());
+  }
+
+  it("offers both downloads and preserves past proposals without executable approvals", async () => {
+    const download = vi.spyOn(transcript, "downloadConversation").mockImplementation(() => {});
+    installFetch([`data: ${JSON.stringify(PROPOSAL)}\n\n`, 'data: {"type":"done"}\n\n']);
+    await openPanel();
+    expect(screen.getByText(/Temporary chat/)).toBeTruthy();
+    await send("stage the plate");
+    fireEvent.click(await screen.findByRole("button", { name: "Authorize" }));
+    await screen.findByText(/Authorized move/);
+    await send("another question");
+    fireEvent.click(screen.getByRole("button", { name: "Download conversation as JSON" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download conversation as Markdown" }));
+    expect(download.mock.calls.map((call) => call[1])).toEqual(["json", "md"]);
+    const exported = transcript.conversationExport(download.mock.calls[0][0]);
+    expect(exported.messages).toHaveLength(4);
+    expect(exported.messages[1].control_events?.map((entry) => entry.event)).toEqual([
+      "action_proposed", "action_submitted", "action_response",
+    ]);
+    expect(authorizeAssistantAction).toHaveBeenCalledTimes(1);
+    expect(approveAssistantPlan).not.toHaveBeenCalled();
+  });
+
+  it("clears a previous account's conversation and approvals on account switch and logout", async () => {
+    const secret = "Alice private conversation";
+    sessionStorage.setItem("ac-assistant-history-v2", JSON.stringify({ owner: auth.identity!.email, turns: [
+      { role: "assistant", text: secret, tools: [], completion: "streaming", control_events: [{ event: "sequence_approved", detail: {}, occurred_at: "now" }] },
+    ] }));
+    installFetch([]);
+    const view = render(<AssistantBubble />);
+    fireEvent.click(await screen.findByLabelText("Open SDL Assistant"));
+    expect(screen.getByText(secret)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
+    expect(JSON.parse(sessionStorage.getItem("ac-assistant-history-v2")!).turns[0].completion).toBe("interrupted");
+    auth.identity = { email: "bob@example.edu", role: "operator" };
+    view.rerender(<AssistantBubble />);
+    fireEvent.click(await screen.findByLabelText("Open SDL Assistant"));
+    expect(screen.queryByText(secret)).toBeNull();
+    expect(sessionStorage.getItem("ac-assistant-history-v2")).not.toContain(secret);
+    auth.authenticated = false;
+    auth.identity = null;
+    view.rerender(<AssistantBubble />);
+    await waitFor(() => expect(sessionStorage.getItem("ac-assistant-history-v2")).toBeNull());
+    expect(authorizeAssistantAction).not.toHaveBeenCalled();
+  });
+
+  it("discards legacy unowned history instead of assigning it to the next login", async () => {
+    sessionStorage.setItem("ac-assistant-history-v1", JSON.stringify([{ role: "user", text: "unowned secret", tools: [] }]));
+    installFetch([]);
+    await openPanel();
+    expect(screen.queryByText("unowned secret")).toBeNull();
+    expect(sessionStorage.getItem("ac-assistant-history-v1")).toBeNull();
+  });
+
+  it("bounds model context while retaining all current-tab messages for download", async () => {
+    const fetch = installFetch(['data: {"type":"text","delta":"response"}\n\n', 'data: {"type":"done"}\n\n']);
+    const download = vi.spyOn(transcript, "downloadConversation").mockImplementation(() => {});
+    await openPanel();
+    for (let i = 0; i < 22; i++) await send(`question ${i}`);
+    const calls = fetch.mock.calls.filter((call) => String(call[0]).includes("/api/assistant/chat"));
+    const messages = JSON.parse(calls.at(-1)![1]!.body as string).messages;
+    expect(messages).toHaveLength(40);
+    expect(messages.at(-1).content).toBe("question 21");
+    fireEvent.click(screen.getByRole("button", { name: "Download conversation as JSON" }));
+    expect(download.mock.calls[0][0]).toHaveLength(44);
+  });
+
+  it("does not submit the next step after the operator changes accounts", async () => {
+    let finishFirst!: (value: { ok: boolean }) => void;
+    vi.mocked(authorizeAssistantAction).mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }));
+    installFetch([`data: ${JSON.stringify(PLAN)}\n\n`, 'data: {"type":"done"}\n\n']);
+    const view = render(<AssistantBubble />);
+    fireEvent.click(await screen.findByLabelText("Open SDL Assistant"));
+    await send("fetch plate");
+    fireEvent.click(await screen.findByRole("button", { name: "Approve these 3 steps" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+    await waitFor(() => expect(authorizeAssistantAction).toHaveBeenCalledTimes(1));
+    auth.identity = { email: "bob@example.edu", role: "operator" };
+    view.rerender(<AssistantBubble />);
+    await act(async () => { finishFirst({ ok: true }); });
+    expect(authorizeAssistantAction).toHaveBeenCalledTimes(1);
+    expect(finishAssistantPlan).toHaveBeenCalledWith("p1", expect.objectContaining({
+      status: "failed", results: [{ index: 1, outcome: "ok" }, { index: 2, outcome: "skipped" }, { index: 3, outcome: "skipped" }],
+    }));
+  });
+
+  it("shows a completion-report failure without changing the physical outcome", async () => {
+    vi.mocked(finishAssistantPlan).mockRejectedValueOnce(new Error("service unavailable"));
+    installFetch([`data: ${JSON.stringify(PLAN)}\n\n`, 'data: {"type":"done"}\n\n']);
+    await openPanel();
+    await send("fetch plate");
+    fireEvent.click(await screen.findByRole("button", { name: "Approve these 3 steps" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+    await screen.findByText(/All 3 steps ran/);
+    expect(await screen.findByText(/Completion report could not be saved: service unavailable/)).toBeTruthy();
+  });
+});
 
 describe("AssistantBubble control mode", () => {
   it("defaults to Ask and offers a Control toggle when eligible", async () => {

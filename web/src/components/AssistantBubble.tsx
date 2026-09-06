@@ -12,6 +12,7 @@ import {
 import { speakableFromMarkdown } from "@/lib/speech";
 import { useVoiceInput } from "@/lib/use-voice-input";
 import { useUserAuth } from "@/lib/user-auth";
+import { downloadConversation, type ControlHistoryEvent } from "@/lib/assistant-transcript";
 
 /**
  * Floating bottom-right chat bubble that talks to the dashboard's
@@ -64,6 +65,10 @@ interface ChatImage {
 }
 
 interface ChatTurn {
+  id?: string;
+  completion?: "streaming" | "completed" | "interrupted" | "failed";
+  error?: string;
+  control_events?: ControlHistoryEvent[];
   role: Role;
   /** Plain text content. For assistants, accumulates as `text` deltas arrive. */
   text: string;
@@ -129,6 +134,8 @@ interface DeckCheck {
 }
 
 interface Proposal {
+  /** Local transcript association; never sent as authorization. */
+  turn_id?: string;
   equipment_id: string;
   equipment_name: string;
   kind: string;
@@ -159,6 +166,7 @@ interface PlanStep {
  *  `propose_plan` (UI_DESIGN §5 Step 1i). Approved as a whole — by the hash
  *  of exactly these steps — then run by this browser one step at a time. */
 interface Plan {
+  turn_id?: string;
   plan_id: string;
   equipment_id: string;
   equipment_name: string;
@@ -192,7 +200,7 @@ interface PlanRun {
 
 type Mode = "ask" | "control";
 
-const STORAGE_KEY = "ac-assistant-history-v1";
+const STORAGE_KEY = "ac-assistant-history-v2";
 const POSITION_KEY = "ac-assistant-position-v1";
 const SIZE_KEY = "ac-assistant-size-v1";
 // Read-aloud is a per-person preference, not per-conversation, so unlike the
@@ -253,13 +261,27 @@ function defaultPosition(size: { w: number; h: number } = defaultSize()): {
 }
 
 export function AssistantBubble() {
-  return <AssistantBubbleInner />;
+  const { loading, authenticated, identity } = useUserAuth();
+  if (loading) return null;
+  const owner = authenticated ? identity?.email ?? null : null;
+  // Remount clears messages, pending approvals, and speech when identity changes.
+  return <AssistantBubbleInner key={owner ?? "anonymous"} owner={owner} />;
 }
 
-function AssistantBubbleInner() {
+function AssistantBubbleInner({ owner }: { owner: string | null }) {
   const { authenticated, identity } = useUserAuth();
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [cacheReady, setCacheReady] = useState(false);
+  const activeTurnIdRef = useRef<string>();
+  const disposedRef = useRef(false);
+  const recordControl = useCallback((turnId: string | undefined, event: string, detail: Record<string, unknown>) => {
+    if (!turnId) return;
+    const entry = { event, detail, occurred_at: new Date().toISOString() };
+    setTurns((prev) => prev.map((turn) => turn.id === turnId
+      ? { ...turn, control_events: [...(turn.control_events ?? []), entry] }
+      : turn));
+  }, []);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   // Drives the elapsed counter on in-flight pills. One interval for the
@@ -529,29 +551,46 @@ function AssistantBubbleInner() {
     };
   }, [stopSpeaking]);
 
-  // Restore prior conversation on mount (per-tab; sessionStorage clears on close).
+  // Only the verified owner may recover this tab's cache. Legacy unowned
+  // history is discarded; anonymous chats remain in memory only.
   useEffect(() => {
     try {
+      sessionStorage.removeItem("ac-assistant-history-v1");
       const raw = sessionStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setTurns(parsed);
+        if (owner && parsed?.owner === owner && Array.isArray(parsed.turns) &&
+            parsed.turns.every((turn: ChatTurn) => turn &&
+              (turn.role === "user" || turn.role === "assistant") &&
+              typeof turn.text === "string" && Array.isArray(turn.tools) &&
+              turn.tools.every((tool) => tool && typeof tool.name === "string" && typeof tool.ok === "boolean") &&
+              (turn.images === undefined || (Array.isArray(turn.images) && turn.images.every((img) => img && typeof img.url === "string"))) &&
+              (turn.control_events === undefined || Array.isArray(turn.control_events)))) {
+          setTurns(parsed.turns.map((turn: ChatTurn) => ({
+            ...turn, phase: null,
+            completion: turn.completion === "streaming" ? "interrupted" : turn.completion,
+          })));
+        } else {
+          sessionStorage.removeItem(STORAGE_KEY);
+        }
       }
     } catch {
       /* ignore corrupt cache */
     }
-  }, []);
+    setCacheReady(true);
+  }, [owner]);
 
   useEffect(() => {
+    if (!cacheReady || !owner) return;
     try {
       sessionStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify(turns.slice(-MAX_STORED_TURNS))
+        JSON.stringify({ owner, turns: turns.slice(-MAX_STORED_TURNS) })
       );
     } catch {
       /* quota / private mode */
     }
-  }, [turns]);
+  }, [turns, cacheReady, owner]);
 
   // Restore last drag position on mount; persist on each change. Like the
   // chat history, this is per-tab — closing the tab resets the position.
@@ -745,7 +784,9 @@ function AssistantBubbleInner() {
     }
   }, [open, clearProposal, clearPlan]);
   useEffect(() => {
+    disposedRef.current = false;
     return () => {
+      disposedRef.current = true;
       abortRef.current?.abort();
       if (expiryRef.current) clearTimeout(expiryRef.current);
       if (planExpiryRef.current) clearTimeout(planExpiryRef.current);
@@ -766,10 +807,12 @@ function AssistantBubbleInner() {
       setAuthorizeResult(null);
       setAuthorizeResponse(null);
 
+      const turnId = crypto.randomUUID();
+      activeTurnIdRef.current = turnId;
       const nextTurns: ChatTurn[] = [
         ...turns,
-        { role: "user", text: trimmed, tools: [], mode },
-        { role: "assistant", text: "", tools: [], mode },
+        { id: crypto.randomUUID(), role: "user", text: trimmed, tools: [], mode, completion: "completed" },
+        { id: turnId, role: "assistant", text: "", tools: [], mode, completion: "streaming" },
       ];
       setTurns(nextTurns);
       setInput("");
@@ -792,8 +835,11 @@ function AssistantBubbleInner() {
           signal: controller.signal,
           body: JSON.stringify({
             mode,
+            conversation_owner: owner,
             messages: nextTurns
               .filter((t) => t.role === "user" || (t.role === "assistant" && t.text))
+              // Context is bounded separately from the downloadable history.
+              .slice(-40)
               .map((t) => ({ role: t.role, content: t.text })),
           }),
         });
@@ -810,6 +856,7 @@ function AssistantBubbleInner() {
 
         while (true) {
           const { value, done } = await reader.read();
+          if (controller.signal.aborted || disposedRef.current) return;
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
           // SSE frames are separated by a blank line.
@@ -838,6 +885,7 @@ function AssistantBubbleInner() {
         // instead of leaving a frozen pill. Deliberate user aborts throw
         // AbortError and return earlier, so they never hit this.
         if (!terminatedRef.current) {
+          setTurns((prev) => prev.map((turn) => turn.id === turnId ? { ...turn, completion: "interrupted" } : turn));
           setRetryable(true);
           setError(
             "Connection lost — the assistant stopped responding before it finished. Check the service, then try again."
@@ -845,6 +893,7 @@ function AssistantBubbleInner() {
         }
       } catch (e) {
         if ((e as Error).name === "AbortError") {
+          setTurns((prev) => prev.map((turn) => turn.id === turnId ? { ...turn, completion: "interrupted" } : turn));
           if (stoppedRef.current) {
             // Deliberate stop: say so on the turn, and drop any live pill.
             setTurns((prev) => {
@@ -859,12 +908,14 @@ function AssistantBubbleInner() {
           return;
         }
         setError((e as Error).message);
+        setTurns((prev) => prev.map((turn) => turn.id === turnId
+          ? { ...turn, completion: "failed", error: (e as Error).message } : turn));
       } finally {
         if (abortRef.current === controller) abortRef.current = null;
         setSending(false);
       }
     },
-    [turns, sending, mode, clearProposal, clearPlan, stopSpeaking]
+    [turns, sending, mode, owner, clearProposal, clearPlan, stopSpeaking]
   );
 
   /** Stop the in-flight turn. Aborting the fetch closes the SSE response,
@@ -943,15 +994,19 @@ function AssistantBubbleInner() {
         // Already spoken mid-stream: the rest of the turn is for the eyes.
         if (!spokeThisTurnRef.current) speakAnswer(streamTextRef.current);
       }
-      // A control proposal is not part of an assistant text turn — surface it
-      // as a confirm card rather than folding it into the transcript.
+      // Keep a display-only projection in history; the live card is separate
+      // and is never reconstructed from storage or downloads.
       if (event.type === "proposal" && event.proposal && typeof event.proposal === "object") {
         const p = event.proposal as Proposal;
         setAuthorizeError(null);
         setAuthorizeResult(null);
         setAuthorizeResponse(null);
         setProposalExpired(false);
-        setProposal(p);
+        setProposal({ ...p, turn_id: activeTurnIdRef.current });
+        recordControl(activeTurnIdRef.current, "action_proposed", {
+          equipment_id: p.equipment_id, action: p.action, args: p.args, reason: p.reason,
+          device_state: p.device_state, deck_checks: p.deck_checks,
+        });
         if (expiryRef.current) clearTimeout(expiryRef.current);
         const ttlMs = Math.max(5, Number(p.expires_in_s) || 120) * 1000;
         expiryRef.current = setTimeout(() => setProposalExpired(true), ttlMs);
@@ -963,7 +1018,12 @@ function AssistantBubbleInner() {
         const p = event.plan as Plan;
         if (!Array.isArray(p.steps) || p.steps.length === 0) return;
         if (planRunningRef.current) return; // never displace a plan mid-run
-        setPlan(p);
+        setPlan({ ...p, turn_id: activeTurnIdRef.current });
+        recordControl(activeTurnIdRef.current, "sequence_proposed", {
+          equipment_id: p.equipment_id, reason: p.reason,
+          steps: p.steps.map(({ action, args }) => ({ action, args })),
+          device_state: p.device_state, deck_checks: p.deck_checks,
+        });
         setPlanRun({
           phase: "draft",
           outcomes: p.steps.map(() => "pending"),
@@ -1070,22 +1130,26 @@ function AssistantBubbleInner() {
           // Natural end of a completed turn. Marks the run as terminated so
           // the stream-end check below knows it finished, not got cut.
           terminatedRef.current = true;
+          if (updated.completion !== "failed") updated.completion = "completed";
           updated.phase = null;
           updated.phaseLabel = undefined;
         } else if (event.type === "error" && typeof event.message === "string") {
           terminatedRef.current = true;
           setError(event.message);
+          updated.completion = "failed";
+          updated.error = event.message;
         }
         return [...prev.slice(0, -1), updated];
       });
     },
-    [speakAnswer]
+    [speakAnswer, recordControl]
   );
 
   const authorizeProposal = useCallback(async () => {
     if (!proposal || authorizing || proposalExpired) return;
     setAuthorizing(true);
     setAuthorizeError(null);
+    recordControl(proposal.turn_id, "action_submitted", { action: proposal.action });
     try {
       const response = await authorizeAssistantAction(
         proposal.equipment_id,
@@ -1095,6 +1159,7 @@ function AssistantBubbleInner() {
       setAuthorizeResult(
         `Authorized ${proposal.action} on ${proposal.equipment_name}.`
       );
+      recordControl(proposal.turn_id, "action_response", { action: proposal.action, outcome: "ok" });
       // Read/imaging responses are the useful output of operating a plate
       // reader. Keep them browser-side and visible; the assistant model's turn
       // has already ended, so scientific values are not fed back to it.
@@ -1114,10 +1179,11 @@ function AssistantBubbleInner() {
           ? `${e.status}: ${e.message}`
           : (e as Error).message;
       setAuthorizeError(msg);
+      recordControl(proposal.turn_id, "action_response", { action: proposal.action, outcome: "failed", message: msg });
     } finally {
       setAuthorizing(false);
     }
-  }, [proposal, authorizing, proposalExpired, clearProposal]);
+  }, [proposal, authorizing, proposalExpired, clearProposal, recordControl]);
 
   // ---- Plan card: approve (by hash) → run (this browser, step by step) ----
 
@@ -1130,16 +1196,18 @@ function AssistantBubbleInner() {
       // silently re-approved.
       await approveAssistantPlan(plan.plan_id, plan.step_hash);
       setPlanRun((r) => r && { ...r, phase: "approved" });
+      recordControl(plan.turn_id, "sequence_approved", {});
     } catch (e) {
       const msg =
         e instanceof ApiError ? `${e.status}: ${e.message}` : (e as Error).message;
       setPlanRun((r) => r && { ...r, phase: "draft", error: msg });
     }
-  }, [plan, planRun]);
+  }, [plan, planRun, recordControl]);
 
   const runPlan = useCallback(async () => {
-    if (!plan || !planRun || planRun.phase !== "approved") return;
+    if (!plan || !planRun || planRun.phase !== "approved" || planRunningRef.current || disposedRef.current) return;
     planRunningRef.current = true;
+    recordControl(plan.turn_id, "sequence_started", {});
     const outcomes: StepOutcome[] = plan.steps.map(() => "pending");
     const messages: (string | null)[] = plan.steps.map(() => null);
     const results: AssistantPlanStepResult[] = [];
@@ -1156,9 +1224,20 @@ function AssistantBubbleInner() {
         }
     );
     for (let i = 0; i < plan.steps.length; i++) {
+      // Signing out or changing accounts must not launch the next command
+      // under a new identity. A command already submitted can still finish.
+      if (disposedRef.current) {
+        haltReason = "Assistant session ended; remaining steps were not submitted.";
+        for (let j = i; j < plan.steps.length; j++) {
+          outcomes[j] = "skipped";
+          results.push({ index: j + 1, outcome: "skipped" });
+        }
+        break;
+      }
       const step = plan.steps[i];
       outcomes[i] = "running";
       setPlanRun((r) => r && { ...r, outcomes: [...outcomes] });
+      recordControl(plan.turn_id, "sequence_step_submitted", { index: i + 1 });
       try {
         // The same passthrough a tile click or a single Authorize uses —
         // per-equipment authz, the device's own 412/423, and the audit row
@@ -1177,7 +1256,7 @@ function AssistantBubbleInner() {
           e instanceof ApiError ? `${e.status}: ${e.message}` : (e as Error).message;
         outcomes[i] = "failed";
         messages[i] = msg;
-        results.push({ index: i + 1, outcome: "failed", status_code: status, message: msg });
+        results.push({ index: i + 1, outcome: "failed", status_code: status, message: msg.slice(0, 500) });
         // Fail-fast, never continue-past-error: the later steps of a
         // sequence assume the earlier ones happened.
         for (let j = i + 1; j < plan.steps.length; j++) {
@@ -1187,34 +1266,41 @@ function AssistantBubbleInner() {
         haltReason = `step ${i + 1} (${step.action}) failed: ${msg}`;
       }
       setPlanRun((r) => r && { ...r, outcomes: [...outcomes], messages: [...messages] });
+      recordControl(plan.turn_id, "sequence_step_response", {
+        index: i + 1, outcome: outcomes[i], message: messages[i],
+      });
       if (haltReason) break;
     }
     const phase: PlanPhase = haltReason ? "failed" : "executed";
     setPlanRun((r) => r && { ...r, phase, haltReason });
+    recordControl(plan.turn_id, "sequence_finished", { status: phase, results, halt_reason: haltReason });
     planRunningRef.current = false;
     try {
       await finishAssistantPlan(plan.plan_id, {
         status: phase,
         results,
-        halt_reason: haltReason,
+        halt_reason: haltReason?.slice(0, 500) ?? null,
       });
-    } catch {
-      // Audit is best-effort here: the per-step control_action rows already
-      // exist, stamped with the plan ref.
+    } catch (e) {
+      const message = `Completion report could not be saved: ${(e as Error).message}`;
+      setPlanRun((r) => r && { ...r, error: message });
+      recordControl(plan.turn_id, "completion_report_failed", { message });
     }
-  }, [plan, planRun]);
+  }, [plan, planRun, recordControl]);
 
   const dismissPlan = useCallback(() => {
     if (!plan || !planRun || planRun.phase === "running") return;
+    recordControl(plan.turn_id, "sequence_dismissed", { phase: planRun.phase });
     if (planRun.phase === "draft" || planRun.phase === "approved") {
       void finishAssistantPlan(plan.plan_id, { status: "aborted", results: [] }).catch(
         () => undefined
       );
     }
     clearPlan();
-  }, [plan, planRun, clearPlan]);
+  }, [plan, planRun, clearPlan, recordControl]);
 
   const clearHistory = useCallback(() => {
+    if (planRunningRef.current || authorizing) return;
     abortRef.current?.abort();
     abortRef.current = null;
     setTurns([]);
@@ -1222,7 +1308,8 @@ function AssistantBubbleInner() {
     clearProposal();
     clearPlan();
     setAuthorizeResult(null);
-  }, [clearProposal, clearPlan]);
+    setAuthorizeResponse(null);
+  }, [clearProposal, clearPlan, authorizing]);
 
   // Suppress the launcher entirely if the dashboard host has no API key.
   // The MCP path (Claude Code) is the supported alternative; see the deploy
@@ -1355,7 +1442,7 @@ function AssistantBubbleInner() {
               <button
                 type="button"
                 onClick={clearHistory}
-                disabled={turns.length === 0}
+                disabled={turns.length === 0 || authorizing || planRun?.phase === "running"}
                 title="Clear the conversation (proposals and authorized actions stay in the audit trail)"
                 className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-ink-subtle transition hover:bg-slate-100 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
@@ -1374,6 +1461,21 @@ function AssistantBubbleInner() {
               </button>
             </div>
           </header>
+
+          <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-3 py-2 text-xs text-ink-subtle dark:border-slate-700 dark:text-slate-400">
+            <p className="flex-1">Temporary chat. Download before closing this tab. Proposals and control actions remain in the audit trail.</p>
+            {(["md", "json"] as const).map((format) => (
+              <button key={format} type="button" disabled={turns.length === 0}
+                aria-label={`Download conversation as ${format === "md" ? "Markdown" : "JSON"}`}
+                className="rounded border border-slate-300 px-2 py-1 disabled:opacity-40 dark:border-slate-600"
+                onClick={() => {
+                  try { downloadConversation(turns, format); }
+                  catch (e) { setError(`Download failed: ${(e as Error).message}`); }
+                }}>
+                {format === "md" ? "MD" : "JSON"}
+              </button>
+            ))}
+          </div>
 
           <div
             ref={scrollerRef}

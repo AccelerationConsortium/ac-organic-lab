@@ -750,6 +750,15 @@ carry an ordered multi-step *plan* on one device, approved as a whole and run
 step by step from the browser — see §5.3b. Step 2 (autonomy) is sketched at
 the end and is **not** approved.
 
+**Temporary conversation update (2026-09-06, implemented locally):** the bubble
+warns that chat is temporary and offers Markdown/JSON downloads. Exports include
+available messages and historical proposals/control outcomes, with no reusable
+approvals. The latest 20 messages are cached for the signed-in owner in this
+tab; logout/account changes clear the chat and live cards. Audit records remain.
+Saved **Plan** mode and the proposed routine-control exception are described in
+[ASSISTANT_PERSISTENCE.md](ASSISTANT_PERSISTENCE.md); neither is enabled by this
+UI update.
+
 ### 5.1 The commitment: the assistant proposes, the browser executes
 
 In Step 1 no model-driven code path POSTs to a device. The model's most

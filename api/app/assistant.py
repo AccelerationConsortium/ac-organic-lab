@@ -70,7 +70,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from .assistant_control import PLAN_TTL_S, REFUSAL_CODES, plan_step_hash
+from .assistant_control import MAX_PLAN_STEPS, PLAN_TTL_S, REFUSAL_CODES, plan_step_hash
 
 logger = logging.getLogger(__name__)
 
@@ -718,12 +718,15 @@ class PlanFinishRequest(BaseModel):
     to what and how far it got."""
 
     status: Literal["executed", "failed", "aborted"]
-    results: list[PlanStepResult] = Field(default_factory=list, max_length=64)
+    results: list[PlanStepResult] = Field(default_factory=list, max_length=MAX_PLAN_STEPS)
     halt_reason: str | None = Field(default=None, max_length=500)
 
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+    # A stale browser tab must not send one person's history using a session
+    # cookie another tab has since changed. Attribution still comes from auth.
+    conversation_owner: str | None = Field(default=None, max_length=320)
     # UI_DESIGN §5: "ask" (default, read-only) or "control" (propose-only).
     # The server decides the actual toolset from the verified identity — a
     # client that lies about its mode gains nothing.
@@ -1321,6 +1324,12 @@ def build_assistant_router() -> APIRouter:
         # after verifying the session — never client-supplied. The backend
         # Claude account is shared, so who-asked lives in this log line.
         actor = request.headers.get("x-auth-user")
+
+        if body.conversation_owner is not None and body.conversation_owner != actor:
+            raise HTTPException(
+                status_code=409,
+                detail="The signed-in account changed. Refresh before continuing this conversation.",
+            )
 
         # Control mode is only honoured for a verified actor, and never under
         # the DASHBOARD_CONTROL_OPEN dev bypass (which has no identity to bind
