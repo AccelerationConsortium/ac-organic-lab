@@ -97,9 +97,33 @@ position reads exist only through the REPL's hardware controller, which the
 robot-server HTTP run engine does not expose, and only one process may hold
 the Flex's hardware — so robot-server stays stopped during Gibbie sessions
 (since 2026-03-30) and the monitor observes the robot from outside. Day-one
-state: the UR arm and balance read `unknown` because the USB Ethernet adapter
-carrying their 192.168.1.x subnet is unplugged on that PC; the Flex reads
-`unknown` until the SSH probe's key passphrase is set in the service env.
+state: the UR arm and balance read `unknown`; the Flex reads `unknown` until
+the SSH probe's key passphrase is set in the service env.
+
+**Why the arm and balance are unreachable (traced 2026-09-06).** The Gibbie PC
+is on the lab switch at **192.168.254.79** (wired; the same segment as the Flex
+at .81, the HTE OT-2 at .50 and the Cytation PC at .54 — confirmed from the
+Cytation PC, which reaches the monitor at `192.168.254.79:8070`). The arm and
+balance are addressed on a *different* segment, 192.168.1.x, and the Gibbie PC
+has no interface on it — its probes time out rather than refuse. The "USB
+Ethernet adapter" that carries that segment is not unplugged: it is a **Realtek
+USB GbE adapter on the Cytation PC**, up at 1 Gbps with a manual
+`192.168.1.100/24` — the exact address the Gibbie `config.toml` assumes for the
+arm. From there a full sweep of 192.168.1.0/24 finds exactly one other host,
+**192.168.1.237**, with TCP 29999 (UR Dashboard Server) and 30002 (secondary
+client) open — the UR-3e, alive and answering. The balance's configured
+`192.168.1.1:8002` gives no answer and nothing else is on that wire, so the
+XPR is either powered off or not on that network. Fix options, all outside
+this repo: (a) move the USB adapter (or the instruments' cable) to the Gibbie
+PC and give it a 192.168.1.x address other than .100, then set the arm's
+`host` to `192.168.1.237` and confirm the balance's real address on its
+display; (b) if the adapter's cable is in fact on the lab switch, a secondary
+`192.168.1.x` address on the Gibbie PC's lab-switch NIC reaches the arm with
+no cable moved — test with one `ping 192.168.1.237` after
+`New-NetIPAddress`; (c) re-address the arm and balance onto 192.168.254.x.
+Shell access to the Gibbie PC is by password only so far (no lab-ops key
+authorized, no `sdl-lab-hostops`), which is why this was traced from next
+door.
 
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and

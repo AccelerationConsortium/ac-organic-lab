@@ -822,8 +822,17 @@ equipment:
   # its SSH REPL, XPR balance over SOAP), which this service never touches.
   # `gateway_fronted: true` so a device the monitor cannot reach (reported as
   # `unknown`, §2.1) counts as unreachable for uptime and PyPoe alerts.
-  # UR arm + balance sit on a USB Ethernet adapter of that PC (192.168.1.x);
-  # both `unknown` at once usually means the adapter, not the instruments.
+  # Network, as found 2026-09-06 (not as first assumed): the Gibbie PC is on
+  # the lab switch at 192.168.254.79 (wired; same segment as the Flex .81, the
+  # HTE OT-2 .50 and the Cytation PC .54). The UR arm + XPR balance live on a
+  # SEPARATE 192.168.1.x segment that the Gibbie PC has no interface on — the
+  # "Realtek USB GbE" adapter carrying it is plugged into the CYTATION PC,
+  # statically 192.168.1.100 (the address this monitor's config wrongly
+  # assumes is the arm). From that segment the UR-3e answers at 192.168.1.237
+  # (dashboard 29999 / secondary 30002 open); the balance's configured
+  # 192.168.1.1:8002 does not answer and nothing else is on the wire. Until
+  # the adapter or the instruments move onto a network the Gibbie PC has, both
+  # tiles read `unknown` (unreachable) — see ROADMAP's Gibbie note.
   # ---------------------------------------------------------------------
 
   - id: gibbie_workflow
