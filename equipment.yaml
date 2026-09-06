@@ -966,3 +966,117 @@ equipment:
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
+
+  # -------------------------------------------------------------------------
+  # Process Chemistry (LLE) bench — monitoring only, 2026-09-06.
+  # A second instance of sdl2-gibbie-server, on the bench PC sdl2-pc-00-lle
+  # (NSSM `process-chem-monitor`, :8070). Same code as Gibbie's monitor, a
+  # different config file; it has no /control/* surface, so every entry here is
+  # `gateway_fronted: true` and an unreachable device reads `unknown` (§2.1)
+  # and alerts as unreachable. The bench is driven by automated-lle and by
+  # ChemStation on that PC, never from here.
+  # -------------------------------------------------------------------------
+
+  - id: lle_ur5_arm
+    name: UR5-CB3 Arm (Process Chemistry)
+    kind: robot_arm
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # UR Dashboard Server queries only, never RTDE (connecting the control
+    # interface uploads and runs a program, which would seize the arm).
+    # busy/running == a program playing on the controller.
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.13
+    status_path: /devices/lle_ur5_arm/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      process_chemistry: { w: 2, h: 1 }
+    pills: {}
+
+  - id: lle_xpr_balance
+    name: XPR Balance (Process Chemistry)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # Reachability of the Mettler XPR SOAP endpoint (port 81) only. The monitor
+    # opens no SOAP session, so it cannot collide with the LLE workflow's own.
+    # mt-xpr-balance-server replaces this tile with a real control surface when
+    # it is deployed on this PC (planned NSSM `mt-xpr-balance` :8081).
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.13
+    status_path: /devices/lle_xpr_balance/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      process_chemistry: { w: 2, h: 1 }
+    pills: {}
+
+  - id: lle_easymax
+    name: EasyMax (Process Chemistry)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # The EasyMax answers on no network port of its own. What is observed is
+    # Mettler's Reactor Device Server on the bench PC's loopback (OPC UA :50008),
+    # the same endpoint automated-lle connects to. So `ready` means the reactor
+    # service is up, not that the reactor is fine; the tile's message says so.
+    # A real state read needs an OPC UA session (mt-easymax-server, later).
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.13
+    status_path: /devices/lle_easymax/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      process_chemistry: { w: 2, h: 1 }
+    pills: {}
+
+  - id: lle_hplc
+    name: HPLC (Process Chemistry)
+    kind: hplc
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # ChemStation-driven from the bench PC, not OpenLab-CDS-driven like
+    # agilent_uplc_ms, so the sidecar there does not apply and the instrument
+    # answers on none of its ports. The observable is the Agilent ChemStation
+    # data service's state on that PC. A stopped service reads `requires_init`,
+    # never `error`: the instrument may be running fine from its own front end.
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.13
+    status_path: /devices/lle_hplc/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      process_chemistry: { w: 2, h: 1 }
+    pills: {}
+
+  - id: lle_ph_unit
+    name: pH Unit (Process Chemistry)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # Pi Zero 2W running PiZeroCam (camera + LED + motor, colorimetric pH).
+    # The camera software is not a service yet, so SSH answering is all this
+    # observes; it proves the Pi is up and nothing more.
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.13
+    status_path: /devices/lle_ph_unit/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      process_chemistry: { w: 2, h: 1 }
+    pills: {}
+
+  - id: lle_server
+    name: Process Chemistry Monitor
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    # The monitor process itself (permanently idle; metrics.devices_unreachable).
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.13
+    status_path: /status
+    poll_timeout_seconds: 5.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}

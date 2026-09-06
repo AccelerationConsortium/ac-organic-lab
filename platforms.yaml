@@ -38,7 +38,7 @@ sections:
     kind: platform
     # hostops_* stay registered + polled in equipment.yaml but render on
     # /utils/devices (the PCs & Servers panel), not on this card.
-    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, bitacora_db, bitacora_eln, pypoe_web, kasa_tapo_gateway, bambu_gateway, gibbie_server, uptime_kuma, hermes_web]
+    equipment: [ac_organic_lab_api, ac_organic_lab_auth, laagente_analitica, analytica_db, bitacora_db, bitacora_eln, pypoe_web, kasa_tapo_gateway, bambu_gateway, gibbie_server, lle_server, uptime_kuma, hermes_web]
 
   - id: complexation
     title: Complexation Platform
@@ -53,6 +53,20 @@ sections:
       # OT-2 camera is now the one that streams.
       - cam_echem_tapo_c100
       - ot2_complexation
+
+  - id: process_chemistry
+    title: Process Chemistry Platform
+    description: Reaction, workup and analysis bench driven by automated-lle
+    href: /platforms/process_chemistry
+    kind: platform
+    # Monitoring only (2026-09-06): the tiles come from a read-only gateway on
+    # the bench PC, and the bench is driven by automated-lle and ChemStation.
+    equipment:
+      - lle_ur5_arm
+      - lle_easymax
+      - lle_hplc
+      - lle_xpr_balance
+      - lle_ph_unit
 
   - id: sample_prep
     title: Gibbie Platform
