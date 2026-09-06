@@ -789,3 +789,112 @@ equipment:
   # it shows up both in the HTE PlatformCard (live preview) and on the
   # dedicated `/cameras` page. Add new cameras / plugs here.
   # ---------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------
+  # Sample-prep bench ("Gibbie"), monitored read-only by `sdl2-gibbie-server`
+  # on the Gibbie PC (sdl2-pc-04). One STATUS_SPEC v1.2 envelope per device at
+  # /devices/{id}/status; no /control/* anywhere (§9 read-only clause). The
+  # bench is driven by `sdl2_sampleprep_platform` (UR arm over RTDE, Flex over
+  # its SSH REPL, XPR balance over SOAP), which this service never touches.
+  # `gateway_fronted: true` so a device the monitor cannot reach (reported as
+  # `unknown`, §2.1) counts as unreachable for uptime and PyPoe alerts.
+  # UR arm + balance sit on a USB Ethernet adapter of that PC (192.168.1.x);
+  # both `unknown` at once usually means the adapter, not the instruments.
+  # ---------------------------------------------------------------------
+
+  - id: gibbie_workflow
+    name: Gibbie Workflow
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # Reflects the Gibbie UI bridge (127.0.0.1:8000 on that PC): run in
+    # progress -> busy/running with the live stage; a simulated run -> dry_run.
+    base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.17
+    status_path: /devices/gibbie_workflow/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      sample_prep: { w: 2, h: 1 }
+    pills: {}
+
+  - id: gibbie_flex
+    name: Opentrons Flex (Gibbie)
+    kind: liquid_handler
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # Observed from outside: robot-server health, or a live Gibbie REPL
+    # session (busy/running as external control) while robot-server is
+    # stopped. Not part of the OT-2 gateway fleet -- see ROADMAP.
+    base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.92
+    status_path: /devices/gibbie_flex/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      sample_prep: { w: 2, h: 2 }
+    pills: {}
+
+  - id: gibbie_ur_arm
+    name: UR Arm (Gibbie)
+    kind: robot_arm
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # UR Dashboard Server queries only (robotmode / safetystatus /
+    # programState). busy/running == a program playing (the RTDE control
+    # program the workflow uploads); safety stops -> error, e-stop -> e_stop.
+    base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.17
+    status_path: /devices/gibbie_ur_arm/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      sample_prep: { w: 2, h: 1 }
+    pills: {}
+
+  - id: gibbie_balance
+    name: XPR Balance (Gibbie)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # Reachability of the Mettler XPR SOAP endpoint only; `ready` means the
+    # endpoint answers, the weighing state is not monitored (the tile's
+    # message says so). No `balance` kind exists in the spec yet.
+    base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.17
+    status_path: /devices/gibbie_balance/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      sample_prep: { w: 2, h: 1 }
+    pills: {}
+
+  - id: gibbie_hotplate
+    name: IKA Hotplate (Gibbie)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # COM7 enumerated on the Gibbie PC; the port is owned by the workflow and
+    # never opened by the monitor, so `ready` means "present", not "heating".
+    base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.17
+    status_path: /devices/gibbie_hotplate/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      sample_prep: { w: 2, h: 1 }
+    pills: {}
+
+  - id: gibbie_server
+    name: Gibbie Monitor
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    # The monitor process itself (permanently idle; metrics.devices_unreachable).
+    base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
+    tailscale_ip: 100.64.254.17
+    status_path: /status
+    poll_timeout_seconds: 5.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}

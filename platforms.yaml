@@ -32,6 +32,18 @@ sections:
       - plug_hte_strip_right
       - plug_hte_strip_left
 
+  - id: sample_prep
+    title: Sample Prep (Gibbie)
+    description: Solid dosing, liquid handling and reaction setup bench -- UR arm, XPR balance, Opentrons Flex, IKA hotplate. Monitoring only; the bench is driven by sdl2_sampleprep_platform.
+    href: /platforms/sample_prep
+    kind: platform
+    equipment:
+      - gibbie_workflow
+      - gibbie_flex
+      - gibbie_ur_arm
+      - gibbie_balance
+      - gibbie_hotplate
+
   - id: web_services
     title: Services
     description: Lab web UIs and dashboards
