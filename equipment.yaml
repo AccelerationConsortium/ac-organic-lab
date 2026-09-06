@@ -1022,7 +1022,11 @@ equipment:
     # Mettler's Reactor Device Server on the bench PC's loopback (OPC UA :50008),
     # the same endpoint automated-lle connects to. So `ready` means the reactor
     # service is up, not that the reactor is fine; the tile's message says so.
-    # A real state read needs an OPC UA session (mt-easymax-server, later).
+    # mt-easymax-server replaces this tile with real instrument state — per-zone
+    # Tr/Tj, stir rates, and activity observed from the instrument's own state
+    # nodes — when it is deployed on this PC (planned NSSM `mt-easymax` :8082,
+    # protocol "1.2", status_path /status). Drop lle_easymax from the monitor's
+    # config.toml at the same time rather than polling the reactor twice.
     base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.13
     status_path: /devices/lle_easymax/status

@@ -255,6 +255,7 @@ Planned, not yet deployed (placeholder names/ports — confirm at install time):
 |---------------------------|----------------|------|---------------------|
 | `bmg_platereader`         | `platereader`  | 8001 | `platereader-pc.<tailnet>` |
 | `mt-xpr-balance-server`   | `mt-xpr-balance` | 8081 | `sdl2-pc-00-lle.<tailnet>` (Process Chemistry XPR at 192.168.254.13; `XPR_PASSWORD` in the service env; a second instance on `sdl2-pc-04` for Gibbie's .83) |
+| `mt-easymax-server`       | `mt-easymax`   | 8082 | `sdl2-pc-00-lle.<tailnet>` (Process Chemistry EasyMax, reached through Mettler's **Reactor Device Server** on that PC's loopback OPC UA :50008 — the console app must be running and its window left open, or the service reports `unknown` with nothing wrong at the instrument. `EASYMAX_PASSWORD` in the service env; `uv sync --extra opcua`. Replaces the reachability-only `lle_easymax` tile the `process-chem-monitor` serves — drop that device from the monitor's `config.toml` when this lands. Check `[limits]` against the reactor model actually on the bench before starting it) |
 | `agilent_platestacker`    | `platestacker` | 8002 | `platestacker-pc.<tailnet>` |
 
 > **Windows quirk:** after every `nssm start <svc>`, run `sc continue <svc>` to clear
