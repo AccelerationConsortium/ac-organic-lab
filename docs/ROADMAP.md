@@ -79,6 +79,27 @@ lab data.
 > and the newer service tiles) are live and version-checked in the
 > protocol mix below, but have no migration history recorded here yet.
 
+**Sample-prep bench ("Gibbie") — monitoring-only, 2026-09-06.** Six entries
+added: `gibbie_workflow`, `gibbie_flex`, `gibbie_ur_arm`, `gibbie_balance`,
+`gibbie_hotplate` (a new *Sample Prep* section) and the monitor itself,
+`gibbie_server` (Services). All are served by
+[`sdl2-gibbie-server`](https://github.com/AccelerationConsortium/sdl2-gibbie-server)
+on the Gibbie PC `sdl2-pc-04` (NSSM `gibbie-server`, :8070), a read-only
+STATUS_SPEC v1.2 gateway under the §9 read-only clause — no `/control/*`,
+nothing to claim — with `gateway_fronted: true` so a device it cannot reach
+alerts as unreachable. The bench itself is driven by
+`xiaomguo/sdl2_sampleprep_platform` (branch `feature/user-interface`): the UR
+arm over RTDE, the Flex over `matterlab_opentrons`' SSH REPL, the XPR balance
+over SOAP. **The Flex is deliberately not in the OT-2 gateway fleet**: the
+workflow's pressure-guarded sample draw, gripper jaw control and hardware
+position reads exist only through the REPL's hardware controller, which the
+robot-server HTTP run engine does not expose, and only one process may hold
+the Flex's hardware — so robot-server stays stopped during Gibbie sessions
+(since 2026-03-30) and the monitor observes the robot from outside. Day-one
+state: the UR arm and balance read `unknown` because the USB Ethernet adapter
+carrying their 192.168.1.x subnet is unplugged on that PC; the Flex reads
+`unknown` until the SSH probe's key passphrase is set in the service env.
+
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and
 AnaliticaDB (LaAgenteAnalitica's own record store at `100.64.254.6:8010`) are
