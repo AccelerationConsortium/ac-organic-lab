@@ -553,6 +553,17 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   surfaced are commits `5d064c4` and `e5bb24c`). Both robots' network
   paths were moved off campus Wi-Fi the same night — see *Operational
   regressions*.
+- [ ] **Wire `ot2_complexation` directly to the lab switch** (USB-to-Ethernet
+  adapter in one of the robot's USB-A ports; the OT-2 has no spare RJ45, its
+  `eth0` *is* the USB-B cable). The robot's Wi-Fi radio wedges on its own
+  (2026-08-30, 2026-09-04: `wlan0` disconnected, empty scan, only a hard
+  reboot restores it), so since 2026-09-05 control rides the UPLC PC's
+  `netsh` bridge (`100.64.254.19:31951`). That works but puts a second PC and
+  its `iphlpsvc` bind-order quirk in the control path. Once wired, give the
+  adapter a DHCP reservation, repoint `ot2-gateway-complexation` at the lab
+  address (`tools/ot2-set-robot-url.ps1`), retire the bridge, and update
+  DEVICE_BRINGUP.md *Network paths* in the device repo. Same shape as HTE's
+  `192.168.254.50`.
 - [ ] **Device repo: self-heal the stale-run 409.** After the robot
   rebooted mid-outage, the gateway kept POSTing commands at its cached run
   id, got 409 `Run … is not the current run`, and latched `error`; recovery
@@ -843,8 +854,8 @@ left dead by an external event, discovered hours later — is what the
 whitelisted, remediate remotely. Residual watch item below.
 
 **Campus Wi-Fi (`compsci`) outage, 2026-08-14 → both OT-2 control paths
-moved off Wi-Fi.** *(Updated 2026-08-27 — the complexation half has since
-changed again; see the retirement note below the list.)* The `172.31/16` campus Wi-Fi the robots and
+moved off Wi-Fi.** *(Updated 2026-09-05 — the complexation half changed twice since; see
+the bridge note below the list.)* The `172.31/16` campus Wi-Fi the robots and
 several Pis ride lost its uplink ~14:45 EDT and flapped for the rest of the
 day: both OT-2s, `sdl2-pi0-fumehood3-actuator`, and `sdl2-pi5-cnc-01`
 dropped off the tailnet simultaneously (two APs on different bands; LAN-local
@@ -857,28 +868,36 @@ configuration — the gateways no longer reach the robots over Wi-Fi at all**:
 - `ot2-gateway-hte` → the robot's wired Pi Ethernet at `192.168.254.50`
   (lab switch subnet).
 - `ot2-gateway-complexation` → a `netsh` port-forward bridge on the UPLC PC
-  (`100.64.254.19:31950` → the robot's USB link-local `169.254.40.81:31950`).
+  (then `100.64.254.19:31950`, now `:31951` → the robot's USB link-local
+  `169.254.40.81:31950`).
 
-**The complexation bridge was retired 2026-08-27.** At some point after the
-outage the gateway was repointed at the robot's own tailnet IP
-(`OT2_HTTP_BASE_URL=http://100.64.254.91:31950`, `sdl2-ot2-complexation`) —
-which meant nothing routed through the bridge anymore, and the bridge itself
-was found **dead**: the `netsh` rule survived a reboot but `iphlpsvc` never
-rebound the listener (it binds only if the listen address exists when the
-service starts, and Tailscale's interface comes up later — config present, no
-socket, connections refused). Rather than leave a fallback that silently
-isn't one, the portproxy rule and the `ot2-complexation-usb-bridge` firewall
-rule were deleted. Note what this means: **complexation control rides the
-robot's tailnet path, whose direct route is campus Wi-Fi (`172.31.60.9`)** —
-the very network this incident is about (tailscale can DERP-relay, but a full
-Wi-Fi drop on the robot severs it). The USB-B cable into the UPLC PC stays
-plugged as the *physical* fallback — the link-local endpoint
-(`169.254.40.81:31950`) still answers from that PC. Re-arm in an outage:
-`netsh interface portproxy add v4tov4 listenaddress=100.64.254.19
-listenport=31950 connectaddress=169.254.40.81 connectport=31950`, re-add the
-firewall rule for TCP 31950, restart `iphlpsvc` if the listener doesn't bind,
-and repoint the gateway env below. (`ot2-gateway-hte` remains on the wired
-Pi Ethernet path exactly as listed — verified 2026-08-27.)
+**The complexation bridge was retired 2026-08-27 and re-armed 2026-09-05.**
+After the outage the gateway had been repointed at the robot's own tailnet IP
+(`OT2_HTTP_BASE_URL=http://100.64.254.91:31950`), so nothing routed through
+the bridge, and the bridge itself was found **dead**: the `netsh` rule survived
+a reboot but `iphlpsvc` never rebound the listener (it binds only if the
+listen address exists when the service starts, and Tailscale's interface
+comes up later — config present, no socket, connections refused). The rule
+was deleted rather than left as a fallback that silently wasn't one, which
+left complexation control riding the robot's campus Wi-Fi (`172.31.60.9`).
+
+That Wi-Fi turned out to fail on its own, not only in campus outages: the
+robot rejoins the tailnet within ~10 min of a hard reboot and then drops
+again — 2026-08-30 19:07 EDT (125 s connect timeout mid-`pick_up_tip`) and
+2026-09-04 ~21:00 EDT, 15 min after a reboot, while the fume hood Pi, the
+UPLC PC and gaia on the same campus network stayed up. Queried over USB, the
+robot reported `wlan0: disconnected`, no address, and an **empty Wi-Fi scan
+even with `rescan=true`** — the radio sees nothing at all, which on a
+Pi 3B+ points at the Broadcom driver wedging rather than DHCP or the AP. On
+2026-09-05 the bridge was re-created on the UPLC PC listening on
+**`100.64.254.19:31951`** → `169.254.40.81:31950` and
+`ot2-gateway-complexation` repointed at it (`OT2_HOST_ALIAS=169.254.40.81`,
+via `tools/ot2-set-robot-url.ps1`); the robot answered in ~70 ms and the
+session came up. **This is now the standing path.** Its dependency: the
+UPLC PC staying up — after a reboot there, `Restart-Service iphlpsvc` and
+confirm `http://100.64.254.19:31951/health` answers before blaming the
+robot. (`ot2-gateway-hte` remains on the wired Pi Ethernet path exactly as
+listed.) Durable fix unchanged: lab-owned wired Ethernet to the robot.
 
 **All of this is config, not code.** Robot addresses live in each gateway
 service's NSSM env on the Cytation PC — change with
@@ -888,9 +907,8 @@ restore `http://172.31.60.10:31950` (hte) / the tailnet name (complexation).
 Open hardening: a DHCP reservation for hte's wired MAC
 (`b8:27:eb:33:af:b6`); report the outage to campus IT. The durable conclusion is the same one the `env_hte` DHCP item already
 reached: **lab devices belong on lab-owned network**, and this outage is the
-strongest argument yet. As of 2026-08-27 that conclusion is only half
-honoured: hte is Wi-Fi-independent, complexation is not (see the retirement
-note above).
+strongest argument yet. As of 2026-09-05 both gateways are Wi-Fi-independent, complexation by
+way of the UPLC PC bridge (see the note above).
 
 **gaia memory thrash → self-heal monitors killed the healthy dashboard API,
 2026-08-27 → mitigated 2026-08-30.** The central server ran out of memory
