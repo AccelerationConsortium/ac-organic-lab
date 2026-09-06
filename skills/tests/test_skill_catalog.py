@@ -296,6 +296,7 @@ def test_robot_arm_graph_control_surface() -> None:
     defs = {d.name: d for d in SKILL_REGISTRY["robot_arm"]}
     assert set(defs) == {
         "graph.move_to",
+        "graph.travel_to",
         "graph.gripper",
         "graph.recover_to",
         "graph.record",
@@ -307,12 +308,52 @@ def test_robot_arm_graph_control_surface() -> None:
         assert d.method == "POST"
     # move_to targets a named node; mode is constrained to the 3 interlock modes.
     assert "node_id" in defs["graph.move_to"].args_schema.model_fields
+    # travel_to is the device's own multi-hop planner (2026-09-01, operator
+    # decision): one blocking call, one reservation across the journey. The
+    # device does not advertise it in allowed_actions yet — the dashboard
+    # assistant reaches it via the travel.<node_id> bridge, gated on the
+    # motion_graph snapshot's reachable/travel targets.
+    assert "node_id" in defs["graph.travel_to"].args_schema.model_fields
     assert defs["graph.mode"].args_schema.model_fields["mode"].is_required()
     # gripper takes a required catalog state name. It is deliberately a bare
     # str, not a Literal: the state catalog lives in the device's
     # motion_graph.yaml and is edited there, so an enum here would go stale.
     # The device's per-node whitelist is the authority (409 on a violation).
     assert defs["graph.gripper"].args_schema.model_fields["state"].is_required()
+
+
+def test_solid_doser_names_match_device_allowed_actions() -> None:
+    """Availability is ``def.name in allowed_actions``, so every solid-doser
+    skill name must be one ``dose_every_well`` actually advertises. This
+    encodes the union of the device's ``service.py`` ``_READY_ACTIONS`` /
+    ``_DEGRADED_ACTIONS`` plus the ``requires_init`` branch's ``startup``
+    (verified live 2026-09-02). The four single-axis loader moves (``lid.*``,
+    ``plate.raise``, ``plate.lower``) were advertised by the device — and
+    driven by the dashboard tile — before the catalog carried them, which is
+    how they stayed unproposable by the assistant (UI_DESIGN §5 Step 1l).
+    """
+
+    device_advertised = {
+        "startup", "shutdown",
+        "plate.set", "plate.load", "plate.unload",
+        "lid.open", "lid.close", "plate.raise", "plate.lower",
+        "dose.well", "dose.multiple", "dose.row", "dose.column", "dose.all",
+        "home", "tare", "calibrate.flow_rate",
+    }
+    defs = {d.name: d for d in SKILL_REGISTRY["solid_doser"]}
+    assert set(defs) == device_advertised
+    for name, d in defs.items():
+        assert d.kind == "solid_doser"
+        assert d.method == "POST"
+        # Dotted name -> URL segment byte-for-byte, except the one hyphenated
+        # device route.
+        segment = "calibrate/flow-rate" if name == "calibrate.flow_rate" else name.replace(".", "/")
+        assert d.endpoint == f"/control/{segment}", name
+    # The lift moves stay available while a sub-component is disconnected —
+    # the device advertises them in ``degraded`` too.
+    for name in ("lid.open", "lid.close", "plate.raise", "plate.lower"):
+        assert "degraded" in defs[name].requires_states, name
+        assert not defs[name].args_schema.model_fields, name
 
 
 def test_hplc_catalog_registered() -> None:

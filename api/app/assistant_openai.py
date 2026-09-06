@@ -34,11 +34,13 @@ Backend *selection* (which mode uses this module at all) lives in
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 import httpx
@@ -54,7 +56,9 @@ from .assistant import (
     _mcp_server_command,
     _plan_from_tool_result,
     _proposal_from_tool_result,
+    _public_snapshot,
     _refusal_from_tool_result,
+    _snapshot_from_tool_result,
     _sse,
 )
 
@@ -87,6 +91,9 @@ MAX_TOOL_ROUNDS = 12
 # authorize button. The message reaches the model as a user-role turn but is
 # written by this backend, never by the operator, and is not persisted into
 # the bubble's history (the convo is rebuilt from the bubble each request).
+# Since 2026-09-04 the nudge round also FORCES the call at the protocol level
+# (see ``_terminal_tool_defs``): the text below is the explanation the model
+# reads, ``tool_choice="required"`` is what makes it comply.
 CONTROL_TERMINAL_NUDGE = (
     "[automated harness check — the operator did not write this] Your reply "
     "ended without a lab-control terminal call. Control mode requires every "
@@ -103,7 +110,51 @@ CONTROL_TERMINAL_NUDGE = (
 # tools. A control turn that never lands one of these — nor a proposal/plan/
 # refusal/decline payload from any tool — is incomplete (see the nudge above).
 _TERMINAL_TOOL_NAMES = frozenset({"propose_action", "propose_plan", "decline_proposal"})
+
+
+def _terminal_tool_defs(tool_defs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The subset of ``tool_defs`` that are lab-control terminal tools.
+
+    The nudge round offers ONLY these, with ``tool_choice="required"``, so the
+    model cannot end that round in prose a second time (2026-09-04). Asking
+    for the call in a user-role message (the nudge text) turned out to be one
+    more instruction a flash-tier model can ignore; ``tool_choice`` is a
+    protocol-level constraint the provider enforces. Reads it may have wanted
+    to make first are deliberately excluded here — by the nudge it has had a
+    full turn to read, and the honest answer if it still cannot decide is
+    ``decline_proposal``, which is in the set.
+    """
+    return [
+        d
+        for d in tool_defs
+        if (d.get("function") or {}).get("name", "").split("__")[-1] in _TERMINAL_TOOL_NAMES
+    ]
+
+
+def _no_terminal_declined(explanation: str) -> dict[str, Any]:
+    """A harness-authored ``declined`` payload for a control turn that ended
+    with no terminal outcome. The bubble renders it as the muted "No action
+    proposed" chip — the why of a missing button must always be on screen
+    (UI_DESIGN §5 Step 1j)."""
+    return {"declined": {"reason_code": "other", "explanation": explanation}}
+
+
 MCP_CALL_TIMEOUT_S = 30.0
+
+# Camera frames captured by lab-history's capture_camera_snapshot are attached
+# to the model's context as an image_url part (base64 data URL) in a
+# harness-authored user message right after the tool round, so a
+# vision-capable model can describe what it sees. Set
+# ASSISTANT_OPENAI_IMAGE_INPUT=0 when running a text-only model — an image
+# part would then fail the whole request. The frame is shown to the operator
+# regardless; only the model's copy is gated.
+OPENAI_IMAGE_INPUT = os.environ.get("ASSISTANT_OPENAI_IMAGE_INPUT", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "",
+}
+MAX_IMAGE_BYTES = 2_000_000
 # How often a silent stretch may re-announce the phase: a throttle, so that
 # thinking tokens (which arrive far too fast to forward one frame each) cost
 # at most one status frame per second.
@@ -384,6 +435,47 @@ async def _call_tool(
         return json.dumps({"error": f"invalid tool arguments: {exc}"})
 
 
+def _image_parts(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chat-completions content parts that hand captured frames to the model.
+
+    One text part explains where the pictures come from (harness-authored,
+    never the operator's words), then one ``image_url`` data-URL part per
+    frame that exists and is under MAX_IMAGE_BYTES. A frame that cannot be
+    read is described instead of attached, so the model never assumes it saw
+    something it did not."""
+
+    parts: list[dict[str, Any]] = []
+    lines: list[str] = []
+    for snap in snapshots:
+        label = f"{snap.get('camera_name') or snap.get('camera_id')} ({snap.get('lens')}, {snap.get('taken_at')})"
+        file_path = snap.get("_file")
+        try:
+            raw = Path(str(file_path)).read_bytes() if file_path else b""
+        except OSError:
+            raw = b""
+        if not raw:
+            lines.append(f"- {label}: the frame could not be read back; do not describe it.")
+            continue
+        if len(raw) > MAX_IMAGE_BYTES:
+            lines.append(f"- {label}: {len(raw)} bytes, too large to attach; describe it only from the operator's words.")
+            continue
+        lines.append(f"- {label}: attached below.")
+        parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")},
+            }
+        )
+    if not lines:
+        return []
+    text = (
+        "[automated harness note — the operator did not write this] The camera "
+        "frame(s) captured by your capture_camera_snapshot call:\n" + "\n".join(lines)
+        + "\nDescribe only what is actually visible in them."
+    )
+    return [{"type": "text", "text": text}, *parts]
+
+
 # ---------------------------------------------------------------------------
 # The turn driver (same contract as assistant._run_claude)
 # ---------------------------------------------------------------------------
@@ -435,6 +527,9 @@ async def run_openai_turn(
     # payload? Gates the one-shot CONTROL_TERMINAL_NUDGE below.
     terminal_call_seen = False
     nudged = False
+    # Set by the nudge for exactly the next request: offer only the terminal
+    # tools and force a call. Cleared as soon as that payload is built.
+    force_terminal = False
 
     # Before anything slow happens — MCP servers spawning, the model queueing
     # — so the bubble shows a live pill from the moment the request lands
@@ -454,6 +549,18 @@ async def run_openai_turn(
                 while True:
                     if rounds >= MAX_TOOL_ROUNDS:
                         terminal = "tool_round_cap"
+                        if include_control and not terminal_call_seen:
+                            yield _sse(
+                                {
+                                    "type": "declined",
+                                    **_no_terminal_declined(
+                                        f"The assistant used all {MAX_TOOL_ROUNDS} tool "
+                                        "rounds before proposing or declining, so no "
+                                        "authorize button was produced. Ask again for "
+                                        "one named action on one device."
+                                    ),
+                                }
+                            )
                         yield _sse(
                             {
                                 "type": "error",
@@ -463,6 +570,23 @@ async def run_openai_turn(
                         return
                     if time.monotonic() > deadline:
                         terminal = "timeout"
+                        # The largest source of "understood but no button" in
+                        # the 2026-08-28 → 09-04 journal (7 of 91 control
+                        # turns): a reasoning model orbiting past the wallclock
+                        # cap. A bare error frame reads as the assistant
+                        # ignoring the request; say what happened.
+                        if include_control and not terminal_call_seen:
+                            yield _sse(
+                                {
+                                    "type": "declined",
+                                    **_no_terminal_declined(
+                                        f"The assistant ran out of time ({DEFAULT_TIMEOUT_S:.0f} s) "
+                                        "before proposing or declining, so no authorize "
+                                        "button was produced. Ask again for one named "
+                                        "action on one device."
+                                    ),
+                                }
+                            )
                         yield _sse(
                             {
                                 "type": "error",
@@ -481,6 +605,12 @@ async def run_openai_turn(
                     # when configured. Ask (flash) never sets it.
                     if include_control and OPENAI_CONTROL_REASONING_EFFORT:
                         payload["reasoning_effort"] = OPENAI_CONTROL_REASONING_EFFORT
+                    if force_terminal:
+                        force_terminal = False
+                        terminal_defs = _terminal_tool_defs(tool_defs)
+                        if terminal_defs:
+                            payload["tools"] = terminal_defs
+                            payload["tool_choice"] = "required"
                     rounds += 1
                     round_text = ""
                     tool_calls: list[dict[str, Any]] = []
@@ -558,6 +688,7 @@ async def run_openai_turn(
                                 # streamed to the bubble stays visible; the
                                 # model's next round adds the missing call.
                                 nudged = True
+                                force_terminal = True
                                 convo.append(
                                     {"role": "assistant", "content": round_text or ""}
                                 )
@@ -618,6 +749,9 @@ async def run_openai_turn(
                             ],
                         }
                     )
+                    # Frames captured this round, attached to the convo after
+                    # the tool results so the next request can look at them.
+                    round_snapshots: list[dict[str, Any]] = []
                     for i, tc in enumerate(tool_calls):
                         pretty = tc["name"].split("__")[-1]
                         # Already shown live via a tool_name frame; only emit a
@@ -685,6 +819,10 @@ async def run_openai_turn(
                         if declined is not None:
                             terminal_call_seen = True
                             yield _sse({"type": "declined", "declined": declined})
+                        snapshot = _snapshot_from_tool_result({"content": result_text})
+                        if snapshot is not None:
+                            yield _sse({"type": "image", "image": _public_snapshot(snapshot)})
+                            round_snapshots.append(snapshot)
                         convo.append(
                             {
                                 "role": "tool",
@@ -692,9 +830,19 @@ async def run_openai_turn(
                                 "content": result_text,
                             }
                         )
+                    if round_snapshots and OPENAI_IMAGE_INPUT:
+                        parts = _image_parts(round_snapshots)
+                        if parts:
+                            convo.append({"role": "user", "content": parts})
     except RuntimeError as exc:
         terminal = "error"
         yield _sse({"type": "error", "message": str(exc)})
+    except (asyncio.CancelledError, GeneratorExit):
+        # The browser went away — the operator pressed Stop, closed the panel,
+        # or asked something new. Starlette closes the response generator,
+        # which lands here. Name it in the turn log and let it propagate.
+        terminal = "client_disconnected"
+        raise
     finally:
         logger.info(
             "assistant turn done: user=%s mode=%s elapsed=%.1fs num_turns=%s "

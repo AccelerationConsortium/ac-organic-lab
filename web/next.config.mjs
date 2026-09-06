@@ -31,9 +31,10 @@ const nextConfig = {
     // have its upstream connection aborted mid-answer, which the bubble
     // reports as "Connection lost". The real fix is the API's keep-alive
     // pulse (api/app/assistant_openai.py, IDLE_TICK_S); this is the backstop
-    // for it, set above the assistant's own 120 s wallclock cap so a genuinely
-    // stuck upstream still gets cut. Takes effect on the next `pnpm build`.
-    proxyTimeout: 130_000,
+    // for it, set above the assistant's own 300 s wallclock cap
+    // (api/app/assistant.py DEFAULT_TIMEOUT_S) so a genuinely stuck upstream
+    // still gets cut. Takes effect on the next build.
+    proxyTimeout: 330_000,
   },
   generateBuildId: () => BUILD_STAMP,
   async redirects() {

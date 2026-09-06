@@ -1,11 +1,11 @@
 # Plate tracking — where every container is, and how it got there
 
 **Status:** design agreed 2026-08-22; registry + digest fix shipped the same
-day; AnaliticaDB Phase 2a (§5), bitácora Phase C (§6), the ac-organic-lab
+day; BitacoraDB Phase 2a (§5), bitácora Phase C (§6), the ac-organic-lab
 executor Phase D (§7) and the views (Phase E) shipped 2026-08-23 — and were
-**deployed the same day**: production AnaliticaDB migrated to `d1e2f3a4b5c6`
+**deployed the same day**: production BitacoraDB migrated to `d1e2f3a4b5c6`
 (contract 0.13.0, tag `contract-0.13.0`, pre-migration dump under
-`/home/sdl2/backups/analiticadb/`), the 39 registry places seeded, and the
+`/home/sdl2/backups/bitacoradb/`), the 39 registry places seeded, and the
 dashboard API/web and bitácora API/frontend restarted on the new code. A
 rehearsal on a restored copy (`bitacora_stagging`, same Postgres) preceded
 the production migration; the copy was left in place. What is *not* in
@@ -15,10 +15,10 @@ production yet is any plate — register the first one and authorize with
 This document is the cross-repo authority for **location and custody
 tracking of plates and the samples in them**, across `ac-organic-lab`
 (registry + executor + dashboard), `bitácora` (authoring + authorization),
-`AnaliticaDB` (the record layer), and the device repos. It answers one
+`BitacoraDB` (the record layer), and the device repos. It answers one
 question that came up three separate ways — *should we build a state machine
 of deck positions like the OT-2 gateway's, drive it from a yaml in this repo,
-and keep it consistent with AnaliticaDB?* — and the answer is: **no state
+and keep it consistent with BitacoraDB?* — and the answer is: **no state
 machine; a registry, a ledger, and a cache, each in the repo whose job it
 already is.**
 
@@ -37,9 +37,9 @@ Three separate things, none of them a state machine:
 
 | Thing | What it is | Where it lives | Mutability |
 |---|---|---|---|
-| **Registry of places** | every nameable place a container can be — a deck slot, a reader carrier, a sealer stage, the arm's gripper, a bench spot, waste | `ac-organic-lab/locations.yaml` (git-reviewed), loaded by `lab_skills.locations`, served as `GET /api/locations`, **seeds** AnaliticaDB `Location` | static; names immutable |
-| **Ledger of moves** | what happened: an append-only `move` row per custody change, with `plan_id` / `step_id`, who, when, commanded vs observed | AnaliticaDB `ContainerAction` | append-only |
-| **Current-location cache** | where each container is *now* | AnaliticaDB `Container.location_id`, set by the service in the same transaction as the `move` row | service-owned cache |
+| **Registry of places** | every nameable place a container can be — a deck slot, a reader carrier, a sealer stage, the arm's gripper, a bench spot, waste | `ac-organic-lab/locations.yaml` (git-reviewed), loaded by `lab_skills.locations`, served as `GET /api/locations`, **seeds** BitacoraDB `Location` | static; names immutable |
+| **Ledger of moves** | what happened: an append-only `move` row per custody change, with `plan_id` / `step_id`, who, when, commanded vs observed | BitacoraDB `ContainerAction` | append-only |
+| **Current-location cache** | where each container is *now* | BitacoraDB `Container.location_id`, set by the service in the same transaction as the `move` row | service-owned cache |
 
 Device snapshots (`details.loaded_plate`, the OT-2 deck, `components.stage`,
 the arm's `gripper.object_detected`) are the **observed** side, used to
@@ -98,8 +98,8 @@ move sequence with a declared custody effect.
   **interlock** (INTERLOCKS.md layer 4 — "plate must be sealed before it leaves
   the prep station" is literally the example), and an interlock needs the
   ledger, not a transition table.
-- **AnaliticaDB already has the design, unbuilt.** `DATABASE_DESIGN.md` §6 +
-  *Plate identity* and `AnaliticaDB/docs/eln-lims-generalization.md` §5–6
+- **BitacoraDB already has the design, unbuilt.** `DATABASE_DESIGN.md` §6 +
+  *Plate identity* and `BitacoraDB/docs/eln-lims-generalization.md` §5–6
   specify `Container` (a plate is one row with 96 positional children,
   `UNIQUE(parent_container_id, position)`), a `Location` **registry table**
   ("not a string … an SDL needs 'where is plate X' to resolve to something a
@@ -115,7 +115,7 @@ where things are" — is right for **which places exist** and wrong for **where
 things are**: the first is static and belongs in a reviewed file next to
 `equipment.yaml`; the second changes every run and belongs in the record
 layer. The bitácora inventory (SQLite, bottles-only, now "slated for absorption
-into AnaliticaDB's ledger") is the cautionary tale for building a second state
+into BitacoraDB's ledger") is the cautionary tale for building a second state
 store anywhere else.
 
 ---
@@ -130,7 +130,7 @@ transitions.
 
 **D2 — One-directional authority; names are immutable.**
 `locations.yaml` is authoritative for *which places exist* (name, `type`,
-`equipment`, `aliases`, `label`, `capacity`). AnaliticaDB is authoritative for
+`equipment`, `aliases`, `label`, `capacity`). BitacoraDB is authoritative for
 *what is where* (`Container.location_id`) and *what happened*
 (`ContainerAction`). The yaml never carries state; the database never invents
 places. Consequences:
@@ -149,7 +149,7 @@ places. Consequences:
 
 **D3 — Naming and types.** `<equipment_id>/<position>` for device-anchored
 places, `<site>/<path>` otherwise; lowercase snake segments, at least one `/`
-(`lab_skills.locations.NAME_RE`). `type` is exactly AnaliticaDB's
+(`lab_skills.locations.NAME_RE`). `type` is exactly BitacoraDB's
 `location_type` enum — `storage | instrument | deck | fridge | waste` — and
 there is deliberately **no `transport`**: the arm's gripper is itself a
 location (`xarm_translocation/gripper`, `instrument`, `capacity: 1`). A plate
@@ -233,11 +233,11 @@ vocabulary back into ours; they are never used to infer a move.
 > `lab_skills.interlocks_custody.require_plate_at` — the layer-4 consumer D1
 > promised.
 
-**D8 — lab.db events are ops audit; custody is read from AnaliticaDB only.**
+**D8 — lab.db events are ops audit; custody is read from BitacoraDB only.**
 `plate_moved`, `plate_custody_mismatch`, `plate_custody_unknown` are registered
 in `LAB_MONITORING.md`'s `event_type` table (reserved until the executor
 emits them). No `/api/history/plates` reads custody out of lab.db; the "where
-is every plate" view is a read-through to AnaliticaDB.
+is every plate" view is a read-through to BitacoraDB.
 
 **D9 — `plan_id` on move rows ⇒ the Plan is opened at run start.**
 `RunRecorder` today writes the `Plan` *after* the run; moves are written
@@ -245,7 +245,7 @@ is every plate" view is a read-through to AnaliticaDB.
 backfilled. `record.py` splits into `open_run_record` (ensure `Experiment`, POST
 `Plan` with the planned steps, `approved → executing`) and `close_run_record`
 (Notes, `completed | abandoned`, final summary Note with per-step statuses).
-This is closer to AnaliticaDB's own semantics (Plan = intent, Notes = what
+This is closer to BitacoraDB's own semantics (Plan = intent, Notes = what
 happened) than the end-of-run write, and it is its own tested phase. Until it
 ships, move rows may carry `plan_id = null` + `step_id` + `params.
 authorization_id` — acceptable for a bench trial, not for go-live.
@@ -256,7 +256,7 @@ three tables, `None` = lab-scoped, readable by any caller with a non-empty
 project scope or admin (`can_read_lab`), writable under the same rule. No
 `ac_auth` change. The alternative in `DATABASE_DESIGN.md` (a `lab-inventory`
 shared project with auto-enrolment) stays on the table; pick one before the
-AnaliticaDB migration lands.
+BitacoraDB migration lands.
 
 **D11 — Sample lineage is later, and the join key does not move.** `transfer`
 rows (source/target well containers, commanded and — when an instrument
@@ -311,7 +311,7 @@ none); served as `GET /api/locations`.
 ```yaml
 locations:
   - name: ot2_hte/slot_2          # identifier, IMMUTABLE; "<equipment_id>/<position>" or "<site>/<path>"
-    type: deck                    # storage | instrument | deck | fridge | waste  (= AnaliticaDB location_type)
+    type: deck                    # storage | instrument | deck | fridge | waste  (= BitacoraDB location_type)
     equipment: ot2_hte            # must exist in equipment.yaml; required for `deck`
     capacity: 1                   # informational; never enforced by the ledger
     aliases:                      # OBSERVATION-ONLY device vocabulary → canonical name
@@ -371,7 +371,7 @@ flowchart LR
     door --> labdb
   end
 
-  subgraph adb["AnaliticaDB (record layer)"]
+  subgraph adb["BitacoraDB (record layer)"]
     loc[("Location<br/>seeded from locations.yaml")]
     cont[("Container<br/>plate + 96 wells<br/>location_id = cache")]
     ledger[("ContainerAction<br/>move · transfer · …<br/>append-only")]
@@ -394,7 +394,7 @@ flowchart LR
 
 ---
 
-## 5. AnaliticaDB "Phase 2a — custody slice" (contract for the next PR)
+## 5. BitacoraDB "Phase 2a — custody slice" (contract for the next PR)
 
 The minimal subset of the designed Phase 2 (`eln-lims-generalization.md`
 §5–6) that location tracking needs: contract `0.12.0 → 0.13.0`. Defer
@@ -498,7 +498,7 @@ without a second migration.
   unobservable` (mismatch only on contradiction). Router: `POST
   /api/custody/move {hid, to, note?}` (signed-in user; `control_action` audit on
   pseudo-device `custody`; lab.db `plate_moved`); `GET /api/custody/plates`
-  (read-through to AnaliticaDB containers + locations; no local cache).
+  (read-through to BitacoraDB containers + locations; no local cache).
 - `api/app/workflow.py`: `_drive_run` builds `custody_by_step` from
   `auth.steps`; in `on_step`, `succeeded` + custody → `record_move` → fresh
   `aggregator.fetch_one(equipment_id)` → `observe` / `reconcile`; mismatch →
@@ -510,7 +510,7 @@ without a second migration.
   `RunState.record = {experiment_id, plan_id}`.
 - `scripts/seed_locations.py`: idempotent upsert of `locations.yaml` into
   `/locations` (`POST`, 409 = exists; `PATCH` only `label` / `active`),
-  `--check` drift report; uses `ANALITICADB_URL` + the edge secret the way
+  `--check` drift report; uses `BITACORADB_URL` + the edge secret the way
   `record.edge_secret()` does; removed names → `active: false`.
 - Retire `api/app/deck.py` (+ `build_deck_router()`) after confirming `web/`
   has no `/api/equipment/*/deck` consumer left (the OT-2 picker reads the
@@ -543,7 +543,7 @@ without a second migration.
 |---|---|---|---|---|
 | 0 | ac-organic-lab | `_DIGEST_FIELDS` / `digest_payload_of` fix (optional-when-truthy `plates`) | — | **shipped 2026-08-22** |
 | B | ac-organic-lab | `locations.yaml`, `lab_skills.locations`, `GET /api/locations`, tests, docs | — | **shipped 2026-08-22** |
-| A | AnaliticaDB | Phase 2a custody slice (§5), contract 0.13.0, migration `d1e2f3a4b5c6` | D10 → decided: nullable `project_id` | **shipped 2026-08-23** (see note below) |
+| A | BitacoraDB | Phase 2a custody slice (§5), contract 0.13.0, migration `d1e2f3a4b5c6` | D10 → decided: nullable `project_id` | **shipped 2026-08-23** (see note below) |
 | C | bitácora | `custody` substeps, `plate_bindings`, compiler 0.4.0, template 1.11.0, Authorize UI (§6) | B (loader); A for the hid check | **shipped 2026-08-23** (see note below) |
 | D1 | ac-organic-lab | `custody.py`, executor hook, front door, `seed_locations.py` (§7) | A, B, C | **shipped 2026-08-23** (see note below) |
 | D2 | ac-organic-lab | Plan-at-start (`open_run_record` / `close_run_record`) | D1 | **shipped 2026-08-23** |
@@ -632,7 +632,7 @@ lands; everything after needs all three.
 - Hid existence: when a record layer is configured, every bound hid must
   resolve via `GET /containers?hid=` (409 if not registered, 503 if the
   store cannot answer — including a contract older than 0.13.0, so an
-  unmigrated production AnaliticaDB refuses rather than pretends).
+  unmigrated production BitacoraDB refuses rather than pretends).
 - Web: the Authorize tab lists the chosen protocol's nominal plates with one
   hid input each; the authorization row shows `plates: reaction → PLT-0042`.
 
@@ -649,7 +649,7 @@ lands; everything after needs all three.
   and may name a waste location.
 - D10 was decided the minimal way: nullable `project_id`, `None` = lab-scoped,
   `authz.can_read_scoped` (`can_read_lab` = admin or ≥1 project in scope).
-- The AnaliticaDB test harness gained a `TEST_DATABASE_URL` escape hatch
+- The BitacoraDB test harness gained a `TEST_DATABASE_URL` escape hatch
   (integration tests against a provided throwaway Postgres) because this
   host's Docker bridge network is down; the migration was validated with
   `alembic upgrade head` / `alembic check` (no diff vs models) / `downgrade`
@@ -660,7 +660,7 @@ lands; everything after needs all three.
 ## 10. Open questions
 
 1. **D10 lab scope** — nullable `project_id` vs the `lab-inventory` shared
-   project. Decide before the AnaliticaDB migration.
+   project. Decide before the BitacoraDB migration.
 2. **Filtration press naming** — `filter_every_well/stage` + `/stage_top`
    assumes a receiver-plate-under-filter-plate stack; confirm at the bench.
 3. **BioStack** — stack capacities and whether `stack_in` / `stack_out` is the
@@ -677,7 +677,7 @@ lands; everything after needs all three.
 
 - [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md) §6 and *Plate identity — the
   device ↔ record join* — the record-layer design this document builds on.
-- `AnaliticaDB/docs/eln-lims-generalization.md` §5–6 — the same design from
+- `BitacoraDB/docs/eln-lims-generalization.md` §5–6 — the same design from
   the record layer's side.
 - `bitácora/docs/ELN_LIMS_V2.md` — the research behind identity, nominal vs
   actual, and "location ≠ identity"; `bitácora/docs/PLATES_AS_OBJECTS.md` —

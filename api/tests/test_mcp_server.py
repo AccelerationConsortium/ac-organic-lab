@@ -180,7 +180,7 @@ async def test_build_server_registers_only_included_tools(monkeypatch):
         "LAB_HISTORY_TOOLS",
         "list_equipment_now,get_equipment_status,record_observation,"
         "query_equipment_events,query_service_uptime,query_sensor_readings,"
-        "tail_journald",
+        "tail_journald,capture_camera_snapshot",
     )
     names = {t.name for t in await _build_server().list_tools()}
     assert names == ALL_TOOLS - {"query_runs", "query_well_results"}
@@ -193,3 +193,122 @@ async def test_build_server_unfiltered_registers_all_tools(monkeypatch):
     monkeypatch.delenv("LAB_HISTORY_TOOLS", raising=False)
     names = {t.name for t in await _build_server().list_tools()}
     assert names == ALL_TOOLS
+
+
+
+# ---------------------------------------------------------------------------
+# capture_camera_snapshot (2026-09-04): a frame off go2rtc's relay, saved for
+# the chat; never the gateway's /control/snapshot.
+# ---------------------------------------------------------------------------
+
+import json as _json  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+import httpx as _httpx  # noqa: E402
+
+from app import mcp_server as _ms  # noqa: E402
+
+_JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 5000
+
+
+def _camera_equipment(*, privacy: bool = False, streaming: bool = True, lenses=("wide", "tele"), fetch_error=None):
+    return {
+        "equipment": [
+            {
+                "id": "cam_hte_tapo_c245",
+                "name": "HTE bench camera",
+                "kind": "camera",
+                "base_url": "http://127.0.0.1:8002",
+                "fetch_error": fetch_error,
+                "status": {
+                    "equipment_status": "ready",
+                    "details": {
+                        "lenses": [{"id": lens} for lens in lenses],
+                        "privacy_mode": privacy,
+                        "streaming_enabled": streaming,
+                    },
+                },
+            },
+            {"id": "plateloc", "name": "PlateLoc", "kind": "plate_sealer", "status": {}},
+        ]
+    }
+
+
+@respx.mock
+async def test_capture_camera_snapshot_saves_a_frame_and_returns_its_chat_url(monkeypatch, tmp_path):
+    monkeypatch.setattr(_ms, "SNAPSHOT_DIR", str(tmp_path))
+    respx.get(f"{DASHBOARD_API_URL}/api/equipment").mock(
+        return_value=_httpx.Response(200, json=_camera_equipment())
+    )
+    frame = respx.get(f"{_ms.GO2RTC_URL}/api/frame.jpeg").mock(
+        return_value=_httpx.Response(200, content=_JPEG, headers={"content-type": "image/jpeg"})
+    )
+    out = _json.loads(await _ms._capture_camera_snapshot("cam_hte_tapo_c245", None))
+    snap = out["snapshot"]
+    # Default lens is wide; the go2rtc source is <camera>_<lens>.
+    assert frame.calls.last.request.url.params["src"] == "cam_hte_tapo_c245_wide"
+    assert snap["camera_name"] == "HTE bench camera"
+    assert snap["lens"] == "wide" and snap["bytes"] == len(_JPEG)
+    assert snap["image_url"].startswith("/api/assistant/snapshots/cam_hte_tapo_c245_wide_")
+    saved = _Path(snap["_file"])
+    assert saved.parent == tmp_path and saved.read_bytes() == _JPEG
+    assert snap["image_url"].endswith(saved.name)
+    assert "did not move the camera" in out["note"]
+
+
+@respx.mock
+async def test_capture_camera_snapshot_honours_lens_and_retries_once(monkeypatch, tmp_path):
+    monkeypatch.setattr(_ms, "SNAPSHOT_DIR", str(tmp_path))
+    respx.get(f"{DASHBOARD_API_URL}/api/equipment").mock(
+        return_value=_httpx.Response(200, json=_camera_equipment())
+    )
+    frame = respx.get(f"{_ms.GO2RTC_URL}/api/frame.jpeg")
+    frame.side_effect = [
+        _httpx.Response(500, content=b""),
+        _httpx.Response(200, content=_JPEG, headers={"content-type": "image/jpeg"}),
+    ]
+    out = _json.loads(await _ms._capture_camera_snapshot("cam_hte_tapo_c245", "tele"))
+    assert out["snapshot"]["lens"] == "tele"
+    assert frame.calls.last.request.url.params["src"] == "cam_hte_tapo_c245_tele"
+    assert len(frame.calls) == 2
+
+
+@respx.mock
+async def test_capture_camera_snapshot_reports_no_frame_after_two_failures(monkeypatch, tmp_path):
+    monkeypatch.setattr(_ms, "SNAPSHOT_DIR", str(tmp_path))
+    respx.get(f"{DASHBOARD_API_URL}/api/equipment").mock(
+        return_value=_httpx.Response(200, json=_camera_equipment())
+    )
+    respx.get(f"{_ms.GO2RTC_URL}/api/frame.jpeg").mock(return_value=_httpx.Response(200, content=b"", headers={"content-type": "image/jpeg"}))
+    out = _json.loads(await _ms._capture_camera_snapshot("cam_hte_tapo_c245", None))
+    assert "no live frame available" in out["error"]
+    assert list(tmp_path.glob("*.jpg")) == []
+
+
+@respx.mock
+async def test_capture_camera_snapshot_refuses_privacy_mode_without_touching_go2rtc(monkeypatch, tmp_path):
+    monkeypatch.setattr(_ms, "SNAPSHOT_DIR", str(tmp_path))
+    respx.get(f"{DASHBOARD_API_URL}/api/equipment").mock(
+        return_value=_httpx.Response(200, json=_camera_equipment(privacy=True))
+    )
+    frame = respx.get(f"{_ms.GO2RTC_URL}/api/frame.jpeg").mock(return_value=_httpx.Response(200, content=_JPEG))
+    out = _json.loads(await _ms._capture_camera_snapshot("cam_hte_tapo_c245", None))
+    assert out["code"] == "privacy_mode_on"
+    assert len(frame.calls) == 0
+
+
+@respx.mock
+async def test_capture_camera_snapshot_unknown_camera_or_lens_lists_the_options(monkeypatch, tmp_path):
+    monkeypatch.setattr(_ms, "SNAPSHOT_DIR", str(tmp_path))
+    respx.get(f"{DASHBOARD_API_URL}/api/equipment").mock(
+        return_value=_httpx.Response(200, json=_camera_equipment())
+    )
+    out = _json.loads(await _ms._capture_camera_snapshot("plateloc", None))
+    assert "no camera with id" in out["error"]
+    assert [c["id"] for c in out["cameras"]] == ["cam_hte_tapo_c245"]
+    out = _json.loads(await _ms._capture_camera_snapshot("cam_hte_tapo_c245", "macro"))
+    assert out["lenses"] == ["wide", "tele"]
+
+
+def test_capture_camera_snapshot_is_a_registered_tool_name():
+    assert "capture_camera_snapshot" in _ms.ALL_TOOLS

@@ -32,7 +32,7 @@ pass the full definition as the labware ``config`` for
 
 Validation is a pragmatic structural check of the Opentrons labware schema 2
 plus the OT-2 physical limits from ``opentrons-server``'s ``LabwareGenerator``
-(footprint 127 × 85.5 mm, height 200 mm) — not the full official JSON schema.
+(footprint 128 × 86 mm, height 200 mm) — not the full official JSON schema.
 """
 
 from __future__ import annotations
@@ -59,8 +59,9 @@ logger = logging.getLogger("ac_dashboard.api.labware")
 
 _LOCK = threading.Lock()
 
-# OT-2 slot physical limits (mm) — mirrors opentrons-server LabwareGenerator.
-_MAX_DIMENSIONS = {"x": 127.0, "y": 85.5, "z": 200.0}
+# OT-2 slot envelope (mm) — the ANSI/SLAS footprint (127.76 × 85.48) plus
+# clearance; mirrors opentrons-server LabwareGenerator.
+_MAX_DIMENSIONS = {"x": 128.0, "y": 86.0, "z": 200.0}
 
 _LOAD_NAME_RE = re.compile(r"^[a-z0-9._]+$")
 

@@ -38,6 +38,10 @@ servers:
         - query_runs
         - query_well_results
         - tail_journald
+        # Reads one JPEG frame from go2rtc's live relay of a camera stream
+        # (GET /api/frame.jpeg) and saves it for the chat. Not a device
+        # command and not a /control/* path — see the data_policy note.
+        - capture_camera_snapshot
 
     sampling:
       enabled: false
@@ -55,8 +59,19 @@ servers:
           deliberately separate server with a different trust level (see
           ARCHITECTURE.md decision #10).
         - >-
-          Project-scoped scientific results live in AnaliticaDB, not here;
+          Project-scoped scientific results live in BitacoraDB, not here;
           answers from this server are telemetry, not experimental records.
+        - >-
+          capture_camera_snapshot (2026-09-04) reads a still from go2rtc's
+          live relay — the stream every dashboard viewer already receives —
+          never the gateway's /control/snapshot, and refuses when the camera
+          reports privacy mode on or streaming disabled. Frames are saved
+          under the assistant runtime dir and served only behind the
+          dashboard's sign-in gate (/api/assistant/snapshots/<name>), pruned
+          after 24 h. Pictures of the lab may show people; the tool exists so
+          the assistant can answer "what does the bench look like", not for
+          surveillance, and the same privacy toggle that blanks the dashboard
+          tile blanks this.
       known_clients:
         - dashboard assistant bubble (api/app/assistant.py, via claude CLI)
         - Hermes `lab-ops` profile on the central server (full allowlist)
@@ -209,7 +224,7 @@ servers:
 
     tools:
       # The durable agent-facing contract: these names are question-shaped
-      # (not storage-shaped) so the planned backend swap to AnaliticaDB's
+      # (not storage-shaped) so the planned backend swap to BitacoraDB's
       # Substance/Lot/Container ledger (DATABASE_DESIGN.md §5) changes
       # nothing client-side.
       include:

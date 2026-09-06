@@ -1,4 +1,4 @@
-"""AnaliticaDB record-layer writes for authorized runs — design decision D-23.
+"""BitacoraDB record-layer writes for authorized runs — design decision D-23.
 
 The executor already *produces* the record layer's shapes on every run
 (`plan_row_from` / `notes_from` in `workflow.py`); this module is what finally
@@ -22,11 +22,11 @@ Three properties this file exists to hold:
    slug is the identity when the protocol carries `design_ref`; a protocol
    without a shared design is still an experiment, identified by its own path.
 
-3. **Disabled unless configured.** No `ANALITICADB_URL` means every call is a
+3. **Disabled unless configured.** No `BITACORADB_URL` means every call is a
    no-op reporting `not_configured`, so deploying this changes nothing until
    the deployment opts in.
 
-Auth is AnaliticaDB's model, matching bitácora's `RecordLayer`: a shared
+Auth is BitacoraDB's model, matching bitácora's `RecordLayer`: a shared
 `X-Edge-Secret` proves the request came through a trusted front, and
 `X-Auth-User` carries the human it is for.
 """
@@ -43,9 +43,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 #: Empty disables the whole feature (property 3 above).
-ANALITICADB_URL = os.environ.get("ANALITICADB_URL", "")
+BITACORADB_URL = os.environ.get("BITACORADB_URL", "")
 #: File-based like bitácora's, so the secret stays out of the systemd unit.
-ANALITICADB_EDGE_SECRET_PATH = os.environ.get("ANALITICADB_EDGE_SECRET_PATH", "")
+BITACORADB_EDGE_SECRET_PATH = os.environ.get("BITACORADB_EDGE_SECRET_PATH", "")
 
 
 def edge_secret() -> str:
@@ -54,16 +54,16 @@ def edge_secret() -> str:
     Unreadable is deliberately not fatal: it degrades to "record layer off",
     which property 1 already requires the caller to survive.
     """
-    if not ANALITICADB_EDGE_SECRET_PATH:
+    if not BITACORADB_EDGE_SECRET_PATH:
         return ""
     try:
-        return Path(ANALITICADB_EDGE_SECRET_PATH).read_text(encoding="utf-8").strip()
+        return Path(BITACORADB_EDGE_SECRET_PATH).read_text(encoding="utf-8").strip()
     except OSError:
-        logger.warning("ANALITICADB_EDGE_SECRET_PATH set but unreadable; record layer off")
+        logger.warning("BITACORADB_EDGE_SECRET_PATH set but unreadable; record layer off")
         return ""
 
 
-#: AnaliticaDB's `NoteKind` enum is {observation, event, deviation, comment} —
+#: BitacoraDB's `NoteKind` enum is {observation, event, deviation, comment} —
 #: narrower than the executor's vocabulary, which distinguishes a device fault
 #: from a step that was sent and never answered. Translating at this boundary
 #: keeps that distinction in the lab's code (where it is a real safety
@@ -82,7 +82,7 @@ NOTE_KIND = {
 }
 
 
-#: AnaliticaDB's `PlanStatus`. `executing` is never used: the row is written
+#: BitacoraDB's `PlanStatus`. `executing` is never used: the row is written
 #: after the run ends, so it is already terminal by the time we can post it.
 PLAN_STATUS = {"ok": "completed", "not_ok": "abandoned"}
 
@@ -137,7 +137,7 @@ class RunRecorder:
         self._project = ""
 
     def _headers(self, user: str) -> dict[str, str]:
-        # X-Auth-Projects is load-bearing, not decoration: AnaliticaDB's
+        # X-Auth-Projects is load-bearing, not decoration: BitacoraDB's
         # can_read row filter reduces a caller without it to an EMPTY scope, so
         # the ensure-GET reads [] even when the campaign's Experiment exists —
         # then the create 409s and the run's record is lost. The executor
@@ -230,7 +230,7 @@ class RunRecorder:
                 # plan was never executed, and `completed` would claim otherwise.
                 # `meta.dry_run` already records which it was.
                 #
-                # AnaliticaDB admits no draft → completed edge: `completed` is
+                # BitacoraDB admits no draft → completed edge: `completed` is
                 # reachable only through the full lifecycle, so a successful run
                 # walks draft → approved → executing → completed, while
                 # `abandoned` is one legal hop from draft. The `approved` edge
@@ -399,9 +399,9 @@ async def open_run_record(
     """Module-level entry point for :meth:`RunRecorder.open`; ``not_configured``
     when the record layer is off."""
     secret = edge_secret()
-    if not ANALITICADB_URL or not secret:
+    if not BITACORADB_URL or not secret:
         return {"opened": False, "reason": "not_configured"}
-    return await RunRecorder(ANALITICADB_URL, secret).open(
+    return await RunRecorder(BITACORADB_URL, secret).open(
         plan=plan, design_ref=design_ref, operator=operator, started_at=started_at)
 
 
@@ -420,9 +420,9 @@ async def close_run_record(
             out.setdefault("open_reason", opened["reason"])
         return out
     secret = edge_secret()
-    if not ANALITICADB_URL or not secret:
+    if not BITACORADB_URL or not secret:
         return {"written": False, "reason": "not_configured"}
-    return await RunRecorder(ANALITICADB_URL, secret).close(
+    return await RunRecorder(BITACORADB_URL, secret).close(
         opened=opened, plan=plan, notes=notes, operator=operator, summary=summary)
 
 
@@ -433,8 +433,8 @@ async def write_run_record(
     """Module-level entry point. Reports `not_configured` when the record layer
     is off, which is a normal state and not an error."""
     secret = edge_secret()
-    if not ANALITICADB_URL or not secret:
+    if not BITACORADB_URL or not secret:
         return {"written": False, "reason": "not_configured"}
-    return await RunRecorder(ANALITICADB_URL, secret).write(
+    return await RunRecorder(BITACORADB_URL, secret).write(
         plan=plan, notes=notes, design_ref=design_ref,
         operator=operator, started_at=started_at)

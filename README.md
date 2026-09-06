@@ -36,7 +36,7 @@ Everything below runs on the one Tailscale-attached dashboard host:
 | Service | Unit / source | Port | What it provides |
 |---|---|---|---|
 | Dashboard UI | `ac-organic-lab-web.service` (`web/`) | 8000 | Next.js frontend — the only thing browsers talk to. |
-| Dashboard API | `ac-organic-lab-api.service` (`api/`) | 8001 | FastAPI aggregator over `lab-skills`: normalized equipment status, the audited control passthrough (claim-gated on v1.1 devices), the history endpoints (`/api/history/*`, backed by `lab.db`), the authorized-run executor (`workflow.py` — bitácora-authorized plans through `execute_plan`, filed to AnaliticaDB), and the **lab assistant** (Ask + propose-only Control; two selectable engines — the `claude` CLI subprocess and an OpenAI-compatible backend via OpenRouter — over the `lab-history` / `lab-control` MCP servers). |
+| Dashboard API | `ac-organic-lab-api.service` (`api/`) | 8001 | FastAPI aggregator over `lab-skills`: normalized equipment status, the audited control passthrough (claim-gated on v1.1 devices), the history endpoints (`/api/history/*`, backed by `lab.db`), the authorized-run executor (`workflow.py` — bitácora-authorized plans through `execute_plan`, filed to BitacoraDB), and the **lab assistant** (Ask + propose-only Control; two selectable engines — the `claude` CLI subprocess and an OpenAI-compatible backend via OpenRouter — over the `lab-history` / `lab-control` MCP servers). |
 | Auth service | `ac-organic-lab-auth.service` (`auth/`) | `<tailscale-ip>:8009` | `ac_auth` email-code login and roster/grant checks. Control-route enforcement lives in the Next.js middleware calling `GET /auth/verify`; Caddy `forward_auth` ([`deploy/Caddyfile.auth-snippet`](deploy/Caddyfile.auth-snippet)) is the edge alternative. See [`docs/AUTH_DESIGN.md`](docs/AUTH_DESIGN.md). |
 | Edge (Caddy) | [`deploy/Caddyfile`](deploy/Caddyfile) | 443/80 | TLS over Tailscale (`tailscale cert`), fronting the UI and the camera streams; the auth snippet wires `forward_auth`. |
 
@@ -48,8 +48,8 @@ The boxed Hermes `lab-runner` agent's Slack connector
 (`hermes-slack.service`, wired per
 [`deploy/hermes-lab-runner/README.md`](deploy/hermes-lab-runner/README.md))
 also runs here, under the separate `hermes` OS user.
-The AnaliticaDB record service is separate infrastructure on the data
-server (`100.64.254.6:8010`, own repo).
+The BitacoraDB record service is separate infrastructure on the data
+server (`127.0.0.1:8013`, own repo).
 
 ## Working with coding agents
 
@@ -92,7 +92,7 @@ All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](doc
 | [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md) | **Agent entry point.** Shared working instructions for all agents (`AGENTS.md`) + Claude-Code specifics (`CLAUDE.md`). See [Working with coding agents](#working-with-coding-agents). |
 | [`docs/AGENTIC_ELN_DESIGN.md`](docs/AGENTIC_ELN_DESIGN.md) | **Agentic ELN design.** The why + the architecture: the four-repo assembly, authorities and trust boundaries, the planning page (repo lifecycle, AG-UI, canonical protocol model, scientific diffs), merge vs. release-for-execution, compilation, and execution boundaries. |
 | [`docs/AGENTIC_ELN_PLAN.md`](docs/AGENTIC_ELN_PLAN.md) | **Agentic ELN implementation plan.** Two build tracks (ELN loop wiring; planning page + release pipeline) and the consolidated list of pending decisions (D-1…D-15). |
-| [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) | The record layer: AnaliticaDB's ELN+LIMS generalization — Plan/Note/Analysis, the materials ledger, containers, the project-repo blueprint, release linkage (mirror — the canonical copy lives in the AnaliticaDB repo). |
+| [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) | The record layer: BitacoraDB's ELN+LIMS generalization — Plan/Note/Analysis, the materials ledger, containers, the project-repo blueprint, release linkage (mirror — the canonical copy lives in the BitacoraDB repo). |
 | [`deploy/README.md`](deploy/README.md) | Linux server deployment, systemd units, Caddy + Tailscale TLS, secrets in service environments, day-to-day operations. |
 | [`deploy/hermes-lab-runner/README.md`](deploy/hermes-lab-runner/README.md) | **Slack wiring runbook** for the boxed Hermes `lab-runner` profile (`hermes-slack.service`): manifest, tokens, per-user pairing/allowlist, verification — templates only, live config stays machine-local. |
 
@@ -224,7 +224,7 @@ control (PTZ, presets, snapshot, recording) and Kasa plugs through
 `platforms.yaml`; per-platform detail pages (e.g. `/platforms/hte`) are
 also section-order-driven. Polling every 2-3 seconds. On top of the
 monitoring core: the SDK's `execute_plan` + MCP surface (v0.4), the
-authorized-run executor (bitácora-authorized plans, filed to AnaliticaDB),
+authorized-run executor (bitácora-authorized plans, filed to BitacoraDB),
 the lab assistant (Ask + propose-only Control), and the agent operations
 layer ([`docs/AGENTIC_LAB_DESIGN.md`](docs/AGENTIC_LAB_DESIGN.md) Part II —
 `lab-runs` trigger, host-ops fleet, the boxed Slack agent).

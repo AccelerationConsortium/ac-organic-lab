@@ -105,6 +105,30 @@ def test_resolve_gripper_state() -> None:
     assert args == {"state": "grip_120"}
 
 
+def test_resolve_travel_target() -> None:
+    """``travel.<node_id>`` bridges to graph.travel_to with the destination in
+    the body — the device plans the hop path itself (Step 1k)."""
+    entry = _registry().equipment[0]
+    sd, passthrough, args = ac._resolve(entry, "travel.deck_slot1_low", {})
+    assert sd.name == "graph.travel_to"
+    assert passthrough == "graph/travel_to"
+    assert args == {"node_id": "deck_slot1_low"}
+
+
+def test_resolve_refuses_malformed_travel_action() -> None:
+    entry = _registry().equipment[0]
+    with pytest.raises(ac.ProposalRefused) as exc:
+        ac._resolve(entry, "travel.", {})
+    assert exc.value.code == "unmappable_action"
+
+
+def test_resolve_refuses_travel_on_other_kinds() -> None:
+    entry = _registry(kind="plate_sealer").equipment[0]
+    with pytest.raises(ac.ProposalRefused) as exc:
+        ac._resolve(entry, "travel.deck_home", {})
+    assert exc.value.code == "unmappable_action"
+
+
 def test_resolve_refuses_malformed_gripper_action() -> None:
     entry = _registry().equipment[0]
     with pytest.raises(ac.ProposalRefused) as exc:
@@ -166,6 +190,51 @@ async def test_propose_gripper_success() -> None:
     assert prop["action"] == "gripper.grip_120"
     assert prop["passthrough_action"] == "graph/gripper"
     assert prop["args"] == {"state": "grip_120"}
+
+
+@respx.mock
+async def test_propose_travel_target_via_motion_graph() -> None:
+    """travel.<node_id> is startable when the destination is in the device's
+    motion_graph snapshot (reachable_nodes or travel_targets), even though the
+    device never lists travel actions in allowed_actions (Step 1k)."""
+    _mock_status(
+        ["stop", "move.uplc_draw_home"], details={"motion_graph": _MOTION_GRAPH}
+    )
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _registry(), "xarm", "travel.deck_home", None, "route to the deck"
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "travel.deck_home"
+    assert prop["passthrough_action"] == "graph/travel_to"
+    assert prop["args"] == {"node_id": "deck_home"}
+
+
+@respx.mock
+async def test_propose_travel_refused_for_unreachable_node() -> None:
+    """A destination outside the snapshot is refused with the valid travel
+    targets in the payload — never sent on to earn the device's 409."""
+    _mock_status(["stop"], details={"motion_graph": _MOTION_GRAPH})
+    out = json.loads(
+        await ac._propose_action(_registry(), "xarm", "travel.nowhere", None, "")
+    )
+    assert out["code"] == "not_allowed"
+    assert out["travel_targets"] == sorted(
+        {"uplc_draw_home", "uplc_draw_up", "deck_home"}
+    )
+
+
+@respx.mock
+async def test_propose_travel_refused_without_motion_graph() -> None:
+    """No snapshot -> no travel surface (fail closed; an arm with no graph
+    loaded cannot route anywhere)."""
+    _mock_status(["stop", "move.deck"])
+    out = json.loads(
+        await ac._propose_action(_registry(), "xarm", "travel.deck_home", None, "")
+    )
+    assert out["code"] == "not_allowed"
 
 
 @respx.mock
@@ -334,19 +403,39 @@ _MOTION_GRAPH = {
 
 @respx.mock
 async def test_list_available_actions_forwards_motion_graph() -> None:
-    """details.motion_graph is forwarded verbatim as read-only path context —
-    the model can see multi-hop travel_targets, but only the single-hop
-    move.<node_id> entries in `actions` are proposable."""
+    """details.motion_graph is forwarded verbatim as read-only path context,
+    and (Step 1k) every node in it gains a synthesized travel.<node_id> entry
+    bridging to the device's own multi-hop planner (graph.travel_to) — the
+    model proposes a destination, never a guessed hop sequence."""
 
     _mock_status(
         ["stop", "move.uplc_draw_home"], details={"motion_graph": _MOTION_GRAPH}
     )
     out = json.loads(await ac._list_available_actions(_registry(), "xarm"))
     assert out["motion_graph"] == _MOTION_GRAPH
-    # Forwarding widened visibility, not the proposable surface: the multi-hop
-    # targets gained no action entries.
-    actions = {a["action"] for a in out["actions"]}
-    assert actions == {"stop", "move.uplc_draw_home"}
+    by_action = {a["action"]: a for a in out["actions"]}
+    assert set(by_action) == {
+        "stop",
+        "move.uplc_draw_home",
+        "travel.uplc_draw_home",
+        "travel.uplc_draw_up",
+        "travel.deck_home",
+    }
+    travel = by_action["travel.deck_home"]
+    assert travel["proposable"] is True
+    assert travel["passthrough_action"] == "graph/travel_to"
+    assert travel["synthesized_from"] == "motion_graph"
+    assert "args_schema" in travel
+
+
+@respx.mock
+async def test_list_available_actions_no_travel_entries_without_graph() -> None:
+    """No motion_graph snapshot -> no synthesized travel surface (an arm with
+    no graph loaded must not advertise unroutable destinations)."""
+
+    _mock_status(["stop", "move.deck"])
+    out = json.loads(await ac._list_available_actions(_registry(), "xarm"))
+    assert not any(a["action"].startswith("travel.") for a in out["actions"])
 
 
 @respx.mock
@@ -1385,6 +1474,55 @@ async def test_propose_plan_holds_only_the_first_step_to_live_allowed_actions() 
 
 
 @respx.mock
+async def test_propose_plan_travel_pick_and_place() -> None:
+    """The Step 1k pick/place shape: travel -> gripper -> travel. Step 1 is
+    vouched for by the motion_graph snapshot (travel is never in
+    allowed_actions); later steps are the device's to re-check live."""
+
+    _mock_status(
+        ["stop", "move.uplc_draw_home"], details={"motion_graph": _MOTION_GRAPH}
+    )
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_plan(
+            _registry(),
+            "xarm",
+            [
+                {"action": "travel.deck_home"},
+                {"action": "gripper.grip_120", "args": {}},
+                {"action": "travel.uplc_draw_up"},
+            ],
+            "pick the plate and stage it",
+        )
+    )
+    plan = out["plan"]
+    assert [s["action"] for s in plan["steps"]] == [
+        "travel.deck_home",
+        "gripper.grip_120",
+        "travel.uplc_draw_up",
+    ]
+    assert plan["steps"][0]["passthrough_action"] == "graph/travel_to"
+    assert plan["steps"][0]["args"] == {"node_id": "deck_home"}
+    assert plan["steps"][2]["passthrough_action"] == "graph/travel_to"
+
+
+@respx.mock
+async def test_propose_plan_refuses_travel_step_one_outside_snapshot() -> None:
+    """The step-1 gate applies to travel too: a destination the snapshot does
+    not vouch for refuses the plan up front instead of dying mid-route."""
+
+    _mock_status(["stop"], details={"motion_graph": _MOTION_GRAPH})
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_plan(
+            _registry(), "xarm", [{"action": "travel.nowhere"}], ""
+        )
+    )
+    assert out["code"] == "not_allowed"
+    assert out["step"] == 1
+
+
+@respx.mock
 async def test_propose_plan_refuses_when_step_one_cannot_start() -> None:
     _mock_status(["stop", "move.uplc_draw_home"])
     _mock_authz(True)
@@ -1512,7 +1650,499 @@ def test_refusal_codes_cover_every_propose_path_err_code() -> None:
     # raised `ProposalRefused("<code>", ...)` relayed as `_err(exc.code, ...)`.
     all_codes = set(re.findall(r'_err\(\s*\n?\s*"([a-z_]+)"', source))
     all_codes |= set(re.findall(r'ProposalRefused\(\s*\n?\s*"([a-z_]+)"', source))
+    # A third way since the deck-slot resolver moved into the SDK (Step 1m):
+    # `_canonicalize_locations` re-raises `SlotResolutionError(exc.code, ...)`
+    # as `ProposalRefused(exc.code, ...)`, so its codes are authored there.
+    from lab_skills import deck_slots
+
+    all_codes |= set(
+        re.findall(r'SlotResolutionError\(\s*\n?\s*"([a-z_]+)"', inspect.getsource(deck_slots))
+    )
     non_propose = {"unknown_labware", "incomplete_definition", "empty_explanation"}
     assert all_codes - non_propose <= ac.REFUSAL_CODES
     # And the set holds nothing stale that no code path can produce.
     assert ac.REFUSAL_CODES <= all_codes
+
+
+# ---------------------------------------------------------------------------
+# solid doser proposals (UI_DESIGN §5 Step 1l, 2026-09-02, operator request)
+# ---------------------------------------------------------------------------
+
+# The bounded surface: names byte-for-byte what dose_every_well advertises
+# (verified live 2026-09-02), mapped to the passthrough URL segment. The device
+# has no stop verb; the three held-back names are workflow-only because they
+# are unbounded synchronous calls (see _PROPOSABLE's Step 1l note).
+_SOLID_DOSER_SURFACE = {
+    "startup": "startup",
+    "shutdown": "shutdown",
+    "home": "home",
+    "tare": "tare",
+    "plate.set": "plate/set",
+    "plate.load": "plate/load",
+    "plate.unload": "plate/unload",
+    "lid.open": "lid/open",
+    "lid.close": "lid/close",
+    "plate.raise": "plate/raise",
+    "plate.lower": "plate/lower",
+    "dose.well": "dose/well",
+    "dose.multiple": "dose/multiple",
+    "calibrate.flow_rate": "calibrate/flow-rate",
+}
+_SOLID_DOSER_WORKFLOW_ONLY = {"dose.row", "dose.column", "dose.all"}
+# What the live device advertises in `ready` (service.py _READY_ACTIONS):
+# everything but startup, plus the three workflow-only dose verbs.
+_SOLID_DOSER_ADVERTISED_READY = sorted(
+    (set(_SOLID_DOSER_SURFACE) - {"startup"}) | _SOLID_DOSER_WORKFLOW_ONLY
+)
+
+
+@pytest.mark.parametrize(("action", "passthrough"), sorted(_SOLID_DOSER_SURFACE.items()))
+def test_resolve_solid_doser_surface(action: str, passthrough: str) -> None:
+    entry = _bench_registry("solid_doser").equipment[0]
+    sd, resolved_passthrough, args = ac._resolve(entry, action, {})
+    assert sd.name == action
+    assert resolved_passthrough == passthrough
+    assert args == {}
+
+
+@pytest.mark.parametrize(
+    "passthrough", ["plate/lower", "plate/raise", "lid/open", "calibrate/flow-rate"]
+)
+def test_resolve_solid_doser_accepts_passthrough_alias(passthrough: str) -> None:
+    """Models pass the slash form they saw as passthrough_action; it must
+    canonicalize back to the dotted advertised name (same as the press)."""
+
+    entry = _bench_registry("solid_doser").equipment[0]
+    sd, resolved_passthrough, _ = ac._resolve(entry, passthrough, {})
+    assert resolved_passthrough == passthrough
+    assert sd.name == {v: k for k, v in _SOLID_DOSER_SURFACE.items()}[passthrough]
+
+
+@pytest.mark.parametrize("action", sorted(_SOLID_DOSER_WORKFLOW_ONLY))
+def test_resolve_solid_doser_refuses_unbounded_dosing(action: str) -> None:
+    """Whole-line / whole-plate dosing is workflow-only: an unbounded
+    synchronous call no passthrough window covers, on a device with no stop."""
+
+    entry = _bench_registry("solid_doser").equipment[0]
+    with pytest.raises(ac.ProposalRefused) as exc:
+        ac._resolve(entry, action, {})
+    assert exc.value.code == "unmappable_action"
+
+
+def test_proposable_solid_doser_equals_bounded_surface() -> None:
+    assert ac._PROPOSABLE["solid_doser"] == set(_SOLID_DOSER_SURFACE)
+
+
+def test_solid_doser_dose_multiple_batch_cap() -> None:
+    """The request-window bound: more wells than the cap refuses with
+    invalid_args and a split-the-work message; the cap itself passes."""
+
+    entry = _bench_registry("solid_doser").equipment[0]
+    field, cap = ac._ARG_CARDINALITY_LIMITS[("solid_doser", "dose.multiple")]
+    assert field == "well_targets"
+    at_cap = {f"A{i}": 5.0 for i in range(1, cap + 1)}
+    sd, _, args = ac._resolve(entry, "dose.multiple", {"well_targets": at_cap})
+    assert sd.name == "dose.multiple"
+    assert len(args["well_targets"]) == cap
+    over_cap = {f"A{i}": 5.0 for i in range(1, cap + 2)}
+    with pytest.raises(ac.ProposalRefused) as exc:
+        ac._resolve(entry, "dose.multiple", {"well_targets": over_cap})
+    assert exc.value.code == "invalid_args"
+    assert f"at most {cap}" in exc.value.message
+
+
+@respx.mock
+async def test_propose_solid_doser_plate_lower() -> None:
+    """The Step 1l minimum ask: one card that sets the plate down on the balance."""
+
+    _mock_bench_status("solid_doser", _SOLID_DOSER_ADVERTISED_READY)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("solid_doser"),
+            "solid_doser_test",
+            "plate.lower",
+            {},
+            "set the plate down on the balance",
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "plate.lower"
+    assert prop["passthrough_action"] == "plate/lower"
+    assert prop["args"] == {}
+    assert prop["kind"] == "solid_doser"
+
+
+@respx.mock
+async def test_propose_solid_doser_dose_well() -> None:
+    _mock_bench_status("solid_doser", _SOLID_DOSER_ADVERTISED_READY)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("solid_doser"),
+            "solid_doser_test",
+            "dose.well",
+            {"well": "B3", "target_mg": 12.5},
+            "dose B3",
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "dose.well"
+    assert prop["passthrough_action"] == "dose/well"
+    assert prop["args"] == {"well": "B3", "target_mg": 12.5}
+
+
+@respx.mock
+async def test_propose_solid_doser_rejects_non_positive_mass() -> None:
+    _mock_bench_status("solid_doser", _SOLID_DOSER_ADVERTISED_READY)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("solid_doser"),
+            "solid_doser_test",
+            "dose.well",
+            {"well": "A1", "target_mg": 0},
+            "",
+        )
+    )
+    assert out["code"] == "invalid_args"
+
+
+@respx.mock
+async def test_propose_solid_doser_dose_all_refused_even_when_advertised() -> None:
+    _mock_bench_status("solid_doser", _SOLID_DOSER_ADVERTISED_READY)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("solid_doser"),
+            "solid_doser_test",
+            "dose.all",
+            {"target_mg": 5.0},
+            "dose the plate",
+        )
+    )
+    assert out["code"] == "unmappable_action"
+
+
+@respx.mock
+async def test_propose_solid_doser_lift_not_advertised_when_off() -> None:
+    """Device off: only startup is advertised, so a lift proposal is refused on
+    the live list (not_allowed) — the allowlist is not what stops it."""
+
+    _mock_bench_status("solid_doser", ["startup"])
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("solid_doser"), "solid_doser_test", "plate.lower", {}, ""
+        )
+    )
+    assert out["code"] == "not_allowed"
+
+
+@respx.mock
+async def test_propose_plan_solid_doser_place_dose_lift() -> None:
+    """The composable shape the operator asked for: lower the plate, tare, dose
+    a small batch, raise it — one plan, one approval, each step re-checked live
+    by the device. Step 4 arrives in slash form and canonicalizes."""
+
+    _mock_bench_status("solid_doser", _SOLID_DOSER_ADVERTISED_READY)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_plan(
+            _bench_registry("solid_doser"),
+            "solid_doser_test",
+            [
+                {"action": "plate.lower"},
+                {"action": "tare"},
+                {"action": "dose.multiple", "args": {"well_targets": {"A1": 5.0, "A2": 5.0}}},
+                {"action": "plate/raise"},
+            ],
+            "dose A1-A2 at 5 mg",
+        )
+    )
+    plan = out["plan"]
+    assert [s["action"] for s in plan["steps"]] == [
+        "plate.lower", "tare", "dose.multiple", "plate.raise",
+    ]
+    assert [s["passthrough_action"] for s in plan["steps"]] == [
+        "plate/lower", "tare", "dose/multiple", "plate/raise",
+    ]
+    assert plan["steps"][2]["args"]["well_targets"] == {"A1": 5.0, "A2": 5.0}
+    assert plan["kind"] == "solid_doser"
+
+
+@respx.mock
+async def test_propose_plan_solid_doser_refuses_oversized_batch_by_step() -> None:
+    _mock_bench_status("solid_doser", _SOLID_DOSER_ADVERTISED_READY)
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_plan(
+            _bench_registry("solid_doser"),
+            "solid_doser_test",
+            [
+                {"action": "plate.lower"},
+                {
+                    "action": "dose.multiple",
+                    "args": {"well_targets": {f"A{i}": 5.0 for i in range(1, 8)}},
+                },
+            ],
+            "",
+        )
+    )
+    assert out["code"] == "invalid_args"
+    assert out["step"] == 2
+
+
+@respx.mock
+async def test_list_available_actions_solid_doser_marks_unbounded_dosing_workflow_only() -> None:
+    _mock_bench_status("solid_doser", _SOLID_DOSER_ADVERTISED_READY)
+    out = json.loads(
+        await ac._list_available_actions(_bench_registry("solid_doser"), "solid_doser_test")
+    )
+    by_action = {a["action"]: a for a in out["actions"]}
+    for action, passthrough in _SOLID_DOSER_SURFACE.items():
+        if action == "startup":
+            continue  # not advertised in `ready`
+        assert by_action[action]["proposable"] is True, action
+        assert by_action[action]["passthrough_action"] == passthrough
+    for action in _SOLID_DOSER_WORKFLOW_ONLY:
+        assert by_action[action]["proposable"] is False, action
+
+
+# ---------------------------------------------------------------------------
+# Deck-slot vocabulary resolver (UI_DESIGN §5 Step 1m, 2026-09-04)
+# ---------------------------------------------------------------------------
+
+from lab_skills import LocationEntry, LocationsConfig  # noqa: E402
+from lab_skills.deck_slots import set_default_locations  # noqa: E402
+
+
+def _locations() -> LocationsConfig:
+    return LocationsConfig(
+        locations=[
+            LocationEntry(
+                name="ot2_hte/slot_1", type="deck", equipment="ot2_hte",
+                aliases={"ot2_hte": "1"}, label="OT-2 HTE · slot 1",
+            ),
+            LocationEntry(
+                name="ot2_hte/slot_2", type="deck", equipment="ot2_hte",
+                aliases={"ot2_hte": "2", "xarm": ["opentrons_2_low", "opentrons_2_high"]},
+                label="OT-2 HTE · slot 2",
+            ),
+            LocationEntry(
+                name="ot2_complexation/slot_2", type="deck", equipment="ot2_complexation",
+                aliases={"ot2_complexation": "2"}, label="OT-2 complexation · slot 2",
+            ),
+        ]
+    )
+
+
+@pytest.fixture()
+def _locs() -> LocationsConfig:
+    """Install a small registry as the SDK's process-wide default (what
+    lab-control reads), and reset to the lazy loader afterwards."""
+    cfg = _locations()
+    set_default_locations(cfg)
+    yield cfg
+    set_default_locations(None)
+
+
+@respx.mock
+async def test_propose_ot2_action_carries_canonical_slot_and_place_label(_locs) -> None:
+    _mock_ot2_status(["tips.reset"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(), "ot2_hte", "tips.reset", {"slot": "ot2_hte/slot_2"}, "refill the rack"
+        )
+    )
+    proposal = out["proposal"]
+    assert proposal["args"] == {"slot": "2"}
+    assert proposal["resolved_locations"][0]["label"] == "OT-2 HTE · slot 2"
+
+
+@respx.mock
+async def test_propose_ot2_action_refuses_a_place_on_the_other_robot(_locs) -> None:
+    _mock_ot2_status(["tips.reset"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(), "ot2_hte", "tips.reset", {"slot": "ot2_complexation/slot_2"}, ""
+        )
+    )
+    assert out["code"] == "wrong_device_location"
+
+
+@respx.mock
+async def test_propose_plan_tags_place_labels_by_step_outside_the_hash(_locs) -> None:
+    _mock_ot2_status(["deck.declare"])
+    _mock_authz(True)
+    steps = [
+        {"action": "deck.declare", "args": {"slots": {"slot_2": "corning_96_wellplate_360ul_flat"}}},
+        {"action": "tips.reset", "args": {"slot": "opentrons_2_low"}},
+    ]
+    out = json.loads(await ac._propose_plan(_ot2_registry(), "ot2_hte", steps, ""))
+    plan = out["plan"]
+    assert plan["steps"][0]["args"] == {"slots": {"2": "corning_96_wellplate_360ul_flat"}}
+    assert plan["steps"][1]["args"] == {"slot": "2"}
+    assert [r["step"] for r in plan["resolved_locations"]] == [1, 2]
+    # The hash covers the steps exactly as sent; labels ride alongside.
+    assert plan["step_hash"] == ac.plan_step_hash(plan["steps"])
+    assert all("resolved_locations" not in s for s in plan["steps"])
+
+
+@respx.mock
+async def test_list_available_actions_shows_the_slot_vocabulary(_locs) -> None:
+    _mock_ot2_status(["tips.reset"])
+    out = json.loads(await ac._list_available_actions(_ot2_registry(), "ot2_hte"))
+    by_name = {loc["name"]: loc for loc in out["locations"]}
+    assert by_name["ot2_hte/slot_2"]["slot"] == "2"
+    assert by_name["ot2_hte/slot_2"]["also_known_as"] == {
+        "xarm": ["opentrons_2_low", "opentrons_2_high"]
+    }
+    assert "ot2_complexation/slot_2" not in by_name
+    assert "bare key" in out["slot_vocabulary"]
+
+
+@respx.mock
+async def test_arm_travel_to_an_ot2_place_name_gets_the_node_hint(_locs) -> None:
+    """``travel.ot2_hte/slot_2`` is not a graph node; the refusal names the
+    nodes that reach that shelf instead of only listing what is allowed."""
+    _mock_status(["move.deck_home"], details={"motion_graph": {"current_node": "deck_home", "reachable_nodes": [], "travel_targets": []}})
+    _mock_authz(True)
+    out = json.loads(await ac._propose_action(_registry(), "xarm", "travel.ot2_hte/slot_2", None, ""))
+    assert out["code"] == "not_allowed"
+    assert out["location_nodes"] == {"ot2_hte/slot_2": ["opentrons_2_low", "opentrons_2_high"]}
+    assert "opentrons_2_low" in out["error"]
+
+
+
+# ---------------------------------------------------------------------------
+# Deck check — the card carries what the gateway believes is on the deck
+# (operator request, 2026-09-04)
+# ---------------------------------------------------------------------------
+
+_OT2_DETAILS = {
+    "snapshot": {
+        "labwares": {
+            "4": {"id": "slot_4", "loadName": "agilent_96_2ml_deep_square", "location": {"slotName": "4"}},
+            "11": {"id": "slot_11", "loadName": "opentrons_96_tiprack_1000ul", "location": {"slotName": "11"}},
+        },
+        "pipettes": {},
+    },
+    "tip_racks": {"11": {"total": 96, "available": 12}},
+}
+
+
+def _mock_ot2_status_with_deck(allowed_actions: list[str]) -> None:
+    respx.get(f"{OT2_BASE}/status").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "equipment_id": "ot2_hte",
+                "equipment_name": "Opentrons OT-2 HTE",
+                "equipment_kind": "liquid_handler",
+                "equipment_status": "ready",
+                "message": "idle",
+                "allowed_actions": allowed_actions,
+                "activity": "idle",
+                "device_time": "2026-09-04T12:00:00Z",
+                "details": _OT2_DETAILS,
+            },
+        )
+    )
+
+
+@respx.mock
+async def test_ot2_proposal_carries_the_deck_with_touched_slots_marked(_locs) -> None:
+    _mock_ot2_status_with_deck(["tips.reset"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(_ot2_registry(), "ot2_hte", "tips.reset", {"slot": "slot 2"}, "")
+    )
+    [check] = out["proposal"]["deck_checks"]
+    assert check["equipment_id"] == "ot2_hte"
+    assert check["touched_slots"] == ["2"]
+    assert check["slots"]["4"]["labware"] == "agilent_96_2ml_deep_square"
+    assert check["slots"]["11"] == {
+        "labware": "opentrons_96_tiprack_1000ul",
+        "id": "slot_11",
+        "tips_available": 12,
+    }
+
+
+@respx.mock
+async def test_ot2_nickname_verb_finds_its_slot_from_the_snapshot(_locs) -> None:
+    _mock_ot2_status_with_deck(["pick_up_tip"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(), "ot2_hte", "pick_up_tip", {"pipette": "p1000", "labware_nickname": "slot_11"}, ""
+        )
+    )
+    [check] = out["proposal"]["deck_checks"]
+    assert check["touched_slots"] == ["11"]
+
+
+@respx.mock
+async def test_ot2_non_deck_verb_carries_no_deck_check(_locs) -> None:
+    _mock_ot2_status_with_deck(["lights.set"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(_ot2_registry(), "ot2_hte", "lights.set", {"on": True}, "")
+    )
+    assert "deck_checks" not in out["proposal"]
+
+
+def _two_device_registry() -> Registry:
+    arm = _registry().equipment[0]
+    ot2 = _ot2_registry().equipment[0]
+    return Registry(equipment=[arm, ot2])
+
+
+@respx.mock
+async def test_arm_travel_into_an_ot2_slot_reads_that_deck(_locs) -> None:
+    """Moving anything onto the OT-2 deck is exactly when the operator must
+    look at it: the arm's card carries the target OT-2's deck, touched slot
+    marked, read live from that device."""
+    _mock_status(
+        ["move.deck_home"],
+        details={"motion_graph": {"current_node": "deck_home", "reachable_nodes": [], "travel_targets": ["opentrons_2_low"]}},
+    )
+    _mock_ot2_status_with_deck([])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(_two_device_registry(), "xarm", "travel.opentrons_2_low", None, "")
+    )
+    [check] = out["proposal"]["deck_checks"]
+    assert check["equipment_id"] == "ot2_hte"
+    assert check["touched_slots"] == ["2"]
+    assert "4" in check["slots"]
+    assert "unreachable" not in check
+
+
+@respx.mock
+async def test_arm_travel_into_an_unreachable_ot2_says_so(_locs) -> None:
+    _mock_status(
+        ["move.deck_home"],
+        details={"motion_graph": {"current_node": "deck_home", "reachable_nodes": [], "travel_targets": ["opentrons_2_low"]}},
+    )
+    respx.get(f"{OT2_BASE}/status").mock(side_effect=httpx.ConnectError("boom"))
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(_two_device_registry(), "xarm", "travel.opentrons_2_low", None, "")
+    )
+    [check] = out["proposal"]["deck_checks"]
+    assert check["equipment_id"] == "ot2_hte"
+    assert check["slots"] == {} and check["unreachable"]
+
+
+@respx.mock
+async def test_ot2_plan_merges_one_deck_check_across_steps(_locs) -> None:
+    _mock_ot2_status_with_deck(["deck.declare"])
+    _mock_authz(True)
+    steps = [
+        {"action": "deck.declare", "args": {"slots": {"slot_2": "corning_96_wellplate_360ul_flat"}}},
+        {"action": "tips.reset", "args": {"slot": "11"}},
+        {"action": "lights.set", "args": {"on": False}},
+    ]
+    out = json.loads(await ac._propose_plan(_ot2_registry(), "ot2_hte", steps, ""))
+    [check] = out["plan"]["deck_checks"]
+    assert check["touched_slots"] == ["2", "11"]

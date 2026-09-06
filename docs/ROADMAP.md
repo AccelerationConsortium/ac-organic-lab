@@ -79,12 +79,13 @@ lab data.
 > and the newer service tiles) are live and version-checked in the
 > protocol mix below, but have no migration history recorded here yet.
 
-**Web-service tile: `analytica_db`.** AnaliticaDB (the lab's record
-store, FastAPI on the data server at `100.64.254.6:8010`) is registered
-under **Web Services** (`kind: other`, `adapter: http`, `protocol: "1.0"`,
-no `open` pill) and serves a STATUS_SPEC `/status` envelope (`ready`, or
-`degraded` if its Postgres is unreachable); the tile reads `ready`. That
-repo is being generalized into the lab's ELN+LIMS record layer — see
+**Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
+lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and
+AnaliticaDB (LaAgenteAnalitica's own record store at `100.64.254.6:8010`) are
+both registered under **Web Services** (`kind: other`, `adapter: http`,
+`protocol: "1.0"`, no `open` pill) and serve a STATUS_SPEC `/status` envelope
+(`ready`, or `degraded` if their Postgres is unreachable); both tiles read
+`ready`. Only BitacoraDB is the lab's record layer — see
 [`DATABASE_DESIGN.md`](DATABASE_DESIGN.md).
 
 **Protocol mix** (live `/status` envelopes, 2026-08-09 sweep). Registry
@@ -149,9 +150,9 @@ each):
 | `plate_sealer` | 8 | Includes 412-precondition skills with `requires_components` (heater + stage) |
 | `plate_stacker` | 6 | Agilent BioStack `/control/*` surface |
 | `press` | 6 | `init`, `stop`, `press.{up,down}`, `plate.{in,out}` |
-| `robot_arm` | 5 | `graph.{move_to,gripper,recover_to,record,mode}` — xArm motion-graph control surface (v1.1, claim-gated); added 2026-05-31, `graph.gripper` 2026-08-13 |
+| `robot_arm` | 6 | `graph.{move_to,travel_to,gripper,recover_to,record,mode}` — xArm motion-graph control surface (v1.1, claim-gated); added 2026-05-31, `graph.gripper` 2026-08-13, `graph.travel_to` 2026-09-01 (device-planned multi-hop travel, UI_DESIGN §5 Step 1k) |
 | `shaker` | 6 | `startup`, `shutdown`, `shake.{start,stop,set_temperature,set_speed}` with motor/heater AND-gates so a heater-side `degraded` doesn't block shaking |
-| `solid_doser` | 13 | `dose.{well,multiple,row,column}` etc.; all endpoints moved under `/control/*` for dose v1.1 (2026-05-31) |
+| `solid_doser` | 17 | `dose.{well,multiple,row,column,all}`, `plate.{set,load,unload,raise,lower}`, `lid.{open,close}`, `home`, `tare`, `calibrate.flow_rate`, lifecycle; all endpoints moved under `/control/*` for dose v1.1 (2026-05-31); the four single-axis loader moves cataloged 2026-09-02 (UI_DESIGN §5 Step 1l) |
 
 **Cross-repo changes since the last sweep** (outcomes only; detail in the
 respective repos):
@@ -549,7 +550,7 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   `ot2_complexation` — `ra_67f32cb0920b4a41`, the 14-step
   `ot2-transfer-smoke` protocol, Slack-triggered by the boxed `lab-runner`
   agent, per-step claims, all steps ok in 146 s, record filed in
-  AnaliticaDB (AGENTIC_ELN_PLAN D-23; the two record-write fixes it
+  BitacoraDB (AGENTIC_ELN_PLAN D-23; the two record-write fixes it
   surfaced are commits `5d064c4` and `e5bb24c`). Both robots' network
   paths were moved off campus Wi-Fi the same night — see *Operational
   regressions*.

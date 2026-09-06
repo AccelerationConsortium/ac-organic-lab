@@ -216,6 +216,37 @@ http://100.64.254.6 {
 		}
 	}
 
+	# ---- BitacoraDB — the lab's ELN+LIMS record layer (this host), path-routed
+	# ONTO this origin. Loopback-only on :8013 (API) and :8014 (preview/bytes), so
+	# the edge is the only way in from the Tailnet. Same forward_auth + shared
+	# secret pattern as /analytica; the service honours X-Auth-* only when
+	# X-Edge-Secret matches its TRUSTED_PROXY_SECRET:
+	#   edge:    BITACORADB_EDGE_SECRET=…  in caddy's systemd env
+	#            (same value as /data/bitacora/bitacoradb-edge.secret)
+	#   service: TRUSTED_PROXY_SECRET=…    in BitacoraDB's .env (ENFORCE_AUTHZ=true)
+	# bitácora and the dashboard API call 127.0.0.1:8013 directly with the secret
+	# file; this route is for humans (/docs) and Tailnet agents.
+	@bitacoradb path /bitacoradb /bitacoradb/*
+	forward_auth @bitacoradb 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
+	}
+	handle_path /bitacoradb/* {
+		reverse_proxy 127.0.0.1:8013 {
+			header_up X-Edge-Secret {env.BITACORADB_EDGE_SECRET}
+		}
+	}
+	@bitacoradbfiles path /bitacoradb-files /bitacoradb-files/*
+	forward_auth @bitacoradbfiles 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
+	}
+	handle_path /bitacoradb-files/* {
+		reverse_proxy 127.0.0.1:8014 {
+			header_up X-Edge-Secret {env.BITACORADB_EDGE_SECRET}
+		}
+	}
+
 	# ---- LaAgenteAnalitica UI (agent chat, on THIS host: gaia) --------------
 	# GraphChat now runs locally at 127.0.0.1:3000 in GRAPHCHAT_AUTH_MODE=ac_auth,
 	# so the app verifies the shared ac_auth_session cookie itself (it is NOT
@@ -285,12 +316,21 @@ http://100.64.254.6 {
 	# /bitacora/inventory/embed and it must load WITHOUT login (the shelf is
 	# read-only; Bitácora's own reads are unauthenticated — only upload is
 	# admin-gated). Exempt the embed page, its read-only API, and the shared
-	# _next/static assets (code only) from forward_auth. Everything else under
-	# /bitacora stays gated. Upload/import is still refused by Bitácora's own
-	# require_admin even after the edge lets the request through (no identity
-	# header → fails closed), so this does not open a write path.
-	@bitacora_inventory path /bitacora/inventory/embed /bitacora/inventory/embed/*\
+	# _next/static assets (code only) from forward_auth — for GET/HEAD ONLY.
+	# Everything else under /bitacora stays gated, and so does every WRITE to
+	# the inventory API: POST /bitacora/api/inventory/import and the tombstone
+	# route fall through to the forward_auth below, which is what injects the
+	# X-Auth-User that Bitácora's require_admin needs. Until 2026-09-04 the
+	# exemption was path-only, so an admin's upload from the browser reached
+	# Bitácora with no identity header and was refused 401 ("authorship could
+	# not be established") — fail-closed, but it made import unusable for
+	# everyone. The method split keeps the shelf public-read and opens no
+	# unauthenticated write path.
+	@bitacora_inventory {
+		path /bitacora/inventory/embed /bitacora/inventory/embed/*\
 		/bitacora/api/inventory /bitacora/api/inventory/* /bitacora/_next/static/*
+		method GET HEAD
+	}
 	handle @bitacora_inventory {
 		# No-store on the embed page's HTML only (Next.js would otherwise pin
 		# its chunk hashes for a year); static assets and API pass through.
@@ -302,17 +342,20 @@ http://100.64.254.6 {
 	}
 	@bitacora {
 		path /bitacora /bitacora/*
-		not path /bitacora/inventory/embed /bitacora/inventory/embed/*\
+		not {
+			path /bitacora/inventory/embed /bitacora/inventory/embed/*\
 			/bitacora/api/inventory /bitacora/api/inventory/* /bitacora/_next/static/*
+			method GET HEAD
+		}
 	}
 	forward_auth @bitacora 100.64.254.6:8009 {
 		uri /auth/verify
 		# X-Auth-Projects / X-Auth-Pi-Projects are load-bearing, not extra: the ELN
-		# forwards them to AnaliticaDB, whose read rule is `admin OR PI OR active
+		# forwards them to BitacoraDB, whose read rule is `admin OR PI OR active
 		# member`, and which learns membership from these headers alone. Without
 		# them every non-admin reaches the record layer with an empty scope, so a
 		# project's own PI sees none of their runs (measured 2026-08-14). The
-		# AnaliticaDB route below already copies them; this one did not.
+		# BitacoraDB route below already copies them; this one did not.
 		copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
 	}
 	handle @bitacora {

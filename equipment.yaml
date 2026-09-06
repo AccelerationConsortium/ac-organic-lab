@@ -614,7 +614,7 @@ equipment:
       link_label: "Open"
       link_href: /bitacora/
 
-  # AnaliticaDB — the analytical-chemistry results catalog (FastAPI) on the
+  # BitacoraDB — the analytical-chemistry results catalog (FastAPI) on the
   # dashboard host. Serves a minimal STATUS_SPEC v1.0 /status envelope
   # (equipment_status `ready`, or `degraded` if its DB is unreachable); the
   # catalog's data API lives under /experiments, /samples, /measurements,
@@ -626,6 +626,24 @@ equipment:
     adapter: http
     protocol: "1.0"
     base_url: http://100.64.254.6:8010
+    status_path: /status
+    poll_timeout_seconds: 3.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
+  # BitacoraDB — the SDL2 lab's own ELN+LIMS record layer
+  # (AccelerationConsortium/BitacoraDB, in service since 2026-09-03). This is where
+  # the run executor files Plans/Notes and the custody ledger lives from the
+  # cutover on (BITACORADB_URL in .env points here). Loopback-only on this
+  # host — the aggregator reaches it the same way it reaches the api.
+  # AnaliticaDB above stays registered because LaAgenteAnalitica still uses it.
+  - id: bitacora_db
+    name: BitacoraDB
+    kind: other
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8013
     status_path: /status
     poll_timeout_seconds: 3.0
     tiles:

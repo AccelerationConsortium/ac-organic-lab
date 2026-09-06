@@ -92,15 +92,23 @@ function sseBody(frames: string[]) {
 }
 
 /** Like `sseBody`, but the stream never closes: the turn stays in flight,
- *  so the live progress pills stay rendered long enough to assert on. */
-function sseBodyOpen(frames: string[]) {
+ *  so the live progress pills stay rendered long enough to assert on. A
+ *  pending read rejects with AbortError when `signal` aborts — what a real
+ *  browser does when the fetch is aborted, and what the Stop button relies on. */
+function sseBodyOpen(frames: string[], signal?: AbortSignal | null) {
   const bytes = new TextEncoder().encode(frames.join(""));
   let sent = false;
   return {
     getReader() {
       return {
         read() {
-          if (sent) return new Promise<never>(() => {});
+          if (sent) {
+            return new Promise<never>((_, reject) => {
+              const abort = () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+              if (signal?.aborted) abort();
+              else signal?.addEventListener("abort", abort, { once: true });
+            });
+          }
           sent = true;
           return Promise.resolve({ value: bytes, done: false });
         },
@@ -127,7 +135,7 @@ function installFetch(chatFrames: string[], opts: { open?: boolean } = {}) {
       expect(init?.method).toBe("POST");
       return Promise.resolve({
         ok: true,
-        body: opts.open ? sseBodyOpen(chatFrames) : sseBody(chatFrames),
+        body: opts.open ? sseBodyOpen(chatFrames, init?.signal) : sseBody(chatFrames),
       });
     }
     return Promise.resolve({ ok: false, text: async () => "unexpected", json: async () => ({}) });
@@ -234,6 +242,106 @@ describe("AssistantBubble control mode", () => {
     fireEvent.change(box, { target: { value: text } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
   }
+
+  it("names the resolved place and the current deck on an OT-2 card (Step 1m)", async () => {
+    const ot2 = {
+      type: "proposal",
+      proposal: {
+        equipment_id: "ot2_hte",
+        equipment_name: "Opentrons OT-2 HTE",
+        kind: "liquid_handler",
+        action: "tips.reset",
+        passthrough_action: "tips/reset",
+        args: { slot: "2" },
+        reason: "refill the rack",
+        actor: "alice@example.edu",
+        expires_in_s: 120,
+        device_state: { equipment_status: "ready", activity: "idle", message: "idle" },
+        resolved_locations: [
+          { field: "slot", value: "2", location: "ot2_hte/slot_2", label: "OT-2 HTE · slot 2", given: "ot2_hte/slot_2" },
+        ],
+        deck_checks: [
+          {
+            equipment_id: "ot2_hte",
+            touched_slots: ["2"],
+            slots: {
+              "4": { labware: "agilent_96_2ml_deep_square", id: "slot_4" },
+              "11": { labware: "opentrons_96_tiprack_1000ul", id: "slot_11", tips_available: 12 },
+            },
+          },
+        ],
+      },
+    };
+    installFetch([`data: ${JSON.stringify(ot2)}\n\n`, 'data: {"type":"done"}\n\n']);
+    await sendInControlMode("refill the tips in slot 2");
+
+    await screen.findByText("Authorize action");
+    // The bare key the device receives, and the place in the registry's words.
+    expect(screen.getByText(/slot=2 \(OT-2 HTE · slot 2\)/)).toBeTruthy();
+    // The deck as the gateway sees it, touched slot starred, empty said out loud.
+    expect(
+      screen.getByText(
+        /ot2_hte · 2\*: empty · 4: agilent_96_2ml_deep_square · 11: opentrons_96_tiprack_1000ul \(12 tips\)/
+      )
+    ).toBeTruthy();
+    expect(screen.getByText(/Check the physical deck matches this before authorizing/)).toBeTruthy();
+  });
+
+  it("shows a captured camera frame in the turn, with the progress pills at the bottom", async () => {
+    installFetch([
+      'data: {"type":"tool_use","name":"capture_camera_snapshot"}\n\n',
+      'data: {"type":"tool_result","name":"capture_camera_snapshot"}\n\n',
+      // Exactly what the backend emits: the path under `image_url` (and `url`);
+      // the bubble must render from either.
+      'data: {"type":"image","image":{"image_url":"/api/assistant/snapshots/cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd.jpg","camera_id":"cam_hte_tapo_c245","camera_name":"HTE bench camera","lens":"wide","taken_at":"2026-09-04T18:00:00+00:00","bytes":206799}}\n\n',
+      'data: {"type":"text","delta":"The deck is empty and the sash is down. Snapshot: `/api/assistant/snapshots/cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd.jpg`."}\n\n',
+      'data: {"type":"done"}\n\n',
+    ]);
+    await openPanel();
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what does the HTE camera see?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const img = (await screen.findByAltText(/HTE bench camera \(wide\) snapshot/)) as HTMLImageElement;
+    expect(img.getAttribute("src")).toBe(
+      "/api/assistant/snapshots/cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd.jpg"
+    );
+    expect(screen.getByText(/HTE bench camera · wide ·/)).toBeTruthy();
+    const text = await screen.findByText(/The deck is empty/);
+    // The path the model wrote in prose is a real link — the fallback when a
+    // picture does not render.
+    const links = screen.getAllByRole("link", { name: /snapshots\/cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd\.jpg/ });
+    // Neither the model's backticks nor the sentence's full stop leak into the href.
+    expect(links.some((a) => a.getAttribute("href") === "/api/assistant/snapshots/cam_hte_tapo_c245_wide_20260904T180000Z_ab12cd.jpg")).toBe(true);
+    const pill = screen.getByText(/capture camera snapshot/);
+    // The pill row comes AFTER the answer text in the bubble (DOCUMENT_POSITION_FOLLOWING = 4).
+    expect(text.compareDocumentPosition(pill) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("Stop aborts the in-flight turn and marks it stopped", async () => {
+    // A stream that never closes: the turn stays in flight until we stop it.
+    installFetch(['data: {"type":"status","phase":"thinking","label":"reasoning…"}\n\n'], {
+      open: true,
+    });
+    await openPanel();
+    const box = screen.getByPlaceholderText(/ask about the lab/i);
+    fireEvent.change(box, { target: { value: "what ran today?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // While in flight, Stop stands where Send was.
+    const stop = await screen.findByRole("button", { name: "Stop" });
+    expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+    fireEvent.click(stop);
+
+    // The fetch was aborted, the composer is back, the turn says it was stopped.
+    const chatCall = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.find((c) =>
+      String(c[0]).includes("/api/assistant/chat")
+    );
+    expect((chatCall?.[1] as RequestInit).signal?.aborted).toBe(true);
+    await screen.findByRole("button", { name: "Send" });
+    expect(screen.getByText(/Stopped by you/)).toBeTruthy();
+    expect(screen.queryByText(/Connection lost/)).toBeNull();
+  });
 
   it("renders a plan card, approves it by hash, then runs the steps in order (Step 1i)", async () => {
     installFetch([

@@ -16,7 +16,7 @@ It is the third of the three root YAML files and answers the third question
 What this file is **not** (``docs/PLATE_TRACKING.md``):
 
 - It is not state. "Where is plate X *now*" lives in the record layer
-  (AnaliticaDB ``Container.location_id`` + the ``ContainerAction`` ledger);
+  (BitacoraDB ``Container.location_id`` + the ``ContainerAction`` ledger);
   this registry only names the places and seeds the ``Location`` table. The
   yaml never carries state; the database never invents places.
 - It is not a state machine. Which moves are legal is device-authoritative
@@ -49,7 +49,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from .registry import Registry
 
-#: Mirrors AnaliticaDB ``Location.location_type`` (DATABASE_DESIGN.md §6).
+#: Mirrors BitacoraDB ``Location.location_type`` (DATABASE_DESIGN.md §6).
 #: Deliberately no ``transport``: a plate in transit sits in the arm's gripper,
 #: which is itself an ``instrument`` location with ``capacity: 1``.
 LocationType = Literal["storage", "instrument", "deck", "fridge", "waste"]
@@ -64,7 +64,7 @@ class LocationEntry(BaseModel):
 
     #: Immutable identifier (see module docstring). Slash-path.
     name: str
-    #: The AnaliticaDB ``location_type`` this seeds.
+    #: The BitacoraDB ``location_type`` this seeds.
     type: LocationType
     #: ``equipment.yaml`` id this place belongs to; required for ``deck``.
     equipment: str | None = None

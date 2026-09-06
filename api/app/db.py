@@ -685,12 +685,23 @@ class LabDatabase:
 
 
 def resolve_db_path() -> Path:
-    """Return the database path from env or the default location."""
+    """Return the database path from env or the default location.
+
+    The default is the repo root's ``data/lab.db``, as the module docstring
+    has always claimed — but until 2026-09-05 the code said ``parents[3]``,
+    which from ``api/app/db.py`` is the directory *above* the repo. Everything
+    that relied on the default (a developer's ``claude mcp add`` of
+    lab-history, pytest runs in the deploy tree) silently read and wrote a
+    parallel ``../data/lab.db`` next to the repo, while the deployed service
+    was saved only by pinning ``LAB_DB_PATH`` in its EnvironmentFile. The
+    sibling stores derived from this path (``labware/``,
+    ``deck_layouts.json``) drifted the same way.
+    """
     env = os.environ.get("LAB_DB_PATH")
     if env:
         return Path(env)
-    # Default: repo-root/data/lab.db
-    return Path(__file__).resolve().parents[3] / "data" / "lab.db"
+    # Default: repo-root/data/lab.db (db.py → app → api → repo root).
+    return Path(__file__).resolve().parents[2] / "data" / "lab.db"
 
 
 def _now() -> str:

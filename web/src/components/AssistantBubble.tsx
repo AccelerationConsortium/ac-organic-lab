@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   ApiError,
@@ -49,6 +49,20 @@ interface ToolCall {
   startedAt?: number;
 }
 
+/** A camera frame the assistant captured during this turn
+ *  (`capture_camera_snapshot` → an `image` SSE frame). `url` is the API's
+ *  own copy of the frame (`/api/assistant/snapshots/…`, pruned after 24 h),
+ *  so the picture in the chat is the moment that was captured, not a live
+ *  re-grab on every render. */
+interface ChatImage {
+  url: string;
+  camera_id: string;
+  camera_name?: string;
+  lens?: string;
+  taken_at?: string;
+  bytes?: number;
+}
+
 interface ChatTurn {
   role: Role;
   /** Plain text content. For assistants, accumulates as `text` deltas arrive. */
@@ -69,6 +83,13 @@ interface ChatTurn {
    * turns persisted before this field existed; those render as Ask, which
    * matches the old behavior exactly (mode resets to Ask on reload). */
   mode?: Mode;
+  /** The operator pressed Stop while this turn was in flight: the fetch was
+   *  aborted (which cancels the API's generator), whatever the model was doing
+   *  was discarded, and no button could have been produced. Rendered as a
+   *  muted chip so a half-written answer is not mistaken for a finished one. */
+  stopped?: boolean;
+  /** Camera frames captured during this turn, oldest first. */
+  images?: ChatImage[];
   /** Control mode (Step 1j): a propose_action/propose_plan refusal surfaced
    * by the backend (`proposal_refused` frame). Rendered as an amber chip in
    * the turn, so "why is there no authorize button" is always on screen
@@ -81,6 +102,32 @@ interface ChatTurn {
 }
 
 /** A validated, propose-only action from the lab-control MCP server. */
+/** A slot-carrying argument lab-control canonicalised against
+ *  `locations.yaml` (UI_DESIGN §5 Step 1m): which argument, the device key it
+ *  now carries, and the registry place + human label — so the card can name
+ *  the place in words next to the bare key the device receives. `given` is
+ *  the spelling the model supplied when it differed; `step` is set on plans. */
+interface ResolvedLocation {
+  field: string;
+  value: string;
+  location: string | null;
+  label: string | null;
+  given?: string;
+  step?: number;
+}
+
+/** What an OT-2 gateway believes is on its deck at proposal time, for the
+ *  device a proposal touches (the OT-2 itself, or the OT-2 an xArm move
+ *  reaches into). `touched_slots` are the slots this action names or uses.
+ *  The snapshot is the gateway's belief; the card asks the operator to check
+ *  the physical deck against it before authorizing. */
+interface DeckCheck {
+  equipment_id: string;
+  touched_slots: string[];
+  slots: Record<string, { labware: string | null; id?: string | null; tips_available?: number }>;
+  unreachable?: string;
+}
+
 interface Proposal {
   equipment_id: string;
   equipment_name: string;
@@ -97,6 +144,8 @@ interface Proposal {
     activity: string;
     message: string | null;
   };
+  resolved_locations?: ResolvedLocation[];
+  deck_checks?: DeckCheck[];
 }
 
 /** One step of a plan: the same shape as a Proposal's action triple. */
@@ -124,6 +173,8 @@ interface Plan {
     activity: string;
     message: string | null;
   };
+  resolved_locations?: ResolvedLocation[];
+  deck_checks?: DeckCheck[];
 }
 
 type PlanPhase = "draft" | "approving" | "approved" | "running" | "executed" | "failed";
@@ -326,6 +377,9 @@ function AssistantBubbleInner() {
   const [resizing, setResizing] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Set only by the Stop button, so the AbortError it causes can be told
+  // apart from the aborts a new question or a closed panel issue.
+  const stoppedRef = useRef(false);
   const expiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const planExpiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // True while runPlan's step loop is in flight. A running plan is never
@@ -724,6 +778,7 @@ function AssistantBubbleInner() {
       const controller = new AbortController();
       abortRef.current = controller;
       terminatedRef.current = false;
+      stoppedRef.current = false;
       // New question: drop the previous answer's buffer, and stop speaking the
       // previous answer — it is now stale.
       streamTextRef.current = "";
@@ -789,7 +844,20 @@ function AssistantBubbleInner() {
           );
         }
       } catch (e) {
-        if ((e as Error).name === "AbortError") return;
+        if ((e as Error).name === "AbortError") {
+          if (stoppedRef.current) {
+            // Deliberate stop: say so on the turn, and drop any live pill.
+            setTurns((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === "assistant") {
+                next[next.length - 1] = { ...last, phase: null, stopped: true };
+              }
+              return next;
+            });
+          }
+          return;
+        }
         setError((e as Error).message);
       } finally {
         if (abortRef.current === controller) abortRef.current = null;
@@ -798,6 +866,16 @@ function AssistantBubbleInner() {
     },
     [turns, sending, mode, clearProposal, clearPlan, stopSpeaking]
   );
+
+  /** Stop the in-flight turn. Aborting the fetch closes the SSE response,
+   *  which cancels the API's generator mid-round; the model's next token and
+   *  any pending tool call are simply never consumed. Nothing actuates from a
+   *  chat turn, so there is nothing to roll back. */
+  const stopTurn = useCallback(() => {
+    if (!abortRef.current) return;
+    stoppedRef.current = true;
+    abortRef.current.abort();
+  }, []);
 
   const speakAnswer = useCallback(
     (markdown: string) => {
@@ -947,6 +1025,15 @@ function AssistantBubbleInner() {
             updated.tools = updated.tools.map((t, i) =>
               i === realIdx ? { ...t, ok: true } : t
             );
+          }
+        } else if (event.type === "image" && event.image && typeof event.image === "object") {
+          // The tool result names the path `image_url`; the frame carries it
+          // under `url` too. Accept either, so a payload shape drift on one
+          // side can never silently drop the picture again.
+          const raw = event.image as ChatImage & { image_url?: string };
+          const url = typeof raw.url === "string" ? raw.url : raw.image_url;
+          if (typeof url === "string" && url.startsWith("/")) {
+            updated.images = [...(updated.images ?? []), { ...raw, url }];
           }
         } else if (
           event.type === "proposal_refused" &&
@@ -1438,13 +1525,24 @@ function AssistantBubbleInner() {
                 disabled={sending}
                 className={`flex-1 resize-none rounded border border-slate-300 bg-white px-2 py-1 text-[13px] text-ink shadow-inner focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${focusClass}`}
               />
-              <button
-                type="submit"
-                disabled={sending || !input.trim()}
-                className={`self-stretch rounded px-3 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700 ${sendClass}`}
-              >
-                Send
-              </button>
+              {sending ? (
+                <button
+                  type="button"
+                  onClick={stopTurn}
+                  title="Stop this turn"
+                  className="self-stretch rounded border border-red-400 bg-red-50 px-3 text-sm font-medium text-red-700 shadow-sm transition hover:bg-red-100 dark:border-red-600 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/70"
+                >
+                  Stop
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  className={`self-stretch rounded px-3 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700 ${sendClass}`}
+                >
+                  Send
+                </button>
+              )}
             </div>
             {voice.error && (
               <p className="mt-1 text-xs text-red-600 dark:text-red-400">{voice.error}</p>
@@ -1595,6 +1693,63 @@ function isDeckClear(proposal: Proposal): boolean {
   );
 }
 
+/** "slot=2 (OT-2 HTE · slot 2)" — the place a slot argument resolved to, in
+ *  the registry's words. The operator reads the shelf, not only the key. */
+function formatLocations(items: ResolvedLocation[]): string {
+  return items
+    .map((r) => `${r.field}=${r.value} (${r.label ?? r.location ?? "unlabelled place"})`)
+    .join("; ");
+}
+
+/** "4: agilent_96_2ml_deep_square · 11: opentrons_96_tiprack_1000ul (12 tips) · 2*: empty" —
+ *  the deck as the gateway sees it, touched slots starred, empty touched
+ *  slots said out loud. Slots sort numerically. */
+function formatDeck(check: DeckCheck): string {
+  const slots = new Set([...Object.keys(check.slots), ...check.touched_slots]);
+  const order = (a: string, b: string) => {
+    const na = Number(a), nb = Number(b);
+    return Number.isNaN(na) || Number.isNaN(nb) ? a.localeCompare(b) : na - nb;
+  };
+  return [...slots]
+    .sort(order)
+    .map((slot) => {
+      const info = check.slots[slot];
+      const mark = check.touched_slots.includes(slot) ? "*" : "";
+      const what = info?.labware ?? (info?.tips_available !== undefined ? "tip rack" : "empty");
+      const tips = info?.tips_available !== undefined ? ` (${info.tips_available} tips)` : "";
+      return `${slot}${mark}: ${what}${tips}`;
+    })
+    .join(" · ");
+}
+
+/** The deck-check block shared by the proposal and plan cards: one "Deck now"
+ *  row per device plus the request to check the physical deck. An OT-2 that
+ *  could not be read is said so, not hidden — the check is then by eye. */
+function DeckCheckRows({ checks }: { checks: DeckCheck[] }) {
+  if (checks.length === 0) return null;
+  return (
+    <>
+      <dl className="mt-1 space-y-1 text-[13px] text-ink dark:text-slate-100">
+        {checks.map((c) =>
+          c.unreachable ? (
+            <Row
+              key={c.equipment_id}
+              label="Deck now"
+              value={`${c.equipment_id}: could not be read (${c.unreachable})`}
+            />
+          ) : (
+            <Row key={c.equipment_id} label="Deck now" value={`${c.equipment_id} · ${formatDeck(c)}`} />
+          )
+        )}
+      </dl>
+      <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+        Check the physical deck matches this before authorizing. Slots marked * are touched by
+        this action.
+      </p>
+    </>
+  );
+}
+
 function ProposalCard({
   proposal,
   expired,
@@ -1645,11 +1800,15 @@ function ProposalCard({
             </dd>
           </div>
         )}
+        {(proposal.resolved_locations?.length ?? 0) > 0 && (
+          <Row label="Place" value={formatLocations(proposal.resolved_locations ?? [])} />
+        )}
         <Row
           label="Device state"
           value={`${proposal.device_state.equipment_status} · ${proposal.device_state.activity}`}
         />
       </dl>
+      <DeckCheckRows checks={proposal.deck_checks ?? []} />
       {clearsDeck && (
         <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
           Clears the entire deck declaration — every slot is unset.
@@ -1756,6 +1915,7 @@ function PlanCard({
           value={`${plan.device_state.equipment_status} · ${plan.device_state.activity}`}
         />
       </dl>
+      <DeckCheckRows checks={plan.deck_checks ?? []} />
       <ol className="mt-1 flex flex-col gap-1" aria-label="plan steps">
         {plan.steps.map((s, i) => {
           const outcome = run.outcomes[i] ?? "pending";
@@ -1775,6 +1935,14 @@ function PlanCard({
                   {JSON.stringify(s.args, null, 2)}
                 </pre>
               )}
+              {(() => {
+                const places = (plan.resolved_locations ?? []).filter((r) => r.step === i + 1);
+                return places.length > 0 ? (
+                  <span className="ml-1 text-xs text-purple-800 dark:text-purple-300">
+                    [{formatLocations(places)}]
+                  </span>
+                ) : null;
+              })()}
               {run.messages[i] && (
                 <span className="ml-1 text-rose-700 dark:text-rose-400">
                   {run.messages[i]}
@@ -1868,6 +2036,35 @@ const TOOL_PILL_TONE = {
   stopped:
     "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300",
 } as const;
+
+/** Absolute http(s) URLs and the API's own paths, as a model writes them. */
+// Backticks and trailing sentence punctuation are excluded: models wrap a
+// path in `code` or end a sentence with it, and either would break the link.
+const LINK_RE = /(https?:\/\/[^\s<>"'`)\]]+?(?=[.,;:!?]*(?:[\s<>"'`)\]]|$))|\/api\/[^\s<>"'`)\]]+?(?=[.,;:!?]*(?:[\s<>"'`)\]]|$)))/g;
+
+/** Plain reply text with its URLs made clickable. The bubble renders answers
+ *  as plain text (no markdown), so a `/api/assistant/snapshots/…` path or an
+ *  http link the model writes would otherwise be dead text — and the
+ *  snapshot link is the operator's fallback when a picture does not render. */
+function linkify(text: string): ReactNode {
+  const parts = text.split(LINK_RE);
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <a
+        key={i}
+        href={part}
+        target="_blank"
+        rel="noreferrer"
+        className="underline decoration-dotted underline-offset-2 hover:decoration-solid"
+      >
+        {part}
+      </a>
+    ) : (
+      part
+    )
+  );
+}
 
 function toolLabel(name: string): string {
   return name.replaceAll("_", " ");
@@ -1994,22 +2191,33 @@ function Turn({
             : "bg-slate-100 text-ink dark:bg-slate-800 dark:text-slate-100"
         }`}
       >
-        <ToolPills
-          tools={turn.tools}
-          phase={live ? turn.phase : null}
-          phaseSince={turn.phaseSince}
-          phaseLabel={live ? turn.phaseLabel : undefined}
-          now={now}
-          live={live}
-          className="mb-1.5"
-        />
         {(turn.text || !livePill) && (
           <span className="whitespace-pre-wrap">
-            {turn.text || (
+            {turn.text ? (
+              isUser ? turn.text : linkify(turn.text)
+            ) : (
               <span className="opacity-60">{isUser ? "" : "…"}</span>
             )}
           </span>
         )}
+        {turn.images?.map((im, i) => (
+          <figure key={`${im.url}-${i}`} className="mt-1.5">
+            <a href={im.url} target="_blank" rel="noreferrer" title="Open full size">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={im.url}
+                alt={`${im.camera_name ?? im.camera_id}${im.lens ? ` (${im.lens})` : ""} snapshot`}
+                loading="lazy"
+                className="max-h-64 w-auto max-w-full rounded border border-slate-300 dark:border-slate-600"
+              />
+            </a>
+            <figcaption className="mt-0.5 text-[11px] text-ink-subtle dark:text-slate-400">
+              {im.camera_name ?? im.camera_id}
+              {im.lens ? ` · ${im.lens}` : ""}
+              {im.taken_at ? ` · ${new Date(im.taken_at).toLocaleTimeString()}` : ""}
+            </figcaption>
+          </figure>
+        ))}
         {turn.refusal && (
           <div className="mt-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[12px] text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
             Proposal refused ({turn.refusal.code}): {turn.refusal.message}
@@ -2020,6 +2228,23 @@ function Turn({
             No action proposed — {turn.declined.explanation}
           </div>
         )}
+        {turn.stopped && (
+          <div className="mt-1.5 rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[12px] text-slate-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400">
+            Stopped by you — nothing further came from this turn.
+          </div>
+        )}
+        {/* Progress last, at the bottom of the bubble: the chat auto-scrolls
+            to its end, so on a long reply the pills stay in view where the
+            eye is instead of scrolling off with the top of the answer. */}
+        <ToolPills
+          tools={turn.tools}
+          phase={live ? turn.phase : null}
+          phaseSince={turn.phaseSince}
+          phaseLabel={live ? turn.phaseLabel : undefined}
+          now={now}
+          live={live}
+          className={turn.text || turn.images?.length ? "mt-1.5" : ""}
+        />
       </div>
     </div>
   );

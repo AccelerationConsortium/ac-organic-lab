@@ -45,6 +45,7 @@ from pydantic import BaseModel, ValidationError
 
 from .claims import ClaimManager
 from .exceptions import CommandOutcomeUnknown, LabError
+from .deck_slots import SlotResolutionError, canonicalize_slot_args
 from .interlocks import Violation, run_interlocks, run_interlocks_async
 from .session import _availability
 from .skill_catalog import SkillDef, skills_for
@@ -255,9 +256,32 @@ def validate_plan(plan: Plan, session: LabSession) -> PlanReport:
                     )
                 )
             else:
-                args_violation = _validate_args(step, sd)
-                if args_violation is not None:
-                    violations.append(args_violation)
+                # Deck-slot vocabulary (Step 1m): write any place name the
+                # author used into the device's own key BEFORE the schema
+                # check, so the schema and the interlocks see the argument the
+                # device will receive. A place on another device is a
+                # violation here, never a 4xx from the gateway later.
+                try:
+                    canonical_args, _ = canonicalize_slot_args(
+                        entry, step.skill, step.args, session.locations
+                    )
+                except SlotResolutionError as exc:
+                    violations.append(
+                        _violation(
+                            step,
+                            exc.code,
+                            exc.message,
+                            actionable=(
+                                'write the OT-2 deck slot as the device\'s bare key, e.g. "2"'
+                            ),
+                        )
+                    )
+                else:
+                    if canonical_args != step.args:
+                        step = step.model_copy(update={"args": canonical_args})
+                    args_violation = _validate_args(step, sd)
+                    if args_violation is not None:
+                        violations.append(args_violation)
 
             # v1.0 device -> annotate the warning so the executor (v0.4)
             # knows it cannot enforce mutual exclusion via ClaimManager.
@@ -497,15 +521,25 @@ async def execute_plan(
             await _notify(on_step, steps_out[-1])
             continue
 
-        # (d) execute under a per-step claim.
+        # (d) execute under a per-step claim. The body is the canonical form
+        # validate_plan already accepted (a place name -> the device's key).
         endpoint = sd.endpoint if sd is not None else f"/control/{step.skill}"
+        try:
+            args, _ = canonicalize_slot_args(
+                client.entry, step.skill, step.args, session.locations
+            )
+        except SlotResolutionError as exc:  # pragma: no cover - validate_plan refused it first
+            steps_out.append(StepRunReport(status="failed", error=str(exc), **base))
+            await _notify(on_step, steps_out[-1])
+            aborted = True
+            continue
         try:
             async with ClaimManager(client, owner=owner, ttl_s=ttl_s) as claim:
                 claimed = not claim.degraded
                 if claimed:
                     claims_acquired.append(client.equipment_id)
                 response = await client.command(
-                    endpoint, step.args, claim_token=claim.token
+                    endpoint, args, claim_token=claim.token
                 )
                 claim.assert_alive()
         except CommandOutcomeUnknown as exc:

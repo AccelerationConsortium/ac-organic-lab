@@ -42,7 +42,7 @@ from .ssh_console import SSH_HOSTS
 HOST_ALIASES: dict[str, frozenset[str]] = {
     # gaia is the dashboard host itself: loopback-bound services (kasa-tapo,
     # bambu, bitácora, the API's own entry) and the 100.64.254.6 tailnet IP
-    # (pypoe, kuma, auth, AnaliticaDB, the edge paths) are all this machine.
+    # (pypoe, kuma, auth, BitacoraDB, the edge paths) are all this machine.
     "gaia": frozenset({"localhost", "127.0.0.1", "100.64.254.6"}),
     "cytation-pc": frozenset({"100.64.254.16"}),
     "uplc-pc": frozenset({"100.64.254.19"}),

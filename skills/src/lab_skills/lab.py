@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 from typing import Mapping
 
+from .locations import LocationsConfig
 from .registry import Registry, load_registry
 from .session import LabSession
 
@@ -34,6 +35,7 @@ class Lab:
         binding: Mapping[str, str] | None = None,
         http_timeout: float = 5.0,
         headers: Mapping[str, str] | None = None,
+        locations: "LocationsConfig | None" = None,
     ) -> LabSession:
         """Build a ``LabSession`` and return it (use as ``async with``).
 
@@ -57,6 +59,7 @@ class Lab:
             binding=binding,
             http_timeout=http_timeout,
             headers=headers,
+            locations=locations,
         )
 
 

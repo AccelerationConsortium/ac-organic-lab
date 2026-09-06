@@ -34,6 +34,30 @@ import type {
  * The legacy `Error.message` is still set to the device's `detail` string
  * when present, so naive callers that only show `e.message` keep working.
  */
+/**
+ * Render a `detail` payload as a human-readable one-liner. Devices send
+ * structured (object) details — e.g. the xArm's 409
+ * `{"error":"edge_not_allowed","reason":"no whitelisted edge ..."}` — and
+ * `String(object)` collapses those to "[object Object]", which is what
+ * operators saw on halted plan runs. Prefer the conventional message fields,
+ * fall back to compact JSON so no diagnostic is ever lost.
+ */
+function detailToMessage(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const d = detail as Record<string, unknown>;
+    const parts = [d.error, d.reason ?? d.message ?? d.detail].filter(
+      (v): v is string => typeof v === "string" && v.length > 0,
+    );
+    if (parts.length > 0) return parts.join(": ");
+  }
+  try {
+    return JSON.stringify(detail) ?? String(detail);
+  } catch {
+    return String(detail);
+  }
+}
+
 export class ApiError extends Error {
   /** HTTP status code from the failed response. */
   readonly status: number;
@@ -53,7 +77,7 @@ export class ApiError extends Error {
   ) {
     const detail =
       body && typeof body === "object" && "detail" in body
-        ? String((body as { detail: unknown }).detail)
+        ? detailToMessage((body as { detail: unknown }).detail)
         : undefined;
     super(detail ?? `${status} ${statusText} from ${path}`);
     this.name = "ApiError";

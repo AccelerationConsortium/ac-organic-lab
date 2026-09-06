@@ -314,7 +314,7 @@ def notes_from(report, *, authorization_id: str) -> list[dict]:
     """Step-anchored `Note`-shaped records of what happened.
 
     Not written anywhere yet — the first slice runs without touching the record
-    layer (D-23) — but produced in the shape AnaliticaDB takes, so wiring it is
+    layer (D-23) — but produced in the shape BitacoraDB takes, so wiring it is
     serialization rather than reverse-engineering. `step_id` is the anchor, which
     is why bitácora's compiler refuses to derive one from a renameable skill name.
 
@@ -447,7 +447,7 @@ def lab_session(request: Request, auth: Authorization):
 # process owns the lab's runs, and a run does not survive an API restart —
 # execute_plan's per-step claims die with the process anyway, so pretending a
 # persisted row is a live run would be the record overstating reality. The
-# durable trail is the plan_run audit rows plus the D-23 AnaliticaDB record
+# durable trail is the plan_run audit rows plus the D-23 BitacoraDB record
 # (record.py); this registry is the *live* view the SSE stream reads from.
 
 @dataclass
@@ -613,7 +613,7 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
         # The record layer's shape — produced here and filed just below (D-23).
         "record": {"plan": plan_row, "notes": notes},
     }
-    # File the run in AnaliticaDB. Deliberately before `done` is emitted, so a
+    # File the run in BitacoraDB. Deliberately before `done` is emitted, so a
     # consumer that sees the run finish also sees whether it was recorded — and
     # deliberately incapable of raising, because the run already happened and a
     # failed write must never be reported as a failed run (record.py, property 1).

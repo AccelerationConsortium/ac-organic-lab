@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Seed / check the record layer's `Location` table from `locations.yaml`.
 
-`locations.yaml` is authoritative for WHICH places exist; AnaliticaDB is
+`locations.yaml` is authoritative for WHICH places exist; BitacoraDB is
 authoritative for WHAT IS WHERE. This script is the one-directional bridge
 (docs/PLATE_TRACKING.md D2): an idempotent upsert-by-name — POST each entry
 (409 = already there), PATCH only `label` / `capacity` / `active` when they
@@ -15,9 +15,9 @@ Usage:
     uv run python scripts/seed_locations.py --check     # report drift only
     uv run python scripts/seed_locations.py             # upsert
 Env:
-    ANALITICADB_URL               (e.g. http://100.64.254.6:8010)
-    ANALITICADB_EDGE_SECRET_PATH  (file holding the trusted-front secret)
-    ANALITICADB_USER              (X-Auth-User to record as creator; default: seed_locations)
+    BITACORADB_URL               (e.g. http://127.0.0.1:8013)
+    BITACORADB_EDGE_SECRET_PATH  (file holding the trusted-front secret)
+    BITACORADB_USER              (X-Auth-User to record as creator; default: seed_locations)
     LAB_LOCATIONS_PATH            (optional; default: the repo's locations.yaml)
 Exit: 0 = in sync (or seeded), 1 = drift found in --check, 2 = config/transport error.
 """
@@ -45,18 +45,18 @@ def _secret(path: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="report drift, write nothing")
-    ap.add_argument("--url", default=os.environ.get("ANALITICADB_URL", ""))
-    ap.add_argument("--secret-path", default=os.environ.get("ANALITICADB_EDGE_SECRET_PATH", ""))
-    ap.add_argument("--user", default=os.environ.get("ANALITICADB_USER", "seed_locations"))
+    ap.add_argument("--url", default=os.environ.get("BITACORADB_URL", ""))
+    ap.add_argument("--secret-path", default=os.environ.get("BITACORADB_EDGE_SECRET_PATH", ""))
+    ap.add_argument("--user", default=os.environ.get("BITACORADB_USER", "seed_locations"))
     ap.add_argument("--locations", default=os.environ.get("LAB_LOCATIONS_PATH") or None)
     args = ap.parse_args(argv)
 
     if not args.url:
-        print("ANALITICADB_URL is not set", file=sys.stderr)
+        print("BITACORADB_URL is not set", file=sys.stderr)
         return 2
     secret = _secret(args.secret_path) if args.secret_path else ""
     if not secret:
-        print("ANALITICADB_EDGE_SECRET_PATH is not set or unreadable", file=sys.stderr)
+        print("BITACORADB_EDGE_SECRET_PATH is not set or unreadable", file=sys.stderr)
         return 2
     cfg = load_locations(args.locations)
     headers = {"X-Edge-Secret": secret, "X-Auth-User": args.user, "X-Auth-Role": "admin"}
@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         with httpx.Client(timeout=15.0, headers=headers) as client:
             r = client.get(f"{base}/locations")
             if r.status_code == 404:
-                print("record layer has no /locations — needs AnaliticaDB ≥ 0.13.0 (migration d1e2f3a4b5c6)", file=sys.stderr)
+                print("record layer has no /locations — needs BitacoraDB ≥ 0.13.0 (migration d1e2f3a4b5c6)", file=sys.stderr)
                 return 2
             r.raise_for_status()
             live = {row["name"]: row for row in r.json()}
