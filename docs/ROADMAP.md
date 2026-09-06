@@ -160,23 +160,40 @@ unplugged), no WSL, runs the **Agilent ChemStation Data Service** and OpenLAB
 license services (so the HPLC is ChemStation-driven, not OpenLab CDS — the
 existing `agilent-hplcms-server` sidecar does not apply as-is), and already
 holds a checkout of **`mt_xpr_balance`** (gitlab.com/telescopeinn — a SOAP
-client for the XPR with automated-dosing support, WSDL vendored) that a
-`mt-xpr-balance` STATUS_SPEC server can wrap rather than rewrite. The Pi is
+client for the XPR with automated-dosing support, WSDL vendored), one of the
+two lineages the new server's client is built from (see below). The Pi is
 Debian 12 / Python 3.11 running **PiZeroCam** (camera + LED + motor,
 colorimetric pH estimation; `image_server` on the Pi, a client elsewhere) —
 not yet a systemd unit, so nothing is whitelisted there. Both MT balances
-(.83 Gibbie, .13 here) serve the XPR web service on **port 81** (8002, the
-port the Gibbie workflow's `mt_balance.py` assumes, is refused).
+(.83 Gibbie, .13 here) serve the XPR web service on **port 81** (8002, which
+a stale comment in Gibbie's deployed `config.toml` claims, is refused;
+Gibbie's runtime itself uses 81 via `BALANCE_PORT`).
 
 **First modular piece, 2026-09-06:**
 [`AccelerationConsortium/mt-xpr-balance-server`](https://github.com/AccelerationConsortium/mt-xpr-balance-server)
-(private) — a STATUS_SPEC v1.2 control service for one XPR balance, wrapping
-Telescope Innovations' `mt_xpr_balance` SOAP client (MIT; the LLE PC already
-holds an older fork of it at `C:\Users\sdl2\Projects\mt_xpr_balance` with
-lab defaults baked in). Claims hard-enforced; weigh / tare / zero / doors /
-cancel / `dose.start`; `activity` from the in-flight request; one 412
-(`dose.start` without a head) mirrored in `allowed_actions`; a mock driver
-runs the whole 20-test suite without hardware. Registered as `kind: other`
+(private) — a STATUS_SPEC v1.2 control service for one XPR balance. Claims
+hard-enforced; weigh / tare / zero / doors / cancel / `dose.start`;
+`activity` from the in-flight request; one 412 (`dose.start` without a head)
+mirrored in `allowed_actions`; a mock driver runs the service suite without
+hardware.
+
+The SOAP client is **in-house** (`xpr_client.py`, 2026-09-06), not a
+dependency. The lab has four copies of two MIT lineages — Telescope
+Innovations / Hein Lab's `mt_xpr_balance` (upstream, plus an older fork on
+the LLE PC with lab defaults and a password baked in) and Matter Lab's
+`matterlab_balances` (which Gibbie's `sdl2_solid_dose` vendors verbatim, one
+default changed, and which Gibbie's runtime imports) — and neither is
+serviceable as-is: no request timeout in either, site facts in code and
+discarded error text in Telescope's, and Matter Lab renders its WSDL *into
+the package directory*, which a service-account install cannot write and two
+instances on one PC would collide over. The new client keeps Matter Lab's
+structured errors, full `GetWeight` form, door verification and dosing-job
+handling, and Telescope's temp-file WSDL and session-reopen retry, then adds
+a timeout on every request, `XprLinkError` for unreachable (§2.1, never a
+device fault), and no re-dosing loop. Mettler's WSDL template is vendored
+(byte-identical in both lineages), so the `xpr` extra is suds-py3 + pprp +
+jinja2 rather than a git dependency. 99 tests, including a tier that drives
+real suds over the vendored WSDL with a canned transport. Registered as `kind: other`
 (no `balance` kind in the spec yet) with `gateway_fronted: true`. **Not yet
 deployed** — first instance planned for the LLE PC as NSSM `mt-xpr-balance`
 on :8081 (`lle_xpr_balance`); Gibbie's balance follows as a second instance
