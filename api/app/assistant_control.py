@@ -125,7 +125,7 @@ PROPOSAL_TTL_S = 120
 PLAN_TTL_S = 600
 # Review-ability bound. A card nobody can read end to end is a rubber stamp;
 # past this the model is told to split the work or recommend a workflow plan.
-MAX_PLAN_STEPS = 40
+MAX_PLAN_STEPS = 256
 
 # Every machine code a propose_action / propose_plan refusal can carry (the
 # ``_err`` calls in the propose paths). assistant.py matches tool-result
@@ -1438,7 +1438,7 @@ def _build_server(registry: Registry):
         {"action": <name from list_available_actions>, "args": {...}} in
         execution order. Later steps may depend on earlier ones — only the
         first step must be in the device's current allowed_actions. One
-        device per plan, at most 40 steps; safety-floor actions
+        device per plan, at most 256 steps; safety-floor actions
         (stop verbs, the xArm's connect/clear_errors) are never proposable.
         Returns an ``error`` + ``code`` object (with the failing ``step``
         number) when refused."""

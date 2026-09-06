@@ -1142,7 +1142,7 @@ actuating path**:
   the earlier ones have run (`seal.start` after `stage.in`, `aspirate` after
   `pick_up_tip`, the next hop after this one), so the live list cannot
   vouch for them at proposal time; the device re-checks every step as it is
-  actually sent. One device per plan; at most `MAX_PLAN_STEPS` (40) steps —
+  actually sent. One device per plan; at most `MAX_PLAN_STEPS` (256) steps —
   a card nobody can read end to end is a rubber stamp.
 - **One card, approved by hash.** The card renders the ordered list with
   arguments and device state. **Approve these N steps** sends the

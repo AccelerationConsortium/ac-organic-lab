@@ -67,9 +67,9 @@ plus admin.
 | Method & path | Purpose |
 |---|---|
 | `GET /inventory?q=<name or CAS>&limit=50` | **Search** by name / CAS / synonym. `q` empty = browse first `N`. Each result includes all its bottles (availability, location, amount). |
-| `GET /inventory/<cas>` | **One chemical** by CAS with every bottle (vendor, lot, expiry, location). 404 if absent. |
+| `GET /inventory/<cas>` | **One chemical** by CAS with every bottle (vendor, lot, expiry, location). 404 if absent. Every chemical row also carries data-quality fields: `cas_check_ok` (false = the CAS fails its check digit, a typo in the LIMS export), `enrichment_source` (`cas` or `name` — the latter means PubChem had no record under this CAS and the data came from a product-name match), `cas_suggested` (PubChem's CAS when the sheet's is a typo), `pubchem_cid`, and `enrichment_note` (why a row is unenriched, or how a name match was accepted). CAS stays authoritative: a valid CAS whose name matches a compound with a *different* CAS is left unenriched and the conflict noted. |
 | `GET /inventory/check?cas=<cas>&needed=50&unit=mL` | **Sufficiency check**: "is 50 mL of THF on the shelf?" Sums across all bottles in the requested unit and reports `sufficient`. A unit mismatch reports what *is* in stock rather than guessing a conversion. |
-| `GET /inventory/stats` | Totals: chemicals, bottles, enriched records, plus `pending_enrichment` (never enriched, PubChem never asked) and `pubchem_missing` (asked, no record). |
+| `GET /inventory/stats` | Totals: chemicals, bottles, enriched records, plus `pending_enrichment` (never enriched, PubChem never asked), `pubchem_missing` (asked, no record) and `cas_suspect` (CAS numbers failing their check digit — LIMS typos). |
 | `GET /inventory/enrich/status` | Progress of the current (or last) background enrichment job in this API process: `running`, `total`/`attempted`/`enriched`/`not_found`, `started_by`, `error`. `running: false` with `finished_at: null` = none has run since the service started. |
 | `GET /inventory/groups` | The lab shelves (groups) with bottle counts. |
 | `GET /inventory/match?labels=dmso,tempo` | Resolve protocol stock labels → `{cas, name}` (null = lab doesn't stock it). |

@@ -203,6 +203,19 @@ def snapshot_reachable(snap, reg_entry) -> bool:
             return snap.status.equipment_status != "unknown"
         except AttributeError:
             return True
+    # OT-2 gateways can speak plainly about their backing robot: the
+    # gateway process answers HTTP 200 even while the robot is off the
+    # network, and it reports exactly that via `details.robot.reachable`.
+    # Trust an explicit False as unreachable — this is the §2.1 “asked and
+    # couldn't reach it” rule applied to the gateway's own robot probe (an
+    # absent / True flag leaves the existing semantics untouched, so non-OT-2
+    # devices that publish no such flag are unaffected).
+    try:
+        robot = snap.status.details.get("robot") or {}
+        if robot.get("reachable") is False:
+            return False
+    except AttributeError:
+        pass
     return True
 
 

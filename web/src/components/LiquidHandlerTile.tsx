@@ -59,7 +59,16 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
   // hosts none, in which case the tile simply offers no link.
   const panelPath = devicePanelPath(snapshot.id);
 
-  // Deck source: the device's own normalized deck; legacy dashboard-store
+    // The gateway answers HTTP 200 even while its robot is off the
+    // network — it reports the robot's reachability explicitly, and we surface
+    // that on the tile so a "Needs init" (amber) is never mistaken for a
+    // healthy boot. (Absent flag = treat as reachable; only an explicit
+    // False trips the offline pill.)
+    const robotReachable =
+      (status.details?.robot as Record<string, unknown> | undefined)
+        ?.reachable as boolean | undefined;
+
+    // Deck source:the device's own normalized deck; legacy dashboard-store
   // fallback (read-only here) for gateways that don't publish it yet.
   const deviceDeck = deviceDeckFromStatus(status);
   const migrated = deviceDeck != null;
@@ -72,10 +81,26 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
   const legacyLabware = legacyDeck?.slots ?? {};
   const robotModules = robotModulesFromStatus(status);
 
+  // The gateway can answer while its robot is offline; an explicit
+  // robot.reachable=false trips a red "Robot offline" pill next to the status pill
+  // so the tile never reads merely "Needs init" when the robot is actually gone.
+
+  const robotOffline = robotReachable === false;
+
   return (
     <TileShell
       snapshot={snapshot}
-      headerRight={<StatusPill state={status.equipment_status} />}
+      headerRight={
+        <>
+          {robotOffline && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-medium text-rose-900 ring-1 ring-inset ring-rose-300 dark:bg-rose-900/30 dark:text-rose-200 dark:ring-rose-800">
+              <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+              Robot offline
+            </span>
+          )}
+          {!robotOffline && <StatusPill state={status.equipment_status} />}
+        </>
+      }
       bannerExtra={
         <>
           {panelPath && (
