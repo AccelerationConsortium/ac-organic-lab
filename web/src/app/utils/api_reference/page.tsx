@@ -3,26 +3,28 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import {
+  TAG_BLURB,
+  TAG_TITLE,
+  endpointMatches,
+  groupByTag,
+  splitSubModules,
+} from "./grouping";
+import type {
+  Endpoint,
+  JsonSchema,
+  JsonSchemaProperty,
+  OpenApiDoc,
+  OpenApiOperation,
+  OpenApiParameter,
+  SubModule,
+} from "./types";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-interface JsonSchemaProperty {
-  type?: string | string[];
-  description?: string;
-  default?: unknown;
-  minimum?: number;
-  maximum?: number;
-  enum?: unknown[];
-  items?: { type?: string };
-}
 
-interface JsonSchema {
-  properties?: Record<string, JsonSchemaProperty>;
-  required?: string[];
-  title?: string;
-  description?: string;
-}
 
 interface ActionDef {
   name: string;
@@ -55,34 +57,9 @@ interface CatalogResponse {
 
 // --- the dashboard's own HTTP surface, read from its OpenAPI document ---
 
-interface OpenApiParameter {
-  name: string;
-  in: string;
-  required?: boolean;
-  description?: string;
-  schema?: JsonSchemaProperty & { $ref?: string };
-}
 
-interface OpenApiOperation {
-  summary?: string;
-  description?: string;
-  tags?: string[];
-  parameters?: OpenApiParameter[];
-  requestBody?: {
-    content?: Record<string, { schema?: JsonSchema & { $ref?: string } }>;
-  };
-}
 
-interface OpenApiDoc {
-  paths: Record<string, Record<string, OpenApiOperation>>;
-  components?: { schemas?: Record<string, JsonSchema> };
-}
 
-interface Endpoint {
-  method: string;
-  path: string;
-  op: OpenApiOperation;
-}
 
 // ---------------------------------------------------------------------------
 // Data fetching
@@ -375,30 +352,36 @@ function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
 // Platform tile — matches History page PlatformGroup card style
 // ---------------------------------------------------------------------------
 
-function PlatformTile({
-  platformId,
-  catalog,
-}: {
-  platformId: string;
-  catalog: PlatformCatalog;
-}) {
+function PlatformTile({ catalog }: { catalog: PlatformCatalog }) {
+  // Folds like the tag groups above, so the whole page is one interaction:
+  // platform → instrument → action, each level closing what it contains.
+  const [open, setOpen] = useState(true);
+
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
-      {/* Platform header */}
-      <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/60">
+      <button
+        onClick={() => setOpen((p) => !p)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-left transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900/60 dark:hover:bg-slate-800/80"
+      >
+        <span className="w-3 shrink-0 text-xs text-ink-subtle dark:text-slate-400">
+          {open ? "−" : "+"}
+        </span>
         <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-300">
           {catalog.label}
         </h4>
-        <span className="text-xs text-ink-subtle dark:text-slate-400">
+        <span className="ml-auto text-xs text-ink-subtle dark:text-slate-400">
           {catalog.instruments.length} instrument{catalog.instruments.length !== 1 ? "s" : ""}
         </span>
-      </div>
+      </button>
 
-      <div className="flex flex-col gap-3 bg-white p-4 dark:bg-slate-950/20">
-        {catalog.instruments.map((inst) => (
-          <InstrumentCard key={inst.id} instrument={inst} />
-        ))}
-      </div>
+      {open && (
+        <div className="flex flex-col gap-3 bg-white p-4 dark:bg-slate-950/20">
+          {catalog.instruments.map((inst) => (
+            <InstrumentCard key={inst.id} instrument={inst} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -406,33 +389,6 @@ function PlatformTile({
 // ---------------------------------------------------------------------------
 // Dashboard API (from this server's OpenAPI document)
 // ---------------------------------------------------------------------------
-
-// Tags in the order an operator meets them, not alphabetically: what the lab
-// *is* (meta, equipment), what you can do to it (control), what it recorded
-// (history), then the specialised surfaces. Anything unlisted sorts last, so a
-// newly-tagged router shows up rather than disappearing.
-const TAG_ORDER = [
-  "meta",
-  "equipment",
-  "equipment-control",
-  "history",
-  "workflow",
-  "labware",
-  "deck",
-  "assistant",
-];
-
-const TAG_BLURB: Record<string, string> = {
-  meta: "Server identity, health, and the two reference documents (this one and the device catalog).",
-  equipment: "Aggregated device state — the poll loop's view of the lab.",
-  "equipment-control":
-    "Operator-initiated writes. Each call runs claim → action → release against the device and writes one audit row.",
-  history: "Read the history DB; the /api/ingest/* routes are how device services write to it.",
-  workflow: "Authorized plan runs: start, watch the step stream, abort.",
-  labware: "Custom labware definitions plus the read-only standard Opentrons set.",
-  deck: "Per-equipment deck layout the OT-2 surfaces share.",
-  assistant: "The chat bubble's backend. Read-only in Ask mode; propose-only in Control mode.",
-};
 
 function resolveSchema(
   schema: (JsonSchema & { $ref?: string }) | undefined,
@@ -531,63 +487,123 @@ function EndpointRow({ endpoint, doc }: { endpoint: Endpoint; doc: OpenApiDoc })
   );
 }
 
-function TagGroup({
-  tag,
-  endpoints,
-  doc,
-}: {
-  tag: string;
-  endpoints: Endpoint[];
-  doc: OpenApiDoc;
-}) {
+// --- rendering ------------------------------------------------------------
+
+function EndpointList({ endpoints, doc }: { endpoints: Endpoint[]; doc: OpenApiDoc }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
-      <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/60">
-        <div className="flex items-center justify-between">
-          <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-300">
-            {tag}
-          </h4>
-          <span className="text-xs text-ink-subtle dark:text-slate-400">
-            {endpoints.length} endpoint{endpoints.length !== 1 ? "s" : ""}
-          </span>
-        </div>
-        {TAG_BLURB[tag] && (
-          <p className="mt-1 text-xs text-ink-subtle dark:text-slate-400">{TAG_BLURB[tag]}</p>
-        )}
-      </div>
-      <div className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-950/20">
-        {endpoints.map((e) => (
-          <EndpointRow key={`${e.method}-${e.path}`} endpoint={e} doc={doc} />
-        ))}
-      </div>
+    <div className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-950/20">
+      {endpoints.map((e) => (
+        <EndpointRow key={`${e.method}-${e.path}`} endpoint={e} doc={doc} />
+      ))}
     </div>
   );
 }
 
-function groupByTag(doc: OpenApiDoc): [string, Endpoint[]][] {
-  const groups = new Map<string, Endpoint[]>();
-  for (const [path, methods] of Object.entries(doc.paths ?? {})) {
-    for (const [method, op] of Object.entries(methods)) {
-      const tag = op.tags?.[0] ?? "other";
-      const list = groups.get(tag) ?? [];
-      list.push({ method: method.toUpperCase(), path, op });
-      groups.set(tag, list);
-    }
-  }
-  const rank = (tag: string) => {
-    const i = TAG_ORDER.indexOf(tag);
-    return i === -1 ? TAG_ORDER.length : i;
-  };
-  return [...groups.entries()]
-    .map(([tag, list]) => {
-      list.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
-      return [tag, list] as [string, Endpoint[]];
-    })
-    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
+function SubModuleBlock({
+  module,
+  doc,
+  forceOpen,
+}: {
+  module: SubModule;
+  doc: OpenApiDoc;
+  forceOpen: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const isOpen = forceOpen || open;
+  return (
+    <div className="border-t border-slate-100 first:border-t-0 dark:border-slate-800">
+      <button
+        onClick={() => setOpen((p) => !p)}
+        aria-expanded={isOpen}
+        className="flex w-full items-center gap-2 bg-white px-4 py-1.5 text-left transition-colors hover:bg-slate-50 dark:bg-slate-950/20 dark:hover:bg-slate-900/40"
+      >
+        <span className="w-3 shrink-0 text-[10px] text-ink-subtle dark:text-slate-400">
+          {isOpen ? "−" : "+"}
+        </span>
+        <span className="font-mono text-xs font-medium text-ink dark:text-slate-200">
+          /{module.name}
+        </span>
+        <span className="ml-auto text-[10px] text-ink-subtle dark:text-slate-400">
+          {module.endpoints.length}
+        </span>
+      </button>
+      {isOpen && <EndpointList endpoints={module.endpoints} doc={doc} />}
+    </div>
+  );
+}
+
+function TagGroup({
+  tag,
+  endpoints,
+  doc,
+  forceOpen,
+}: {
+  tag: string;
+  endpoints: Endpoint[];
+  doc: OpenApiDoc;
+  /** A live filter opens every group that still has matches, so a reader
+   *  never has to guess which fold hides the endpoint they searched for. */
+  forceOpen: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const isOpen = forceOpen || open;
+  const modules = splitSubModules(endpoints);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+      <button
+        onClick={() => setOpen((p) => !p)}
+        aria-expanded={isOpen}
+        className="flex w-full items-start gap-3 bg-slate-50 px-4 py-2.5 text-left transition-colors hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/80"
+      >
+        <span className="mt-0.5 w-3 shrink-0 text-xs text-ink-subtle dark:text-slate-400">
+          {isOpen ? "−" : "+"}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-baseline gap-2">
+            <span className="text-sm font-semibold text-ink dark:text-slate-100">
+              {TAG_TITLE[tag] ?? tag}
+            </span>
+            <span className="font-mono text-[10px] text-ink-subtle dark:text-slate-400">
+              {tag}
+            </span>
+          </span>
+          {TAG_BLURB[tag] && (
+            <span className="mt-0.5 block text-xs text-ink-subtle dark:text-slate-400">
+              {TAG_BLURB[tag]}
+            </span>
+          )}
+        </span>
+        <span className="shrink-0 text-xs text-ink-subtle dark:text-slate-400">
+          {endpoints.length} endpoint{endpoints.length !== 1 ? "s" : ""}
+        </span>
+      </button>
+
+      {isOpen &&
+        (modules ? (
+          <div className="border-t border-slate-100 dark:border-slate-800">
+            {modules.map((module) => (
+              <SubModuleBlock
+                key={module.name}
+                module={module}
+                doc={doc}
+                forceOpen={forceOpen}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="border-t border-slate-100 dark:border-slate-800">
+            <EndpointList endpoints={endpoints} doc={doc} />
+          </div>
+        ))}
+    </div>
+  );
 }
 
 function DashboardApiSection() {
   const { data, isPending, error } = useOpenApi();
+  const [query, setQuery] = useState("");
+  const [expandAll, setExpandAll] = useState(false);
 
   if (isPending) {
     return <p className="text-sm text-ink-muted dark:text-slate-300">Loading dashboard API…</p>;
@@ -600,21 +616,59 @@ function DashboardApiSection() {
     );
   }
 
-  const groups = groupByTag(data);
-  const total = groups.reduce((n, [, list]) => n + list.length, 0);
+  const all = groupByTag(data);
+  const total = all.reduce((n, [, list]) => n + list.length, 0);
+  const filtering = query.trim().length > 0;
+  const groups = all
+    .map(([tag, list]) => [tag, list.filter((e) => endpointMatches(e, query))] as [string, Endpoint[]])
+    .filter(([, list]) => list.length > 0);
+  const shown = groups.reduce((n, [, list]) => n + list.length, 0);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <p className="text-sm text-ink-muted dark:text-slate-300">
         {total} endpoints on this server, read live from its own OpenAPI document — so this
-        list cannot drift from what the server actually serves. Click an endpoint for
-        parameters and request body.
+        list cannot drift from what the server actually serves. Groups fold; open one for its
+        endpoints, and an endpoint for its parameters and request body.
       </p>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        {groups.map(([tag, endpoints]) => (
-          <TagGroup key={tag} tag={tag} endpoints={endpoints} doc={data} />
-        ))}
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter by path, method or summary…"
+          aria-label="Filter endpoints"
+          className="min-w-0 flex-1 rounded-md border border-slate-300 bg-surface-raised px-3 py-1.5 text-sm text-ink placeholder:text-ink-subtle focus:border-slate-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+        />
+        <button
+          onClick={() => setExpandAll((p) => !p)}
+          className="shrink-0 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-ink transition-colors hover:border-slate-400 hover:bg-surface-subtle dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+        >
+          {expandAll ? "Collapse all" : "Expand all"}
+        </button>
       </div>
+      {filtering && (
+        <p className="text-xs text-ink-subtle dark:text-slate-400">
+          {shown} of {total} endpoints match.
+        </p>
+      )}
+      {groups.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-ink-subtle dark:border-slate-700 dark:text-slate-400">
+          Nothing matches “{query}”.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {groups.map(([tag, endpoints]) => (
+            <TagGroup
+              key={tag}
+              tag={tag}
+              endpoints={endpoints}
+              doc={data}
+              forceOpen={expandAll || filtering}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -689,7 +743,7 @@ function DeviceCatalogSection() {
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
       {platforms.map(([id, catalog]) => (
-        <PlatformTile key={id} platformId={id} catalog={catalog} />
+        <PlatformTile key={id} catalog={catalog} />
       ))}
     </div>
   );
