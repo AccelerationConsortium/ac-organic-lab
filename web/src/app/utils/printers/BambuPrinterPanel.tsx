@@ -1,4 +1,7 @@
+"use client";
+
 import { EquipmentGrid } from "@/components/EquipmentGrid";
+import { useUserAuth } from "@/lib/user-auth";
 import type { EquipmentSnapshot } from "@/types/api";
 
 /**
@@ -54,28 +57,71 @@ export function BambuPrinterPanel({ printers }: { printers: EquipmentSnapshot[] 
 
       <EquipmentGrid snapshots={printers} />
 
-      <section className="flex flex-col gap-2">
-        <h2 className="text-base font-semibold text-ink dark:text-slate-100">
-          Submit a print
-        </h2>
+      <SubmissionPanel />
+    </section>
+  );
+}
+
+/**
+ * The framed page, or an explanation of why it is not framed.
+ *
+ * Gating on the session is not cosmetic. The `/bambu/*` route sits behind
+ * `forward_auth`, and an unauthenticated request comes back 401 carrying the
+ * dashboard's own login HTML as its body — which a browser happily renders,
+ * so framing it unconditionally showed the dashboard nested inside itself
+ * (with its layout scripts re-running in the frame). We only frame it when we
+ * know the request will be allowed through.
+ */
+function SubmissionPanel() {
+  const { loading, authenticated, requestLogin } = useUserAuth();
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="text-base font-semibold text-ink dark:text-slate-100">
+        Submit a print
+      </h2>
+
+      {loading ? (
         <p className="text-sm text-ink-subtle dark:text-slate-300">
-          The gateway&apos;s own page, served here behind the dashboard&apos;s login, so a
-          submission is recorded against your account. If this panel is blank the{" "}
-          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">
-            /bambu/*
-          </code>{" "}
-          edge route is not installed yet — use <em>Open directly</em> above, where
-          submissions are not attributable.
+          Checking your sign-in…
         </p>
-        {/* No border or radius: the page draws its own panels, so a frame around
-            it reads as a second, redundant card edge. Same reasoning as
-            /utils/xarm_control. */}
-        <iframe
-          src={SUBMISSION_EMBED_PATH}
-          title="Bambu Gateway — submit a print"
-          className="h-[880px] min-h-[560px] w-full border-0 bg-transparent"
-        />
-      </section>
+      ) : authenticated ? (
+        <>
+          <p className="text-sm text-ink-subtle dark:text-slate-300">
+            The gateway&apos;s own page, served here behind the dashboard&apos;s login,
+            so a submission is recorded against your account. If this panel is blank
+            the{" "}
+            <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">
+              /bambu/*
+            </code>{" "}
+            edge route is not installed yet — use <em>Open directly</em> above, where
+            submissions are not attributable.
+          </p>
+          {/* No border or radius: the page draws its own panels, so a frame
+              around it reads as a second, redundant card edge. Same reasoning
+              as /utils/xarm_control. */}
+          <iframe
+            src={SUBMISSION_EMBED_PATH}
+            title="Bambu Gateway — submit a print"
+            className="h-[880px] min-h-[560px] w-full border-0 bg-transparent"
+          />
+        </>
+      ) : (
+        <div className="flex flex-col items-start gap-3 rounded-md border border-slate-200 bg-surface-subtle px-4 py-5 dark:border-slate-700 dark:bg-slate-800/40">
+          <p className="text-sm text-ink-muted dark:text-slate-300">
+            Sign in to submit a print. Submissions made here are recorded against
+            your account; the <em>Open directly</em> link above reaches the gateway
+            without a login, and those are not attributable to anyone.
+          </p>
+          <button
+            type="button"
+            onClick={requestLogin}
+            className="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700"
+          >
+            Sign in
+          </button>
+        </div>
+      )}
     </section>
   );
 }
