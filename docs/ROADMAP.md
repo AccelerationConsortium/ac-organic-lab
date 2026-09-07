@@ -219,8 +219,62 @@ deployed** — first instance planned for the LLE PC as NSSM `mt-xpr-balance`
 on :8081 (`lle_xpr_balance`); Gibbie's balance follows as a second instance
 and retires the Gibbie monitor's reachability-only tile. Deploying opens a
 SOAP session on a shared instrument, so it waits for a moment when the LLE
-workflow is not using the balance. The EasyMax server (`mt-easymax-server`)
-is the next piece and needs the interface decision first.
+workflow is not using the balance.
+
+**Second modular piece, 2026-09-06:**
+[`AccelerationConsortium/mt-easymax-server`](https://github.com/AccelerationConsortium/mt-easymax-server)
+(private) — a STATUS_SPEC v1.2 service for one Mettler reactor system
+(EasyMax / OptiMax / RC1mx / RX10), reached through the vendor's **Reactor
+Device Server**: a .NET console app on the bench PC that exposes the
+instrument over OPC UA (loopback :50008) and talks to it through the third
+"door" reserved for the instrument gateway — so it coexists with iControl,
+and an operation started here lands in the running iControl recipe exactly as
+if it had been started at the touchpad.
+
+The interface decision this entry was waiting on, now taken: **one service per
+instrument, both reactor zones as components**, every control verb taking
+`reactor: 1|2`. The Reactor Device Server fronts one instrument with
+instrument-level facts (model, serial, active-fault counts) and STATUS_SPEC
+claims are per-device, so per-zone services would duplicate all of that to buy
+mutual exclusion nothing needs today — `automated-lle` drives zone 1 only.
+Scope is **stirrer and thermostat control** (`stir.start`/`stop`,
+`temp.set`/`stop`/`reflux`/`distill`, `deadband.set`); the up-to-4 dosing units
+and 2 EasySamplers the same server exposes are discovered and reported in
+`components`, but carry no control verbs — they dispense reagent and draw
+samples, and none has been exercised through this interface on this bench.
+
+The driver comes from `automated-lle`'s `components/easymax` (Apache-2.0),
+rewritten for a service rather than a synchronous workflow: async throughout
+(the private event loop on a worker thread existed only because ivoryOS calls
+it synchronously); **control calls return when the instrument accepts them**,
+where upstream slept for the ramp duration plus five seconds and would have
+pinned an HTTP request for the length of a 40-minute heat ramp; a timeout on
+every request, where upstream had none; and reads batched through
+`read_attributes`, so each node carries its own status code and an absent R2
+degrades one field instead of blinding the poll. `activity` is observed from
+the instrument's own `Stirrer.State` / `Thermostat.State` nodes, health from
+its `ErrorsCounter` / `WarningsCounter` (which doubles as the §6.1 run gate,
+mirrored into `allowed_actions` by one shared function) — so a `degraded`
+reactor mid-ramp reports `degraded` + `running`. Because activity is
+*observed*, the service samples on its own 20 s timer rather than trusting
+someone to poll: a stir ramp between two 60 s dashboard polls would otherwise
+be a span nobody counts. 114 tests, none touching an instrument — including a
+tier that drives real `asyncua.ua` types against a fake server, so node
+identifiers and the `Thermostat.HeatCool` argument order are checked for real.
+Registered as `kind: other` (no `reactor` kind in the spec yet) with
+`gateway_fronted: true`.
+
+**Not yet deployed** — planned for the LLE PC as NSSM `mt-easymax` on :8082.
+`lle_easymax` stays pointed at `process-chem-monitor` until it lands, since
+repointing a `gateway_fronted` tile at a dead port would alert as unreachable;
+the registry comment carries the swap, which also drops that device from the
+monitor's `config.toml` rather than polling the reactor twice. Two cautions
+for whoever deploys it: `automated-lle` holds its own OPC UA session to the
+same server and does not participate in claims, so a claim here excludes only
+dashboard / `lab-skills` writers; and the `[limits]` block ships with EasyMax
+102 defaults that want checking against the reactor actually on the bench.
+Mettler's users guide is confidential and is deliberately not vendored — only
+the interface facts are encoded in the client.
 
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and
