@@ -1018,18 +1018,21 @@ equipment:
     adapter: http
     protocol: "1.2"
     gateway_fronted: true
-    # The EasyMax answers on no network port of its own. What is observed is
-    # Mettler's Reactor Device Server on the bench PC's loopback (OPC UA :50008),
-    # the same endpoint automated-lle connects to. So `ready` means the reactor
-    # service is up, not that the reactor is fine; the tile's message says so.
-    # mt-easymax-server replaces this tile with real instrument state — per-zone
-    # Tr/Tj, stir rates, and activity observed from the instrument's own state
-    # nodes — when it is deployed on this PC (planned NSSM `mt-easymax` :8082,
-    # protocol "1.2", status_path /status). Drop lle_easymax from the monitor's
-    # config.toml at the same time rather than polling the reactor twice.
-    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    # mt-easymax-server (NSSM `mt-easymax`, deployed 2026-09-06), talking OPC UA
+    # to Mettler's Reactor Device Server on this PC's loopback :50008 — the same
+    # endpoint automated-lle connects to. Per-zone Tr/Tj and stir rates, with
+    # `activity` observed from the instrument's own Stirrer/Thermostat State
+    # nodes. Claims are hard-enforced, but automated-lle does not participate in
+    # them, so a claim here excludes only dashboard / lab-skills writers.
+    #
+    # Reads `unknown` — not `error` — whenever the instrument's state cannot be
+    # determined, which covers both "the Reactor Device Server is not running"
+    # (it is a console app that does not auto-start, so a reboot of that PC
+    # stops it) and "the EasyMax itself is switched off". The tile this replaced
+    # reported `ready` in both cases, because the OPC UA port was listening.
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8082
     tailscale_ip: 100.64.254.13
-    status_path: /devices/lle_easymax/status
+    status_path: /status
     poll_timeout_seconds: 5.0
     tiles:
       process_chemistry: { w: 2, h: 1 }
