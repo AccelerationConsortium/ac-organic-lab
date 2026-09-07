@@ -264,17 +264,59 @@ identifiers and the `Thermostat.HeatCool` argument order are checked for real.
 Registered as `kind: other` (no `reactor` kind in the spec yet) with
 `gateway_fronted: true`.
 
-**Not yet deployed** — planned for the LLE PC as NSSM `mt-easymax` on :8082.
-`lle_easymax` stays pointed at `process-chem-monitor` until it lands, since
-repointing a `gateway_fronted` tile at a dead port would alert as unreachable;
-the registry comment carries the swap, which also drops that device from the
-monitor's `config.toml` rather than polling the reactor twice. Two cautions
-for whoever deploys it: `automated-lle` holds its own OPC UA session to the
+**Deployed and verified 2026-09-06** on the LLE PC as NSSM `mt-easymax` on
+:8082 (auto-start, no SCM dependency, whitelisted in that PC's
+`sdl-lab-hostops`). The repo is **private**, and that PC has GitHub auth for
+nothing — both repos already checked out there are public — so the tree was
+copied from gaia over SSH at the pushed commit rather than planting a
+credential on a lab PC. `git pull` there will not work until that is decided;
+see the open item below.
+
+The first contact with real hardware paid for itself: the service connected,
+authenticated and read the instrument's identity (`EasyMax`, serial
+`C433575900`, firmware `6.2.0.1065`, poll rate 2000 ms) — and then found three
+defects the mock could not have.
+
+1. **A silent node is not an absent one.** The EasyMax at 192.168.254.12 is
+   powered off, so the whole subdevice tree returns `BadNoDataAvailable` — the
+   node resolves, the server has no value for it. Discovery treated any bad
+   status as "subdevice not present", concluded the instrument had no reactor
+   zones, and refused to start. Only `BadNodeIdUnknown` and relatives mean
+   absent. Same distinction §2.1 draws between "no such thing" and "cannot see
+   it".
+2. **`ready` was reachable while knowing nothing.** With discovery fixed, a
+   fully blind readback fell through to `ready` — a claim about equipment the
+   service cannot see at all. It now reports `unknown` asking whether the
+   instrument is on; a *partly* readable instrument still gives a real health
+   answer for the zone that answered.
+3. **`Reflux` / `Distill` take Tj − Tr, not Tr − Tj.** The vendor guide says
+   the latter; the live server's `InputArguments` name and describe it
+   `TjMinusTr`, the opposite of the `Thermostat.TrMinusTj` *reading*. The API
+   parameter said `tr_minus_tj_k` — the wrong sign for a temperature offset on
+   a live reaction. Renamed. The same browse confirmed `HeatCool`'s argument
+   order and enum mappings, which were right.
+
+Fixed in `b4820bc` with regression tests driven from the exact status code the
+instrument returned; the fleet lesson — browse `InputArguments` before trusting
+any document — is in that repo's `AGENTS.md`.
+
+Current tile state: `unknown` / `unknown`, both zones and all subdevices
+discovered, `last_error: null`, claims hard-enforced (a tokenless control POST
+returns 423, verified from gaia). It will stay `unknown` until the reactor is
+powered on, which is the honest answer and worth contrasting with the
+monitoring-only tile it replaces — that one reads `ready`, because the OPC UA
+endpoint is listening, while the reactor is off.
+
+Open items: `lle_easymax` still points at `process-chem-monitor` :8070 (the
+swap also drops that device from the monitor's `config.toml` rather than
+polling the reactor twice); `automated-lle` holds its own OPC UA session to the
 same server and does not participate in claims, so a claim here excludes only
-dashboard / `lab-skills` writers; and the `[limits]` block ships with EasyMax
-102 defaults that want checking against the reactor actually on the bench.
-Mettler's users guide is confidential and is deliberately not vendored — only
-the interface facts are encoded in the client.
+dashboard / `lab-skills` writers; `[limits]` carries EasyMax 102 defaults that
+want confirming against this instrument; whether the RDS's always-present
+`DosingUnit1-4` / `AutoSampler1-2` nodes distinguish installed hardware from
+absent can only be learned with the reactor powered on. Mettler's users guide
+is confidential and is deliberately not vendored — only the interface facts are
+encoded in the client.
 
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and
