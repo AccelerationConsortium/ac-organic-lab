@@ -1,5 +1,7 @@
 "use client";
 
+import { useUserAuth } from "@/lib/user-auth";
+
 /**
  * xArm Control — the arm's own operator panel (a separate app served by the
  * device service at :8000/web/), framed here same-origin at /xarm5/web/ via
@@ -11,8 +13,43 @@
  * against ac_auth, and the device trusts the injected identity (see
  * deploy/Caddyfile.single-edge), so the panel picks up the signed-in user
  * without a second login.
+ *
+ * Which is exactly why the frame is gated on the session here. An
+ * unauthenticated request to /xarm5/web/ comes back `401 {"detail":"not
+ * authenticated"}`, and a browser renders that body — so framing it
+ * unconditionally showed a logged-out visitor raw JSON where the panel should
+ * be. We only frame it once we know the request will be allowed through.
  */
 export default function XarmControlPage() {
+  const { loading, authenticated, requestLogin } = useUserAuth();
+
+  if (loading) {
+    return (
+      <p className="text-sm text-ink-subtle dark:text-slate-300">
+        Checking your sign-in…
+      </p>
+    );
+  }
+
+  if (!authenticated) {
+    return (
+      <div className="flex flex-col items-start gap-3 rounded-md border border-slate-200 bg-surface-subtle px-4 py-5 dark:border-slate-700 dark:bg-slate-800/40">
+        <p className="text-sm text-ink-muted dark:text-slate-300">
+          Sign in to open the arm&apos;s control panel. The edge passes your identity
+          through to the device, so a claim you take is recorded against your
+          account.
+        </p>
+        <button
+          type="button"
+          onClick={requestLogin}
+          className="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700"
+        >
+          Sign in
+        </button>
+      </div>
+    );
+  }
+
   return (
     // Full-bleed, like /notebooks: the panel is a whole second UI (title tile,
     // camera, Control Modes, log) and the app's max-w-7xl column crops it.
