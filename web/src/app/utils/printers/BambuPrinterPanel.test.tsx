@@ -60,4 +60,20 @@ describe("BambuPrinterPanel", () => {
     expect(screen.getByText("Bambu H2D 01")).toBeTruthy();
     expect(screen.getByText(/Monitoring only/)).toBeTruthy();
   });
+
+  it("links out to the gateway's submission page over the tailnet", () => {
+    render(<BambuPrinterPanel printers={[]} />);
+
+    const link = screen.getByRole("link", { name: /Submit a print/ });
+    // Must be an absolute tailnet URL: the registry reaches this gateway on
+    // loopback, which in a browser is the visitor's own machine.
+    expect(link.getAttribute("href")).toBe("http://100.64.254.6:8012/ui");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noreferrer");
+  });
+
+  it("says that queueing a job does not reach a printer", () => {
+    render(<BambuPrinterPanel printers={[]} />);
+    expect(screen.getByText(/dispatch is not implemented/i)).toBeTruthy();
+  });
 });
