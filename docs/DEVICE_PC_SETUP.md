@@ -100,6 +100,57 @@ Routine host operations should go through the `sdl-lab-hostops` MCP surface
 (whitelisted, audited — see [`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md)); SSH is the
 maintenance/deploy path, not the everyday one.
 
+### 2.5 Deploying a **private** repo to a device PC
+
+Every device repo the fleet had until 2026-09-06 was public, so `git clone` on
+a device PC needed no credentials and none were ever set up. `mt-easymax-server`
+and `mt-xpr-balance-server` are private, and on a device PC that means:
+
+```
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
+```
+
+Git Credential Manager cannot help over SSH either — it fails with `Unable to
+persist credentials with the 'wincredman' credential store`, because that store
+needs an interactive desktop session.
+
+**Do not sign the PC in to a personal GitHub account.** It would grant that
+machine read/write to every repo that account can reach, to run one device
+service. Three workable options, in the order they were weighed on 2026-09-06:
+
+1. **Copy the tree from gaia** (what `mt-easymax` is deployed with). No
+   credential on the lab PC at all; gaia already has auth and SSH to every
+   device PC. The cost is that §4's `git pull` update path does not work there
+   — updates are a re-copy, below.
+2. **A read-only deploy key**, scoped to the one repo. Restores `git pull`;
+   cannot push; no personal account involved; revocable per repo. Needs an
+   SSH remote, and one key per private repo. (github.com:22 is reachable from
+   `sdl2-pc-00-lle` — checked.)
+3. **A fine-grained read-only PAT** scoped to those repos. Works over the
+   existing HTTPS remotes, but is still account-bound and still needs an
+   interactive session to store.
+
+Copying the tree, from gaia, excluding the venv and keeping the deployed
+`config.toml`:
+
+```bash
+cd ~/caoyang && tar czf /tmp/<repo>.tgz \
+    --exclude='.venv' --exclude='__pycache__' --exclude='.pytest_cache' \
+    --exclude='*.egg-info' --exclude='config.toml' <repo>
+scp /tmp/<repo>.tgz <host>:C:/Users/sdl2/<repo>.tgz
+ssh <host> 'powershell -NoProfile -Command "cd C:\Users\sdl2\Projects; tar -xzf C:\Users\sdl2\<repo>.tgz"'
+ssh <host> 'C:\SDL_Tools\uv.exe sync --project C:\Users\sdl2\Projects\<repo> --link-mode copy'
+ssh <host> 'C:\SDL_Tools\nssm.exe restart <svc>'
+```
+
+`.git` is included, so the checkout is a real repo at the pushed commit and
+`git log` / `git status` on the PC still tell the truth about what is running —
+only fetching is unavailable.
+
+> **Write config files from gaia, not with PowerShell.** `Set-Content -Encoding
+> UTF8` in Windows PowerShell 5.1 writes a **BOM**, and `tomllib` rejects it
+> with `Invalid statement (at line 1, column 1)`. `scp` the file instead.
+
 ## 3. Install a single device service
 
 Run from an elevated PowerShell. Replace `<repo>`, `<svc>`, and `<port>` with the device-specific values from the table in [§7 Conventions](#7-conventions).
@@ -270,6 +321,8 @@ After install + smoke, register the service in the monorepo's `equipment.yaml` w
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
+| `mt-easymax` reads `unknown` and says the instrument is reporting no data, but the reactor is fine | **Mettler's Reactor Device Server is not running.** It is a .NET *console application*, not a Windows service, and on `sdl2-pc-00-lle` it has **no auto-start at all** — no Run key, no Startup shortcut, no scheduled task. It survives a disconnected RDP session but not a reboot or a logoff. | Log in as `sdl2` and start it from its desktop shortcut. The service reconnects on its own (30 s retry). If it should come back by itself, add a Startup-folder shortcut or a scheduled task. |
+| `mt-easymax` reads `unknown` and the Reactor Device Server *is* running | The instrument itself is off. The RDS keeps answering and keeps serving the identity it cached (`Model`, `SerialNumber`), while every live parameter returns `BadNoDataAvailable`. | Power on the reactor. This is not a fault and does not set `last_error` — see the repo's README, *When the instrument is switched off*. |
 | `sc query <svc>` says `STOPPED` immediately after `nssm start` | wrong `AppDirectory` or `.venv` not synced | Run `C:\SDL_Tools\uv.exe sync --extra api` from the repo dir; check `<svc>.err.log`. |
 | `/control/startup` returns 503 with "profile not found" | service is running as `LocalSystem` | Reset `ObjectName` to `.\labuser` (see §5). |
 | `/control/seal/start` returns 423 | strict claim enforcement, no `X-Claim-Token` | The SDK's `ClaimManager` handles this automatically. For manual `curl` debugging, acquire a claim first via `POST /control/claim`. |
