@@ -61,15 +61,30 @@ describe("BambuPrinterPanel", () => {
     expect(screen.getByText(/Monitoring only/)).toBeTruthy();
   });
 
-  it("links out to the gateway's submission page over the tailnet", () => {
+  it("frames the submission page same-origin behind the edge", () => {
     render(<BambuPrinterPanel printers={[]} />);
 
-    const link = screen.getByRole("link", { name: /Submit a print/ });
-    // Must be an absolute tailnet URL: the registry reaches this gateway on
-    // loopback, which in a browser is the visitor's own machine.
+    const frame = screen.getByTitle("Bambu Gateway — submit a print");
+    // Same-origin path, not the gateway's own address: that is what puts it
+    // behind the dashboard's login and lets the edge inject the identity.
+    expect(frame.getAttribute("src")).toBe("/bambu/ui/");
+  });
+
+  it("keeps a direct link as a fallback, and says it is not attributable", () => {
+    render(<BambuPrinterPanel printers={[]} />);
+
+    const link = screen.getByRole("link", { name: /Open directly/ });
+    // Absolute tailnet URL: the registry reaches this gateway on loopback,
+    // which in a browser is the visitor's own machine.
     expect(link.getAttribute("href")).toBe("http://100.64.254.6:8012/ui");
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toContain("noreferrer");
+    expect(screen.getByText(/not attributable/)).toBeTruthy();
+  });
+
+  it("explains a blank panel rather than leaving it mysterious", () => {
+    render(<BambuPrinterPanel printers={[]} />);
+    expect(screen.getByText(/edge route is not installed yet/)).toBeTruthy();
   });
 
   it("says that queueing a job does not reach a printer", () => {

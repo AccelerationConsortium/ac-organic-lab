@@ -2,20 +2,31 @@ import { EquipmentGrid } from "@/components/EquipmentGrid";
 import type { EquipmentSnapshot } from "@/types/api";
 
 /**
- * The Bambu gateway's own submission page.
+ * The gateway's submission page, framed same-origin at /bambu/ui/ via a Caddy
+ * path route — the same arrangement as the xArm panel at /xarm5/web/.
  *
- * Absolute and tailnet-addressed on purpose. `equipment.yaml` reaches this
- * service at `127.0.0.1:8012` because the aggregator runs on the same host as
- * the gateway — but loopback in a visitor's browser means the visitor's own
- * machine, so the registry's `base_url` is useless as a link. A raw tailnet IP
- * rather than the MagicDNS name so the link resolves for any tailnet member
- * regardless of their DNS settings.
+ * Framing it behind the edge is what buys SSO. A cookie cannot be shared with
+ * the gateway on its own origin: raw 100.x addresses cannot carry a `Domain`
+ * cookie and *.ts.net is on the Public Suffix List, so a browser drops any
+ * tailnet-wide cookie (see AUTH_DESIGN, "Why sessions can't be shared
+ * per-host"). One origin behind /bambu/* means one login, and the edge injects
+ * the signed-in identity so a submission is recorded against a real account
+ * instead of a name somebody typed.
  */
-const SUBMISSION_UI_URL = "http://100.64.254.6:8012/ui";
+const SUBMISSION_EMBED_PATH = "/bambu/ui/";
+
+/**
+ * The same page reached directly on the gateway. Kept as a fallback for when
+ * the edge route is not installed, and deliberately an absolute tailnet URL:
+ * `equipment.yaml` reaches that gateway on loopback, which in a browser is the
+ * visitor's own machine. Submissions made this way are *not* attributable —
+ * there is no login on that port.
+ */
+const SUBMISSION_DIRECT_URL = "http://100.64.254.6:8012/ui";
 
 export function BambuPrinterPanel({ printers }: { printers: EquipmentSnapshot[] }) {
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex flex-col gap-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold text-ink dark:text-slate-100">
@@ -26,21 +37,45 @@ export function BambuPrinterPanel({ printers }: { printers: EquipmentSnapshot[] 
             controls remain in Bambu&apos;s cloud interfaces.
           </p>
           <p className="text-sm text-ink-subtle dark:text-slate-300">
-            Print jobs are submitted through the gateway&apos;s own page, which validates
-            a model against the target machine and queues it. Queued jobs are never sent
-            to a printer — dispatch is not implemented.
+            Print jobs are submitted below: the gateway validates a model against the
+            target machine and queues it. Queued jobs are never sent to a printer —
+            dispatch is not implemented.
           </p>
         </div>
         <a
-          href={SUBMISSION_UI_URL}
+          href={SUBMISSION_DIRECT_URL}
           target="_blank"
           rel="noreferrer"
-          className="shrink-0 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-900 hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-900/20 dark:text-emerald-200 dark:hover:bg-emerald-900/30"
+          className="shrink-0 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-ink hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
         >
-          Submit a print <span aria-hidden="true">↗</span>
+          Open directly <span aria-hidden="true">↗</span>
         </a>
       </header>
+
       <EquipmentGrid snapshots={printers} />
+
+      <section className="flex flex-col gap-2">
+        <h2 className="text-base font-semibold text-ink dark:text-slate-100">
+          Submit a print
+        </h2>
+        <p className="text-sm text-ink-subtle dark:text-slate-300">
+          The gateway&apos;s own page, served here behind the dashboard&apos;s login, so a
+          submission is recorded against your account. If this panel is blank the{" "}
+          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">
+            /bambu/*
+          </code>{" "}
+          edge route is not installed yet — use <em>Open directly</em> above, where
+          submissions are not attributable.
+        </p>
+        {/* No border or radius: the page draws its own panels, so a frame around
+            it reads as a second, redundant card edge. Same reasoning as
+            /utils/xarm_control. */}
+        <iframe
+          src={SUBMISSION_EMBED_PATH}
+          title="Bambu Gateway — submit a print"
+          className="h-[880px] min-h-[560px] w-full border-0 bg-transparent"
+        />
+      </section>
     </section>
   );
 }

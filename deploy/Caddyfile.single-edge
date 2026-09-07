@@ -188,6 +188,57 @@ http://100.64.254.6 {
 		}
 	}
 
+	# ---- Bambu printer gateway submission page, path-routed ONTO this origin -
+	# bambu-server (THIS host, :8012) serves a submission page at /ui and its
+	# API at the service root (/printers, /submissions, /whoami). Path-routed
+	# here so it sits behind this origin's login: a cookie cannot be shared
+	# with the gateway on its own address (raw 100.x cannot carry a `Domain`
+	# cookie and *.ts.net is on the Public Suffix List), so framing it here is
+	# the only way it participates in SSO. The dashboard frames /bambu/ui/ at
+	# Utils -> 3D Printers (web/src/app/utils/printers/BambuPrinterPanel.tsx).
+	#
+	# We STRIP ONLY the /bambu prefix (no /ui rewrite): the page (canonical URL
+	# /bambu/ui/) AND its API (/bambu/printers, /bambu/submissions, ...) both
+	# resolve on the gateway. Prefix-safe by construction — the page derives its
+	# API base by stripping the trailing /ui segment of its own path, the same
+	# arrangement as the OT-2 SPA above, so one file serves the direct
+	# deployment and this prefix with no server-side rewrite.
+	#
+	# The gateway answers /ui AND /ui/ directly rather than redirecting between
+	# them: a Starlette slash-redirect would emit a Location without the /bambu
+	# prefix and land the visitor on the dashboard (the trap the /xarm5 block
+	# documents).
+	#
+	# forward_auth gates the human at the edge and injects X-Auth-User /
+	# X-Auth-Role; `copy_headers` OVERWRITES any client-supplied value, which is
+	# the protection (a `request_header` strip would run after forward_auth and
+	# remove what it just injected). `header_up` SETS X-Edge-Auth, so a direct
+	# caller off the tailnet cannot forge it. The gateway trusts the injected
+	# identity ONLY when that secret matches, and records the submitter as
+	# verified; with no secret configured it trusts nothing and falls back to a
+	# typed-in label. Set the SAME secret on both sides:
+	#   edge:    BAMBU_EDGE_SHARED_SECRET=…  in caddy's systemd EnvironmentFile
+	#   gateway: BAMBU_EDGE_SHARED_SECRET=…  in bambu-server's unit environment
+	# Not in git. Reverse-proxying over loopback because the gateway runs on
+	# this host — which also lets its bind go back to 127.0.0.1 once this route
+	# is live, closing the unauthenticated /submissions path on the tailnet.
+	#
+	# The aggregator is unaffected: equipment.yaml polls 127.0.0.1:8012
+	# directly, so none of these routes change how the dashboard reads status.
+	@bambu_ui path /bambu /bambu/*
+	forward_auth @bambu_ui 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
+	# Normalize every entrypoint to the page's canonical trailing-slash URL.
+	redir /bambu /bambu/ui/ 308
+	redir /bambu/ /bambu/ui/ 308
+	handle_path /bambu/* {
+		reverse_proxy 127.0.0.1:8012 {
+			header_up X-Edge-Auth {env.BAMBU_EDGE_SHARED_SECRET}
+		}
+	}
+
 	# ---- AnaliticaDB results catalog (this host), path-routed ONTO this origin
 	# AnaliticaDB (FastAPI) serves the analytical-results catalog + /docs at :8010
 	# on this host. handle_path strips /analytica so the service sees its own root
