@@ -38,6 +38,22 @@ const LABWARE_PATH_RE = /^\/api\/labware(?:\/.*)?$/;
 // X-Auth-User for api/app/custody.py to record as the mover.
 const CUSTODY_PATH_RE = /^\/api\/custody(?:\/.*)?$/;
 
+// The authorized-run executor (api/app/workflow.py). Starting a run moves
+// hardware through a whole plan, and aborting one interferes with a run in
+// flight — both strictly more consequential than the single operator click
+// CONTROL_PATH_RE has always gated. This matcher entry was simply missing
+// until 2026-09-07: /api/workflow/* reached the Next rewrite, was proxied to
+// FastAPI, and the backend read `X-Auth-User` straight off the client request
+// with a placeholder fallback. So an unauthenticated caller who could reach
+// the dashboard and knew an authorization id could start it, or forge whose
+// name went into the run record and the plan_run audit row.
+//
+// Reads (GET: run state, the SSE event stream) are not gated, like every
+// other read here — but identity headers are stripped on ALL methods below,
+// because the backend forwards `X-Auth-User` to bitácora when it fetches the
+// authorization, and a client-chosen value must never reach it.
+const WORKFLOW_PATH_RE = /^\/api\/workflow(?:\/.*)?$/;
+
 // -- /api/assistant/* gate (Phase 2) -----------------------------------------
 //
 // The lab assistant is read-only for hardware but can read ALL lab history,
@@ -226,6 +242,29 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // ---- Workflow-run guard (start / abort need a signed-in principal) ----
+  if (WORKFLOW_PATH_RE.test(pathname)) {
+    // Stripped on every method, read or write: the client never gets to say
+    // who it is, on any workflow route.
+    const headers = new Headers(request.headers);
+    headers.delete("x-auth-user");
+    headers.delete("x-auth-role");
+
+    if (CONTROL_METHODS.has(request.method) && !CONTROL_OPEN) {
+      const v = await verifySession(request);
+      if (!v.ok) {
+        return NextResponse.json(
+          { detail: "Sign in to start or abort a run." },
+          { status: 401 },
+        );
+      }
+      if (v.user) headers.set("x-auth-user", v.user);
+      if (v.role) headers.set("x-auth-role", v.role);
+    }
+
+    return NextResponse.next({ request: { headers } });
+  }
+
   // ---- Control-surface guard (view-only until signed in) ----------------
   if (
     CONTROL_METHODS.has(request.method) &&
@@ -261,6 +300,7 @@ export const config = {
     "/api/assistant/:path*",
     "/api/labware/:path*",
     "/api/custody/:path*",
+    "/api/workflow/:path*",
     "/admin/:path*",
     "/api/admin/:path*",
     // Negative lookahead, not "/api/ssh/:path*": the ws path must not reach
