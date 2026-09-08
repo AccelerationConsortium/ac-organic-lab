@@ -1,5 +1,13 @@
 # Agentic ELN — Implementation Plan
 
+**Roadmap supersession, 2026-09-07:** Product scope and future sequencing now
+follow [Bitácora product direction](../../bitacora/docs/PRODUCT_DIRECTION.md)
+and [this lab's integration direction](BITACORA_INTEGRATION_DIRECTION.md).
+The dated phases and external-agent assembly assignments below are historical;
+they are not a current completion estimate or the standalone product roadmap.
+Prioritize the manual scientific workflow, integrated records/inventory, and
+an optional connector boundary. Existing execution gates remain unchanged.
+
 **Status:** consolidated plan (2026-07-22), updated (2026-07-23). Phases A–C
 shipped in `bitacora`; Phase D pending. Sequencing and open decisions for
 the design in [`AGENTIC_ELN_DESIGN.md`](AGENTIC_ELN_DESIGN.md); the record

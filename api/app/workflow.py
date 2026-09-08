@@ -96,6 +96,59 @@ PLAN_RUN = "plan_run"
 #: gone home — more honest than a robot's, and worth knowing.
 
 
+#: Dev escape hatch, deliberately the SAME env the Next.js middleware reads
+#: (``web/src/middleware.ts``). When the dashboard is opened for local
+#: development the middleware strips client identity headers and injects
+#: nothing, so a launcher legitimately arrives anonymous; refusing it here
+#: would make the open mode unusable rather than open. Default is closed.
+def _identity_enforced() -> bool:
+    return os.environ.get("DASHBOARD_CONTROL_OPEN", "").lower() != "true"
+
+
+#: The identity a run is attributed to when the gate is deliberately open.
+#: Never reachable in production — see :func:`launcher_identity`.
+_OPEN_MODE_IDENTITY = "ac-organic-lab-dashboard"
+
+
+def launcher_identity(request: Request, *, action: str) -> str:
+    """The verified human or machine principal behind a workflow mutation.
+
+    ``X-Auth-User`` is injected by ``web/src/middleware.ts`` after it verifies
+    the session (or ``X-Api-Key``) against ac_auth, and stripped from the client
+    request first — the same trust chain ``control.py`` relies on, and the same
+    reason it can be believed here: this app binds ``127.0.0.1`` only
+    (``deploy/ac-organic-lab-api.service``), so the middleware and local
+    processes are the only paths in.
+
+    Until 2026-09-07 this header was read with ``or "ac-organic-lab-dashboard"``
+    and ``/api/workflow/*`` was **absent from the middleware's matcher**, so
+    neither end checked anything: a request that reached the dashboard could
+    start an authorized run with no identity at all, or with any identity it
+    cared to name, and that value was what the run record, the SSE
+    ``launched_by`` and the ``plan_run`` audit row then carried. Starting
+    hardware is at least as consequential as the single operator click
+    ``control.py`` has always gated; an unattributable one is worse, because
+    the audit trail actively misleads.
+
+    Raises 401 rather than falling back. The one exception is the documented
+    ``DASHBOARD_CONTROL_OPEN`` dev mode, which the middleware honours the same
+    way.
+    """
+    identity = (request.headers.get("X-Auth-User") or "").strip()
+    if identity:
+        return identity
+    if not _identity_enforced():
+        return _OPEN_MODE_IDENTITY
+    raise HTTPException(
+        status_code=401,
+        detail=(
+            f"sign in to {action}: this request carried no verified identity, "
+            "and a run may not be started, aborted, or recorded under a "
+            "placeholder."
+        ),
+    )
+
+
 def device_headers(request: Request) -> dict[str, str]:
     """Identity headers for outbound device calls, or empty when unconfigured.
 
@@ -551,8 +604,7 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
 
     # D9: open the Plan before the first step so custody rows can anchor to it.
     # A dry run opens nothing (it is a preflight; `write` files it as a draft
-    # at the end, as before). A record layer that is down at start leaves
-    # `opened: False`, and the close falls back to the end-of-run write.
+    # at the end, as before).
     if state.dry_run:
         state.record = {"opened": False, "reason": "dry_run"}
     else:
@@ -563,6 +615,37 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
         )
     state.emit("record", {k: v for k, v in state.record.items()
                           if k in ("opened", "plan_id", "experiment_id", "reason", "error")})
+
+    # …and a live run does not proceed without it. AGENTIC_LAB_DESIGN Part I
+    # §1.3 makes a registered Plan a *precondition* of execution, alongside the
+    # merge and validate_plan, and §2.1 says why: "if it isn't recorded, it
+    # didn't happen". Until 2026-09-07 `opened` was stored and never read — a
+    # record layer that was down, unconfigured, or that rejected the write left
+    # `opened: False` and the run entered the SDK session anyway, on the theory
+    # that the end-of-run `close` would fall back to writing a record. It does,
+    # but that is a different claim: a record written afterwards cannot
+    # establish that a Plan existed *before* the hardware moved, which is the
+    # whole point of the rule.
+    #
+    # Refused before `connection` is entered, so no claim is taken and no
+    # command is issued. A dry run is exempt because it opens nothing by design
+    # and actuates nothing either.
+    if not state.dry_run and not state.record.get("opened"):
+        why = state.record.get("error") or state.record.get("reason") or "unknown"
+        reason = (
+            "run refused: the BitacoraDB Plan could not be registered before "
+            f"execution ({why}). A live run requires a registered Plan "
+            "(AGENTIC_LAB_DESIGN Part I §1.3); nothing was claimed and no "
+            "command was sent."
+        )
+        logger.error("run %s refused: %s", state.run_id, reason)
+        state.status = "finished"
+        state.result = {"ok": False, "error": reason, "record": state.record}
+        state.emit("done", state.result)
+        await _record_run_event(request, state.authorization_id, outcome="refused",
+                                owner=identity, detail=reason[:300],
+                                duration_s=time.monotonic() - state.started_at)
+        return
 
     async def on_step(step_report) -> None:
         state.emit("step", {
@@ -821,7 +904,16 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
         if recorder is None:
             result = {"recorded": False, "reason": "not_configured"}
         else:
+            # Hash the stable run/step identity to stay within the ledger's
+            # key limit even for long compiled step IDs. A new run is a new fact.
+            from hashlib import sha256
+            import json
+            custody_key = "dashboard:" + sha256(json.dumps([
+                auth.authorization_id, state.run_id, step_report.step_id, hid,
+            ]).encode()).hexdigest()
             result = await recorder.record_move(
+                client_action_id=custody_key,
+                expected_from=state.custody_expected.get(hid),
                 hid=hid, to=to, performed_by=step_report.equipment_id or step_report.role,
                 recorder=state.launched_by, project=auth.project_id,
                 plan_id=plan_id, step_id=step_report.step_id,
@@ -949,7 +1041,7 @@ def build_workflow_router() -> APIRouter:
         reason, not a run_id that dies immediately: nothing may be accepted
         for execution that was not verified first.
         """
-        identity = request.headers.get("X-Auth-User") or "ac-organic-lab-dashboard"
+        identity = launcher_identity(request, action="start a run")
 
         async with httpx.AsyncClient() as client:
             try:
@@ -1059,10 +1151,15 @@ def build_workflow_router() -> APIRouter:
         chamber. The current step finishes (or times out); everything after is
         skipped with the reason on the report.
         """
+        # Identity first: an abort is a write on a live run, and "who stopped
+        # it" is part of the record. It used to be recorded as `unknown` for an
+        # unauthenticated caller, which reads like a system event rather than a
+        # person — and the route accepted it. 401 before 404, so an anonymous
+        # caller cannot probe which run ids exist either.
+        who = launcher_identity(request, action="abort a run")
         state = _RUNS.get(run_id)
         if state is None:
             raise HTTPException(status_code=404, detail=f"no run {run_id!r}")
-        who = request.headers.get("X-Auth-User") or "unknown"
         if state.status != "running":
             return {"run_id": run_id, "status": state.status,
                     "detail": "run already finished; nothing to abort"}

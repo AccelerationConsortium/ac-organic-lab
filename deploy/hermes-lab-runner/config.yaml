@@ -14,7 +14,7 @@
 # mcp/servers.yaml, never a local convenience edit.
 
 model:
-  default: z-ai/glm-5.2
+  default: z-ai/glm-5.3
   provider: openrouter
 
 agent:

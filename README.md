@@ -1,5 +1,9 @@
 # AC Organic Lab
 
+Product direction (2026-09-07): [role as Bitácora's optional lab integration](docs/BITACORA_INTEGRATION_DIRECTION.md).
+This describes future ownership and integration work, not a change to current
+execution permissions or deployed behavior.
+
 Monorepo for the Acceleration Consortium (AC) Organic Self-driving Lab platform stack: the equipment-status contract, the inventory, the Python SDK that workflows and the dashboard share, the dashboard's web server and Next.js UI, the lab's login service, and the lab assistant (read-only Ask mode plus a propose-only Control mode — it never actuates hardware).
 
 The dashboard runs on a single Tailscale-attached server and aggregates status from each lab equipment's REST API into one normalized contract. The browser only ever talks to the dashboard server; the dashboard server is the only client that calls the equipment APIs over the lab Tailnet. Workflow code uses the same SDK directly without going through the dashboard.
@@ -68,11 +72,16 @@ Claude Code, others) work across the lab. Three files, in precedence order:
 Every other repo layers its own `AGENTS.md` / thin `CLAUDE.md` / `AGENT_RULES.md`
 on this base (see [`organic-hte-template`](https://github.com/AccelerationConsortium/organic-hte-template)).
 Durable repo-wide facts go in `AGENTS.md` (git is the source of truth, portable
-to any machine); cross-repo/machine facts go in each agent's own global memory.
+to any machine). Shared product decisions live in their owning repository's
+versioned docs; private machine preferences follow the agent-memory policy.
 
 ## Documentation
 
-All design documents live in [`docs/`](docs/). Start with [`STATUS_SPEC.md`](docs/STATUS_SPEC.md) if you are bringing a new piece of equipment online, and [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) if you want to understand how the platform fits together.
+Lab integration design lives in [`docs/`](docs/). Bitácora product direction lives
+in [bitacora/docs/PRODUCT_DIRECTION.md](../bitacora/docs/PRODUCT_DIRECTION.md),
+and record-layer design is owned by BitacoraDB. Start with
+[`STATUS_SPEC.md`](docs/STATUS_SPEC.md) for device integration and
+[`ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the existing platform.
 
 | Document | What it covers |
 |---|---|

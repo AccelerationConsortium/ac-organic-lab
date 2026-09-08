@@ -1,5 +1,12 @@
 # Database Design — BitacoraDB as the ELN + LIMS record layer
 
+**Product decision, 2026-09-07:**
+[BitacoraDB's record direction](../../BitacoraDB/docs/BITACORA_RECORD_DIRECTION.md)
+places the record layer inside the Bitácora product, with repository consolidation
+undecided. References below to a separate project describe the present repository
+and deployment, not a requirement for separate product installation. Record schema
+ownership remains in BitacoraDB; this file is an integration reference.
+
 > **Status:** design analysis (2026-07-03; consolidated under this name
 > 2026-07-22, formerly `BITACORADB_ELN_LIMS_DESIGN.md`). **Canonical copy:**
 > `BitacoraDB/docs/eln-lims-generalization.md` — edit there; this copy lives

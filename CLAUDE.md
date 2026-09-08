@@ -18,9 +18,10 @@ them unless the human explicitly asks. See `AGENTS.md` §1.
 - **Repo memory dir:**
   `~/.claude/projects/-Users-macbook-m2-Projects-ac-organic-lab/memory/`.
   One fact per file with frontmatter; index each in that dir's `MEMORY.md`.
-  Follow the type rules: `project`/`feedback`/`user`/`reference`. Cross-repo or
-  MacBook-wide facts do **not** go here — propose them for the appropriate
-  global memory instead (`AGENTS.md` §5).
+  Follow the type rules: `project`/`feedback`/`user`/`reference`. Shared product
+  and integration decisions belong in their owning repository's versioned docs,
+  not private agent memory. Machine-wide setup and personal preferences follow
+  the approval-based global-memory policy (`AGENTS.md` §5).
 - **Slash commands / skills** are listed at session start; invoke a skill only
   when it appears in the available list. Don't guess skill names.
 - **Workspace context:** the parent `../CLAUDE.md` is the lab integration

@@ -10,7 +10,7 @@ failed and why.
 
 Three properties this file exists to hold:
 
-1. **A record-write failure never fails the run.** The run is physical and has
+1. **A final record-write failure never erases the physical outcome.** The run is physical and has
    already happened. Raising here would turn "the plate was sealed but we could
    not file the paperwork" into a crashed run, which is a worse lie than a
    missing row. Every path returns a status dict; nothing propagates.
@@ -22,9 +22,9 @@ Three properties this file exists to hold:
    slug is the identity when the protocol carries `design_ref`; a protocol
    without a shared design is still an experiment, identified by its own path.
 
-3. **Disabled unless configured.** No `BITACORADB_URL` means every call is a
-   no-op reporting `not_configured`, so deploying this changes nothing until
-   the deployment opts in.
+3. **Opening the record is required before live execution.** No
+   `BITACORADB_URL` reports `not_configured`; the workflow refuses live
+   execution if opening its Plan fails. Dry runs remain available.
 
 Auth is BitacoraDB's model, matching bitácora's `RecordLayer`: a shared
 `X-Edge-Secret` proves the request came through a trusted front, and
@@ -291,8 +291,8 @@ class RunRecorder:
     # status. A Plan row cannot be edited afterwards (no PATCH), so the final
     # per-step statuses go into one summary Note — which is also the shape the
     # record layer's own semantics want: Plan = intent, Notes = what happened.
-    # `write` stays as the fallback (dry runs, or a record layer that was down
-    # at start) so a run is filed the old way rather than not at all.
+    # `write` remains a compatibility filing path. The live workflow refuses
+    # execution when opening the Plan fails; it cannot bypass that gate.
 
     async def open(
         self, *, plan: dict[str, Any], design_ref: str | None,

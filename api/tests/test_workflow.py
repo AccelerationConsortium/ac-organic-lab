@@ -499,6 +499,11 @@ def _fake_auth(**over):
     return a
 
 
+#: Every workflow mutation needs a verified identity since 2026-09-07 — the
+#: middleware injects it in production; the rigs supply it here.
+OPERATOR = {"X-Auth-User": "op@utoronto.ca"}
+
+
 @_pytest.fixture
 def run_rig(monkeypatch):
     from app.main import app
@@ -521,6 +526,17 @@ def run_rig(monkeypatch):
 
     monkeypatch.setattr(wf, "fetch_authorization", fake_fetch)
     monkeypatch.setattr(wf, "lab_session", lambda request, a: _Conn())
+
+    # A live run needs a registered BitacoraDB Plan before it may execute
+    # (AGENTIC_LAB_DESIGN Part I §1.3, enforced since 2026-09-07). There is no
+    # record layer in this rig, so stand one in — otherwise every live-run test
+    # here would be exercising the refusal rather than what it means to test.
+    # `test_a_run_without_a_registered_plan_never_reaches_the_executor` below
+    # covers the refusal on purpose.
+    async def fake_open(*, plan, design_ref, operator, started_at):
+        return {"opened": True, "plan_id": "pl_test", "experiment_id": "ex_test"}
+
+    monkeypatch.setattr(wf, "open_run_record", fake_open)
 
     finished = _asyncio.Event()
 
@@ -592,6 +608,168 @@ def test_a_refusal_is_still_a_409_not_a_doomed_run_id(run_rig):
     assert r.status_code == 409
     assert "ra_nope" in r.json()["detail"]
     assert wf._RUNS == {}  # nothing was accepted for execution
+
+
+# ── 2026-09-07 safety review: findings 1 and 2 ──────────────────────────────
+
+
+def _never_runs():
+    """An executor that fails the test if it is ever reached."""
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        raise AssertionError("execute_plan was reached; nothing should have run")
+    return fake_exec
+
+
+@_pytest.mark.parametrize("headers", [None, {"X-Auth-User": "   "}])
+def test_starting_a_run_without_a_verified_identity_is_refused(run_rig, headers):
+    """Finding 1, the reproduction.
+
+    `/api/workflow/*` was missing from the Next.js middleware matcher, and the
+    backend read `X-Auth-User` with an `or "ac-organic-lab-dashboard"` fallback
+    — so anyone who could reach the dashboard API and knew an authorization id
+    could start a run on live hardware, with the placeholder standing in for
+    them in the run record and the audit row.
+    """
+    client, wf, auth, install, finished = run_rig
+    install(_never_runs())
+
+    r = client.post("/api/workflow/runs",
+                    json={"authorization_id": auth.authorization_id},
+                    **({"headers": headers} if headers else {}))
+
+    assert r.status_code == 401
+    assert "verified identity" in r.json()["detail"]
+    assert wf._RUNS == {}          # nothing was accepted for execution
+
+
+def test_a_run_is_attributed_to_whoever_the_edge_verified(run_rig):
+    """The other half: a supplied identity is used, and it is the one the
+    middleware injected — the client's own header is stripped before it gets
+    here (`web/src/middleware.ts`), which is why this may be believed."""
+    client, wf, auth, install, finished = run_rig
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        assert owner == "op@utoronto.ca"      # the SDK claims under it too
+        return _FakeRunReport([])
+
+    install(fake_exec)
+    r = client.post("/api/workflow/runs",
+                    json={"authorization_id": auth.authorization_id},
+                    headers=OPERATOR)
+    assert r.status_code == 202
+    assert wf._RUNS[r.json()["run_id"]].launched_by == "op@utoronto.ca"
+
+
+def test_aborting_without_a_verified_identity_is_refused(run_rig):
+    """An abort interferes with a run in flight, and "who stopped it" is part
+    of the record — it used to be accepted anonymously and filed as
+    `unknown`. 401 lands before the 404, so an anonymous caller cannot probe
+    which run ids exist either."""
+    client, wf, auth, install, finished = run_rig
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        await on_step(_step_report("home_gantry"))
+        return _FakeRunReport([_step_report("home_gantry")])
+
+    install(fake_exec)
+    run_id = client.post("/api/workflow/runs",
+                         json={"authorization_id": auth.authorization_id},
+                         headers=OPERATOR).json()["run_id"]
+
+    r = client.post(f"/api/workflow/runs/{run_id}/abort")
+    assert r.status_code == 401
+    assert wf._RUNS[run_id].abort_requested is None
+
+    assert client.post("/api/workflow/runs/run_nope/abort").status_code == 401
+
+
+def test_the_open_dev_mode_still_works(run_rig, monkeypatch):
+    """`DASHBOARD_CONTROL_OPEN=true` is the documented local-dev posture, and
+    the middleware honours it by stripping identity and injecting nothing — so
+    refusing here would make the open mode unusable rather than open."""
+    client, wf, auth, install, finished = run_rig
+    monkeypatch.setenv("DASHBOARD_CONTROL_OPEN", "true")
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        return _FakeRunReport([])
+
+    install(fake_exec)
+    r = client.post("/api/workflow/runs", json={"authorization_id": auth.authorization_id})
+    assert r.status_code == 202
+    assert wf._RUNS[r.json()["run_id"]].launched_by == "ac-organic-lab-dashboard"
+
+
+@_pytest.mark.parametrize(
+    "record, why",
+    [
+        ({"opened": False, "reason": "not_configured"}, "not_configured"),
+        ({"opened": False, "error": "502 from BitacoraDB"}, "502 from BitacoraDB"),
+        ({}, "unknown"),
+    ],
+)
+def test_a_run_without_a_registered_plan_never_reaches_the_executor(
+    run_rig, monkeypatch, record, why
+):
+    """Finding 2, the reproduction.
+
+    `open_run_record`'s verdict was stored on the run and never read: a record
+    layer that was down, unconfigured, or that rejected the write left
+    `opened: False`, and the run entered the SDK session anyway. AGENTIC_LAB_
+    DESIGN Part I §1.3 makes a registered Plan a precondition of execution, and
+    the end-of-run fallback write cannot satisfy it — a record written
+    afterwards does not establish that a Plan existed before the hardware moved.
+    """
+    client, wf, auth, install, finished = run_rig
+
+    async def fake_open(*, plan, design_ref, operator, started_at):
+        return dict(record)
+
+    monkeypatch.setattr(wf, "open_run_record", fake_open)
+    install(_never_runs())
+
+    r = client.post("/api/workflow/runs",
+                    json={"authorization_id": auth.authorization_id},
+                    headers=OPERATOR)
+    assert r.status_code == 202      # the gates that refuse inline already passed
+    run_id = r.json()["run_id"]
+
+    for _ in range(50):
+        got = client.get(f"/api/workflow/runs/{run_id}").json()
+        if got["status"] == "finished":
+            break
+    assert got["status"] == "finished"
+    assert got["result"]["ok"] is False
+    assert "Plan could not be registered" in got["result"]["error"]
+    assert why in got["result"]["error"]
+    # And the executor was never called — `_never_runs` would have raised.
+
+
+def test_a_dry_run_is_exempt_from_the_registered_plan_gate(run_rig, monkeypatch):
+    """A dry run opens no Plan by design and actuates nothing, so requiring one
+    would only stop people preflighting."""
+    client, wf, auth, install, finished = run_rig
+    ran = []
+
+    async def fake_exec(plan, session, *, owner, dry_run, gate, on_step):
+        ran.append(dry_run)
+        return _FakeRunReport([], dry_run=True)
+
+    async def fake_open(*, plan, design_ref, operator, started_at):
+        raise AssertionError("a dry run must not open a Plan")
+
+    monkeypatch.setattr(wf, "open_run_record", fake_open)
+    install(fake_exec)
+
+    r = client.post("/api/workflow/runs",
+                    json={"authorization_id": auth.authorization_id, "dry_run": True},
+                    headers=OPERATOR)
+    assert r.status_code == 202
+    for _ in range(50):
+        got = client.get(f"/api/workflow/runs/{r.json()['run_id']}").json()
+        if got["status"] == "finished":
+            break
+    assert got["result"]["ok"] is True
+    assert ran == [True]
 
 
 def test_the_event_stream_replays_from_the_start_and_ends_on_done(run_rig):
@@ -767,7 +945,8 @@ def _custody_rig(run_rig, monkeypatch, statuses, *, dry_run=False, aggregator=No
         return _FakeRunReport(reports, ok=all(s == "succeeded" for s in statuses))
 
     install(fake_exec)
-    r = client.post("/api/workflow/runs", json={"authorization_id": cauth.authorization_id, "dry_run": dry_run})
+    r = client.post("/api/workflow/runs", json={"authorization_id": cauth.authorization_id, "dry_run": dry_run},
+                    headers=OPERATOR)
     assert r.status_code == 202, r.text
     run_id = r.json()["run_id"]
     # drain the event stream (ends on `done`)
@@ -942,7 +1121,8 @@ def _preflight_rig(run_rig, monkeypatch, ledger, statuses, *,
 
     install(fake_exec)
     r = client.post("/api/workflow/runs",
-                    json={"authorization_id": cauth.authorization_id, "dry_run": dry_run})
+                    json={"authorization_id": cauth.authorization_id, "dry_run": dry_run},
+                    headers=OPERATOR)
     assert r.status_code == 202, r.text
     events = []
     with client.stream("GET", f"/api/workflow/runs/{r.json()['run_id']}/events") as resp:
@@ -1166,7 +1346,8 @@ def _lineage_rig(run_rig, monkeypatch, statuses, *, dry_run=False,
 
     install(fake_exec)
     r = client.post("/api/workflow/runs",
-                    json={"authorization_id": lauth.authorization_id, "dry_run": dry_run})
+                    json={"authorization_id": lauth.authorization_id, "dry_run": dry_run},
+                    headers=OPERATOR)
     assert r.status_code == 202, r.text
     events = []
     with client.stream("GET", f"/api/workflow/runs/{r.json()['run_id']}/events") as resp:

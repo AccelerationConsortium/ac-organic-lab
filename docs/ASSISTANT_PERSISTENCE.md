@@ -1,5 +1,14 @@
 # Assistant modes — temporary Control and saved Plan work
 
+> **Product-direction update, 2026-09-07:**
+> [BITACORA_INTEGRATION_DIRECTION.md](BITACORA_INTEGRATION_DIRECTION.md) supersedes
+> dashboard ownership of a future scientific planning lifecycle. Scientific drafts
+> and review belong to Bitácora; this assistant remains a convenient entry point.
+> Existing saved sessions, scope checks, retention, and inert restoration remain
+> implemented behavior. Preserve them until a reviewed migration. The historical
+> sandbox/import sequence below is not the current product roadmap. No routine
+> control exception or expanded agent access is approved by this update.
+
 **Status: revised proposal (2026-09-06).** The user chose convenient temporary
 Control sessions plus a separate mode for saved planning. The routine-action
 scope and binding-contract amendment in §2 still need a human decision; this
@@ -38,7 +47,13 @@ its existing stop boundary before changing sessions.
 
 ## 1. Decisions
 
-### D-1 — Saved planning sessions belong to the dashboard service
+### D-1 — Existing session storage; future scientific ownership superseded
+
+The following describes existing assistant.db storage, which remains supported.
+Future scientific planning uses Bitácora ownership through a scoped integration;
+it must not acquire a second authoritative protocol/idea lifecycle here. Explicit
+capture preserves selected ideas before conversation retention expires. Storage
+migration and compatibility remain to be designed.
 
 Use assistant.db, owned by api/, with SQLite WAL, serialized writes, migrations,
 and bounded retention. Keep it separate from public lab.db telemetry and
@@ -293,6 +308,11 @@ remains visible without changing the reported physical outcome.
 
 The routine-action exception, sandbox provisioning, and protocol handoff
 remain proposed. Part I is unchanged.
+
+**Historical release sequence:** retained for implementation provenance. Future
+work follows BITACORA_INTEGRATION_DIRECTION: connector design, interrupted-run
+recording, and scoped scientific capture. Items 3–5 below are not authorization
+to implement an execution exception or an independent dashboard planning product.
 
 1. **Temporary convenience:** truthful notice, Markdown/JSON downloads,
    identity-scoped browser caches, and completion-report sizing. No expansion

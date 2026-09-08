@@ -43,6 +43,18 @@ just the short list agents most often need):
 
 ## 2. Repo layout & sources of truth
 
+Product ownership follows [`docs/BITACORA_INTEGRATION_DIRECTION.md`](docs/BITACORA_INTEGRATION_DIRECTION.md)
+and the canonical [`Bitácora product direction`](../bitacora/docs/PRODUCT_DIRECTION.md).
+This repo owns laboratory operation and is a target optional connector for the
+standalone Bitácora product. Scientific drafting belongs to Bitácora; experimental
+evidence and the target materials ledger belong to BitacoraDB. Keep the convenient
+dashboard assistant, but delegate scientific capture rather than build a second
+scientific planning lifecycle. Current saved sessions remain supported until an
+explicit migration. Hermes operations and the dashboard's CLI/API backends are
+distinct integrations; no provider migration or broader Hermes access is implied.
+Software recovery never establishes whether a physical action happened. Preserve
+uncertainty and reconcile before repeating an ambiguous hardware action.
+
 Monorepo layering (data flows left to right; details in `README.md` /
 `docs/ARCHITECTURE.md`):
 
@@ -94,6 +106,10 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
 
 ## 4. Recurring pitfalls (project-specific)
 
+- **The dashboard supports plain HTTP Tailnet URLs.** Browser message IDs
+  must use `web/src/lib/random-id.ts`: `crypto.randomUUID()` requires a secure
+  context and can fail before a chat request is sent. The helper falls back
+  to `crypto.getRandomValues()`, which is available on HTTP.
 - **Single-PC concentration:** xArm (8000), PlateLoc (8010), both OT-2
   gateways (8020/8021), shaker (8030), Cytation 5 (8040), BioStack (8050),
   and hostops (8060) all live on `sdl2-pc-03-cytation`. One reboot takes out
@@ -163,10 +179,13 @@ agents stay on the same page.
   Nothing another agent needs belongs here.
 - **`docs/AGENTIC_LAB_DESIGN.md` Part I** — the binding contract; only changes
   when a human explicitly asks. Never edit it to smooth over a working problem.
-- **Cross-repo / MacBook-wide facts** (repo roles, stable machine setup, durable
-  personal preferences) belong in the **agent's global memory** (Hermes memory,
-  Codex `~/.codex/memories/`, Claude user memory) — *proposed for approval*,
-  not silently written. Do not put cross-repo facts in this repo.
+- **Shared product and integration decisions** belong in versioned repository
+  docs with one canonical owner and links from affected repos. Product direction
+  lives in bitacora; laboratory integration implications live here; record-layer
+  implications live in BitacoraDB. Do not make private agent memory their authority.
+- **Machine-wide setup and personal preferences** belong in the agent's global
+  memory (Hermes memory, Codex `~/.codex/memories/`, Claude user memory) — proposed
+  for approval, not silently written. Keep machine-specific facts out of product docs.
 - **Never** put temporary debugging notes, stale TODOs, or one-off observations
   into any memory or instruction file.
 

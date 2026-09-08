@@ -1,5 +1,12 @@
 # AC Organic Self-driving Lab — Architecture
 
+**Target boundary, 2026-09-07:** This document describes the existing lab stack.
+[BITACORA_INTEGRATION_DIRECTION.md](BITACORA_INTEGRATION_DIRECTION.md) governs
+its future integration with the standalone Bitácora product. Scientific planning
+belongs to Bitácora, experimental evidence and the target materials ledger to
+BitacoraDB, and physical execution to this lab. Equipment inventory remains lab
+configuration; it is distinct from the product's chemical stock ledger.
+
 **Status:** living document. Last revised to record the `AGENTS.md`-based agent memory policy (design decision #11).
 
 This document describes the long-term architecture of the AC Organic Self-driving Lab software stack — what each piece is for, why it exists, and how the pieces fit together. For step-by-step implementation milestones see the working plan in `.cursor/plans/`.
