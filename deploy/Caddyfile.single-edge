@@ -380,6 +380,21 @@ http://100.64.254.6 {
 		reverse_proxy 100.64.254.6:8007
 	}
 
+	# Private standalone beta: the dashboard verifies the cookie and exact
+	# server-configured tester account. All paths, assets and writes are gated.
+	# Fail closed when the tester is unset or either auth service is unavailable.
+	@bitacora_beta path /bitacora-beta /bitacora-beta/*
+	handle @bitacora_beta {
+		route {
+			forward_auth 100.64.254.6:8000 {
+				uri /api/admin/bitacora-beta
+				copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
+			}
+			header Cache-Control "private, no-store"
+			reverse_proxy 127.0.0.1:13001
+		}
+	}
+
 	# ---- bitacora (agentic ELN), path-routed ONTO this origin ---------------
 	# The ELN is a separate Next.js app on :3001, framed by the dashboard's
 	# /workflows tab. It is built with `basePath: /bitacora` and proxies

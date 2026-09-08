@@ -85,6 +85,12 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
 - **Environment: `uv`.** This is a uv virtual workspace (`skills/`, `api/`,
   `auth/` are members sharing one root `.venv/`). Use `uv sync` to set up,
   `uv run …` to execute.
+- **Private Bitácora beta access** uses the cookie-only
+  `/api/admin/bitacora-beta` verifier and server-side tester allowlist. Caddy
+  gates the entire beta prefix through it; link visibility is not access
+  control. Never replace this with an admin-role-only check. See
+  docs/BITACORA_PRIVATE_BETA.md. Apply edge patches to the current configuration
+  without discarding unrelated installed routes or TLS settings.
 - **Python tests:** `uv run pytest skills/tests api/tests` (or a single path).
   `asyncio_mode = "auto"`; add `-m 'not integration'` to skip hardware-touching
   tests.
