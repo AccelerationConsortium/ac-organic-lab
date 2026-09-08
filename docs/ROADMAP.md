@@ -264,8 +264,9 @@ identifiers and the `Thermostat.HeatCool` argument order are checked for real.
 Registered as `kind: other` (no `reactor` kind in the spec yet) with
 `gateway_fronted: true`.
 
-**Deployed and verified 2026-09-06** on the LLE PC as NSSM `mt-easymax` on
-:8082 (auto-start, no SCM dependency, whitelisted in that PC's
+**Deployed and verified 2026-09-06**, and again 2026-09-07 (`6debd9f`) and
+2026-09-08 (`b7e3c22`, `5587831` — see the acceptance-test entry below), on the
+LLE PC as NSSM `mt-easymax` on :8082 (auto-start, no SCM dependency, whitelisted in that PC's
 `sdl-lab-hostops`). The repo is **private**, and that PC has GitHub auth for
 nothing — both repos already checked out there are public — so the tree was
 copied from gaia over SSH at the pushed commit rather than planting a
@@ -300,23 +301,69 @@ Fixed in `b4820bc` with regression tests driven from the exact status code the
 instrument returned; the fleet lesson — browse `InputArguments` before trusting
 any document — is in that repo's `AGENTS.md`.
 
-Current tile state: `unknown` / `unknown`, both zones and all subdevices
-discovered, `last_error: null`, claims hard-enforced (a tokenless control POST
-returns 423, verified from gaia). It will stay `unknown` until the reactor is
-powered on, which is the honest answer and worth contrasting with the
-monitoring-only tile it replaces — that one reads `ready`, because the OPC UA
-endpoint is listening, while the reactor is off.
+**Reactor powered on 2026-09-08 — the acceptance test, and what it caught.**
+Until this session the service had never observed a running reactor: every
+v1.2 claim in it was proven against the mock only. Sixty seconds after
+power-on it was reporting `unknown` on a *healthy* instrument — `errors_active:
+0`, both zones reading Tr/Tj — and would have done so permanently on this
+bench. Because the registry marks this device `gateway_fronted`, §2.1 renders
+that as **unreachable**: the tile would have claimed the reactor was offline
+while it ran a reaction, strictly worse than the monitoring-only tile it
+replaced. Two independent causes, neither reachable with the instrument off
+(everything returns `BadNoDataAvailable` then), both fixed in `b7e3c22`:
 
-Open items: `lle_easymax` still points at `process-chem-monitor` :8070 (the
-swap also drops that device from the monitor's `config.toml` rather than
-polling the reactor twice); `automated-lle` holds its own OPC UA session to the
-same server and does not participate in claims, so a claim here excludes only
-dashboard / `lab-skills` writers; `[limits]` carries EasyMax 102 defaults that
-want confirming against this instrument; whether the RDS's always-present
-`DosingUnit1-4` / `AutoSampler1-2` nodes distinguish installed hardware from
-absent can only be learned with the reactor powered on. Mettler's users guide
-is confidential and is deliberately not vendored — only the interface facts are
-encoded in the client.
+1. **`DosingState` does not speak the stirrer's vocabulary.** It is a String
+   reporting `Init` at rest, run through the `off`/`on`/`ramp` normaliser, so
+   every *fitted* dosing unit mapped to `unknown`, the readback was never
+   `determinate`, `activity` could only be `unknown`, and the §2.2 health word
+   could never resolve. One unrecognised enum value, four layers up.
+2. **The vendor's `Acutal` typo is not in this firmware.** That node returns
+   `BadNodeIdUnknown`; the real one is `Actual`. The fallback was working, but
+   the primary's failure was still recorded, so every poll published a false
+   `readback_errors` entry — 28 of them.
+
+**Subdevice presence, measured** (this is the open question below, answered):
+dosing units **1–2 are fitted** (real values, `DosingState: Init`), units 3–4
+and **both samplers are absent** (nothing answers). Powered off, the two are
+indistinguishable, so this is a bench fact and now lives in `config.toml` —
+`max_dosing_units` / `max_samplers` describe what is *installed*, not a probe
+ceiling, because an invented slot never answers and blocks `determinate`
+forever.
+
+**A third naming trap, documented:** `Thermostat.EndValue` carries the *moving*
+ramp setpoint, not the final target (24.10 → 24.83 → 25.50 over 40 s on a
+2 K/min ramp, settling at 30.00 on arrival). So `target_error` is tracking
+error against the commanded trajectory, and the arrival test is the observed
+state leaving `ramp` for `on` — never `end_value_c == target`. After `Acutal`
+and `TjMinusTr`, the rule in that repo's `AGENTS.md` is now simply: assume
+nothing on this instrument is named for what it holds.
+
+**What the acceptance test proved** (all on hardware, all previously mock-only):
+`activity` observed on **both** axes — stirrer and thermostat, each with the
+other switched off, and neither commanded by this service; `activity_since`
+stamped at real transition instants, one of them *earlier* than the poll that
+reported it; `busy ≡ healthy + running` and `ready ⇒ idle`; the stability dwell
+flipping at exactly 30 s, resetting when the target moves, and holding 4.7 min
+at **±0.5 °C** without chatter; `metrics["cycles_total"]` catching a **21 s**
+stir span, shorter than the dashboard's 60 s poll and exactly the case §2.3.1
+exists for; the full claim → control → release write path; and a service
+restart *mid-stir* returning `busy`/`running` by reading the instrument rather
+than assuming. The `Thermostat.TrMinusTj` **reading** is also confirmed
+(−6.85 K driving a ramp, −0.29 K holding at setpoint) — the `Reflux`/`Distill`
+**argument** of the opposite convention remains unexercised.
+
+Open items: `automated-lle` holds its own OPC UA session to the same server and
+does not participate in claims, so a claim here excludes only dashboard /
+`lab-skills` writers; `[limits]` still carries **unverified** EasyMax 102
+defaults — the 2026-09-08 ramp confirmed a normal setpoint and a 2 K/min ramp
+work, but −40…180 °C and ≤ 10 K/min need the instrument's spec plate, not a
+vial of water; the secure channel drops roughly every **12 h 45 m** with a
+token whose expiry stamps a date over a year in the past
+(`Security token id 17 has timed out (2025-01-15 …)`), which the recovery loop
+reopens in ~3 s unattended but which nobody has explained; and `git pull` on
+that PC still does not work (see the private-repo note above). Mettler's users
+guide is confidential and is deliberately not vendored — only the interface
+facts are encoded in the client.
 
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and
