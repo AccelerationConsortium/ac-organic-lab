@@ -266,6 +266,18 @@ async function openPanel() {
 }
 
 describe("temporary assistant conversations", () => {
+  it("sends and renders a reply when HTTP provides no crypto.randomUUID", async () => {
+    vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto) });
+    const fetchMock = installFetch([
+      'data: {"type":"text","delta":"Chat is working"}\n\n',
+      'data: {"type":"done"}\n\n',
+    ]);
+    await openPanel();
+    await send("hello");
+    expect(await screen.findByText("Chat is working")).toBeTruthy();
+    expect(sessionCalls(fetchMock, "POST", /\/api\/assistant\/chat$/)).toHaveLength(1);
+  });
+
   async function send(text: string) {
     const box = screen.getByRole("textbox");
     fireEvent.change(box, { target: { value: text } });
@@ -1107,6 +1119,8 @@ describe("AssistantBubble plan mode (saved sessions)", () => {
   });
 
   it("opens the picker on an empty chat; a new session unlocks the composer and turns post to it", async () => {
+    // Saved turns also need request IDs on plain HTTP dashboard origins.
+    vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto) });
     const fetchMock = installFetch(PLAN_REPLY);
     await openPanel();
     fireEvent.click(screen.getByRole("button", { name: "Plan" }));

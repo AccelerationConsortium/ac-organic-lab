@@ -128,7 +128,7 @@ async def test_record_move_resolves_name_and_hid_then_posts_one_row():
     assert post.calls.last.request.headers["X-Auth-Projects"] == "chanlam"
     # second move of the same plate reuses the resolutions (cached)
     await rec.record_move(hid="PLT-1", to="ot2_hte/slot_2", performed_by="h", recorder="me@lab")
-    assert respx.calls.call_count == 4   # 2 GETs + 2 POSTs, not 6
+    assert respx.calls.call_count == 5   # fresh plate location, cached destination
 
 
 @respx.mock
@@ -247,3 +247,36 @@ def test_front_door_maps_recorder_outcomes_to_http(monkeypatch):
         assert client.post("/api/custody/move", json={"hid": "PLT-1", "to": "bench/hte_staging"}, headers={"X-Auth-User": "u"}).status_code == 422
     with TestClient(_app(monkeypatch, None)) as client:
         assert client.post("/api/custody/move", json={"hid": "PLT-1", "to": "bench/hte_staging"}, headers={"X-Auth-User": "u"}).status_code == 503
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_move_retries_lost_response_with_identical_request_and_expected_location():
+    import json
+    respx.get(f"{BASE}/containers").mock(return_value=httpx.Response(200, json=[{"container_id": "c1", "location_id": "changed"}]))
+    def locations(request):
+        name = request.url.params["name"]
+        return httpx.Response(200, json=[{"location_id": {"from": "l0", "to": "l1"}[name]}])
+    respx.get(f"{BASE}/locations").mock(side_effect=locations)
+    post = respx.post(f"{BASE}/container-actions").mock(side_effect=[
+        httpx.ReadTimeout("response lost"), httpx.Response(200, json={"action_id": "original"})])
+    result = await CustodyRecorder(BASE, "s").record_move(
+        hid="plate", to="to", performed_by="device", recorder="u", expected_from="from",
+        client_action_id="auth:run:step:plate")
+    assert result["recorded"] is True and result["action_id"] == "original"
+    first, second = [json.loads(call.request.content) for call in post.calls]
+    assert first == second
+    assert first["expected_location_id"] == "l0", "use the run expectation, not the later cache"
+    assert first["client_action_id"] == "auth:run:step:plate"
+
+
+@respx.mock
+@pytest.mark.anyio
+@pytest.mark.parametrize("status,attempts,uncertain", [(409, 1, False), (502, 2, True)])
+async def test_move_distinguishes_conflict_from_uncertain_failure(status, attempts, uncertain):
+    respx.get(f"{BASE}/containers").mock(return_value=httpx.Response(200, json=[{"container_id": "c1"}]))
+    respx.get(f"{BASE}/locations").mock(return_value=httpx.Response(200, json=[{"location_id": "l1"}]))
+    post = respx.post(f"{BASE}/container-actions").mock(return_value=httpx.Response(status, text="refused"))
+    result = await CustodyRecorder(BASE, "s").record_move(hid="p", to="t", performed_by="d", recorder="u")
+    assert result["recorded"] is False and result["uncertain"] is uncertain
+    assert post.call_count == attempts

@@ -185,6 +185,8 @@ def reconcile(expected_hid: str, observation: Observation) -> Verdict:
 # ── the recorder (record-layer client; never raises) ─────────────────────
 
 
+_UNSET_LOCATION = object()
+
 @dataclass
 class CustodyRecorder:
     """The few record-layer calls custody needs. One instance per run (or per
@@ -351,6 +353,7 @@ class CustodyRecorder:
         project: str | None = None, plan_id: str | None = None,
         step_id: str | None = None, observed: Observation | None = None,
         params: dict[str, Any] | None = None,
+        client_action_id: str | None = None, expected_from: str | None | object = _UNSET_LOCATION,
     ) -> dict[str, Any]:
         """One ``move`` row: container ``hid`` is now at place ``to``.
 
@@ -358,15 +361,29 @@ class CustodyRecorder:
         or ``{"recorded": False, "reason": …}``; never raises. ``step_id`` is
         only sent with a ``plan_id`` (the ledger refuses a dangling step).
         """
+        write_started = False
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                row = await self.resolve_container(client, hid, user=recorder, project=project)
+                row = await self.resolve_container(client, hid, user=recorder, project=project,
+                                                   refresh=expected_from is _UNSET_LOCATION)
                 if row is None:
                     return {"recorded": False, "reason": "unknown_container", "hid": hid}
                 location_id = await self.resolve_location(client, to, user=recorder, project=project)
                 if location_id is None:
                     return {"recorded": False, "reason": "unknown_location", "to": to}
+                if expected_from is _UNSET_LOCATION:
+                    expected_id = row.get("location_id")
+                elif expected_from is None:
+                    expected_id = None
+                else:
+                    expected_id = await self.resolve_location(client, expected_from,
+                                                              user=recorder, project=project)
+                    if expected_id is None:
+                        return {"recorded": False, "reason": "unknown_expected_location"}
+                from uuid import uuid4
                 body: dict[str, Any] = {
+                    "client_action_id": client_action_id or f"dashboard:bench:{uuid4().hex}",
+                    "expected_location_id": expected_id,
                     "action_type": "move",
                     "target_container_id": row["container_id"],
                     "to_location_id": location_id,
@@ -383,17 +400,31 @@ class CustodyRecorder:
                     body["params"]["step_id"] = step_id  # no plan to anchor into (yet)
                 if project:
                     body["project"] = project
-                r = await client.post(f"{self.base_url}/container-actions",
-                                      headers=self._headers(recorder, project), json=body)
+                # Only the ledger POST is retried, never the physical step.
+                # Both attempts send identical ids, expected state and payload.
+                write_started = True
+                for attempt in range(2):
+                    try:
+                        r = await client.post(f"{self.base_url}/container-actions",
+                                              headers=self._headers(recorder, project), json=body)
+                    except httpx.TransportError:
+                        if attempt:
+                            raise
+                        continue
+                    if r.status_code < 500 or attempt:
+                        break
                 if r.status_code >= 400:
                     return {"recorded": False, "reason": f"http_{r.status_code}",
-                            "detail": r.text[:300]}
+                            "detail": r.text[:300], "uncertain": r.status_code >= 500}
                 out = r.json()
+                if not out.get("action_id"):
+                    raise ValueError("record layer returned no action_id")
                 return {"recorded": True, "action_id": out.get("action_id"),
                         "container_id": row["container_id"], "to_location_id": location_id}
         except Exception as exc:  # noqa: BLE001 — property 1
             logger.warning("custody move not recorded (%s → %s): %s", hid, to, exc)
-            return {"recorded": False, "reason": "unreachable", "detail": str(exc)[:300]}
+            return {"recorded": False, "reason": "unreachable", "detail": str(exc)[:300],
+                    "uncertain": write_started}
 
     async def current_location(self, hid: str, *, user: str,
                                project: str | None = None,

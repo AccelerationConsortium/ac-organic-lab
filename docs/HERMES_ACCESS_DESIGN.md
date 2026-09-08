@@ -1,5 +1,12 @@
 # Hermes access design — a platform agent, not a science agent
 
+**Product-direction clarification, 2026-09-07:** The operational identity and
+access restrictions below remain in force. Keeping a convenient lab assistant
+does not grant this principal scientific access. Future scientific capture is
+a scoped Bitácora operation under verified authority, as described in
+[BITACORA_INTEGRATION_DIRECTION.md](BITACORA_INTEGRATION_DIRECTION.md).
+No provider migration or wider unattended-agent permissions are selected.
+
 **Status:** design note, 2026-08-09. Phase 2 (the edge-path policy) is
 **implemented** in `auth/`; **Phases 0 and 1 are implemented 2026-08-12** —
 the `hermes` OS user (record at the end of its section) and the

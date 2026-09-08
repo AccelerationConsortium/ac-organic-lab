@@ -1,5 +1,14 @@
 # Agentic ELN — Design
 
+**Product scope updated 2026-09-07:** The canonical target is
+[Bitácora product direction](../../bitacora/docs/PRODUCT_DIRECTION.md): an
+AI-native ELN, LIMS, and inventory product with an integrated record layer,
+manual workflows, and optional lab connectors. The assembly narrative and
+mandatory sibling-SDK coupling below are historical implementation context,
+not target product dependencies. Existing scientific review, identity, and
+hardware authorization gates remain in force. New product decisions live in
+Bitácora; this document retains the lab integration design.
+
 **Status:** consolidated design (2026-07-22). Architecture reviewed against the
 binding contracts; **not itself part of the lab contract.** This document
 merges the former `AGENTIC_ELN_ASSESSMENT.md` (the why, the landscape, the

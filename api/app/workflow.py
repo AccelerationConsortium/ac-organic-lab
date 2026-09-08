@@ -904,7 +904,16 @@ async def custody_after_step(state: RunState, request: Request, auth: Authorizat
         if recorder is None:
             result = {"recorded": False, "reason": "not_configured"}
         else:
+            # Hash the stable run/step identity to stay within the ledger's
+            # key limit even for long compiled step IDs. A new run is a new fact.
+            from hashlib import sha256
+            import json
+            custody_key = "dashboard:" + sha256(json.dumps([
+                auth.authorization_id, state.run_id, step_report.step_id, hid,
+            ]).encode()).hexdigest()
             result = await recorder.record_move(
+                client_action_id=custody_key,
+                expected_from=state.custody_expected.get(hid),
                 hid=hid, to=to, performed_by=step_report.equipment_id or step_report.role,
                 recorder=state.launched_by, project=auth.project_id,
                 plan_id=plan_id, step_id=step_report.step_id,

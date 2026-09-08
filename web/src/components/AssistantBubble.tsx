@@ -10,6 +10,7 @@ import {
   type AssistantPlanStepResult,
 } from "@/lib/api";
 import { speakableFromMarkdown } from "@/lib/speech";
+import { randomId } from "@/lib/random-id";
 import { useVoiceInput } from "@/lib/use-voice-input";
 import { useUserAuth } from "@/lib/user-auth";
 import { downloadConversation, type ControlHistoryEvent } from "@/lib/assistant-transcript";
@@ -1153,11 +1154,11 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
       setAuthorizeResult(null);
       setAuthorizeResponse(null);
 
-      const turnId = crypto.randomUUID();
+      const turnId = randomId();
       activeTurnIdRef.current = turnId;
       const nextTurns: ChatTurn[] = [
         ...turns,
-        { id: crypto.randomUUID(), role: "user", text: trimmed, tools: [], mode, completion: "completed" },
+        { id: randomId(), role: "user", text: trimmed, tools: [], mode, completion: "completed" },
         { id: turnId, role: "assistant", text: "", tools: [], mode, completion: "streaming" },
       ];
       setTurns(nextTurns);
@@ -1184,7 +1185,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
               ? // The server rebuilds context from the session; this tab
                 // sends only its new text and an idempotency key (a retry
                 // replays the stored turn instead of running it twice).
-                { request_id: crypto.randomUUID(), text: trimmed }
+                { request_id: randomId(), text: trimmed }
               : {
                   mode,
                   conversation_owner: owner,
