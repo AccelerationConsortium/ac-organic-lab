@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     for (const name of ["X-Auth-User", "X-Auth-Role", "X-Auth-Projects", "X-Auth-Pi-Projects"]) {
       headers.set(name, verified.headers.get(name) ?? "");
     }
-    return NextResponse.json({ href: "/bitacora-beta", label: "Bitácora Beta" }, { headers });
+    return NextResponse.json({ href: "/bitacora-beta", label: "Bitácora Beta", user }, { headers });
   } catch {
     return deny(503);
   }

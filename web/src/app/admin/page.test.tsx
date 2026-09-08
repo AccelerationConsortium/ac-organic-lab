@@ -207,12 +207,18 @@ afterEach(() => {
 
 describe("AdminPage", () => {
   it("shows the private beta link only after the server permits access", async () => {
-    bodies["/api/admin/bitacora-beta"] = { href: "/bitacora-beta", label: "Bitácora Beta" };
+    bodies["/api/admin/bitacora-beta"] = { href: "/bitacora-beta", label: "Bitácora Beta", user: "yang@lab.ca" };
     renderPage();
     const link = await screen.findByRole("link", { name: "Open Bitácora Beta" });
     expect(link.getAttribute("href")).toBe("/bitacora-beta");
   });
   it("does not advertise beta to an admin without beta access", async () => {
+    renderPage();
+    await screen.findByText("Accounts & Activities");
+    expect(screen.queryByRole("link", { name: "Open Bitácora Beta" })).toBeNull();
+  });
+  it("does not reuse another account's cached beta grant", async () => {
+    bodies["/api/admin/bitacora-beta"] = { href: "/bitacora-beta", label: "Bitácora Beta", user: "someone-else@lab.ca" };
     renderPage();
     await screen.findByText("Accounts & Activities");
     expect(screen.queryByRole("link", { name: "Open Bitácora Beta" })).toBeNull();
