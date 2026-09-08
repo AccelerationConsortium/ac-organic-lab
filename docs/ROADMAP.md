@@ -352,9 +352,26 @@ than assuming. The `Thermostat.TrMinusTj` **reading** is also confirmed
 (−6.85 K driving a ramp, −0.29 K holding at setpoint) — the `Reflux`/`Distill`
 **argument** of the opposite convention remains unexercised.
 
-Open items: `automated-lle` holds its own OPC UA session to the same server and
-does not participate in claims, so a claim here excludes only dashboard /
-`lab-skills` writers; `[limits]` still carries **unverified** EasyMax 102
+**Two operational constraints found the same afternoon** (mt-easymax-server
+`ed9ccbc`). First, **an iControl experiment on a reactor blocks the gateway
+door**: with one running on R2, every `Thermostat.HeatCool` through the Reactor
+Device Server was refused `BadInternalError`, the identical call succeeded the
+moment the operator stopped it, and R1 — which had no experiment — accepted it
+throughout. **This is a live §6.2 gap**, documented rather than fixed: the
+envelope still advertises `temp.set` in that situation, so a client that trusts
+`allowed_actions` gets a 502. Closing it needs a node reporting experiment
+ownership, and since the touchpad displays the experiment's name one may exist —
+browsing for it is the next step. Second, **`temp.stop` is not a safe parking
+state**: `SwitchOff` returns the jacket to the chiller default, ~8 °C here,
+below the dew point of lab air, so a reactor left "off" collects condensation.
+That was the source of real condensation on this bench — an idle zone measured
+Tr 8.9 / Tj 8.3 °C in a ~21 °C room. Park a reactor at room temperature with the
+thermostat *on*.
+
+Open items: whether the RDS exposes an experiment-ownership node, which is what
+the §6.2 gap above turns on; `automated-lle` holds its own OPC UA session to the
+same server and does not participate in claims, so a claim here excludes only
+dashboard / `lab-skills` writers; `[limits]` still carries **unverified** EasyMax 102
 defaults — the 2026-09-08 ramp confirmed a normal setpoint and a 2 K/min ramp
 work, but −40…180 °C and ≤ 10 K/min need the instrument's spec plate, not a
 vial of water; the secure channel drops roughly every **12 h 45 m** with a
