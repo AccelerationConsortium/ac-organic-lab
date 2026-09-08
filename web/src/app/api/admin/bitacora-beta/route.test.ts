@@ -30,7 +30,7 @@ describe("private beta gate", () => {
     vi.stubGlobal("fetch", fetcher);
     const response = await GET(request({ cookie: "ac_auth_session=opaque", "x-api-key": "never-forward", "x-auth-pi-projects": "forged" }));
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ href: "/bitacora-beta", label: "Bitácora Beta" });
+    expect(await response.json()).toEqual({ href: "/bitacora-beta", label: "Bitácora Beta", user: tester });
     expect(response.headers.get("x-auth-projects")).toBe("verified-project");
     expect(response.headers.get("x-auth-pi-projects")).toBe("");
     expect(response.headers.get("cache-control")).toBe("no-store");

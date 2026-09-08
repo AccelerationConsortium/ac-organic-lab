@@ -278,7 +278,7 @@ function HealthRow({
 export default function AdminPage() {
   const { loading, authenticated, identity } = useUserAuth();
   const isAdmin = authenticated && identity?.role === "admin";
-  const beta = useAdminQuery<{ href: string; label: string }>("/api/admin/bitacora-beta", 60_000, isAdmin);
+  const beta = useAdminQuery<{ href: string; label: string; user: string }>("/api/admin/bitacora-beta", 60_000, isAdmin);
 
   const [eventEmail, setEventEmail] = useState("");
   const [actionOwner, setActionOwner] = useState("");
@@ -370,7 +370,7 @@ export default function AdminPage() {
     // two-column grid uses items-start so each tile sits at its own content
     // height like the Overview's masonry cards, with pairs preserved.
     <>
-    {beta.data?.href === "/bitacora-beta" && <p className="pt-3 text-sm">
+    {beta.data?.href === "/bitacora-beta" && beta.data.user === identity?.email?.trim().toLowerCase() && <p className="pt-3 text-sm">
       <a href="/bitacora-beta" target="_blank" rel="noopener noreferrer" className="font-medium text-sky-700 underline dark:text-sky-300">Open Bitácora Beta</a>
       <span className="ml-2 text-ink-subtle">Private test instance · separate data</span>
     </p>}
