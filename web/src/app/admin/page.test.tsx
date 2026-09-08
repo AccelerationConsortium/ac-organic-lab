@@ -193,6 +193,7 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  delete bodies["/api/admin/bitacora-beta"];
   stubFetch();
   auth.loading = false;
   auth.authenticated = true;
@@ -205,6 +206,17 @@ afterEach(() => {
 });
 
 describe("AdminPage", () => {
+  it("shows the private beta link only after the server permits access", async () => {
+    bodies["/api/admin/bitacora-beta"] = { href: "/bitacora-beta", label: "Bitácora Beta" };
+    renderPage();
+    const link = await screen.findByRole("link", { name: "Open Bitácora Beta" });
+    expect(link.getAttribute("href")).toBe("/bitacora-beta");
+  });
+  it("does not advertise beta to an admin without beta access", async () => {
+    renderPage();
+    await screen.findByText("Accounts & Activities");
+    expect(screen.queryByRole("link", { name: "Open Bitácora Beta" })).toBeNull();
+  });
   it("gates on an admin session client-side", async () => {
     auth.identity = { role: "operator", email: "op@lab.ca" };
     renderPage();
