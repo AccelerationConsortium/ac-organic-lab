@@ -26,6 +26,24 @@ publishes `/docs` and `/openapi.json`; its OpenAPI document includes the
 gateway, per-printer telemetry, queues, and submission lifecycle. Per-printer
 registry entries do not duplicate the gateway-level links.
 
+For Bambu, the live OpenAPI `LoadedTray` model describes inventory fields used
+by the printer tiles: `ams_id`, `tray_id`, `tray_color`, `tray_color_name`,
+`tray_color_source`, and nullable `remaining_percent`. The source enum is
+`bambu_color_match`, `operator_declared`, `generic`, or `unknown`. An
+operator-declared Transparent label is not inferred from an all-zero color.
+Profiles withhold stale observations; the status envelope keeps inventory
+under `details.ams_trays` and empty units under `details.ams_unit_ids`.
+The typed frontend interface `BambuAmsTray` mirrors these display fields.
+
+The Bambu reference links to `/bambu/docs` for the authenticated gateway API;
+all schema URLs there retain the edge prefix. The dashboard's generic Swagger
+viewer disables “Try it out”: its allowlisted proxy serves documents only and
+must not suggest that it forwards submission or hardware operations. The
+gateway's submission/approval records still do not dispatch prints.
+
+Full gateway field and authentication semantics:
+[`bambu-server/docs/API_REFERENCE.md`](../../bambu-server/docs/API_REFERENCE.md).
+
 These declarations describe where documentation is expected, not proof that
 every deployment has it. A running older server's 404 response is preserved
 unchanged. This makes version skew visible in the API Reference rather than

@@ -70,6 +70,7 @@ def build_equipment_docs_router() -> APIRouter:
             return get_swagger_ui_html(
                 openapi_url=f"{proxy_root}{openapi_document.path}",
                 title=f"{entry.name} API documentation",
+                swagger_ui_parameters={"supportedSubmitMethods": []},
             )
 
         client = getattr(request.app.state, "control_client", None)

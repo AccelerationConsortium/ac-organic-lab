@@ -88,6 +88,7 @@ async def test_swagger_uses_same_origin_proxied_openapi() -> None:
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "/api/equipment/ot2_hte/documentation/openapi.json" in response.text
+    assert '"supportedSubmitMethods": []' in response.text
 
 
 async def test_unregistered_path_is_not_proxied() -> None:
