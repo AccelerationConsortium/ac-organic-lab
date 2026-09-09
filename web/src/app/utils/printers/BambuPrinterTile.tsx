@@ -5,9 +5,35 @@ import { StatusPill } from "@/components/StatusPill";
 
 type Tray = BambuAmsTray;
 
+/**
+ * AMS unit ids arrive in two bands. 0.. are the four-slot units (AMS 2 Pro,
+ * AMS Lite); 128.. are the single-spool AMS HT units. The printer numbers them,
+ * so the band — not a count of what happens to be loaded — is what tells us how
+ * many slots a unit physically has.
+ */
+const HT_BASE = 128;
+
+function isHt(id: number) {
+  return id >= HT_BASE && id < HT_BASE + 26;
+}
+
+function unitLetter(id: number) {
+  return String.fromCharCode(65 + (isHt(id) ? id - HT_BASE : id));
+}
+
 function unitName(id: number) {
-  if (id >= 128 && id < 154) return `HT ${String.fromCharCode(97 + id - 128)}`;
-  return id >= 0 && id < 26 ? `AMS ${String.fromCharCode(65 + id)}` : `AMS ${id}`;
+  if (isHt(id)) return `AMS HT ${unitLetter(id)}`;
+  return id >= 0 && id < 26 ? `AMS ${unitLetter(id)}` : `AMS ${id}`;
+}
+
+function slotCount(id: number) {
+  return isHt(id) ? 1 : 4;
+}
+
+/** Bambu Studio's own shorthand: AMS A slot 1 is "A1"; an HT unit is just "HT A". */
+function slotCode(id: number, trayId: number) {
+  if (isHt(id)) return `HT ${unitLetter(id)}`;
+  return id >= 0 && id < 26 ? `${unitLetter(id)}${trayId + 1}` : `${id}-${trayId + 1}`;
 }
 
 function color(tray: Tray) {
@@ -15,6 +41,42 @@ function color(tray: Tray) {
   const rgb = /^[0-9A-F]{6}(FF)?$/.test(hex) ? `#${hex.slice(0, 6)}` : undefined;
   const names: Record<string, string> = {"#FFFFFF": tray.tray_type === "PLA" ? "Jade White" : "White", "#0086D6": "Cyan", "#A6A9AA": "Silver", "#F72323": "Red", "#000000": "Black"};
   return {rgb, name: tray.tray_color_name ?? (rgb ? names[rgb] ?? "Custom color" : "Unknown color")};
+}
+
+function swatch(background: string) {
+  return <span aria-hidden="true" className="h-4 w-4 shrink-0 rounded-full border border-slate-300 dark:border-slate-600" style={{background}} />;
+}
+
+function LoadedSlot({ code, tray }: { code: string; tray: Tray }) {
+  const display = color(tray);
+  const low = tray.remaining_percent != null && tray.remaining_percent < 20;
+  return (
+    <div className="flex min-w-0 items-center gap-1.5 rounded-md border border-slate-100 px-1.5 py-1 dark:border-slate-800" title={`${code} · ${display.name} · ${tray.tray_color_source === "operator_declared" ? "Color declared by operator" : "Color match from reported telemetry"}`}>
+      {swatch(display.name.toLowerCase() === "transparent" ? "repeating-conic-gradient(#cbd5e1 0% 25%, #fff 0% 50%) 0 / 8px 8px" : display.rgb ?? "transparent")}
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium text-ink dark:text-slate-200">{code} · {tray.tray_type ?? "Unknown"}</p>
+        <p className="truncate text-xs text-ink-subtle dark:text-slate-400">{display.name}</p>
+      </div>
+      <span className={`text-xs tabular-nums ${low ? "text-amber-700 dark:text-amber-400" : "text-ink-subtle dark:text-slate-400"}`}>{tray.remaining_percent == null ? "—" : `${tray.remaining_percent}%`}</span>
+    </div>
+  );
+}
+
+/**
+ * A slot the printer reports nothing in. Rendered rather than omitted: the
+ * operator loading a job needs to see which bays are free, and a unit with
+ * three of four spools should not look identical to a three-slot unit.
+ */
+function EmptySlot({ code }: { code: string }) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5 rounded-md border border-dashed border-slate-200 px-1.5 py-1 dark:border-slate-700" title={`${code} · no filament reported`}>
+      <span aria-hidden="true" className="h-4 w-4 shrink-0 rounded-full border border-dashed border-slate-300 dark:border-slate-600" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium text-ink-subtle dark:text-slate-400">{code} · Empty</p>
+        <p className="truncate text-xs text-ink-subtle dark:text-slate-500">No filament</p>
+      </div>
+    </div>
+  );
 }
 
 export function BambuPrinterTile({ snapshot, onSelect }: { snapshot: EquipmentSnapshot; onSelect: () => void }) {
@@ -30,6 +92,7 @@ export function BambuPrinterTile({ snapshot, onSelect }: { snapshot: EquipmentSn
   const remaining = metric("remaining_time");
   const trays = available && Array.isArray(details.ams_trays) ? details.ams_trays as Tray[] : [];
   const units = available && Array.isArray(details.ams_unit_ids) ? details.ams_unit_ids as number[] : [...new Set(trays.map(tray => tray.ams_id))];
+  const totalSlots = units.reduce((sum, unit) => sum + slotCount(unit), 0);
   const job = typeof details.job_name === "string" ? details.job_name : null;
 
   return (
@@ -62,21 +125,30 @@ export function BambuPrinterTile({ snapshot, onSelect }: { snapshot: EquipmentSn
           </div>)}
         </dl>
         <section className="flex-1" aria-label={`${snapshot.name} filament inventory`}>
-          <div className="mb-2 flex items-center justify-between"><h3 className="text-xs font-semibold text-ink-subtle dark:text-slate-400">Filament inventory</h3><span className="text-xs text-ink-subtle dark:text-slate-400">{available ? `${trays.length} loaded` : "Unavailable"}</span></div>
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-ink-subtle dark:text-slate-400">Filament inventory</h3>
+            <span className="text-xs text-ink-subtle dark:text-slate-400">{available ? `${trays.length} of ${totalSlots} slots loaded` : "Unavailable"}</span>
+          </div>
           {units.length === 0 && <p className="text-sm text-ink-subtle dark:text-slate-400">No AMS inventory reported.</p>}
           <div className="space-y-2">
-            {units.map(unit => <div key={unit}>
-              <h4 className="mb-1 text-xs font-medium text-ink-muted dark:text-slate-300">{unitName(unit)}</h4>
-              {trays.filter(tray => tray.ams_id === unit).length === 0 ? <p className="text-xs text-ink-subtle dark:text-slate-400">Empty · no loaded filament reported</p> :
-                <div className="grid gap-1.5 sm:grid-cols-2">{trays.filter(tray => tray.ams_id === unit).map(tray => {
-                  const display = color(tray);
-                  return <div key={tray.tray_id} className="flex min-w-0 items-center gap-1.5 rounded-md border border-slate-100 px-1.5 py-1 dark:border-slate-800" title={`${display.name} · ${tray.tray_color_source === "operator_declared" ? "Color declared by operator" : "Color match from reported telemetry"}`}>
-                    <span aria-hidden="true" className="h-4 w-4 shrink-0 rounded-full border border-slate-300 dark:border-slate-600" style={{background: display.name.toLowerCase() === "transparent" ? "repeating-conic-gradient(#cbd5e1 0% 25%, #fff 0% 50%) 0 / 8px 8px" : display.rgb ?? "transparent"}} />
-                    <div className="min-w-0 flex-1"><p className="truncate text-xs font-medium text-ink dark:text-slate-200">{unit < 26 ? `${String.fromCharCode(65 + unit)}${tray.tray_id + 1}` : unitName(unit)} · {tray.tray_type ?? "Unknown"}</p><p className="truncate text-xs text-ink-subtle dark:text-slate-400">{display.name}</p></div>
-                    <span className={`text-xs tabular-nums ${tray.remaining_percent != null && tray.remaining_percent < 20 ? "text-amber-700 dark:text-amber-400" : "text-ink-subtle dark:text-slate-400"}`}>{tray.remaining_percent == null ? "—" : `${tray.remaining_percent}%`}</span>
-                  </div>;
-                })}</div>}
-            </div>)}
+            {units.map(unit => {
+              const slots = slotCount(unit);
+              const mine = trays.filter(tray => tray.ams_id === unit);
+              // A tray reporting a slot outside the unit's range would vanish
+              // from a fixed grid. Show it rather than silently drop it.
+              const extra = mine.filter(tray => tray.tray_id < 0 || tray.tray_id >= slots);
+              return <div key={unit}>
+                <h4 className="mb-1 text-xs font-medium text-ink-muted dark:text-slate-300">{unitName(unit)}</h4>
+                <div className={`grid gap-1.5 ${slots === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
+                  {Array.from({length: slots}, (_, slot) => {
+                    const tray = mine.find(candidate => candidate.tray_id === slot);
+                    const code = slotCode(unit, slot);
+                    return tray ? <LoadedSlot key={slot} code={code} tray={tray} /> : <EmptySlot key={slot} code={code} />;
+                  })}
+                  {extra.map(tray => <LoadedSlot key={`extra-${tray.tray_id}`} code={slotCode(unit, tray.tray_id)} tray={tray} />)}
+                </div>
+              </div>;
+            })}
           </div>
         </section>
         <button type="button" onClick={onSelect} className="w-full rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800 hover:bg-sky-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300 dark:hover:bg-sky-900">Prepare a job · view queue</button>
