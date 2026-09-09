@@ -50,7 +50,7 @@ export function BambuPrinterPanel({ printers }: { printers: EquipmentSnapshot[] 
         </a>
       </header>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {printers.map(printer => <BambuPrinterTile key={printer.id} snapshot={printer} onSelect={() => select(printer.id)} />)}
         {printers.length === 0 && <p className="text-sm text-ink-subtle dark:text-slate-400">No printers registered.</p>}
       </div>
