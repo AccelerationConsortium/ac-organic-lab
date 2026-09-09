@@ -17,12 +17,16 @@ import {
   MAX_DIMENSIONS,
   buildDefinition,
   defaultSpec,
+  gridFromSpec,
+  type GridSpec,
+  type WellGrid,
   specFromDefinition,
   validateSpec,
   type DisplayCategory,
   type LabwareSpec,
   type ValidationIssue,
 } from "@/lib/labware-schema";
+import { geometryFromDefinition, frontProjectionColumns, wellHalfX, wellHalfY } from "@/lib/labware-geometry";
 import { useUserAuth } from "@/lib/user-auth";
 
 /**
@@ -77,127 +81,60 @@ function NumberInput({
   );
 }
 
-// Top-down SVG preview in real proportions (row A at the top = back edge).
-function Preview({ spec }: { spec: LabwareSpec }) {
-  const wells = [];
-  const halfX =
-    spec.wellShape === "circular" ? (spec.wellDiameter ?? 0) / 2 : (spec.wellXDimension ?? 0) / 2;
-  const halfY =
-    spec.wellShape === "circular" ? (spec.wellDiameter ?? 0) / 2 : (spec.wellYDimension ?? 0) / 2;
-  for (let row = 0; row < Math.min(spec.rows, 40); row++) {
-    for (let col = 0; col < Math.min(spec.columns, 40); col++) {
-      const cx = spec.offsetA1X + col * spec.spacingX;
-      const cy = spec.offsetA1Y + row * spec.spacingY; // SVG y-down == back→front
-      wells.push(
-        spec.wellShape === "circular" ? (
-          <circle
-            key={`${row}-${col}`}
-            cx={cx}
-            cy={cy}
-            r={halfX}
-            className="fill-sky-200 stroke-sky-600 dark:fill-sky-900 dark:stroke-sky-400"
-            strokeWidth={0.4}
-          />
-        ) : (
-          <rect
-            key={`${row}-${col}`}
-            x={cx - halfX}
-            y={cy - halfY}
-            width={halfX * 2}
-            height={halfY * 2}
-            className="fill-sky-200 stroke-sky-600 dark:fill-sky-900 dark:stroke-sky-400"
-            strokeWidth={0.4}
-          />
-        ),
-      );
-    }
-  }
-  return (
-    <svg
-      viewBox={`-2 -2 ${spec.footprintX + 4} ${spec.footprintY + 4}`}
-      className="w-full rounded border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
-      role="img"
-      aria-label="Top-down labware preview"
-    >
-      <rect
-        x={0}
-        y={0}
-        width={spec.footprintX}
-        height={spec.footprintY}
-        className="fill-slate-50 stroke-slate-400 dark:fill-slate-800 dark:stroke-slate-500"
-        strokeWidth={0.6}
-        rx={2}
-      />
-      {wells}
-    </svg>
-  );
+// Both views read the emitted definition, including imported per-well geometry.
+function Preview({ definition, side = false }: { definition: Record<string, unknown> | null; side?: boolean }) {
+  const geometry = geometryFromDefinition(definition);
+  if (!geometry) return <p className="text-xs">Fix the fields below to preview the definition.</p>;
+  const height = side ? Math.max(geometry.footprintZ, ...Object.values(geometry.wells).map(w =>
+    w.z + Math.max(w.depth, ...(w.sections?.map(s => s.topHeight) ?? [])))) : geometry.footprintY;
+  const names = side ? frontProjectionColumns(geometry).map(c => c[0]) : geometry.ordering.flat();
+  return <svg viewBox={`-2 -2 ${geometry.footprintX + 4} ${height + 4}`}
+    className="w-full rounded border border-slate-200 bg-white dark:bg-slate-900"
+    role="img" aria-label={side ? "Front well profiles" : "Top-down labware preview"}>
+    <rect x={0} y={side ? height - geometry.footprintZ : 0} width={geometry.footprintX}
+      height={side ? geometry.footprintZ : geometry.footprintY} fill="none" stroke="#94a3b8" strokeWidth={0.5} />
+    {names.map(name => {
+      const w = geometry.wells[name], hx = wellHalfX(w), hy = wellHalfY(w);
+      const style = { fill: "#bae6fd", stroke: "#0284c7", strokeWidth: 0.4 };
+      return <g key={name}><title>{name}: {w.totalLiquidVolume} µL</title>
+        {side ? w.sections?.length ? w.sections.map((section, i) => <polygon key={i} {...style}
+          points={`${w.x-section.topDiameter/2},${height-w.z-section.topHeight} ${w.x+section.topDiameter/2},${height-w.z-section.topHeight} ${w.x+section.bottomDiameter/2},${height-w.z-section.bottomHeight} ${w.x-section.bottomDiameter/2},${height-w.z-section.bottomHeight}`} />)
+          : <rect {...style} x={w.x-hx} y={height-w.z-w.depth} width={2*hx} height={w.depth} />
+          : w.shape === "circular" ? <circle {...style} cx={w.x} cy={geometry.footprintY-w.y} r={hx} />
+          : <rect {...style} x={w.x-hx} y={geometry.footprintY-w.y-hy} width={2*hx} height={2*hy} />}
+      </g>;
+    })}
+  </svg>;
 }
 
-// Cross-section (front elevation): body height = footprintZ, well cavities cut
-// from the top down `wellDepth` at each column's x position. The bottom-shape
-// hint is drawn on the cavity floor (flat / rounded / conical).
-function SideView({ spec }: { spec: LabwareSpec }) {
-  const halfX =
-    spec.wellShape === "circular" ? (spec.wellDiameter ?? 0) / 2 : (spec.wellXDimension ?? 0) / 2;
-  const depth = Math.min(spec.wellDepth, spec.footprintZ);
-  const cavities = [];
-  for (let col = 0; col < Math.min(spec.columns, 40); col++) {
-    const cx = spec.offsetA1X + col * spec.spacingX;
-    const x0 = cx - halfX;
-    const w = halfX * 2;
-    const floorY = depth;
-    let floor = null;
-    if (spec.wellBottomShape === "v") {
-      floor = (
-        <polygon
-          points={`${x0},${floorY} ${cx},${Math.min(floorY + w / 2, spec.footprintZ)} ${x0 + w},${floorY}`}
-          className="fill-white dark:fill-slate-900"
-        />
-      );
-    } else if (spec.wellBottomShape === "u") {
-      floor = (
-        <ellipse
-          cx={cx}
-          cy={floorY}
-          rx={halfX}
-          ry={Math.min(halfX, spec.footprintZ - floorY + halfX)}
-          className="fill-white dark:fill-slate-900"
-        />
-      );
-    }
-    cavities.push(
-      <g key={col}>
-        <rect x={x0} y={0} width={w} height={floorY} className="fill-white dark:fill-slate-900" />
-        {floor}
-      </g>,
-    );
-  }
-  return (
-    <svg
-      viewBox={`-2 -2 ${spec.footprintX + 4} ${spec.footprintZ + 4}`}
-      className="w-full rounded border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
-      role="img"
-      aria-label="Side-view labware cross-section"
-    >
-      <rect
-        x={0}
-        y={0}
-        width={spec.footprintX}
-        height={spec.footprintZ}
-        className="fill-slate-200 stroke-slate-400 dark:fill-slate-700 dark:stroke-slate-500"
-        strokeWidth={0.6}
-      />
-      {cavities}
-      <rect
-        x={0}
-        y={0}
-        width={spec.footprintX}
-        height={spec.footprintZ}
-        className="fill-none stroke-slate-400 dark:stroke-slate-500"
-        strokeWidth={0.6}
-      />
-    </svg>
-  );
+function GridEditor({ group, onChange, onRemove }: { group: WellGrid; onChange: (g: WellGrid) => void; onRemove: () => void }) {
+  const update = <K extends keyof GridSpec>(key: K, value: GridSpec[K]) =>
+    onChange({ ...group, grid: { ...group.grid, [key]: value } });
+  const numericFields: [keyof GridSpec, string][] = [
+    ["rows", "Rows"], ["columns", "Columns"], ["offsetA1X", "First well from left (mm)"],
+    ["offsetA1Y", "First well from back (mm)"], ["spacingX", "Spacing X (mm)"], ["spacingY", "Spacing Y (mm)"],
+    ...(group.grid.wellShape === "circular" ? [["wellDiameter", "Diameter (mm)"]] :
+      [["wellXDimension", "Well X (mm)"], ["wellYDimension", "Well Y (mm)"]]) as [keyof GridSpec, string][],
+    ["wellDepth", "Depth (mm)"], ["wellZ", "Well bottom Z (mm)"], ["wellVolumeUl", "Capacity (µL)"],
+  ];
+  return <fieldset className="mt-3 rounded border border-slate-300 p-2 dark:border-slate-700">
+    <legend className="text-xs">Well grid</legend>
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <Field label="Grid label"><input className={inputCls} value={group.label} onChange={e => onChange({ ...group, label: e.target.value })} /></Field>
+      <Field label="First column number (new IDs)"><NumberInput value={group.firstColumn} step={1} onChange={v => onChange({ ...group, firstColumn: v })} /></Field>
+      <Field label="Shape"><select className={inputCls} value={group.grid.wellShape} onChange={e => update("wellShape", e.target.value as GridSpec["wellShape"])}>
+        <option value="circular">Circular</option><option value="rectangular">Rectangular</option>
+      </select></Field>
+      {numericFields.map(([key, label]) => <Field key={key} label={label}><NumberInput
+        value={group.grid[key] as number | undefined} step={key === "rows" || key === "columns" ? 1 : 0.01}
+        onChange={v => update(key, v)} /></Field>)}
+      <Field label="Bottom shape"><select className={inputCls} value={group.grid.wellBottomShape} onChange={e => update("wellBottomShape", e.target.value as GridSpec["wellBottomShape"])}>
+        <option value="flat">Flat</option><option value="u">U (round)</option><option value="v">V (conical)</option>
+      </select></Field>
+    </div>
+    {group.originalWells && <p className="mt-2 text-xs">Imported well IDs and exact geometry are retained until this grid is edited. Geometry edits replace its internal profiles with schematic wells; changing row or column counts generates new IDs.</p>}
+    <button type="button" className="mt-2 text-xs text-rose-600" onClick={onRemove}>Remove grid</button>
+  </fieldset>;
 }
 
 /** What the form is currently editing (loaded from the store) — or null for a
@@ -439,14 +376,18 @@ export default function LabwareBuilderPage() {
                 <option value="reservoir">Reservoir</option>
                 <option value="tipRack">Tip rack</option>
                 <option value="tubeRack">Tube rack</option>
+                {["adapter", "aluminumBlock", "lid", "other", "system", "trash"].map(category =>
+                  <option key={category} value={category}>{category}</option>)}
               </select>
             </Field>
+            {!spec.wellGroups && <>
             <Field label="Rows" issue={issueFor("rows")}>
               <NumberInput value={spec.rows} step={1} onChange={(v) => set("rows", v)} />
             </Field>
             <Field label="Columns" issue={issueFor("columns")}>
               <NumberInput value={spec.columns} step={1} onChange={(v) => set("columns", v)} />
             </Field>
+            </>}
             <Field label={`Footprint X (mm, ≤${MAX_DIMENSIONS.x})`} issue={issueFor("footprintX")}>
               <NumberInput value={spec.footprintX} onChange={(v) => set("footprintX", v)} />
             </Field>
@@ -456,6 +397,7 @@ export default function LabwareBuilderPage() {
             <Field label={`Height Z (mm, ≤${MAX_DIMENSIONS.z})`} issue={issueFor("footprintZ")}>
               <NumberInput value={spec.footprintZ} onChange={(v) => set("footprintZ", v)} />
             </Field>
+            {!spec.wellGroups && <>
             <Field label="A1 offset from left (mm)" issue={issueFor("offsetA1X")}>
               <NumberInput value={spec.offsetA1X} onChange={(v) => set("offsetA1X", v)} />
             </Field>
@@ -517,12 +459,26 @@ export default function LabwareBuilderPage() {
                 <option value="v">V (conical)</option>
               </select>
             </Field>
+            </>}
             {spec.displayCategory === "tipRack" && (
               <Field label="Tip length (mm)" issue={issueFor("tipLength")}>
                 <NumberInput value={spec.tipLength} onChange={(v) => set("tipLength", v)} />
               </Field>
             )}
           </div>
+
+          {spec.wellGroups?.map((group, i) => <GridEditor key={i} group={group}
+            onChange={g => set("wellGroups", spec.wellGroups!.map((old, j) => i === j ? g : old))}
+            onRemove={() => set("wellGroups", spec.wellGroups!.filter((_, j) => i !== j))} />)}
+          <button type="button" className="mt-3 rounded border border-sky-600 px-2 py-1 text-xs" onClick={() => {
+            const groups = spec.wellGroups ?? [{ label: "Grid 1", firstColumn: 1, grid: gridFromSpec(spec) }];
+            const firstColumn = Math.max(0, ...groups.map(g => g.firstColumn + g.grid.columns - 1)) + 1;
+            set("wellGroups", [...groups, { label: `Grid ${groups.length + 1}`, firstColumn,
+              grid: { ...gridFromSpec(spec), rows: 1, columns: 1, offsetA1X: 110, offsetA1Y: 40 } }]);
+          }}>Add independent well grid</button>
+          {spec.wellGroups && issues.length > 0 && <ul className="mt-2 text-xs text-rose-600">
+            {issues.map((issue, i) => <li key={i}>{issue.message}</li>)}
+          </ul>}
 
           <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
             <button
@@ -587,18 +543,16 @@ export default function LabwareBuilderPage() {
             <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-300">
               Preview (top-down, to scale)
             </h3>
-            <Preview spec={spec} />
+            <Preview definition={definition} />
             <p className="mt-1 text-[10px] text-ink-subtle dark:text-slate-400">
-              Row A is at the top (the deck&apos;s back edge). {spec.rows} × {spec.columns} ={" "}
-              {spec.rows * spec.columns} wells.
+              Back edge at the top. {definition ? Object.keys(definition.wells as object).length : "—"} wells at their defined positions.
             </p>
             <h3 className="mb-2 mt-3 text-[11px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-300">
               Side view (front elevation, to scale)
             </h3>
-            <SideView spec={spec} />
+            <Preview definition={definition} side />
             <p className="mt-1 text-[10px] text-ink-subtle dark:text-slate-400">
-              Height {spec.footprintZ} mm, wells {spec.wellDepth} mm deep ({spec.wellBottomShape}{" "}
-              bottom).
+              Nearest well at each X position. The outline is the bounding envelope; walls are schematic unless internal profiles are supplied.
             </p>
           </section>
 
