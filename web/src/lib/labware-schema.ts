@@ -21,9 +21,12 @@ export const MAX_DIMENSIONS = { x: 128, y: 86, z: 200 } as const;
 export const LOAD_NAME_RE = /^[a-z0-9._]+$/;
 
 export type WellShape = "circular" | "rectangular";
-export type DisplayCategory = "wellPlate" | "reservoir" | "tipRack" | "tubeRack";
+export type DisplayCategory = "wellPlate" | "reservoir" | "tipRack" | "tubeRack" | "adapter" | "aluminumBlock" | "lid" | "other" | "system" | "trash";
 
 export interface LabwareSpec {
+  /** Independent grids; imported groups retain exact well data until edited. */
+  wellGroups?: WellGrid[];
+  sourceDefinition?: Record<string, unknown>;
   loadName: string;
   displayName: string;
   /** Vendor or manufacturer; emitted as Opentrons `brand.brand`. */
@@ -59,6 +62,43 @@ export interface LabwareSpec {
   wellBottomShape: "flat" | "u" | "v";
   /** Required when displayCategory is tipRack (mm). */
   tipLength?: number;
+}
+
+export type GridSpec = Pick<LabwareSpec,
+  "rows" | "columns" | "offsetA1X" | "offsetA1Y" | "spacingX" | "spacingY" |
+  "wellShape" | "wellDiameter" | "wellXDimension" | "wellYDimension" |
+  "wellDepth" | "wellVolumeUl" | "wellBottomShape"> & { wellZ: number };
+export interface WellGrid {
+  label: string;
+  firstColumn: number;
+  grid: GridSpec;
+  /** Preserve nonstandard IDs and source precision for imported grids. */
+  ordering?: string[][];
+  originalGrid?: GridSpec;
+  originalWells?: Record<string, Record<string, unknown>>;
+}
+export function gridFromSpec(spec: LabwareSpec): GridSpec {
+  const { rows, columns, offsetA1X, offsetA1Y, spacingX, spacingY, wellShape,
+    wellDiameter, wellXDimension, wellYDimension, wellDepth, wellVolumeUl, wellBottomShape } = spec;
+  return { rows, columns, offsetA1X, offsetA1Y, spacingX, spacingY, wellShape,
+    wellDiameter, wellXDimension, wellYDimension, wellDepth, wellVolumeUl, wellBottomShape,
+    wellZ: round2(spec.footprintZ - wellDepth) };
+}
+function gridDefinition(spec: LabwareSpec, group: WellGrid) {
+  const g = group.grid;
+  if (group.originalGrid && JSON.stringify(g) === JSON.stringify(group.originalGrid)) {
+    return { wells: structuredClone(group.originalWells!), ordering: group.ordering! };
+  }
+  const generated = buildDefinition({ ...spec, ...g, wellGroups: undefined,
+    sourceDefinition: undefined }) as { wells: Record<string, Record<string, unknown>>; ordering: string[][] };
+  const wells: Record<string, Record<string, unknown>> = {};
+  const sameCounts = group.ordering?.length === g.columns && group.ordering.every(c => c.length === g.rows);
+  const ordering = generated.ordering.map((col, c) => col.map((name, r) => {
+    const id = sameCounts ? group.ordering![c][r] : `${rowName(r)}${group.firstColumn + c}`;
+    wells[id] = { ...generated.wells[name], z: g.wellZ };
+    return id;
+  }));
+  return { wells, ordering };
 }
 
 /** A sensible starting spec (96-well SLAS plate geometry). */
@@ -105,6 +145,46 @@ export interface ValidationIssue {
 
 /** Validate the parametric spec. Empty result == buildable. */
 export function validateSpec(spec: LabwareSpec): ValidationIssue[] {
+  if (spec.wellGroups) {
+    const issues: ValidationIssue[] = [];
+    if (!spec.wellGroups.length) return [{ field: "wellGroups", message: "Add at least one well grid." }];
+    const ids = new Set<string>();
+    for (const group of spec.wellGroups) {
+      const g = group.grid;
+      const groupIssues = validateSpec({ ...spec, ...g, wellGroups: undefined });
+      issues.push(...groupIssues.map(i => ({ ...i, message: `${group.label}: ${i.message}` })));
+      if (!Number.isInteger(group.firstColumn) || group.firstColumn < 1)
+        issues.push({ field: "wellGroups", message: `${group.label}: first column must be a positive integer.` });
+      if (!Number.isFinite(g.wellZ) || g.wellZ < 0)
+        issues.push({ field: "wellGroups", message: `${group.label}: well bottom Z must be finite and nonnegative.` });
+      if (groupIssues.length === 0) {
+        for (const id of gridDefinition(spec, group).ordering.flat()) {
+          if (ids.has(id)) issues.push({ field: "wellGroups", message: `Duplicate well ID: ${id}. Change the first column.` });
+          ids.add(id);
+        }
+      }
+    }
+    if (!issues.length) {
+      const entries = spec.wellGroups.flatMap(group => Object.entries(gridDefinition(spec, group).wells));
+      for (let i = 0; i < entries.length; i++) for (let j = i + 1; j < entries.length; j++) {
+        const [aName, a] = entries[i], [bName, b] = entries[j];
+        const half = (w: Record<string, unknown>, axis: "x" | "y") => Number(w.shape === "circular" ? w.diameter : w[`${axis}Dimension`]) / 2;
+        const dx = Math.abs(Number(a.x) - Number(b.x)), dy = Math.abs(Number(a.y) - Number(b.y));
+        let overlap: boolean;
+        if (a.shape === "circular" && b.shape === "circular") overlap = Math.hypot(dx, dy) < half(a, "x") + half(b, "x") - 1e-7;
+        else if (a.shape === "rectangular" && b.shape === "rectangular") overlap = dx < half(a, "x") + half(b, "x") - 1e-7 && dy < half(a, "y") + half(b, "y") - 1e-7;
+        else {
+          const circle = a.shape === "circular" ? a : b, rect = a.shape === "rectangular" ? a : b;
+          overlap = Math.hypot(Math.max(0, dx - half(rect, "x")), Math.max(0, dy - half(rect, "y"))) < half(circle, "x") - 1e-7;
+        }
+        if (overlap) {
+          issues.push({ field: "wellGroups", message: `Wells ${aName} and ${bName} overlap. Adjust offsets, spacing or well sizes.` });
+          return issues;
+        }
+      }
+    }
+    return issues;
+  }
   const issues: ValidationIssue[] = [];
   const err = (field: ValidationIssue["field"], message: string) =>
     issues.push({ field, message });
@@ -133,17 +213,17 @@ export function validateSpec(spec: LabwareSpec): ValidationIssue[] {
     ["footprintY", spec.footprintY, MAX_DIMENSIONS.y],
     ["footprintZ", spec.footprintZ, MAX_DIMENSIONS.z],
   ] as const) {
-    if (!(value > 0)) err(field, "Must be positive.");
+    if (!Number.isFinite(value) || !(value > 0)) err(field, "Must be finite and positive.");
     else if (value > max) err(field, `Exceeds the OT-2 slot limit (${max} mm).`);
   }
 
   if (spec.wellShape === "circular") {
-    if (!(spec.wellDiameter && spec.wellDiameter > 0))
+    if (!(spec.wellDiameter && Number.isFinite(spec.wellDiameter) && spec.wellDiameter > 0))
       err("wellDiameter", "Diameter is required for circular wells.");
   } else {
-    if (!(spec.wellXDimension && spec.wellXDimension > 0))
+    if (!(spec.wellXDimension && Number.isFinite(spec.wellXDimension) && spec.wellXDimension > 0))
       err("wellXDimension", "X size is required for rectangular wells.");
-    if (!(spec.wellYDimension && spec.wellYDimension > 0))
+    if (!(spec.wellYDimension && Number.isFinite(spec.wellYDimension) && spec.wellYDimension > 0))
       err("wellYDimension", "Y size is required for rectangular wells.");
   }
   if (!(spec.wellDepth > 0)) err("wellDepth", "Well depth must be positive.");
@@ -152,6 +232,13 @@ export function validateSpec(spec: LabwareSpec): ValidationIssue[] {
   if (!(spec.wellVolumeUl > 0)) err("wellVolumeUl", "Volume must be positive.");
   if (spec.displayCategory === "tipRack" && !(spec.tipLength && spec.tipLength > 0))
     err("tipLength", "Tip length is required for tip racks.");
+
+  for (const field of ["offsetA1X", "offsetA1Y", "spacingX", "spacingY", "wellDepth", "wellVolumeUl"] as const) {
+    if (!Number.isFinite(spec[field])) err(field, "Must be a finite number.");
+  }
+  if (spec.columns > 1 && !(spec.spacingX > 0)) err("spacingX", "Spacing must be positive.");
+  if (spec.rows > 1 && !(spec.spacingY > 0)) err("spacingY", "Spacing must be positive.");
+  if (spec.rows * spec.columns > 1536) err("rows", "At most 1536 wells per grid.");
 
   // Geometry: every well center ± half its width must stay inside the footprint.
   const halfX =
@@ -174,6 +261,45 @@ export function validateSpec(spec: LabwareSpec): ValidationIssue[] {
 
 /** Expand a valid spec into a complete Opentrons schema-2 definition. */
 export function buildDefinition(spec: LabwareSpec): Record<string, unknown> {
+  if (spec.wellGroups) {
+    const base = spec.sourceDefinition ? structuredClone(spec.sourceDefinition) :
+      buildDefinition({ ...spec, wellGroups: undefined, sourceDefinition: undefined });
+    const wells: Record<string, Record<string, unknown>> = {};
+    const ordering: string[][] = [];
+    for (const group of spec.wellGroups) {
+      const built = gridDefinition(spec, group);
+      for (const id of Object.keys(built.wells)) {
+        if (id in wells) throw new Error(`Duplicate well ID: ${id}`);
+      }
+      Object.assign(wells, built.wells);
+      ordering.push(...built.ordering);
+    }
+    const source = spec.sourceDefinition;
+    // Keep access ordering and metadata untouched when membership is unchanged.
+    const oldOrdering = source?.ordering as string[][] | undefined;
+    const sameIds = oldOrdering && oldOrdering.flat().length === Object.keys(wells).length &&
+      oldOrdering.flat().every(id => id in wells);
+    const sameBottoms = spec.wellGroups.every(g => g.originalGrid?.wellBottomShape === g.grid.wellBottomShape);
+    const parameters = { ...(base.parameters as Record<string, unknown>), loadName: spec.loadName,
+      isTiprack: spec.displayCategory === "tipRack" };
+    if (spec.displayCategory === "tipRack") Object.assign(parameters, { tipLength: spec.tipLength });
+    else if (spec.sourceDefinition && spec.displayCategory === (spec.sourceDefinition.metadata as Record<string, unknown>)?.displayCategory) {
+      if (spec.tipLength !== undefined) Object.assign(parameters, { tipLength: spec.tipLength });
+    } else delete (parameters as Record<string, unknown>).tipLength;
+    return { ...base,
+      namespace: source && (source.parameters as Record<string, unknown>)?.loadName === spec.loadName ? base.namespace : "custom",
+      metadata: { ...(base.metadata as object), displayName: spec.displayName, displayCategory: spec.displayCategory },
+      brand: { ...(base.brand as object), brand: spec.brand.trim(),
+        ...(spec.brandIds || (base.brand as Record<string, unknown>)?.brandId ? { brandId: lines(spec.brandIds) } : {}),
+        ...(spec.productLinks || (base.brand as Record<string, unknown>)?.links ? { links: lines(spec.productLinks) } : {}) },
+      parameters,
+      dimensions: { xDimension: spec.footprintX, yDimension: spec.footprintY, zDimension: spec.footprintZ },
+      wells, ordering: sameIds ? oldOrdering : ordering,
+      groups: sameIds && sameBottoms ? base.groups : spec.wellGroups.map(group => ({
+        wells: gridDefinition(spec, group).ordering.flat(), metadata: { wellBottomShape: group.grid.wellBottomShape },
+      })),
+    };
+  }
   const wells: Record<string, Record<string, unknown>> = {};
   const ordering: string[][] = [];
   for (let col = 0; col < spec.columns; col++) {
@@ -254,14 +380,8 @@ function lines(value: string): string[] {
     .filter(Boolean);
 }
 
-/**
- * Best-effort inverse of {@link buildDefinition}: populate the parametric
- * form from an existing schema-2 definition so it can be modified and
- * re-saved. Geometry is derived from A1 (offsets/shape/depth/volume), its
- * neighbours (spacing), and `ordering` (grid). Non-uniform ("irregular")
- * labware loses per-well detail — the returned `warnings` say so.
- */
-export function specFromDefinition(defn: Record<string, unknown>): {
+/** Read the common metadata and initial grid fields; explicit wells are imported below. */
+function uniformSpecFromDefinition(defn: Record<string, unknown>): {
   spec: LabwareSpec;
   warnings: string[];
 } {
@@ -299,7 +419,8 @@ export function specFromDefinition(defn: Record<string, unknown>): {
     category === "wellPlate" ||
     category === "reservoir" ||
     category === "tipRack" ||
-    category === "tubeRack"
+    category === "tubeRack" || category === "adapter" || category === "aluminumBlock" ||
+    category === "lid" || category === "other" || category === "system" || category === "trash"
   ) {
     spec.displayCategory = category;
   } else if (d.parameters?.isTiprack) {
@@ -349,21 +470,56 @@ export function specFromDefinition(defn: Record<string, unknown>): {
   const bottom = d.groups?.[0]?.metadata?.wellBottomShape;
   if (bottom === "flat" || bottom === "u" || bottom === "v") spec.wellBottomShape = bottom;
 
-  // Flag non-uniform geometry the parametric form cannot represent.
-  const wellList = Object.values(wells);
-  const uniform = wellList.every(
-    (w) =>
-      w.depth === a1.depth &&
-      w.shape === a1.shape &&
-      (a1.shape === "rectangular"
-        ? w.xDimension === a1.xDimension && w.yDimension === a1.yDimension
-        : w.diameter === a1.diameter),
-  );
-  if (!uniform) {
-    warnings.push(
-      "Wells are not uniform — the form models one well geometry, so per-well differences will be lost on rebuild.",
-    );
-  }
-
   return { spec, warnings };
+}
+
+/** Import explicit wells without resampling coordinates or discarding inner geometry.
+ * Wells with matching geometry form a grid only when their positions are regular.
+ * Otherwise each well remains an independently positioned one-well grid. */
+export function specFromDefinition(defn: Record<string, unknown>): { spec: LabwareSpec; warnings: string[] } {
+  const { spec } = uniformSpecFromDefinition(defn);
+  const wells = defn.wells as Record<string, Record<string, unknown>>;
+  const ordering = defn.ordering as string[][];
+  if (!wells || !Array.isArray(ordering) || !ordering.length || ordering.some(c => !Array.isArray(c) || !c.length))
+    throw new Error("Definition needs wells and nonempty ordering columns.");
+  const ids = ordering.flat();
+  if (new Set(ids).size !== ids.length || ids.length !== Object.keys(wells).length || ids.some(id => !wells[id]))
+    throw new Error("Ordering must reference every well exactly once.");
+  const buckets = new Map<string, string[]>();
+  const groups = defn.groups as { wells: string[]; metadata?: { wellBottomShape?: string } }[] | undefined;
+  const bottom = (id: string) => groups?.find(g => g.wells.includes(id))?.metadata?.wellBottomShape ?? "flat";
+  for (const id of ids) {
+    const { x, y, ...geometry } = wells[id];
+    const key = JSON.stringify([Object.entries(geometry).sort(([a], [b]) => a.localeCompare(b)), bottom(id)]);
+    buckets.set(key, [...(buckets.get(key) ?? []), id]);
+  }
+  const wellGroups: WellGrid[] = [];
+  function add(names: string[][]) {
+    const w = wells[names[0][0]];
+    const g: GridSpec = {
+      ...gridFromSpec(spec), rows: names[0].length, columns: names.length,
+      offsetA1X: Number(w.x), offsetA1Y: spec.footprintY - Number(w.y),
+      spacingX: names.length > 1 ? Number(wells[names[1][0]].x) - Number(w.x) : 0,
+      spacingY: names[0].length > 1 ? Number(w.y) - Number(wells[names[0][1]].y) : 0,
+      wellShape: w.shape as WellShape, wellDiameter: w.diameter as number | undefined,
+      wellXDimension: w.xDimension as number | undefined, wellYDimension: w.yDimension as number | undefined,
+      wellDepth: Number(w.depth), wellVolumeUl: Number(w.totalLiquidVolume), wellZ: Number(w.z),
+      wellBottomShape: bottom(names[0][0]) as GridSpec["wellBottomShape"],
+    };
+    const regular = names.every((col, c) => col.length === g.rows && col.every((id, r) =>
+      Math.abs(Number(wells[id].x) - g.offsetA1X - c * g.spacingX) < 1e-7 &&
+      Math.abs(Number(wells[id].y) - (spec.footprintY - g.offsetA1Y - r * g.spacingY)) < 1e-7));
+    if (!regular) { for (const id of names.flat()) add([[id]]); return; }
+    wellGroups.push({ label: `Grid ${wellGroups.length + 1} (${names.flat().join(", ")})`,
+      firstColumn: Number(names[0][0].match(/\d+$/)?.[0] ?? wellGroups.length + 1), grid: g,
+      originalGrid: structuredClone(g), ordering: names,
+      originalWells: Object.fromEntries(names.flat().map(id => [id, structuredClone(wells[id])])) });
+  }
+  for (const names of buckets.values()) {
+    const xs = [...new Set(names.map(id => Number(wells[id].x)))].sort((a, b) => a - b);
+    add(xs.map(x => names.filter(id => Number(wells[id].x) === x).sort((a, b) => Number(wells[b].y) - Number(wells[a].y))));
+  }
+  spec.wellGroups = wellGroups;
+  spec.sourceDefinition = structuredClone(defn);
+  return { spec, warnings: [] };
 }
