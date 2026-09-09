@@ -924,6 +924,7 @@ export interface DeviceDeckSlot {
   labware: {
     kind: string;
     load_name: string;
+    definition?: unknown | null;
     display_name?: string | null;
     is_tiprack?: boolean;
     rows?: number | null;

@@ -1,18 +1,20 @@
 "use client";
-
-import type { RobotModule, DeviceDeck } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { ApiError, getLabwareDefinition, getStandardLabwareDefinition, type DeviceDeck, type RobotModule } from "@/lib/api";
+import { geometryFromDefinition, wellHalfX, wellHalfY, type LabwareGeometry } from "@/lib/labware-geometry";
 import {
   deckRows,
   TEMP_FAMILIES,
   buildSlotView,
-  computeOverhangReadouts,
+  computeModuleFootprints,
   moduleFamily,
   moduleShortLabel,
   pairModuleSlots,
   type SlotView,
   type TipRackSummary,
-} from "@/lib/ot2-deck";
-import { buildWellModel } from "@/lib/plate-wells";
+} from "../lib/ot2-deck";
+import { buildWellModel } from "../lib/plate-wells";
+
 
 function formatTemp(v: number | null | undefined): string {
   if (v == null || Number.isNaN(v)) return "—";
@@ -33,7 +35,7 @@ export function ModuleReadout({ live, compact }: { live: RobotModule | null; com
         className={[
           compact ? "text-sm" : "text-xl",
           "font-semibold tabular-nums",
-          cur == null ? "text-slate-400 dark:text-slate-400" : "text-ink dark:text-slate-100",
+          cur == null ? "text-slate-400 dark:text-slate-500" : "text-ink dark:text-slate-100",
         ].join(" ")}
       >
         {formatTemp(cur)} °C
@@ -44,7 +46,7 @@ export function ModuleReadout({ live, compact }: { live: RobotModule | null; com
       <span
         className={[
           "text-[9px] uppercase tracking-wider",
-          active ? "text-amber-600 dark:text-amber-400" : "text-ink-subtle dark:text-slate-300",
+          active ? "text-amber-600 dark:text-amber-400" : "text-ink-subtle dark:text-slate-400",
         ].join(" ")}
       >
         {status}
@@ -53,91 +55,56 @@ export function ModuleReadout({ live, compact }: { live: RobotModule | null; com
   );
 }
 
-const MINI_ROW_LETTERS = "ABCDEFGHIJKLMNOP";
-
-/**
- * Per-well tint for the deck's miniature grid. A well here is 2–3 px, so this
- * is deliberately *not* the inspector's vocabulary: an outlined "hollow" ring
- * turns to mud at this size, and three tones is already the most a 96-dot
- * thumbnail can carry.
- *
- * - present (default): solid grey, as it has always been.
- * - `empty`: a faint dot — the tip was picked and dropped, the hole is bare.
- * - `touched`: amber, matching the inspector — used, but still in the rack.
- *
- * An **untracked** rack keeps the plain solid grey. That is not a claim it is
- * full; the tile has no honest way to say "unknown" at this scale, so it says
- * nothing, and the slot's tooltip plus the expanded inspector carry the truth.
- */
-const MINI_WELL_FILL: Record<string, string> = {
-  // Green is reserved for "a tip is there and unused" — the one state an
-  // operator scans the deck for. It also distinguishes a *tracked* rack at a
-  // glance: no green anywhere means either every tip is gone or the tracker
-  // has no record, and both of those want a closer look.
-  fresh: "bg-emerald-400 dark:bg-emerald-500",
-  touched: "bg-amber-300 dark:bg-amber-600",
-  empty: "bg-slate-300 dark:bg-slate-600",
-  mounted: "bg-slate-300 dark:bg-slate-600",
-};
-// Wells with nothing known about them: plates (tip state is a rack concept)
-// and racks the tracker has never registered. Same grey as an emptied well —
-// deliberately, because "no tip" and "no idea" are both "do not count on it",
-// and the tooltip plus the inspector carry the distinction.
-const MINI_WELL_DEFAULT = "bg-slate-300 dark:bg-slate-600";
-
-// Miniature well grid drawn inside a deck slot once well-plate labware is
-// assigned. The inner grid is given the plate's own aspect ratio so every cell
-// is square, and it is centred within the (taller) slot box.
-export function MiniPlate({
-  rows,
-  columns,
-  wellKinds,
-}: {
-  rows: number;
-  columns: number;
-  /** Optional per-well state, keyed `A1`-style. Omitted → every well solid. */
-  wellKinds?: Record<string, string>;
-}) {
-  return (
-    <div className="flex h-full w-full items-center justify-center p-1.5">
-      <div
-        className="grid w-full gap-[2px]"
-        style={{
-          aspectRatio: `${columns} / ${rows}`,
-          gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
-        }}
-        aria-hidden
-      >
-        {Array.from({ length: rows * columns }, (_, i) => {
-          // CSS grid fills row-major, so index → (row, column) → well id.
-          const well = `${MINI_ROW_LETTERS[Math.floor(i / columns)] ?? "?"}${(i % columns) + 1}`;
-          const kind = wellKinds?.[well];
-          return (
-            <span
-              key={i}
-              className={`rounded-full ${(kind && MINI_WELL_FILL[kind]) || MINI_WELL_DEFAULT}`}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
+/** Exact definition geometry, independent of ordering's rectangularity. */
+function LabwareThumbnail({ view, slot, tipRacks }: { view: SlotView; slot: number | string; tipRacks: TipRackSummary[] }) {
+  const [loaded, setLoaded] = useState<{ name: string; geometry: LabwareGeometry | null; error?: string } | null>(null);
+  useEffect(() => {
+    if (!view.loadName || view.definition != null) return;
+    let cancelled = false;
+    const name = view.loadName;
+    getStandardLabwareDefinition(name).catch(error => {
+      if (error instanceof ApiError && error.status === 404) return getLabwareDefinition(name);
+      throw error;
+    }).then(({ definition }) => {
+      if (!cancelled) setLoaded({ name, geometry: geometryFromDefinition(definition) });
+    }).catch((error: unknown) => {
+      if (!cancelled) setLoaded({ name, geometry: null, error: error instanceof Error ? error.message : String(error) });
+    });
+    return () => { cancelled = true; };
+  }, [view.loadName, view.definition]);
+  const geometry = view.definition != null ? geometryFromDefinition(view.definition) : loaded?.name === view.loadName ? loaded?.geometry ?? null : null;
+  if (!geometry) return <div className="flex h-full items-center justify-center text-[10px] text-slate-500" title={loaded?.error}>
+    {view.definition == null && view.loadName && loaded?.name !== view.loadName ? "Loading geometry…" : "Geometry unavailable"}
+  </div>;
+  const model = buildWellModel({ geometry, rows: geometry.rows, columns: geometry.columns,
+    isTiprack: geometry.isTiprack, tipRack: tipRacks.find(r => r.slot === String(slot)) ?? null, samples: view.wells ?? null });
+  return <svg className="h-full w-full" viewBox={`0 0 ${geometry.footprintX} ${geometry.footprintY}`}
+    role="img" aria-label={`Top-down view of ${model.total} wells at definition coordinates`}>
+    <rect width={geometry.footprintX} height={geometry.footprintY} rx={2}
+      className="fill-slate-50 stroke-slate-400 dark:fill-slate-800 dark:stroke-slate-500" strokeWidth={0.6} />
+    {geometry.ordering.flat().map(name => {
+      const w = geometry.wells[name], cell = model.byWell[name];
+      const color = cell?.kind === "fresh" ? "fill-emerald-400 dark:fill-emerald-500" :
+        cell?.kind === "touched" ? "fill-amber-300 dark:fill-amber-600" : "fill-slate-300 dark:fill-slate-600";
+      const style = { className: color, "data-well": name };
+      return <g key={name}><title>{name}</title>{w.shape === "rectangular" ?
+        <rect {...style} x={w.x-wellHalfX(w)} y={geometry.footprintY-w.y-wellHalfY(w)} width={2*wellHalfX(w)} height={2*wellHalfY(w)} /> :
+        <ellipse {...style} cx={w.x} cy={geometry.footprintY-w.y} rx={wellHalfX(w)} ry={wellHalfY(w)} />}</g>;
+    })}
+  </svg>;
 }
 
 export interface DeckPanelProps {
-  /** The gateway's normalized deck (details.snapshot.deck) — null for an
-   *  un-migrated device, in which case `legacyLabware` drives the render. */
+  /** The gateway's normalized deck (details.snapshot.deck). */
   deviceDeck: DeviceDeck | null;
-  /** Legacy dashboard-store slots (slot -> kind); ignored when deviceDeck set. */
+  /** Legacy store slots (slot -> kind); ignored when deviceDeck set. */
   legacyLabware?: Record<string, string>;
   /** Live module telemetry (details.robot.modules) for readout pairing. */
   robotModules?: RobotModule[];
   selectedSlot?: number | string | null;
   /** Omit for a read-only deck (cells render as plain, non-clickable tiles). */
   onSelectSlot?: (slot: number | string | null) => void;
-  /** "tile" = fixed 160×120 cells (dashboard tile); "page" = responsive
-   *  full-width cells with labware names rendered inside. */
+  /** "tile" = fixed 160×120 cells; "page" = responsive full-width cells. */
   variant?: "tile" | "page";
   /** Tip-tracker summaries (`details.tip_racks`). When given, a tip rack's
    *  wells are tinted by real state instead of drawn uniformly full. */
@@ -147,9 +114,9 @@ export interface DeckPanelProps {
 /**
  * The 12-slot OT-2 deck (slot 1 bottom-left … 12 top-right, rendered top row
  * first to match the physical deck). Declared vs observed state, mismatch
- * flags, module accent + live temperature readouts (including the
- * temperature-module overhang cell) all come from the shared ot2-deck lib, so
- * the dashboard tile and the full-page interface render identically.
+ * flags, module accent, physical multi-slot module footprints, and live
+ * temperature readouts all come from the shared ot2-deck lib.
+ * Ported from the ac-organic-lab dashboard.
  */
 export function DeckPanel({
   deviceDeck,
@@ -167,40 +134,7 @@ export function DeckPanel({
   const interactive = onSelectSlot != null;
 
   const moduleSlots = pairModuleSlots(deviceDeck, robotModules);
-  const overhangReadout = computeOverhangReadouts(deviceDeck, moduleSlots);
-
-  /**
-   * Per-well state for a tip-rack slot, via the same model the expanded
-   * inspector renders — one definition of "fresh / used / empty", so the
-   * thumbnail and the detail view can never disagree.
-   *
-   * Returns undefined (⇒ uniform solid) unless this slot is a tracked tip
-   * rack: an untracked rack has no state to show, and inventing one is the
-   * failure this exists to avoid.
-   */
-  function wellKindsFor(
-    v: SlotView,
-    slot: number | string,
-  ): Record<string, string> | undefined {
-    if (!v.isTiprack) return undefined;
-    const summary = tipRacks.find((r) => r.slot === String(slot));
-    if (!summary) return undefined;
-    const model = buildWellModel({
-      isTiprack: true,
-      rows: v.rows,
-      columns: v.columns,
-      geometry: null,
-      tipRack: summary,
-      samples: null,
-      slot,
-    });
-    const out: Record<string, string> = {};
-    for (const cell of model.cells) out[cell.well] = cell.kind;
-    return out;
-  }
-  // Module slots whose readout renders in an overhang cell — their own cell
-  // then shows only the module name (or the plate sitting on it).
-  const exportedReadouts = new Set(Array.from(overhangReadout.values(), (o) => o.moduleSlot));
+  const moduleFootprints = computeModuleFootprints(deviceDeck);
 
   const grid = (
     <div
@@ -209,42 +143,37 @@ export function DeckPanel({
           ? "grid w-full gap-x-2 gap-y-1 sm:gap-x-3 sm:gap-y-1.5"
           : "grid justify-center gap-[10px] overflow-x-auto"
       }
-      style={{
-        gridTemplateColumns: page
-          ? `repeat(${columns}, minmax(0, 1fr))`
-          : `repeat(${columns}, 160px)`,
-      }}
+      style={{ gridTemplateColumns: page ? `repeat(${columns}, minmax(0, 1fr))` : `repeat(${columns}, 160px)` }}
     >
       {rows.flat().map((slot) => {
         const v = buildSlotView(slot, deviceDeck, legacyLabware);
         const selected = selectedSlot === slot;
         const mismatch = v.state === "mismatch";
-        // Module presentation: `overhang` puts the paired live readout in
-        // this (empty) cell because the long temperature module physically
-        // overhangs it from the slot to the right; `paired` is this slot's
-        // own module telemetry (shown inline only when no overhang cell
-        // exported it and the family reports temperatures).
-        const overhang = overhangReadout.get(slot);
+        const footprint = moduleFootprints.get(slot);
+        const footprintOnly = footprint != null && v.state === "empty";
+        const footprintConflict =
+          footprint != null && footprint.anchorSlot !== slot && v.state !== "empty" && v.moduleName == null;
         const paired = moduleSlots.get(slot);
         const inlineReadout =
           v.kind === "module" &&
           v.moduleName != null &&
-          !exportedReadouts.has(slot) &&
           TEMP_FAMILIES.has(moduleFamily(v.moduleName) ?? "");
-        const moduleAccent = overhang != null || v.moduleName != null;
+        const moduleAccent = footprint != null || v.moduleName != null;
         // Declared = operator intent the robot has not confirmed. Page-only,
         // matching where the "declared" wording already renders: on the compact
         // tile almost every slot is declared, so outlining them all would say
         // nothing while shouting.
         const declaredOnly = page && migrated && v.state === "declared";
-        const cellTitle = overhang
-          ? `Slot ${slot} — overhang of the ${overhang.name} at slot ${overhang.moduleSlot}`
+        const cellTitle = footprintOnly
+          ? `Slot ${slot} — occupied by the ${footprint.moduleName} anchored at slot ${footprint.anchorSlot}`
           : v.title;
         const cellClassName = [
           "relative overflow-hidden rounded border transition-colors",
-          page ? "aspect-[4/3] w-full" : "h-[120px] w-[160px]",
+          "aspect-[127.76/85.48] w-full",
           selected
             ? "border-sky-500 bg-sky-50 dark:border-sky-500 dark:bg-sky-950/40"
+            : footprintConflict
+              ? "border-rose-500 bg-rose-50 dark:border-rose-500 dark:bg-rose-950/30"
             : mismatch
               ? "border-amber-500 bg-amber-50 dark:border-amber-500 dark:bg-amber-950/30"
               : declaredOnly
@@ -259,25 +188,26 @@ export function DeckPanel({
         ].join(" ");
         const cellBody = (
           <>
-            {overhang ? (
+            {footprintOnly ? (
               <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-1">
-                <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-300">
-                  {moduleShortLabel(overhang.name)} · slot {overhang.moduleSlot}
+                <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+                  {moduleShortLabel(footprint.moduleName)}
                 </span>
-                <ModuleReadout live={overhang.live} />
+                <span className="text-[9px] text-ink-subtle dark:text-slate-400">
+                  footprint of slot {footprint.anchorSlot}
+                </span>
               </div>
             ) : v.isTrash ? (
               <div className="flex h-full w-full items-center justify-center bg-slate-300/70 dark:bg-slate-700/60">
-                <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-300">
+                <span className="text-[9px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
                   waste
                 </span>
               </div>
-            ) : v.rows > 0 && v.columns > 0 ? (
-              <MiniPlate rows={v.rows} columns={v.columns} wellKinds={wellKindsFor(v, slot)} />
+            ) : v.loadName || (v.rows > 0 && v.columns > 0) ? (
+              <LabwareThumbnail view={v} slot={slot} tipRacks={tipRacks} />
             ) : v.state !== "empty" ? (
-              // Occupied by something without a grid (module, unknown kind).
               <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-1 text-center">
-                <span className="text-[10px] font-medium text-ink-subtle dark:text-slate-300">
+                <span className="text-[10px] font-medium text-ink-subtle dark:text-slate-400">
                   {v.label || v.kind}
                 </span>
                 {inlineReadout && <ModuleReadout live={paired?.live ?? null} compact />}
@@ -289,34 +219,25 @@ export function DeckPanel({
                 </span>
               </div>
             )}
-            {/* Amber strip ties the module's cells together: the overhang
-                readout cell and the module's own slot (module name or the
-                plate sitting on it) read as one 1.5-slot fixture. */}
             {moduleAccent && (
               <span
                 className="absolute inset-x-0 top-0 h-[3px] bg-amber-400/90 dark:bg-amber-500/80"
                 aria-hidden
               />
             )}
-            {/* Slot number in the cell's own top-left corner. Bare text, no
-                pill: the badge background is what made the old corner number
-                read as an overlay sitting on top of A1. An empty slot already
-                draws its number large and centred, so it is skipped here. */}
-            {page && v.state !== "empty" && (
+            {/* Overlay the slot ID without reserving any preview space. */}
+            {(
               <span
                 className={[
-                  "pointer-events-none absolute left-1 top-0.5 text-[10px] font-semibold leading-none",
+                  "pointer-events-none absolute left-0.5 top-0.5 z-10 rounded bg-white/90 px-1 py-0.5 text-[10px] font-semibold leading-none shadow-sm dark:bg-slate-900/90",
                   moduleAccent ? "top-[5px]" : "",
-                  "text-ink-subtle dark:text-slate-300",
+                  "text-ink dark:text-slate-200",
                 ].join(" ")}
                 aria-hidden
               >
                 {slot}
               </span>
             )}
-            {/* State badge for migrated devices (top-right corner). The page
-                variant also badges declared-only slots so intent vs observed
-                is legible at a glance. */}
             {/* Both variants badge the cell's top-right corner. The page
                 variant used to reserve a whole text row above the box for this,
                 costing every row ~1.1em of height to carry a badge that only a
@@ -330,6 +251,14 @@ export function DeckPanel({
                 aria-hidden
               >
                 {v.state === "mismatch" ? "≠" : "busy"}
+              </span>
+            )}
+            {footprintConflict && (
+              <span
+                className="absolute right-1 top-1 rounded bg-rose-600 px-1 text-[8px] font-semibold uppercase tracking-wide text-white"
+                aria-hidden
+              >
+                conflict
               </span>
             )}
           </>
@@ -346,7 +275,11 @@ export function DeckPanel({
               className="min-h-[1.15em] truncate px-0.5 text-left text-[10px] font-medium leading-tight text-ink dark:text-slate-200"
               title={v.loadName || v.label || undefined}
             >
-              {v.state !== "empty" && !overhang && !v.isTrash ? v.label : "\u00a0"}
+              {v.state !== "empty" && !v.isTrash
+                ? v.label
+                : footprintOnly
+                  ? `${moduleShortLabel(footprint.moduleName)} footprint`
+                  : "\u00a0"}
             </span>
           </div>
         ) : (
@@ -379,7 +312,10 @@ export function DeckPanel({
   if (!page) return grid;
   return (
     <div className="flex w-full flex-col gap-1.5">
-      <p className="flex items-center gap-1.5 px-0.5 text-[10px] leading-tight text-ink-subtle dark:text-slate-300">
+      <p className="px-0.5 text-center text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+        Back of robot
+      </p>
+      <p className="flex items-center gap-1.5 px-0.5 text-[10px] leading-tight text-ink-subtle dark:text-slate-400">
         <span
           className="inline-block h-3 w-4 shrink-0 rounded-[2px] border border-orange-400 dark:border-orange-500/80"
           aria-hidden
@@ -388,6 +324,9 @@ export function DeckPanel({
         yet observed on the robot.
       </p>
       {grid}
+      <p className="px-0.5 text-center text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+        Front · operator
+      </p>
     </div>
   );
 }

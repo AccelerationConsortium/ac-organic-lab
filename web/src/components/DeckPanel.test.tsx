@@ -5,12 +5,24 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   deckWith,
   emptySlot,
-  labwareSlot,
+  labwareSlot as baseLabwareSlot,
   mismatchSlot,
   moduleSlot,
 } from "@/lib/ot2-deck-test-helpers";
 
+import { buildDefinition, defaultSpec } from "@/lib/labware-schema";
 import { DeckPanel } from "./DeckPanel";
+
+function labwareSlot(...args: Parameters<typeof baseLabwareSlot>) {
+  const slot = baseLabwareSlot(...args);
+  slot.labware!.definition = buildDefinition({ ...defaultSpec(), loadName: args[1].load_name,
+    displayCategory: args[1].is_tiprack ? "tipRack" : "wellPlate", tipLength: 50 });
+  return slot;
+}
+vi.mock("@/lib/api", async importOriginal => {
+  const original = await importOriginal<typeof import("@/lib/api")>();
+  return { ...original, getStandardLabwareDefinition: vi.fn(async () => ({ definition: {} })) };
+});
 
 afterEach(cleanup);
 
@@ -154,7 +166,7 @@ describe("DeckPanel declared vs observed rendering", () => {
     expect(container.textContent).not.toContain("Orange outline");
   });
 
-  it("renders a declared temperature module with its overhang readout cell", () => {
+  it("keeps a temperature module and readout in its assigned slot", () => {
     const deck = deckWith({ "11": moduleSlot("declared", "temperature module gen2") });
     render(
       <DeckPanel
@@ -173,8 +185,9 @@ describe("DeckPanel declared vs observed rendering", () => {
       />,
     );
     const overhang = screen.getByTitle(
-      "Slot 10 — overhang of the temperature module gen2 at slot 11",
+      "Slot 11 — temperature module gen2 (declared)",
     );
+    expect(screen.getByTitle("Slot 10 — empty")).toBeTruthy();
     expect(overhang.textContent).toContain("37 °C");
     expect(overhang.textContent).toContain("→ 40 °C");
   });
@@ -212,7 +225,10 @@ describe("DeckPanel tip-state rendering", () => {
   /** The dots inside slot 5's mini grid, in row-major render order. */
   function wellDots(container: HTMLElement): Element[] {
     const cell = container.querySelector('[title^="Slot 5"]')!;
-    return Array.from(cell.querySelectorAll("span.rounded-full"));
+    return Array.from(cell.querySelectorAll("[data-well]")).sort((a, b) => {
+      const x = a.getAttribute("data-well")!, y = b.getAttribute("data-well")!;
+      return x.charCodeAt(0) - y.charCodeAt(0) || Number(x.slice(1)) - Number(y.slice(1));
+    });
   }
 
   it("greys the wells an 8-channel pick emptied, and tints a used tip", () => {
@@ -224,11 +240,11 @@ describe("DeckPanel tip-state rendering", () => {
     expect(dots).toHaveLength(96);
     // Row-major: index = row * columns + column. Column 1 is index r*12.
     for (let r = 0; r < 8; r++) {
-      expect(dots[r * 12].className).toContain("bg-slate-300"); // emptied
+      expect(dots[r * 12].getAttribute("class")).toContain("fill-slate-300"); // emptied
     }
-    expect(dots[7 * 12 + 1].className).toContain("bg-amber-300"); // H2, used
+    expect(dots[7 * 12 + 1].getAttribute("class")).toContain("fill-amber-300"); // H2, used
     // Green is the "a tip is there and unused" signal.
-    expect(dots[3].className).toContain("bg-emerald-400"); // A4, still full
+    expect(dots[3].getAttribute("class")).toContain("fill-emerald-400"); // A4, still full
   });
 
   it("draws an untracked rack uniformly rather than claiming it is full", () => {
@@ -236,10 +252,10 @@ describe("DeckPanel tip-state rendering", () => {
     // "unknown" at 2 px, so it says nothing — the inspector carries the truth.
     const { container } = render(<DeckPanel deviceDeck={rackDeck()} tipRacks={[]} />);
     const dots = wellDots(container);
-    expect(dots.every((d) => d.className.includes("bg-slate-300"))).toBe(true);
+    expect(dots.every((d) => (d.getAttribute("class") ?? "").includes("fill-slate-300"))).toBe(true);
     // The load-bearing part: no green anywhere. Green means "known available",
     // so an unregistered rack must never show it.
-    expect(dots.some((d) => d.className.includes("emerald"))).toBe(false);
+    expect(dots.some((d) => (d.getAttribute("class") ?? "").includes("emerald"))).toBe(false);
   });
 
   it("leaves a plate alone (tip state is a tip-rack concept)", () => {
@@ -254,7 +270,39 @@ describe("DeckPanel tip-state rendering", () => {
     });
     const { container } = render(<DeckPanel deviceDeck={deck} tipRacks={summary({ A1: "empty" })} />);
     const dots = wellDots(container);
-    expect(dots.every((d) => d.className.includes("bg-slate-300"))).toBe(true);
-    expect(dots.some((d) => d.className.includes("emerald"))).toBe(false);
+    expect(dots.every((d) => (d.getAttribute("class") ?? "").includes("fill-slate-300"))).toBe(true);
+    expect(dots.some((d) => (d.getAttribute("class") ?? "").includes("emerald"))).toBe(false);
   });
+});
+
+it("uses exact mixed well sizes, rectangular shapes and a padding-free viewBox in the overview", () => {
+  const slot = labwareSlot("declared", { kind: "unknown", load_name: "mixed_test" });
+  slot.labware!.definition = {
+    dimensions: { xDimension: 127.75, yDimension: 85.5, zDimension: 20 },
+    ordering: [["A1", "B1"], ["A2"]],
+    wells: {
+      A1: { x: 15, y: 70, z: 2, depth: 18, shape: "circular", diameter: 14.7 },
+      B1: { x: 15, y: 30, z: 2, depth: 18, shape: "circular", diameter: 27.81 },
+      A2: { x: 70, y: 60, z: 2, depth: 18, shape: "rectangular", xDimension: 12, yDimension: 8 },
+    },
+  };
+  const { container } = render(<DeckPanel deviceDeck={deckWith({ "2": slot })} />);
+  expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 127.75 85.5");
+  expect(container.querySelectorAll("[data-well]")).toHaveLength(3);
+  expect(container.querySelector('[data-well="A1"]')?.getAttribute("rx")).toBe("7.35");
+  expect(container.querySelector('[data-well="B1"]')?.getAttribute("rx")).toBe("13.905");
+  const rect = container.querySelector('[data-well="A2"]')!;
+  expect(rect.tagName).toBe("rect");
+  expect(rect.getAttribute("x")).toBe("64");
+  expect(rect.getAttribute("y")).toBe("21.5");
+  expect(rect.getAttribute("width")).toBe("12");
+  const cell = screen.getByTitle("Slot 2 — mixed_test (declared)");
+  expect(cell.querySelector(".absolute.left-0\\.5")?.textContent).toBe("2");
+});
+
+it("reserves the thermocycler footprint without inventing an adjacent temperature-module slot", () => {
+  render(<DeckPanel deviceDeck={deckWith({ "7": moduleSlot("declared", "thermocycler module gen2") })} />);
+  expect(screen.getByTitle("Slot 8 — occupied by the thermocycler module gen2 anchored at slot 7")).toBeTruthy();
+  expect(screen.getByTitle("Slot 10 — occupied by the thermocycler module gen2 anchored at slot 7")).toBeTruthy();
+  expect(screen.getByTitle("Slot 11 — occupied by the thermocycler module gen2 anchored at slot 7")).toBeTruthy();
 });

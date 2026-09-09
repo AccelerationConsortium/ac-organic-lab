@@ -101,12 +101,11 @@ describe("geometryFromDefinition", () => {
     expect(geometryFromDefinition(definition({ ordering: [] }))).toBeNull();
   });
 
-  it("skips malformed wells but keeps the usable ones", () => {
+  it("rejects malformed ordered wells rather than displaying a partial layout", () => {
     const defn = definition();
     (defn.wells as Record<string, unknown>).B3 = { shape: "circular" }; // no x/y/depth
     const g = geometryFromDefinition(defn);
-    expect(g?.wells.B3).toBeUndefined();
-    expect(g?.wells.A1).toBeDefined();
+    expect(g).toBeNull();
   });
 
   it("measures circular and rectangular wells on the right axis", () => {

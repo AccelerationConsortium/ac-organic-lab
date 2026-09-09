@@ -211,6 +211,7 @@ export interface SlotView {
   moduleName?: string; // set when a hardware module occupies this slot (labware may sit on it)
   /** Exact Opentrons load_name when the deck reports one (shown in tooltips/details). */
   loadName?: string;
+  definition?: unknown | null;
   /** For mismatch slots: what was declared vs what is observed. */
   declared?: { kind: string; load_name: string } | null;
   /** The setup recipe's nickname for this slot — the join key for
@@ -273,6 +274,7 @@ export function buildSlotView(
       title,
       moduleName: s.module?.module_name,
       loadName: s.labware?.load_name || undefined,
+      definition: s.labware?.definition ?? null,
       declared: s.declared ?? null,
       nickname: s.labware?.nickname ?? null,
       // Trust the deck's own flag; fall back to the classified kind for a
@@ -500,4 +502,31 @@ export function pipetteLabel(state: string | undefined | null): string {
     .filter((p) => !/^gen\d+$/i.test(p))
     .map((p) => (/^p\d+$/i.test(p) ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)))
     .join(" ");
+}
+
+export interface ModuleFootprint {
+  /** The slot carrying the module in the device state. */
+  anchorSlot: number | string;
+  moduleName: string;
+}
+
+/**
+ * Extra deck cells physically occupied by a module.
+ *
+ * Temperature, magnetic, and heater-shaker modules each occupy the one SBS
+ * slot they are declared in. The Thermocycler is the OT-2 exception: its
+ * anchor is slot 7 and its body occupies slots 7, 8, 10, and 11. Project the
+ * other three cells so an empty-looking cell never invites an operator to put
+ * labware under the module. Do not invent a footprint for a declaration at an
+ * unsupported anchor: render the gateway's asserted slot faithfully instead.
+ */
+export function computeModuleFootprints(deviceDeck: DeviceDeck | null): Map<number | string, ModuleFootprint> {
+  const footprint = new Map<number | string, ModuleFootprint>();
+  if (!deviceDeck) return footprint;
+  const anchor = deviceDeck.slots["7"];
+  if (moduleFamily(anchor?.module?.module_name) !== "thermocycler") return footprint;
+  for (const slot of [7, 8, 10, 11]) {
+    footprint.set(slot, { anchorSlot: 7, moduleName: anchor.module!.module_name });
+  }
+  return footprint;
 }
