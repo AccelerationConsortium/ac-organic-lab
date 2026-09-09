@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { EquipmentSnapshot } from "@/types/api";
@@ -80,7 +80,7 @@ describe("BambuPrinterPanel", () => {
 
     expect(screen.queryByTitle("Bambu Gateway — submit a print")).toBeNull();
     expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
-    expect(screen.getByText(/not attributable to anyone/)).toBeTruthy();
+    expect(screen.getByText(/same dashboard sign-in/)).toBeTruthy();
   });
 
   it("offers to start the login flow instead", () => {
@@ -105,28 +105,58 @@ describe("BambuPrinterPanel", () => {
     const frame = screen.getByTitle("Bambu Gateway — submit a print");
     // Same-origin path, not the gateway's own address: that is what puts it
     // behind the dashboard's login and lets the edge inject the identity.
-    expect(frame.getAttribute("src")).toBe("/bambu/ui/");
+    expect(frame.getAttribute("src")).toBe("/bambu/ui/?embed=1");
   });
 
-  it("keeps a direct link as a fallback, and says it is not attributable", () => {
+  it("routes the standalone link through the authenticated edge", () => {
     render(<BambuPrinterPanel printers={[]} />);
 
-    const link = screen.getByRole("link", { name: /Open directly/ });
-    // Absolute tailnet URL: the registry reaches this gateway on loopback,
-    // which in a browser is the visitor's own machine.
-    expect(link.getAttribute("href")).toBe("http://100.64.254.6:8012/ui");
+    const link = screen.getByRole("link", { name: /Open submissions/ });
+    expect(link.getAttribute("href")).toBe("/bambu/ui/");
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toContain("noreferrer");
-    expect(screen.getByText(/not attributable/)).toBeTruthy();
+    expect(screen.queryByText(/Open directly/)).toBeNull();
   });
 
-  it("explains a blank panel rather than leaving it mysterious", () => {
+  it("explains attribution without suggesting an auth bypass", () => {
     render(<BambuPrinterPanel printers={[]} />);
-    expect(screen.getByText(/edge route is not installed yet/)).toBeTruthy();
+    expect(screen.getByText(/signed-in account/)).toBeTruthy();
   });
 
   it("says that queueing a job does not reach a printer", () => {
     render(<BambuPrinterPanel printers={[]} />);
     expect(screen.getByText(/dispatch is not implemented/i)).toBeTruthy();
+  });
+
+  it("shows live progress, empty units and operator-declared transparent filament", () => {
+    const printer = printerSnapshot("bambu_one", "Printer One", "P1S");
+    printer.status.activity = "running";
+    printer.status.metrics = { print_progress: {value: 35, unit: "%"}, remaining_time: {value: 20, unit: "min"} };
+    printer.status.details = {job_name: "fixture.3mf", ams_unit_ids: [0, 128], ams_trays: [
+      {ams_id: 128, tray_id: 0, tray_type: "PC", tray_color: "00000000", tray_color_name: "Transparent", tray_color_source: "operator_declared", remaining_percent: 12},
+    ]};
+    render(<BambuPrinterPanel printers={[printer]} />);
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("35");
+    expect(screen.getByText("Transparent")).toBeTruthy();
+    expect(screen.getByText("12%")).toBeTruthy();
+    expect(screen.getByText(/Empty · no loaded filament/)).toBeTruthy();
+  });
+
+  it("withholds cached tray contents when telemetry is unavailable", () => {
+    const printer = printerSnapshot("bambu_one", "Printer One", "P1S");
+    printer.status.equipment_status = "unknown";
+    printer.status.details = {ams_unit_ids: [0], ams_trays: [{ams_id: 0, tray_id: 0, tray_type: "PC", tray_color_name: "Transparent"}]};
+    render(<BambuPrinterPanel printers={[printer]} />);
+    expect(screen.queryByText("Transparent")).toBeNull();
+    expect(screen.getByText("Telemetry unavailable")).toBeTruthy();
+  });
+
+  it("selects a printer using a same-origin message without reloading the form", () => {
+    render(<BambuPrinterPanel printers={[printerSnapshot("bambu_one", "Printer One", "P1S")]} />);
+    const frame = screen.getByTitle("Bambu Gateway — submit a print") as HTMLIFrameElement;
+    const send = vi.spyOn(frame.contentWindow!, "postMessage");
+    fireEvent.click(screen.getByRole("button", {name: "Prepare a job · view queue"}));
+    expect(send).toHaveBeenCalledWith({type: "bambu:select-printer", printer: "bambu_one"}, window.location.origin);
+    expect(frame.getAttribute("src")).toBe("/bambu/ui/?embed=1");
   });
 });

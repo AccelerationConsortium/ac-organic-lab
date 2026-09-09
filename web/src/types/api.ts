@@ -38,6 +38,20 @@ export type AggregatorHealth = Schemas["AggregatorHealth"];
 export type Location = Schemas["Location"];
 export type Tile = Schemas["Tile"];
 
+/** Bambu gateway details.ams_trays / profile.observed.loaded_trays display fields.
+ * The gateway's live LoadedTray OpenAPI schema is authoritative. Color names
+ * are matches/declarations, not spool identity; null remaining means unknown.
+ */
+export interface BambuAmsTray {
+  ams_id: number;
+  tray_id: number;
+  tray_type?: string | null;
+  tray_color?: string | null;
+  tray_color_name?: string | null;
+  tray_color_source?: "bambu_color_match" | "operator_declared" | "generic" | "unknown" | null;
+  remaining_percent?: number | null;
+}
+
 // ---------------------------------------------------------------------
 // Hand-curated camera + plug shapes (mirror lab_skills/registry.py and
 // kasa_tapo_services/models.py).

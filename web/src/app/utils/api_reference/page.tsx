@@ -350,6 +350,12 @@ function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
                 Opened through the dashboard&apos;s read-only documentation proxy. Availability
                 comes from the running equipment server.
               </p>
+              {instrument.id === "bambu_gateway" && <p className="mt-2 text-xs text-ink-muted dark:text-slate-300">
+                Printer profiles expose typed AMS slots, color names and their source,
+                and remaining filament estimates. Operator-declared colors do not establish
+                spool identity. Submission approval does not start a print.{" "}
+                <a href="/bambu/docs" target="_blank" rel="noreferrer" className="font-medium text-sky-700 underline dark:text-sky-400">Open authenticated gateway API</a>
+              </p>}
             </div>
           )}
 
