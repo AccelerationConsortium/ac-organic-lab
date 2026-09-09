@@ -1088,7 +1088,7 @@ equipment:
     pills: {}
 
   - id: lle_server
-    name: Process Chemistry Monitor
+    name: ProcessChem Monitor
     kind: other
     adapter: http
     protocol: "1.2"
