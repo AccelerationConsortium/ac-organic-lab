@@ -44,6 +44,18 @@ class EquipmentUnreachable(LabError):
         self.message = message
 
 
+class CapabilityUnavailable(LabError):
+    """A reachable older device does not implement an optional read endpoint."""
+
+    def __init__(self, equipment_id: str, path: str, http_status: int) -> None:
+        message = f"{path} is unavailable (HTTP {http_status}); deployment may predate it"
+        super().__init__(f"{equipment_id}: {message}")
+        self.equipment_id = equipment_id
+        self.path = path
+        self.http_status = http_status
+        self.message = message
+
+
 class CommandOutcomeUnknown(LabError):
     """A control command was sent and no answer arrived in time.
 
@@ -111,11 +123,7 @@ class EquipmentInMaintenance(LabError):
         contact: str | None = None,
     ) -> None:
         suffix = f" until {until.isoformat()}" if until is not None else ""
-        msg = (
-            f"{equipment_id} is in maintenance"
-            + (f" ({reason})" if reason else "")
-            + suffix
-        )
+        msg = f"{equipment_id} is in maintenance" + (f" ({reason})" if reason else "") + suffix
         super().__init__(msg)
         self.equipment_id = equipment_id
         self.reason = reason
@@ -225,6 +233,7 @@ class Degraded(LabError):
 
 __all__ = [
     "BadRequest",
+    "CapabilityUnavailable",
     "ClaimRejected",
     "Degraded",
     "EquipmentBusy",

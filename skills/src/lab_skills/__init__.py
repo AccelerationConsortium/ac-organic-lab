@@ -18,6 +18,13 @@ from .aggregator import EquipmentAggregator
 from .claims import ClaimManager
 from .skill_catalog import SKILL_REGISTRY, Skill, SkillDef
 from .client import EquipmentClient
+from .discovery import (
+    ActionCatalog,
+    AgentDocumentation,
+    DiscoveredAction,
+    EquipmentDiscovery,
+    OpenAPIDocument,
+)
 from .typed_clients import (
     FumeHoodClient,
     PlateReaderClient,
@@ -28,6 +35,7 @@ from .typed_clients import (
 )
 from .exceptions import (
     BadRequest,
+    CapabilityUnavailable,
     ClaimRejected,
     Degraded,
     EquipmentBusy,
@@ -111,18 +119,22 @@ from .waiting import wait_until_state
 __version__ = "0.1.0"
 
 __all__ = [
+    "ActionCatalog",
     "Activity",
     "AdapterKind",
     "BadRequest",
+    "CapabilityUnavailable",
     "CameraConfig",
     "CameraLens",
     "ClaimManager",
     "ClaimRejected",
     "ComponentStatus",
+    "DiscoveredAction",
     "Degraded",
     "EquipmentAggregator",
     "EquipmentBusy",
     "EquipmentClient",
+    "EquipmentDiscovery",
     "EquipmentEntry",
     "EquipmentInMaintenance",
     "EquipmentKind",
@@ -145,6 +157,7 @@ __all__ = [
     "Maintenance",
     "MetricValue",
     "PROTOCOL_VERSION",
+    "OpenAPIDocument",
     "SPEC_VERSION",
     "PillConfig",
     "Plan",
@@ -177,6 +190,7 @@ __all__ = [
     "canonical_slot",
     "canonicalize_slot_args",
     "WaitTimeout",
+    "AgentDocumentation",
     "__version__",
     "clear_interlocks",
     "execute_plan",

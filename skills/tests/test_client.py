@@ -59,9 +59,7 @@ async def test_probe_and_health(http) -> None:
     }
     with respx.mock(base_url=entry.base_url) as router:
         router.get("/").mock(return_value=httpx.Response(200, json=probe_body))
-        router.get("/health").mock(
-            return_value=httpx.Response(200, json={"status": "healthy"})
-        )
+        router.get("/health").mock(return_value=httpx.Response(200, json={"status": "healthy"}))
         client = EquipmentClient(entry, http)
         probe = await client.probe()
         health = await client.health()
@@ -92,12 +90,81 @@ async def test_status_5xx_raises_unreachable(http) -> None:
 
 
 @pytest.mark.asyncio
+async def test_documentation_discovery_reads_the_running_gateway(http) -> None:
+    entry = _entry(kind="liquid_handler")
+    with respx.mock(base_url=entry.base_url) as router:
+        router.get("/docs/agent").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "documentation_version": "1",
+                    "equipment_kind": "liquid_handler",
+                    "model": "Opentrons Flex",
+                    "links": {"actions": "/plans/actions"},
+                },
+            )
+        )
+        router.get("/plans/actions").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "actions": [
+                        {
+                            "action": "gripper_move_to_relative",
+                            "idempotent": False,
+                            "args_schema": {"type": "object"},
+                        }
+                    ]
+                },
+            )
+        )
+        router.get("/openapi.json").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "openapi": "3.1.0",
+                    "info": {"title": "gateway"},
+                    "paths": {"/control/gripper-move-to-relative": {"post": {}}},
+                },
+            )
+        )
+        discovered = await EquipmentClient(entry, http).discover()
+
+    assert discovered.agent_docs is not None
+    assert discovered.agent_docs.model == "Opentrons Flex"
+    assert discovered.action_catalog is not None
+    assert discovered.action_catalog.actions[0].action == "gripper_move_to_relative"
+    assert discovered.openapi is not None
+    assert "/control/gripper-move-to-relative" in discovered.openapi.paths
+    assert discovered.unavailable == {}
+
+
+@pytest.mark.asyncio
+async def test_documentation_discovery_reports_older_gateway_endpoints(http) -> None:
+    entry = _entry(kind="liquid_handler")
+    with respx.mock(base_url=entry.base_url) as router:
+        for path in ("/docs/agent", "/plans/actions"):
+            router.get(path).mock(return_value=httpx.Response(404))
+        router.get("/openapi.json").mock(
+            return_value=httpx.Response(
+                200,
+                json={"openapi": "3.1.0", "info": {}, "paths": {"/status": {"get": {}}}},
+            )
+        )
+        discovered = await EquipmentClient(entry, http).discover()
+
+    assert discovered.agent_docs is None
+    assert discovered.action_catalog is None
+    assert set(discovered.unavailable) == {"/docs/agent", "/plans/actions"}
+    assert "predate" in discovered.unavailable["/plans/actions"]
+    assert discovered.openapi is not None
+
+
+@pytest.mark.asyncio
 async def test_status_invalid_envelope_raises_unreachable(http) -> None:
     entry = _entry()
     with respx.mock(base_url=entry.base_url) as router:
-        router.get("/status").mock(
-            return_value=httpx.Response(200, json={"hello": "world"})
-        )
+        router.get("/status").mock(return_value=httpx.Response(200, json={"hello": "world"}))
         client = EquipmentClient(entry, http)
         with pytest.raises(EquipmentUnreachable):
             await client.status()

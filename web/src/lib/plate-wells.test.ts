@@ -151,6 +151,7 @@ describe("buildWellModel — tip racks", () => {
     columns: 12,
     geometry: null,
     samples: null,
+    slot: "5",
     nickname: "tips_20",
   };
 
@@ -171,6 +172,15 @@ describe("buildWellModel — tip racks", () => {
     expect(model.byWell.H2).toMatchObject({ kind: "touched", detail: "plate_D_B2" });
   });
 
+  it("keeps a tip currently on a pipette distinct from touched and empty", () => {
+    const model = buildWellModel({
+      ...base,
+      tipRack: tipRack({ A1: "on_pipette" }),
+    });
+    expect(model.byWell.A1).toMatchObject({ kind: "mounted", mounted: true });
+    expect(model.counts.mounted).toBe(1);
+  });
+
   it("is unknown — not full — for a rack the tracker has never registered", () => {
     // The distinction the whole component exists to preserve.
     const model = buildWellModel({ ...base, tipRack: null });
@@ -183,7 +193,7 @@ describe("buildWellModel — tip racks", () => {
     const model = buildWellModel({
       ...base,
       tipRack: tipRack({}),
-      mountedTips: [{ pipette: "p20", rack: "tips_20", well: "A3", wells: COLUMN_1.map((w) => w.replace("1", "3")) }],
+      mountedTips: [{ pipette: "p20", rack: "5", well: "A3", wells: COLUMN_1.map((w) => w.replace("1", "3")) }],
     });
     expect(model.cells.filter((c) => c.mounted)).toHaveLength(8);
     expect(model.byWell.H3.mounted).toBe(true);
@@ -194,7 +204,7 @@ describe("buildWellModel — tip racks", () => {
     const model = buildWellModel({
       ...base,
       tipRack: tipRack({}),
-      mountedTips: [{ pipette: "p300", rack: "tips_20", well: "B5" }],
+      mountedTips: [{ pipette: "p300", rack: "5", well: "B5" }],
     });
     expect(model.cells.filter((c) => c.mounted)).toHaveLength(1);
     expect(model.byWell.B5.mounted).toBe(true);

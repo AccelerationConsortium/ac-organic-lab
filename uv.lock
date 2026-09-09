@@ -45,6 +45,7 @@ version = "0.1.0"
 source = { editable = "api" }
 dependencies = [
     { name = "fastapi" },
+    { name = "jsonschema" },
     { name = "lab-skills" },
     { name = "mcp" },
     { name = "opentrons-shared-data" },
@@ -65,6 +66,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "jsonschema", specifier = ">=4.23" },
     { name = "lab-skills", editable = "skills" },
     { name = "mcp", specifier = ">=1.0" },
     { name = "opentrons-shared-data", specifier = ">=8.0" },

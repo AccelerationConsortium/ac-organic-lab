@@ -11,6 +11,7 @@ import {
 } from "./ot2-deck-test-helpers";
 import {
   buildSlotView,
+  deckRows,
   claimedByFromStatus,
   computeOverhangReadouts,
   declaredMapFromDeck,
@@ -28,6 +29,19 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("declaredMapFromDeck", () => {
+  it("retains a declaration after the run observes the slot", () => {
+    const slot = labwareSlot("occupied", {
+      kind: "96-well",
+      load_name: "corning_96_wellplate_360ul_flat",
+    });
+    slot.declared = {
+      kind: "96-well",
+      load_name: "corning_96_wellplate_360ul_flat",
+    };
+    expect(declaredMapFromDeck(deckWith({ "3": slot }))).toEqual({
+      "3": "corning_96_wellplate_360ul_flat",
+    });
+  });
   it("round-trips a declared slot as its exact load_name (not the coarse kind)", () => {
     const deck = deckWith({
       "3": labwareSlot("declared", {
@@ -101,6 +115,20 @@ describe("nextDeclaration", () => {
 
   it("treats empty string as clear", () => {
     expect(nextDeclaration({ "7": "tiprack" }, 7, "")).toEqual({});
+  });
+
+  it("preserves an alphabetic Flex slot", () => {
+    expect(nextDeclaration({}, "B2", "nest_96_wellplate_200ul_flat")).toEqual({
+      B2: "nest_96_wellplate_200ul_flat",
+    });
+  });
+});
+
+describe("deckRows", () => {
+  it("uses A1-D4 when the running deck is a Flex", () => {
+    const deck = deckWith({ A1: emptySlot() });
+    expect(deckRows(deck)[0]).toEqual(["A1", "A2", "A3", "A4"]);
+    expect(deckRows(deck).flat()).toHaveLength(16);
   });
 });
 
@@ -296,7 +324,15 @@ describe("status detail readers", () => {
   it("parses mounted tips and the claim holder", () => {
     const status = statusWithDetails({
       mounted_tips: {
-        right: { rack: "tips_300", well: "C5", last_sample: "cu-complex-2", origin_status: "fresh" },
+        right: {
+          rack: "5",
+          well: "C5",
+          last_sample: "cu-complex-2",
+          origin_status: "fresh",
+          contacted_liquid: true,
+          uncertain: false,
+          picked_at: "2026-09-09T12:00:00Z",
+        },
       },
       claimed_by: {
         session_id: "f1f1c1a2",
@@ -307,10 +343,13 @@ describe("status detail readers", () => {
     expect(mountedTipsFromStatus(status)).toEqual([
       {
         pipette: "right",
-        rack: "tips_300",
+        rack: "5",
         well: "C5",
         last_sample: "cu-complex-2",
         origin_status: "fresh",
+        contacted_liquid: true,
+        uncertain: false,
+        picked_at: "2026-09-09T12:00:00Z",
       },
     ]);
     expect(claimedByFromStatus(status)?.owner).toBe("agent:complexation");

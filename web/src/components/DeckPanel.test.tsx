@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   deckWith,
+  emptySlot,
   labwareSlot,
   mismatchSlot,
   moduleSlot,
@@ -36,6 +37,20 @@ describe("DeckPanel slot selection", () => {
     expect(buttons[0].title).toBe("Slot 10 — empty");
     expect(buttons[2].title).toBe("Slot 12 — empty");
     expect(buttons[11].title).toBe("Slot 3 — empty");
+  });
+
+  it("renders and selects the running Flex deck's 16 alphabetic slots", () => {
+    const onSelectSlot = vi.fn();
+    const deck = deckWith({ A1: emptySlot() });
+    render(
+      <DeckPanel deviceDeck={deck} selectedSlot={null} onSelectSlot={onSelectSlot} />,
+    );
+    const buttons = screen.getAllByRole("button");
+    expect(buttons).toHaveLength(16);
+    expect(buttons[0].title).toBe("Slot A1 — empty");
+    expect(buttons[15].title).toBe("Slot D4 — empty");
+    fireEvent.click(buttons[5]);
+    expect(onSelectSlot).toHaveBeenLastCalledWith("B2");
   });
 });
 

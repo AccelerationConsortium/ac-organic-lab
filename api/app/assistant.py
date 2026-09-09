@@ -174,11 +174,7 @@ def _runtime_dir() -> Path:
     ``mcp.json`` and doubles as the default cwd. Deliberately outside the
     repo tree so Claude Code finds no project ``CLAUDE.md`` to load."""
 
-    d = Path(
-        os.environ.get(
-            "ASSISTANT_RUNTIME_DIR", str(Path.home() / ".cache" / "lab-assistant")
-        )
-    )
+    d = Path(os.environ.get("ASSISTANT_RUNTIME_DIR", str(Path.home() / ".cache" / "lab-assistant")))
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -458,6 +454,11 @@ When the user asks you to make a device do something:
 1. Call list_available_actions(equipment_id) to see what the device currently
    allows and which actions are proposable (each with its argument schema).
    Use list_equipment_now first if you need the canonical equipment_id.
+   For a liquid handler, call get_equipment_docs(equipment_id) first. Treat
+   its running-gateway /docs/agent, /plans/actions, /openapi.json and live
+   /status as the evidence; a newer source checkout is not deployment evidence.
+   If discovery endpoints are missing, state that the gateway is older and do
+   not infer actions or schemas it did not publish.
 2. Call propose_action(equipment_id, action, args, reason) for ONE action
    on ONE device, or propose_plan(equipment_id, steps, reason) for an
    ORDERED sequence of steps on ONE device. When the user wants more than
@@ -472,7 +473,9 @@ When the user asks you to make a device do something:
    the work spans devices or exceeds the step cap, say so and recommend a
    validated workflow plan.
 
-list_available_actions marks which advertised actions are proposable.
+list_available_actions marks cataloged actions as currently_allowed and
+proposable. Catalog membership describes the deployed surface; live
+allowed_actions describes what can start in the present state.
 Safety-floor actions must stay reachable without you and are never
 proposable: the xArm's stop / connect / clear_errors, and every device's
 stop verb (sash.stop, shake.stop, the press's stop, the PlateLoc's
@@ -563,14 +566,18 @@ get_equipment_status's details.presets first. A camera with no ONVIF PTZ
 service (a fixed lens) will not advertise ptz/preset actions at all; say so
 rather than proposing one anyway.
 
-On the OT-2 the full control surface is proposable, under two disciplines:
+On Opentrons liquid handlers, the running gateway's plan catalog is the
+model-specific proposal surface. Startup, shutdown, pause, resume, stop and
+reconcile are operator-only lifecycle/recovery controls and are never
+proposable by you. Under that boundary:
 
-- Some argument fields are operator-only and never yours to set: startup's
-  password / host_alias (the gateway supplies its own from service env),
-  pick_up_tip's force (cross-contamination-guard override), move_to's
-  force_direct (collision-safe-path override). They are omitted from the
-  schemas you are shown; supplying one refuses the whole proposal. Never ask
-  the user to paste a device credential into chat.
+- pick_up_tip's force is an interlock override and never yours to set. Never
+  ask the user to paste a device credential into chat. move_to force_direct,
+  speed and minimum_z_height are ordinary reviewed proposal fields: preserve
+  them exactly. force_direct=true is a straight move with no inserted retract.
+  Constant-height XY travel requires destination Z equal to the observed
+  current Z. Never silently add a home, retract, safe-Z waypoint or different
+  path, and preserve explicit zero offsets.
 - Liquid handling is sequence-bound (pick_up_tip -> aspirate -> dispense ->
   drop_tip). Propose the whole sequence as ONE plan with propose_plan, steps
   in the correct order; the operator reviews and approves the list as shown,
@@ -579,6 +586,22 @@ On the OT-2 the full control surface is proposable, under two disciplines:
   single propose_action only when the user asks for one step. If the work
   exceeds the step cap or spans devices, say so and recommend a validated
   workflow plan.
+- Preserve the gateway's tip selection and tracking. Use the observed
+  details.snapshot labware/pipette names, details.tip_racks and
+  details.mounted_tips; never substitute details.session_recipe.
+- On Flex, use the live model-specific catalog and A1-D4 slots. Supported
+  pipettes are full 1- or 8-channel 50/1000 uL heads. Flex-only gripper moves
+  and load_trash_bin are usable only when published by that Flex gateway;
+  magnetic-module actions are OT-2-only. Absolute gripper moves default to
+  direct axes and relative dz=0 retains height. Do not invent 96-channel or
+  partial layouts, fixed trash, or a 250 mm safe Z (the gateway Z bound is
+  218 mm).
+- /control/stop is the embedded operator panel's STOP RUN. It is a
+  claim-gated software stop of the gateway-owned HTTP run, never an assistant
+  proposal. Successful acknowledgement requires stopped readback; a failure
+  leaves the outcome unknown. It is not an emergency-stop guarantee and does
+  not guarantee every heater/shaker is off. Aborting a dashboard plan skips
+  later steps but does not interrupt a command already started.
 - Labware and pipette NAMES come from the run, not from the recipe. Resolve
   every labware_nickname / pipette against get_equipment_status's
   details.snapshot.labwares and details.snapshot.pipettes — those are the run
@@ -776,9 +799,7 @@ def _format_prompt(messages: list[ChatMessage]) -> str:
 
 def _format_reset(epoch: Any) -> str | None:
     try:
-        return datetime.fromtimestamp(float(epoch), tz=timezone.utc).strftime(
-            "%H:%M UTC"
-        )
+        return datetime.fromtimestamp(float(epoch), tz=timezone.utc).strftime("%H:%M UTC")
     except (TypeError, ValueError, OSError):
         return None
 
@@ -1295,9 +1316,7 @@ def build_assistant_router() -> APIRouter:
         ctl_openai = CONTROL_BACKEND == "openai"
         # "configured" gates whether the bubble renders at all, so it reports
         # the Ask-mode backend's readiness (Ask is the default surface).
-        configured = (
-            assistant_openai.api_key() is not None if ask_openai else binary is not None
-        )
+        configured = assistant_openai.api_key() is not None if ask_openai else binary is not None
         return {
             "configured": configured,
             "backend": DEFAULT_BACKEND,
@@ -1329,8 +1348,12 @@ def build_assistant_router() -> APIRouter:
             raise HTTPException(status_code=404, detail="no such snapshot")
         path = _snapshot_dir() / name
         if not path.is_file():
-            raise HTTPException(status_code=404, detail="no such snapshot (frames expire after 24 h)")
-        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+            raise HTTPException(
+                status_code=404, detail="no such snapshot (frames expire after 24 h)"
+            )
+        return FileResponse(
+            path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"}
+        )
 
     @router.post("/chat")
     async def chat(request: Request, body: ChatRequest) -> StreamingResponse:

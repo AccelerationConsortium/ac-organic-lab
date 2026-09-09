@@ -264,8 +264,9 @@ identifiers and the `Thermostat.HeatCool` argument order are checked for real.
 Registered as `kind: other` (no `reactor` kind in the spec yet) with
 `gateway_fronted: true`.
 
-**Deployed and verified 2026-09-06** on the LLE PC as NSSM `mt-easymax` on
-:8082 (auto-start, no SCM dependency, whitelisted in that PC's
+**Deployed and verified 2026-09-06**, and again 2026-09-07 (`6debd9f`) and
+2026-09-08 (`b7e3c22`, `5587831` — see the acceptance-test entry below), on the
+LLE PC as NSSM `mt-easymax` on :8082 (auto-start, no SCM dependency, whitelisted in that PC's
 `sdl-lab-hostops`). The repo is **private**, and that PC has GitHub auth for
 nothing — both repos already checked out there are public — so the tree was
 copied from gaia over SSH at the pushed commit rather than planting a
@@ -300,23 +301,103 @@ Fixed in `b4820bc` with regression tests driven from the exact status code the
 instrument returned; the fleet lesson — browse `InputArguments` before trusting
 any document — is in that repo's `AGENTS.md`.
 
-Current tile state: `unknown` / `unknown`, both zones and all subdevices
-discovered, `last_error: null`, claims hard-enforced (a tokenless control POST
-returns 423, verified from gaia). It will stay `unknown` until the reactor is
-powered on, which is the honest answer and worth contrasting with the
-monitoring-only tile it replaces — that one reads `ready`, because the OPC UA
-endpoint is listening, while the reactor is off.
+**Reactor powered on 2026-09-08 — the acceptance test, and what it caught.**
+Until this session the service had never observed a running reactor: every
+v1.2 claim in it was proven against the mock only. Sixty seconds after
+power-on it was reporting `unknown` on a *healthy* instrument — `errors_active:
+0`, both zones reading Tr/Tj — and would have done so permanently on this
+bench. Because the registry marks this device `gateway_fronted`, §2.1 renders
+that as **unreachable**: the tile would have claimed the reactor was offline
+while it ran a reaction, strictly worse than the monitoring-only tile it
+replaced. Two independent causes, neither reachable with the instrument off
+(everything returns `BadNoDataAvailable` then), both fixed in `b7e3c22`:
 
-Open items: `lle_easymax` still points at `process-chem-monitor` :8070 (the
-swap also drops that device from the monitor's `config.toml` rather than
-polling the reactor twice); `automated-lle` holds its own OPC UA session to the
+1. **`DosingState` does not speak the stirrer's vocabulary.** It is a String
+   reporting `Init` at rest, run through the `off`/`on`/`ramp` normaliser, so
+   every *fitted* dosing unit mapped to `unknown`, the readback was never
+   `determinate`, `activity` could only be `unknown`, and the §2.2 health word
+   could never resolve. One unrecognised enum value, four layers up.
+2. **The vendor's `Acutal` typo is not in this firmware.** That node returns
+   `BadNodeIdUnknown`; the real one is `Actual`. The fallback was working, but
+   the primary's failure was still recorded, so every poll published a false
+   `readback_errors` entry — 28 of them.
+
+**Subdevice presence, measured** (this is the open question below, answered):
+dosing units **1–2 are fitted** (real values, `DosingState: Init`), units 3–4
+and **both samplers are absent** (nothing answers). Powered off, the two are
+indistinguishable, so this is a bench fact and now lives in `config.toml` —
+`max_dosing_units` / `max_samplers` describe what is *installed*, not a probe
+ceiling, because an invented slot never answers and blocks `determinate`
+forever.
+
+**A third naming trap, documented:** `Thermostat.EndValue` carries the *moving*
+ramp setpoint, not the final target (24.10 → 24.83 → 25.50 over 40 s on a
+2 K/min ramp, settling at 30.00 on arrival). So `target_error` is tracking
+error against the commanded trajectory, and the arrival test is the observed
+state leaving `ramp` for `on` — never `end_value_c == target`. After `Acutal`
+and `TjMinusTr`, the rule in that repo's `AGENTS.md` is now simply: assume
+nothing on this instrument is named for what it holds.
+
+**What the acceptance test proved** (all on hardware, all previously mock-only):
+`activity` observed on **both** axes — stirrer and thermostat, each with the
+other switched off, and neither commanded by this service; `activity_since`
+stamped at real transition instants, one of them *earlier* than the poll that
+reported it; `busy ≡ healthy + running` and `ready ⇒ idle`; the stability dwell
+flipping at exactly 30 s, resetting when the target moves, and holding 4.7 min
+at **±0.5 °C** without chatter; `metrics["cycles_total"]` catching a **21 s**
+stir span, shorter than the dashboard's 60 s poll and exactly the case §2.3.1
+exists for; the full claim → control → release write path; and a service
+restart *mid-stir* returning `busy`/`running` by reading the instrument rather
+than assuming. The `Thermostat.TrMinusTj` **reading** is also confirmed
+(−6.85 K driving a ramp, −0.29 K holding at setpoint) — the `Reflux`/`Distill`
+**argument** of the opposite convention remains unexercised.
+
+**First unattended dependency outage, survived** (2026-09-08 → 09). The bench
+PC's Reactor Device Server stopped listening entirely for ~2 h 40 m
+(`ConnectionRefusedError [WinError 1225]` on `opc.tcp://localhost:50008`) with
+nobody present. This is the console-application exposure that repo's `AGENTS.md`
+warns about — the RDS is not a Windows service, so a logoff or a closed window
+takes it down — occurring for the first time in production. The service's 30 s
+boot-retry loop (the same pattern shaker v0.2.2 / plateloc v1.5.0 ship for USB
+enumeration) reconnected on its own when it returned, leaving no `last_error`
+and needing no intervention. Worth recording because it is the first evidence
+that loop works against a real dependency failure rather than a staged one.
+
+**Two operational constraints found the same afternoon** (mt-easymax-server
+`ed9ccbc`). First, **an iControl experiment on a reactor blocks the gateway
+door**: with one running on R2, every `Thermostat.HeatCool` through the Reactor
+Device Server was refused `BadInternalError`, the identical call succeeded the
+moment the operator stopped it, and R1 — which had no experiment — accepted it
+throughout. **This is a live §6.2 gap**, documented rather than fixed: the
+envelope still advertises `temp.set` in that situation, so a client that trusts
+`allowed_actions` gets a 502. Closing it needs a node reporting experiment
+ownership, and since the touchpad displays the experiment's name one may exist —
+browsing for it is the next step. Second, **`temp.stop` is not a safe parking
+state**: `SwitchOff` returns the jacket to the chiller default, ~8 °C here,
+below the dew point of lab air, so a reactor left "off" collects condensation.
+That was the source of real condensation on this bench — an idle zone measured
+Tr 8.9 / Tj 8.3 °C in a ~21 °C room. Park a reactor at room temperature with the
+thermostat *on*.
+
+Open items: whether the RDS exposes an experiment-ownership node, which is what
+the §6.2 gap above turns on; `automated-lle` holds its own OPC UA session to the
 same server and does not participate in claims, so a claim here excludes only
-dashboard / `lab-skills` writers; `[limits]` carries EasyMax 102 defaults that
-want confirming against this instrument; whether the RDS's always-present
-`DosingUnit1-4` / `AutoSampler1-2` nodes distinguish installed hardware from
-absent can only be learned with the reactor powered on. Mettler's users guide
-is confidential and is deliberately not vendored — only the interface facts are
-encoded in the client.
+dashboard / `lab-skills` writers; `[limits]` still carries **unverified** EasyMax 102
+defaults — the 2026-09-08 ramp confirmed a normal setpoint and a 2 K/min ramp
+work, but −40…180 °C and ≤ 10 K/min need the instrument's spec plate, not a
+vial of water; the secure channel drops at an **irregular** interval with a
+token whose expiry stamps a date over a year in the past
+(`Security token id 17 has timed out (2025-01-15 …)`, then id 5 stamped
+`2025-01-09`), which the recovery loop reopens in ~3 s unattended but which
+nobody has explained — the first write-up here said "roughly every 12 h 45 m",
+which was a single sample stated as a rate; the second gap was 3 h 45 m, so the
+distribution is unknown and only the recurrence is established. Note also that
+`details.recovery.attempts` counts *attempts while the link is down*, not
+channel drops: it read 34 against 3 actual session reopens across an outage, so
+it is a health signal rather than a drop count; and `git pull` on
+that PC still does not work (see the private-repo note above). Mettler's users
+guide is confidential and is deliberately not vendored — only the interface
+facts are encoded in the client.
 
 **Web-service tiles: `bitacora_db` and `analytica_db`.** BitacoraDB — the
 lab's ELN+LIMS record layer, loopback `127.0.0.1:8013` on this host — and
@@ -385,7 +466,7 @@ each):
 | `fume_hood` | 2 | `sash.move`, `sash.stop` |
 | `hplc` | 6 | `run.{submit,abort}`, `queue.cancel`, `instrument.standby`, `workflow.{start,end}` (Agilent UPLC-MS sidecar) |
 | `liquid_handler` | 21 | OT-2 full `/control/*` surface: lifecycle (`startup`/`shutdown`), protocol exec (`setup`/`home`/`move_to`/`pick_up_tip`/`aspirate`/`dispense`/`drop_tip`/`move_labware`/`pause`/`resume`), plate + tip tracking (`plate.{load,unload}`/`well.update`/`tips.{reset,mark}`), temperature module (`tempmod.{set,deactivate}`), convenience (`lights.set`/`deck.declare`). Typed args added 2026-07-12; `move_to` (well or absolute-XYZ pipette motion) added 2026-07-18; `tips.mark` + `tempmod.*` added 2026-08-30 (`tips.mark` is the partial-rack correction `tips.reset` could only make by over-claiming a full rack) |
-| `plate_reader` | 15 | Mirrors live `agilent-cytation-server` `/control/*` (drawer, plate, three reads, imaging, incubator, shaker). Arg ranges aligned to the device OpenAPI 2026-08-19: absorbance 230–999 nm, FL ex/em 250–700 nm, no `gain` on reads, camera analog gain 0–47 dB. |
+| `plate_reader` | 15 | Mirrors live `agilent-cytation-server` `/control/*` (drawer, plate, three reads, imaging, incubator, shaker). Arg ranges **re-probed against the live OpenAPI 2026-09-08, matching exactly**: absorbance 230–999 nm; FL ex/em 250–700 nm; focal height 4.5–13.88 mm (declared — the usable floor rises with plate height, see the sub-task); luminescence integration 0.1–60 s; incubator 18–65 °C; shake displacement 1–6 mm, pattern `orbital`\|`linear`; imaging exposure 0.01–10000 ms, camera analog gain 0–47 dB, LED intensity 1–10. No `gain` on any read (the device 422s it). `ReadResult` carries `dict[str, float \| None]` + `over_range` so a saturated well is named, not blanked. |
 | `plate_sealer` | 8 | Includes 412-precondition skills with `requires_components` (heater + stage) |
 | `plate_stacker` | 6 | Agilent BioStack `/control/*` surface |
 | `press` | 6 | `init`, `stop`, `press.{up,down}`, `plate.{in,out}` |
@@ -477,7 +558,7 @@ host. Spec is what the device's live `/status` envelope reports.
 | `torry_pines_shaker` | `http` | **1.2** | ✅ `degraded` (motor healthy) | First native v1.2 device (2026-07-25): motor-observed `activity`, `cycles_total`, per-subsystem `allowed_actions`. Poll timeout restored to 10 s (read-off-lock fix deployed). The heater RTD `cal` fault recurs intermittently — now reported honestly as `degraded` without blocking shakes. 2026-08-02: recovered from a 2026-07-31 USB-serial drop (same COM6 after re-enumeration, no config change) and motor verified with a live 20 s test cycle (`degraded` + `running`, `cycles_total` 0→1); the RTD `cal` fault is active again — temperature control blocked pending recalibration at the instrument. |
 | `filter_every_well` | `http` | **1.2** | ✅ `requires_init` | v1.2 **deployed and verified live 2026-08-09** (repo v1.1.0, PR #1): move-lock `activity` (the exact hardware-motion span), `cycles_total` counting platen strokes — a stroke lasts seconds, so the 60 s poll misses it and the counter is the only utilization record. First test suite in that repo (10 tests). `requires_init` after the deploy is normal: `_system_state` boots `stopped`, so a service restart always needs one `POST /control/startup`. PressTile per-direction `hold_time` inputs verified (EQUIP_STATUS.md §8). |
 | `plateloc` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and live 2026-07-30** (device v1.4.0, PR #2): seal-cycle `activity`, `cycles_total` mirroring the instrument odometer (live value 1862, equal to `cycle_count`), three §6 interlocks (stage / health / temperature) all mirrored in `allowed_actions`, `equipment_version` populated. Real claims (TTL `ClaimStore`, commit fa98ca8) verified 2026-05-31; 423 ahead of the 412s. Reader-visible behaviour changes noted below the sub-tasks. |
-| `cytation_5` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and verified live 2026-08-02** (device repo commit 65fa1c4): `activity` observed from the in-flight-operation flag, `activity_since` stamped at span edges, reserved `cycles_total` (measurements + captures; the original `read_count` stays measurement-only). The b86da09 migration had derived `activity` from `equipment_status` (§2.3 forbids it), stamped `activity_since` with the poll instant, and paired `requires_init` with `unknown` — all three fixed. **`/status` no longer shares the reader lock**: it was queueing behind reads, so `busy` / `running` was unobservable from outside (same read-off-lock fix as the shaker); it now serves a short-TTL readback cache and reports `details.readback_age_s`. 13 actions advertised; device-repo Phases 2+3+4 all shipped. |
+| `cytation_5` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and verified live 2026-08-02** (device repo commit 65fa1c4): `activity` observed from the in-flight-operation flag, `activity_since` stamped at span edges, reserved `cycles_total` (measurements + captures; the original `read_count` stays measurement-only). The b86da09 migration had derived `activity` from `equipment_status` (§2.3 forbids it), stamped `activity_since` with the poll instant, and paired `requires_init` with `unknown` — all three fixed. **`/status` no longer shares the reader lock**: it was queueing behind reads, so `busy` / `running` was unobservable from outside (same read-off-lock fix as the shaker); it now serves a short-TTL readback cache and reports `details.readback_age_s`. Device-repo Phases 2+3+4 all shipped. **Reliability release `4c9fb77` live 2026-09-08** — six reader-visible behaviour changes in the sub-tasks below. Advertises 12 actions with no plate loaded (the reads and `imaging.capture` are gated on a loaded plate and a closed carrier, `shake.stop` on shaking — §6.2 mirroring, **not** a fault); tile copy in [`EQUIP_STATUS.md`](EQUIP_STATUS.md) §12. |
 | `agilent_uplc_ms` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and verified live 2026-08-09** (sidecar v0.3.0, PR #2): acquisition-observed `activity`, so an error landing mid-run reports `error` + `activity: "running"` instead of erasing the run. No `cycles_total` by design (runs are minutes-to-hours). Hard claims and the `workflow.start`/`end` campaign lock unchanged; the sidecar owns the queue. **Production runs from branch `fix_server_vial`, not `main`** — see the sub-task below. |
 | `agilent_biostack` | `http` | **1.2** | ✅ `ready` | v1.2 **deployed and verified live 2026-08-03** (commit e531170): `activity` / `activity_since` from the macro-in-flight flag, reserved `cycles_total` counting plate moves (`stage_plate` / `present_plate` / `handoff`; `home` is `running` but carries no plate, so not a cycle), `allowed_actions` gated on activity. No read-off-lock fix was needed — `get_status()` already avoided `_op_lock`, so a poll answers during a ~21 s macro. Claim trio + `/control/{startup,shutdown,home,stage_plate,present_plate,handoff}` on real hardware (`details.com_port: COM8`, `bench_validated: 2026-05-29`), not dry-run. Still not exercised end-to-end from a workflow or a dashboard tile — see the sub-task. |
 | `pypoe_web` | `http` | 1.1 | ✅ `ready` | Internal web service; no control surface. |
@@ -511,18 +592,29 @@ host. Spec is what the device's live `/status` envelope reports.
    `details.loaded_plate` is on the live envelope (`null` with no plate
    loaded). Phase 4's `plate_reader.py` is registered in
    `skill_catalog/` (15 SkillDefs, including incubator + shaker; arg
-   ranges match the live OpenAPI as of 2026-08-23 — the incubator is
-   **18-65 °C**, not the 4-45 an earlier "aligned to OpenAPI" pass
-   assumed; probe `<base>/openapi.json` rather than trusting a prior
-   alignment). With the v1.2 work of 2026-08-02 this device has no open
-   migration items, and as of 2026-08-23/24 the write surface is
-   **hardware-verified for imaging capture and absorbance reads** (the
-   latter matching a Gen5 sweep, once the instrument's 94-99 checksum
-   rejection was worked around). What remains is fluorescence /
-   luminescence reads, a sub-ambient setpoint, and driving a measurement
-   end-to-end **from a workflow** — see the `cytation_5` sub-tasks below,
-   which also record that incubator temperature is unreadable while the
-   shaker runs.
+   ranges **re-probed against the live `/openapi.json` 2026-09-08 and
+   matching exactly** — the incubator is **18-65 °C**, not the 4-45 an
+   earlier "aligned to OpenAPI" pass assumed; probe
+   `<base>/openapi.json` rather than trusting a prior alignment). With
+   the v1.2 work of 2026-08-02 this device has no open migration items,
+   and **absorbance reads are hardware-verified** against a Gen5 sweep
+   (2026-08-23/24, once the instrument's 94-99 checksum rejection was
+   worked around). Fluorescence reads completed across seven shapes on
+   2026-08-31 — that establishes the read *path*, not quantitative
+   calibration.
+
+   **Imaging is no longer claimed as verified.** An earlier revision of
+   this entry said the write surface was "hardware-verified for imaging
+   capture"; the device repo's 2026-09-04 bench session
+   ([`BENCH_2026-09-04.md`](https://github.com/cyrilcaoyang/agilent-cytation-server/blob/main/docs/BENCH_2026-09-04.md))
+   withdrew that, and the retraction is recorded in the `cytation_5`
+   sub-tasks below. Camera frames and auto-exposure work; **working
+   microscopy is not established.** What remains: luminescence regions
+   ending at H12 and full-plate luminescence, quantitative FL /
+   luminescence calibration, a sub-ambient setpoint, stable arrival at
+   setpoint, the unresolved optical path, and driving a measurement
+   end-to-end **from a workflow**. The sub-tasks also record that
+   incubator temperature is unreadable while the shaker runs.
 
 ### Conformance checklists
 
@@ -904,9 +996,8 @@ Open:
   camera analog dB (0–47). Typed `PlateReaderClient` so
   `session.role("plate_reader").read_absorbance(...)` works.
 - [x] **Hardware verification of the write surface — absorbance reads land**
-  (device repo, 2026-08-23/24). `imaging.capture` was verified end-to-end on
-  2026-08-12; absorbance was the last major unverified path, and it now reads
-  and **matches a Gen5 sweep** (A1 0.0841 vs 0.084, C5 2.5394 vs 2.525). It
+  (device repo, 2026-08-23/24). Absorbance now reads and **matches a Gen5
+  sweep** (A1 0.0841 vs 0.084, C5 2.5394 vs 2.525). It
   had been failing for a non-obvious reason: PyLabRobot's command checksum
   (`sum(cmd) % 100`) is **rejected by the instrument whenever it lands in
   94-99** — the start-read ACKs `2D06`, which surfaced as "the reader was not
@@ -915,10 +1006,117 @@ Open:
   and discards the extra wells (the wavelength is the measurement and cannot
   move). 41-93 are unreachable with a single-well region and remain untested,
   so the guard is conservative. The earlier "column 1 is unreadable" finding
-  was wrong and is retracted. **Still unverified:** fluorescence and
-  luminescence reads (IMPLEMENTATION.md tests 2+), and any sub-ambient
-  incubator setpoint — 18 °C is the *declared* floor and no low setpoint has
-  ever been commanded.
+  was wrong and is retracted. This entry also used to claim `imaging.capture`
+  was "verified end-to-end on 2026-08-12" — see the retraction below.
+- [ ] **RETRACTED: imaging was not verified.** The device repo's
+  [2026-09-04 bench session](https://github.com/cyrilcaoyang/agilent-cytation-server/blob/main/docs/BENCH_2026-09-04.md)
+  withdrew three conclusions this roadmap and the 2026-08-31 bench notes had
+  carried. Recorded as retractions, not edits, because each was load-bearing
+  for something:
+  - **"The 40X objective returns the 20X image"** was never an
+    objective-selection bug. The turret moves for every code (`P0e01/02/03`
+    all answer `0000`, with 1.3 / 8.3 / 1.3 s of travel). The identical
+    frames were a smooth left-to-right illumination gradient with no plate
+    structure — the same frame for all five non-`1` positions, including the
+    two the inventory calls empty (pairwise mean|diff| 1.95, i.e. one frame
+    plus sensor noise).
+  - **The autofocus half of "imaging autofocus + auto-exposure PASS."**
+    PyLabRobot's `set_focus` built a five-digit position field where the
+    instrument's is seven, so **every focus command below 9.3993 mm was
+    refused** (`570F`, answered in 15–36 ms — too fast to contain travel).
+    The autofocus was climbing noise through rejected commands. Fixed
+    device-side (`F{mode}{counts:07d}`, reply checked); byte-identical to
+    PLR's above the boundary, so the range with a hardware track record
+    cannot regress. **Auto-exposure still passes.**
+  - **"Settle the 4X field of view with a calibration target."** No target
+    needed: the factor is exactly **4.00** against PyLabRobot's own figure
+    (adjacent well centres 1580–1587 px at 9 mm pitch → 5.68 µm/px, a
+    ~13.9 mm field where PLR puts 4X at 3.474 mm).
+  - **What is actually established:** camera frames and auto-exposure work.
+    **Working microscopy does not.** The 4X frame does not change across
+    9 mm of Z — 19 frames, every command accepted and every one a real
+    move, `lap_var` 25.11 → 25.13, 81 % of pixels within 2 — which a ~50 µm
+    depth of field cannot produce. 20X and 40X accept **no** focus position
+    at all (94 positions at 0.1 mm steps, three declared plate heights,
+    carrier empty and lit). The instrument's own inventory
+    (`h2 = 1320520`, …) is **phase-annulus part numbers from the
+    condenser**, which PLR maps to `O_*_PL_FL_Phase` and calls "installed
+    objectives" — it has never been evidence of glass in the turret. Every
+    optical observation since August fits *no objective in the light path*.
+    Whether they are missing, fitted where the codes don't reach, or present
+    with a misrouted camera path is a **physical inspection, not a software
+    question** — open at end of session. Do not label the existing overview
+    frames as calibrated 4× microscopy.
+- [x] **Reliability release deployed and live 2026-09-08** (device repo
+  `4c9fb77`, CI green; live `/status` confirms protocol 1.2 on the
+  registered `cytation_5` endpoint). Dashboard-side handling shipped the
+  same day — see [`EQUIP_STATUS.md`](EQUIP_STATUS.md) §12 for the tile copy,
+  including the 412 body-nesting trap (this device nests its precondition
+  fields under `detail`; plateloc serves them flat, so the two tiles' 412
+  parsers read different levels, and reading the wrong one fails silently).
+  Six behaviour changes worth knowing as a reader:
+  1. **The driver raises when the instrument refuses a command** instead of
+     discarding the refusal. Failures that used to look like silent
+     successes now surface and populate `last_error`. **Expect more visible
+     faults, not fewer** — that is the fix working, not a new fault rate.
+  2. **Saturated wells are named, not blanked.** All three reads answer
+     `{wells, over_range}`; a saturated well is `null` in `wells` *and*
+     listed in `over_range`, and nothing else in `wells` is ever `null`. A
+     consumer rendering `null` as "no data" now mislabels saturation — and
+     on a dilution series the saturated wells are the *most concentrated*
+     points, so treating them as missing fits the curve to the tail and
+     returns a confident wrong slope. The SDK's `ReadResult` declared
+     `dict[str, float]`, a shape that **could not represent the device's own
+     response**; now `dict[str, float | None]` plus `over_range`
+     (`skill_catalog/plate_reader.py`, tested).
+  3. **`plate.load` with the same `plate_id` and `wells` omitted preserves
+     the existing well map** (and the model, when omitted). A different
+     `plate_id` still starts from 96 empty wells; an explicit `wells` list
+     still replaces the map. This closed a data-loss trap where re-loading
+     to re-assign the reader's `Plate` resource wiped per-well sample
+     tracking. `PlateLoadArgs` documents all three cases.
+  4. **Plate-persistence failures return HTTP 503** and leave durable and
+     in-memory state unchanged (previously they could silently diverge). Note
+     503 is this device's *general* control-path execution-failure code
+     ("retrying may help"), so the shared `interpretActionError` branch added
+     for it surfaces the device's sentence and honours `Retry-After` but
+     deliberately does **not** promise the device is unchanged — that
+     guarantee holds for `plate.load`, not for a read that failed
+     mid-execution. See [`EQUIP_STATUS.md`](EQUIP_STATUS.md) §12.
+  5. **Claim heartbeats renew the originally requested TTL**, where they
+     used to reset to a hardcoded 30 s — so a `ClaimManager` holding a long
+     TTL and heartbeating on the advertised interval could lose its claim
+     mid-run. **Nothing in this repo compensated for the old bug and
+     nothing needs unwinding:** the dashboard passthrough requests
+     `ttl_s = 30.0` (`_CLAIM_TTL_SECONDS`) and `execute_plan` defaults to
+     the same, so no caller here ever asked for a TTL the old code would
+     have shortened. The fix matters the first time a workflow passes a
+     longer `ttl_s` for a slow read.
+  6. **Captures land under `<plate_id>/<UTC date>`** with UUID filenames and
+     a JSON sidecar. Timestamps and folder dates are **UTC**, so near local
+     midnight a capture lands in what an operator calls tomorrow's folder —
+     check both dates before concluding an image was not written.
+- [ ] **Read focal-height floor rises with declared plate height**
+  (measured 2026-09-08). On the tested **19 mm** plate model, fluorescence
+  and luminescence reads at 4.5–5.6 mm are refused — `5B00` returned as the
+  read *body*, ~6 s after the `O` start-read has already answered `0000` —
+  while 5.8 mm and above work, and the same heights succeed with a 14.5 mm
+  or 7.5 mm model declared. So this is **geometry, not a fixed instrument
+  limit**, and the catalog's 4.5 mm floor is the device's *declared* range,
+  not a universally usable one. The SDK cannot narrow it without knowing the
+  plate, so `_FOCAL_MM` keeps the declared range and records the measurement
+  beside it; the tile's `read.*` recovery copy points at both the focal
+  height and whether the declared model matches the physical plate.
+  Absorbance takes no `focal_height_mm` and is unaffected. **Do not assume
+  this resolves the H12 refusal** — that remains a separate open case.
+- [ ] **Still unverified** (device repo `docs/IMPLEMENTATION.md` is the
+  source of truth for this list; mirror it rather than restating it):
+  quantitative fluorescence and luminescence calibration against a standard
+  and blank; luminescence regions ending at **H12** and full-plate
+  luminescence (both still fail); any **sub-ambient** incubator setpoint
+  (18 °C is the *declared* floor and no low setpoint has ever been
+  commanded); **stable arrival at setpoint** (a ramp has been observed, a
+  hold has not); shaker behaviour with liquid.
 - [x] **The FTDI ↔ libusbK driver swap is retired** (device repo, verified on
   hardware 2026-08-23) — **this entry previously told you to perform it before
   booking bench time; do not.** A **D2XX transport shim** talks through the

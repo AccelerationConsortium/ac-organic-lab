@@ -96,7 +96,18 @@ SLOT_ARG_SKILLS = frozenset({"tips.reset", "tips.mark", "move_labware", "setup",
 #: should show the operator the deck for. Lifecycle, lights, plate/well
 #: bookkeeping and the temperature module do not touch a slot.
 DECK_TOUCHING_SKILLS = SLOT_ARG_SKILLS | frozenset(
-    {"pick_up_tip", "aspirate", "dispense", "drop_tip", "move_to", "home"}
+    {
+        "pick_up_tip",
+        "aspirate",
+        "dispense",
+        "drop_tip",
+        "move_to",
+        "home",
+        "blow_out",
+        "touch_tip",
+        "mix",
+        "air_gap",
+    }
 )
 
 # ``2`` / ``slot 2`` / ``slot_2`` / ``ot2_hte/slot_2`` — the spellings a person

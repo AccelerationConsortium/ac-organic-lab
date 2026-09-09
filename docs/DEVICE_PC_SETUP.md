@@ -124,8 +124,8 @@ service. Three workable options, in the order they were weighed on 2026-09-06:
    — updates are a re-copy, below.
 2. **A read-only deploy key**, scoped to the one repo. Restores `git pull`;
    cannot push; no personal account involved; revocable per repo. Needs an
-   SSH remote, and one key per private repo. (github.com:22 is reachable from
-   `sdl2-pc-00-lle` — checked.)
+   SSH remote, and one key per private repo. **Chosen and in place for
+   `mt-easymax-server` on `sdl2-pc-00-lle` (2026-09-09) — recipe below.**
 3. **A fine-grained read-only PAT** scoped to those repos. Works over the
    existing HTTPS remotes, but is still account-bound and still needs an
    interactive session to store.
@@ -146,6 +146,45 @@ ssh <host> 'C:\SDL_Tools\nssm.exe restart <svc>'
 `.git` is included, so the checkout is a real repo at the pushed commit and
 `git log` / `git status` on the PC still tell the truth about what is running —
 only fetching is unavailable.
+
+#### The deploy-key recipe (option 2), as actually done
+
+On the device PC, as the service's user (`sdl2`):
+
+```powershell
+ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\id_ed25519_<repo>_deploy -N '""' -C "deploy-key <repo> <host>"
+```
+
+Then from gaia, add the **public** half as a read-only deploy key and point the
+checkout at SSH:
+
+```bash
+gh repo deploy-key add <pubkey-file> --repo AccelerationConsortium/<repo> \
+    --title "<host> (read-only)"          # read-only unless you pass -w
+```
+
+```powershell
+cd C:\Users\sdl2\Projects\<repo>
+git remote set-url origin git@github.com:AccelerationConsortium/<repo>.git
+git config core.sshCommand "'C:\Program Files\Git\usr\bin\ssh.exe' -i C:/Users/sdl2/.ssh/id_ed25519_<repo>_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+git pull --ff-only origin main
+```
+
+> **Use Git's bundled `ssh.exe`, not `C:\Windows\System32\OpenSSH\ssh.exe`.**
+> This is the whole trick, and it cost an hour to find. When a device PC is
+> driven over SSH (as every agent and remote-ops path does), Windows OpenSSH's
+> client **hangs indefinitely on any network operation** in that services-session
+> context — it ignores `ConnectTimeout`, and it hangs identically for a
+> deliberately bogus hostname, which is the control that proves the target is
+> irrelevant. Git for Windows' own `ssh.exe` at
+> `C:\Program Files\Git\usr\bin\ssh.exe` works normally in the same session.
+> Symptom to recognise: `git fetch` produces no output and never returns, while
+> `Test-NetConnection github.com -Port 22` reports `TcpTestSucceeded=True`.
+> Do not conclude the firewall is blocking SSH — test a bogus hostname first.
+
+Deploy keys are per-repo and per-host: a second private repo on the same PC
+needs its own key, and `core.sshCommand` is set per checkout, so the two do not
+interfere.
 
 > **Write config files from gaia, not with PowerShell.** `Set-Content -Encoding
 > UTF8` in Windows PowerShell 5.1 writes a **BOM**, and `tomllib` rejects it

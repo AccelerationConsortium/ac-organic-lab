@@ -3,7 +3,7 @@
 Reference device: ``opentrons-server`` (the OT-2 gateway on
 ``sdl2-pc-03-cytation:8020`` and the complexation OT-2 on ``:8021``).
 
-This module catalogs the OT-2's full ``/control/*`` surface with typed
+This module catalogs the typed union of the OT-2 and Flex plan surfaces with
 Pydantic ``args_schema``s:
 
 * **Session lifecycle** — ``startup`` / ``shutdown``.
@@ -18,9 +18,9 @@ Pydantic ``args_schema``s:
 * **Convenience** — ``lights.set`` (deck light) and ``deck.declare``
   (operator/recipe deck layout, metadata only).
 
-Each ``name`` matches, byte-for-byte, a string the gateway advertises in
-``EquipmentStatus.allowed_actions`` (see ``opentrons-server``
-``gateway/service.py::allowed_actions``). The SDK computes availability as
+Each ``name`` matches, byte-for-byte, a string a gateway profile publishes in
+``GET /plans/actions`` and may advertise in ``EquipmentStatus.allowed_actions``.
+Runtime discovery selects the model-specific subset. The SDK computes availability as
 ``def.name in allowed_actions`` (``session.py::_availability``), so these
 names are the contract — renaming one breaks ``lab.skills()`` matching and is
 a breaking change (``SKILLS_CATALOG.md`` §versioning).
@@ -43,12 +43,23 @@ never lists in ``allowed_actions``, so a SkillDef for it would always report
 
 from __future__ import annotations
 
+import re
+
 from typing import Annotated, Any, Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .models import SkillDef
 from .registry import register
+
+
+MAX_PIPETTE_VOLUME_UL = 1000.0
+MAX_WELL_OFFSET_MM = 100.0
+MAX_FLEX_X_MM = 477.2
+MAX_FLEX_Y_MM = 493.8
+MAX_Z_MM = 218.0
+ROBOT_REFERENCE_PATTERN = r"^[A-Za-z0-9_-]+$"
+WELL_NAME_PATTERN = r"^[A-Z]+[1-9][0-9]*$"
 
 
 # ---------------------------------------------------------------------------
@@ -59,18 +70,24 @@ from .registry import register
 # ---------------------------------------------------------------------------
 
 
-class _NoArgs(BaseModel):
+class _StrictArgs(BaseModel):
+    """Gateway request bodies reject unknown keys and non-finite numbers."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+
+class _NoArgs(_StrictArgs):
     """Empty body for parameter-less actions (home / shutdown / pause /
     resume / plate.unload)."""
 
 
-class LightsSetArgs(BaseModel):
+class LightsSetArgs(_StrictArgs):
     """Body for ``POST /control/lights`` (mirrors Opentrons ``POST /robot/lights``)."""
 
     on: bool
 
 
-class DeckDeclareArgs(BaseModel):
+class DeckDeclareArgs(_StrictArgs):
     """Body for ``POST /control/deck/declare``.
 
     Sets the operator/recipe-declared deck layout on the OT-2 gateway (the
@@ -97,7 +114,7 @@ class DeckDeclareArgs(BaseModel):
     slots: Dict[str, Optional[Union[str, Dict[str, Any]]]] = Field(default_factory=dict)
 
 
-class StartupArgs(BaseModel):
+class StartupArgs(_StrictArgs):
     """Body for ``POST /control/startup``.
 
     ``host_alias`` / ``password`` are optional overrides; omit both so the
@@ -144,6 +161,16 @@ class InstrumentSpec(BaseModel):
     instrument_name: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
 
+    @model_validator(mode="after")
+    def _supported_flex_head(self) -> "InstrumentSpec":
+        name = self.instrument_name or ""
+        if name.startswith("flex_") and not re.fullmatch(r"flex_(1|8)channel_(50|1000)", name):
+            raise ValueError(
+                "Flex currently supports full 1/8-channel heads only; "
+                "96-channel and partial layouts are not supported"
+            )
+        return self
+
 
 class ModuleSpec(BaseModel):
     """One entry of ``setup.modules`` (temperature / magnetic / heater-shaker)."""
@@ -155,7 +182,7 @@ class ModuleSpec(BaseModel):
     location: str
 
 
-class SetupArgs(BaseModel):
+class SetupArgs(_StrictArgs):
     """Body for ``POST /control/setup`` — load pipettes, tipracks, plates,
     reservoirs, and modules under stable nicknames the other verbs reference."""
 
@@ -164,21 +191,29 @@ class SetupArgs(BaseModel):
     modules: list[ModuleSpec] = Field(default_factory=list)
 
 
-class WellLocation(BaseModel):
+class WellLocation(_StrictArgs):
     """A well on a loaded labware, with an optional vertical offset (mm).
 
     Give at most one of ``top`` / ``bottom`` (offset from that reference);
     ``center=True`` aspirates/dispenses at the well centre.
     """
 
-    labware_nickname: str
-    position: str = Field(..., description='well name, e.g. "A1" / "H12"')
-    top: Optional[float] = None
-    bottom: Optional[float] = None
+    labware_nickname: str = Field(pattern=ROBOT_REFERENCE_PATTERN)
+    position: str = Field(
+        ..., pattern=WELL_NAME_PATTERN, description='well name, e.g. "A1" / "H12"'
+    )
+    top: Optional[float] = Field(default=None, ge=-MAX_WELL_OFFSET_MM, le=MAX_WELL_OFFSET_MM)
+    bottom: Optional[float] = Field(default=None, ge=-MAX_WELL_OFFSET_MM, le=MAX_WELL_OFFSET_MM)
     center: bool = False
 
+    @model_validator(mode="after")
+    def _one_reference(self) -> "WellLocation":
+        if sum((self.top is not None, self.bottom is not None, self.center)) > 1:
+            raise ValueError("provide only one of top, bottom or center")
+        return self
 
-class LiquidMoveArgs(BaseModel):
+
+class LiquidMoveArgs(_StrictArgs):
     """Body for ``POST /control/aspirate`` and ``POST /control/dispense``.
 
     ``flow_rate`` (µL/s) is optional: omit to use the transport default (the
@@ -186,21 +221,29 @@ class LiquidMoveArgs(BaseModel):
     default on the run-engine HTTP transport, which has no implicit default).
     """
 
-    pipette: str
-    volume_ul: float = Field(..., gt=0.0)
+    pipette: str = Field(pattern=ROBOT_REFERENCE_PATTERN)
+    volume_ul: float = Field(..., gt=0.0, le=MAX_PIPETTE_VOLUME_UL)
     location: WellLocation
     flow_rate: Optional[float] = Field(default=None, gt=0.0)
 
 
-class CoordinateLocation(BaseModel):
+class DispenseArgs(LiquidMoveArgs):
+    """Dispense plus the HTTP run engine's optional plunger-air push-out."""
+
+    push_out: Optional[float] = Field(default=None, ge=0, le=MAX_PIPETTE_VOLUME_UL)
+
+
+class CoordinateLocation(_StrictArgs):
     """Absolute deck coordinates in mm (the robot's deck reference frame)."""
 
-    x: float
-    y: float
-    z: float
+    # This static catalog spans OT-2 and Flex. The running gateway's OpenAPI
+    # supplies its tighter model-specific X/Y bounds to discovery clients.
+    x: float = Field(ge=0, le=MAX_FLEX_X_MM)
+    y: float = Field(ge=0, le=MAX_FLEX_Y_MM)
+    z: float = Field(ge=0, le=MAX_Z_MM)
 
 
-class MoveToArgs(BaseModel):
+class MoveToArgs(_StrictArgs):
     """Body for ``POST /control/move-to`` (pipette motion, no liquid).
 
     Exactly one of ``location`` (well-addressed) or ``coordinates`` (absolute
@@ -209,15 +252,21 @@ class MoveToArgs(BaseModel):
     collision avoidance when set.
     """
 
-    pipette: str
+    pipette: str = Field(pattern=ROBOT_REFERENCE_PATTERN)
     location: Optional[WellLocation] = None
     coordinates: Optional[CoordinateLocation] = None
     speed: Optional[float] = Field(default=None, gt=0.0, description="mm/s")
     force_direct: bool = False
     minimum_z_height: Optional[float] = Field(default=None, ge=0.0)
 
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> "MoveToArgs":
+        if (self.location is None) == (self.coordinates is None):
+            raise ValueError("provide exactly one of 'location' or 'coordinates'")
+        return self
 
-class TipArgs(BaseModel):
+
+class TipArgs(_StrictArgs):
     """Body for ``POST /control/pick-up-tip`` and ``POST /control/drop-tip``.
 
     On ``pick_up_tip`` pass ``labware_nickname`` (a loaded tiprack) +
@@ -234,14 +283,14 @@ class TipArgs(BaseModel):
     body (STATUS_SPEC §6.1) and never mutate ``last_error`` (§6.3).
     """
 
-    pipette: str
-    labware_nickname: Optional[str] = None
-    position: Optional[str] = None
+    pipette: str = Field(pattern=ROBOT_REFERENCE_PATTERN)
+    labware_nickname: Optional[str] = Field(default=None, pattern=ROBOT_REFERENCE_PATTERN)
+    position: Optional[str] = Field(default=None, pattern=WELL_NAME_PATTERN)
     sample_id: Optional[str] = None
     force: bool = False
 
 
-class TipsResetArgs(BaseModel):
+class TipsResetArgs(_StrictArgs):
     """Body for ``POST /control/tips/reset`` — (re)register a tip rack with
     every tip fresh, marking a physical rack swap. Racks named in
     ``/control/setup`` labware register automatically and keep their used-tip
@@ -279,7 +328,7 @@ class TipsResetArgs(BaseModel):
         return self
 
 
-class TipsMarkArgs(BaseModel):
+class TipsMarkArgs(_StrictArgs):
     """Body for ``POST /control/tips/mark`` — set the status of *part* of a
     tracked rack (mirrors ``opentrons-server`` ``TipsMarkRequest``).
 
@@ -326,7 +375,7 @@ class TipsMarkArgs(BaseModel):
         return self
 
 
-class TempmodSetArgs(BaseModel):
+class TempmodSetArgs(_StrictArgs):
     """Body for ``POST /control/tempmod/set`` — target temperature for an
     Opentrons temperature module on the deck."""
 
@@ -346,7 +395,7 @@ class TempmodSetArgs(BaseModel):
     )
 
 
-class TempmodDeactivateArgs(BaseModel):
+class TempmodDeactivateArgs(_StrictArgs):
     """Body for ``POST /control/tempmod/deactivate`` — stop holding a
     temperature and let the block drift to ambient."""
 
@@ -359,7 +408,15 @@ class TempmodDeactivateArgs(BaseModel):
     )
 
 
-class MoveLabwareArgs(BaseModel):
+class GripperOffset(_StrictArgs):
+    """Flex gripper pickup/drop offset in millimetres; explicit zero is kept."""
+
+    x: float = Field(default=0, ge=-MAX_WELL_OFFSET_MM, le=MAX_WELL_OFFSET_MM)
+    y: float = Field(default=0, ge=-MAX_WELL_OFFSET_MM, le=MAX_WELL_OFFSET_MM)
+    z: float = Field(default=0, ge=-MAX_WELL_OFFSET_MM, le=MAX_WELL_OFFSET_MM)
+
+
+class MoveLabwareArgs(_StrictArgs):
     """Body for ``POST /control/move-labware``.
 
     ``new_location`` is an OT-2 deck slot (``"1"``..``"12"``) or ``"OFF_DECK"``.
@@ -368,11 +425,22 @@ class MoveLabwareArgs(BaseModel):
     will not retract for you (see ``opentrons-server`` ``HTTP_DRIVE_PLAN.md``).
     """
 
-    labware_nickname: str
+    labware_nickname: str = Field(pattern=ROBOT_REFERENCE_PATTERN)
     new_location: str = Field(..., description='deck slot "1".."12" or "OFF_DECK"')
+    use_gripper: bool = False
+    pick_up_offset: Optional[GripperOffset] = None
+    drop_offset: Optional[GripperOffset] = None
+
+    @model_validator(mode="after")
+    def _gripper_options(self) -> "MoveLabwareArgs":
+        if not self.use_gripper and (
+            self.pick_up_offset is not None or self.drop_offset is not None
+        ):
+            raise ValueError("gripper offsets require use_gripper=true")
+        return self
 
 
-class PlateLoadArgs(BaseModel):
+class PlateLoadArgs(_StrictArgs):
     """Body for ``POST /control/plate/load`` — register the plate the
     orchestrator considers loaded. ``model`` is an Opentrons ``load_name``
     (no gateway default); ``wells`` defaults to 96 empty wells."""
@@ -382,7 +450,7 @@ class PlateLoadArgs(BaseModel):
     wells: Optional[list[Dict[str, Any]]] = None
 
 
-class WellUpdateArgs(BaseModel):
+class WellUpdateArgs(_StrictArgs):
     """Body for ``POST /control/well/update`` — mutate one well of the loaded
     plate (the device-owned ``volume_ul`` plus orchestrator-owned metadata)."""
 
@@ -392,6 +460,348 @@ class WellUpdateArgs(BaseModel):
     notes: Optional[str] = None
     clear_sample_id: bool = False
     clear_notes: bool = False
+
+
+class PipetteArgs(_StrictArgs):
+    pipette: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+class BlowOutArgs(PipetteArgs):
+    """Expel residual liquid at a well, or explicitly at the current location."""
+
+    location: Optional[WellLocation] = None
+    in_place: bool = False
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "BlowOutArgs":
+        if (self.location is not None) == self.in_place:
+            raise ValueError("provide a location or in_place=true, exclusively")
+        return self
+
+
+class MixArgs(LiquidMoveArgs):
+    repetitions: int = Field(ge=1, le=1000)
+    rate: float = Field(default=1, gt=0, le=10)
+
+    @model_validator(mode="after")
+    def _uses_rate(self) -> "MixArgs":
+        if self.flow_rate is not None:
+            raise ValueError("mix uses rate; set individual flows with set_flow_rate first")
+        return self
+
+
+class AirGapArgs(PipetteArgs):
+    location: WellLocation
+    volume_ul: float = Field(gt=0, le=MAX_PIPETTE_VOLUME_UL)
+    height: float = Field(default=5, ge=0, le=MAX_WELL_OFFSET_MM)
+
+    @model_validator(mode="after")
+    def _height_is_the_only_offset(self) -> "AirGapArgs":
+        if (
+            self.location.top is not None
+            or self.location.bottom is not None
+            or self.location.center
+        ):
+            raise ValueError("air_gap uses height above the well top; omit location offsets")
+        return self
+
+
+class TouchTipArgs(PipetteArgs):
+    labware_nickname: str = Field(min_length=1, pattern=ROBOT_REFERENCE_PATTERN)
+    position: str = Field(pattern=WELL_NAME_PATTERN)
+    radius: float = Field(default=1, gt=0, le=1)
+    v_offset: float = Field(default=-1, ge=-MAX_WELL_OFFSET_MM, le=0)
+    speed: float = Field(default=60, ge=1, le=80)
+
+
+class FlowRateArgs(PipetteArgs):
+    aspirate: Optional[float] = Field(default=None, gt=0)
+    dispense: Optional[float] = Field(default=None, gt=0)
+    blow_out: Optional[float] = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> "FlowRateArgs":
+        if all(getattr(self, field) is None for field in ("aspirate", "dispense", "blow_out")):
+            raise ValueError("provide at least one flow rate in uL/s")
+        return self
+
+
+class PipetteSpeedArgs(PipetteArgs):
+    speed: float = Field(gt=0, le=400, description="Explicit gantry move speed in mm/s.")
+
+
+class ModuleArgs(_StrictArgs):
+    module: str = Field(
+        min_length=1,
+        pattern=ROBOT_REFERENCE_PATTERN,
+        description="Loaded module nickname or declared deck slot.",
+    )
+
+
+class HeaterShakerTemperatureArgs(ModuleArgs):
+    celsius: float = Field(ge=37, le=95)
+
+
+class ShakeSpeedArgs(ModuleArgs):
+    rpm: int = Field(ge=200, le=3000)
+
+
+class MagnetEngageArgs(ModuleArgs):
+    height_from_base: float = Field(ge=0, le=20, description="Height above labware base in mm.")
+
+
+class BlockTemperatureArgs(ModuleArgs):
+    temperature: float = Field(ge=4, le=99)
+    hold_time_seconds: Optional[float] = Field(default=None, ge=0, le=86400)
+    block_max_volume: Optional[float] = Field(default=None, gt=0, le=100)
+
+
+class LidTemperatureArgs(ModuleArgs):
+    temperature: float = Field(ge=37, le=110)
+
+
+class CommentArgs(_StrictArgs):
+    message: str = Field(min_length=1, max_length=2000)
+
+
+class DelayArgs(_StrictArgs):
+    seconds: float = Field(ge=0, le=86400)
+
+
+class GripperMoveAbsoluteArgs(_StrictArgs):
+    """Flex gripper mount move; direct axis motion is the reviewed default."""
+
+    force_direct: bool = Field(
+        default=True,
+        description=(
+            "True preserves direct motion without a Z-retract waypoint; false "
+            "requests the robot's arced mount move."
+        ),
+    )
+    x: float = Field(ge=0, le=MAX_FLEX_X_MM)
+    y: float = Field(ge=0, le=MAX_FLEX_Y_MM)
+    z: float = Field(ge=0, le=MAX_Z_MM)
+    speed: float = Field(default=50, gt=0, le=400)
+
+
+class GripperMoveRelativeArgs(_StrictArgs):
+    dx: float = Field(default=0, ge=-100, le=100)
+    dy: float = Field(default=0, ge=-100, le=100)
+    dz: float = Field(default=0, ge=-100, le=100)
+    speed: float = Field(default=50, gt=0, le=400)
+
+
+class TrashBinArgs(_StrictArgs):
+    nickname: str = Field(default="default_trash", pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    location: str = Field(pattern=r"^[A-D][13]$")
+
+
+def _http_action(
+    name: str,
+    endpoint: str,
+    args_schema: type[BaseModel],
+    description: str,
+    *,
+    duration: float | None = None,
+) -> SkillDef:
+    return SkillDef(
+        name=name,
+        kind="liquid_handler",
+        description=description,
+        endpoint=endpoint,
+        args_schema=args_schema,
+        requires_states=["ready"],
+        estimated_duration_s=duration,
+    )
+
+
+# Typed union of the model-specific catalogs served by opentrons-server
+# e5936de. Runtime discovery decides which subset a particular gateway actually
+# implements; the two existing OT-2 registrations are unchanged.
+_NEW_HTTP_SKILLS = [
+    _http_action("comment", "/control/comment", CommentArgs, "Add a protocol-run comment."),
+    _http_action("delay", "/control/delay", DelayArgs, "Delay for 0-86400 seconds."),
+    _http_action(
+        "blow_out",
+        "/control/blow-out",
+        BlowOutArgs,
+        "Blow out at an explicit loaded well or explicitly in place.",
+    ),
+    _http_action(
+        "touch_tip",
+        "/control/touch-tip",
+        TouchTipArgs,
+        "Touch a loaded well's wall; updates the existing tip-contact tracker.",
+    ),
+    _http_action(
+        "mix", "/control/mix", MixArgs, "Repeat aspirate/dispense mixing in one loaded well."
+    ),
+    _http_action(
+        "air_gap",
+        "/control/air-gap",
+        AirGapArgs,
+        "Aspirate air at a bounded height above an explicit loaded well.",
+    ),
+    _http_action(
+        "prepare_aspirate",
+        "/control/prepare-aspirate",
+        PipetteArgs,
+        "Prepare a named pipette for aspiration.",
+    ),
+    _http_action("home_pipette", "/control/home-pipette", PipetteArgs, "Home a named pipette."),
+    _http_action("home_plunger", "/control/home-plunger", PipetteArgs, "Home a named plunger."),
+    _http_action(
+        "set_flow_rate",
+        "/control/set-flow-rate",
+        FlowRateArgs,
+        "Set one or more pipette flow rates in microliters per second.",
+    ),
+    _http_action(
+        "set_speed",
+        "/control/set-speed",
+        PipetteSpeedArgs,
+        "Set explicit pipette-move speed in millimeters per second.",
+    ),
+    _http_action(
+        "hs_latch_open", "/control/hs-latch-open", ModuleArgs, "Open a heater-shaker latch."
+    ),
+    _http_action(
+        "hs_latch_close", "/control/hs-latch-close", ModuleArgs, "Close a heater-shaker latch."
+    ),
+    _http_action(
+        "hs_set_and_wait_shake_speed",
+        "/control/hs-set-and-wait-shake-speed",
+        ShakeSpeedArgs,
+        "Set heater-shaker speed to 200-3000 rpm and wait for it.",
+    ),
+    _http_action(
+        "hs_deactivate_shaker",
+        "/control/hs-deactivate-shaker",
+        ModuleArgs,
+        "Stop a heater-shaker's shaker motor.",
+    ),
+    _http_action(
+        "hs_set_target_temperature",
+        "/control/hs-set-target-temperature",
+        HeaterShakerTemperatureArgs,
+        "Set a heater-shaker target from 37-95 °C without waiting.",
+    ),
+    _http_action(
+        "hs_set_and_wait_temperature",
+        "/control/hs-set-and-wait-temperature",
+        HeaterShakerTemperatureArgs,
+        "Set a heater-shaker target from 37-95 °C and wait for it.",
+    ),
+    _http_action(
+        "hs_wait_for_temperature",
+        "/control/hs-wait-for-temperature",
+        ModuleArgs,
+        "Wait for a heater-shaker's existing target temperature.",
+    ),
+    _http_action(
+        "hs_deactivate_heater",
+        "/control/hs-deactivate-heater",
+        ModuleArgs,
+        "Deactivate a heater-shaker heater.",
+    ),
+    _http_action(
+        "hs_deactivate",
+        "/control/hs-deactivate",
+        ModuleArgs,
+        "Deactivate heater-shaker heating and shaking.",
+    ),
+    _http_action(
+        "tempmod_await_temperature",
+        "/control/tempmod-await-temperature",
+        ModuleArgs,
+        "Wait for a temperature module's existing target.",
+    ),
+    _http_action(
+        "magmod_engage",
+        "/control/magmod-engage",
+        MagnetEngageArgs,
+        "Engage an OT-2 magnetic module at an explicit 0-20 mm height from base.",
+    ),
+    _http_action(
+        "magmod_disengage",
+        "/control/magmod-disengage",
+        ModuleArgs,
+        "Disengage an OT-2 magnetic module.",
+    ),
+    _http_action(
+        "thermocycler_open_lid",
+        "/control/thermocycler-open-lid",
+        ModuleArgs,
+        "Open a thermocycler lid.",
+    ),
+    _http_action(
+        "thermocycler_close_lid",
+        "/control/thermocycler-close-lid",
+        ModuleArgs,
+        "Close a thermocycler lid.",
+    ),
+    _http_action(
+        "thermocycler_set_block_temperature",
+        "/control/thermocycler-set-block-temperature",
+        BlockTemperatureArgs,
+        "Set thermocycler block temperature, optional hold, and optional max volume.",
+    ),
+    _http_action(
+        "thermocycler_set_lid_temperature",
+        "/control/thermocycler-set-lid-temperature",
+        LidTemperatureArgs,
+        "Set thermocycler lid temperature from 37-110 °C.",
+    ),
+    _http_action(
+        "thermocycler_deactivate_block",
+        "/control/thermocycler-deactivate-block",
+        ModuleArgs,
+        "Deactivate thermocycler block temperature control.",
+    ),
+    _http_action(
+        "thermocycler_deactivate_lid",
+        "/control/thermocycler-deactivate-lid",
+        ModuleArgs,
+        "Deactivate thermocycler lid temperature control.",
+    ),
+    _http_action(
+        "thermocycler_deactivate",
+        "/control/thermocycler-deactivate",
+        ModuleArgs,
+        "Deactivate thermocycler block and lid temperature control.",
+    ),
+    _http_action(
+        "gripper_move_to_relative",
+        "/control/gripper-move-to-relative",
+        GripperMoveRelativeArgs,
+        "Move a Flex gripper by direct relative axes; dz=0 retains height.",
+    ),
+    _http_action(
+        "gripper_move_to_absolute",
+        "/control/gripper-move-to-absolute",
+        GripperMoveAbsoluteArgs,
+        "Move a Flex gripper to XYZ; direct axis motion is the default.",
+    ),
+    _http_action(
+        "gripper_open_jaw",
+        "/control/gripper-open-jaw",
+        _NoArgs,
+        "Open a Flex gripper jaw.",
+    ),
+    _http_action(
+        "gripper_close_jaw",
+        "/control/gripper-close-jaw",
+        _NoArgs,
+        "Close a Flex gripper jaw with the robot's default force.",
+    ),
+    _http_action("home_gripper", "/control/home-gripper", _NoArgs, "Home the Flex gripper Z axis."),
+    _http_action(
+        "load_trash_bin",
+        "/control/load-trash-bin",
+        TrashBinArgs,
+        "Register an explicit Flex movable-trash location in column 1 or 3.",
+    ),
+]
 
 
 register(
@@ -483,9 +893,12 @@ register(
         SkillDef(
             name="dispense",
             kind="liquid_handler",
-            description="Dispense a volume into a well (optional flow_rate in µL/s).",
+            description=(
+                "Dispense a volume into a well (optional flow_rate and HTTP "
+                "push_out in µL). Residual liquid still needs an explicit blow_out."
+            ),
             endpoint="/control/dispense",
-            args_schema=LiquidMoveArgs,
+            args_schema=DispenseArgs,
             requires_states=["ready"],
             estimated_duration_s=3.0,
         ),
@@ -505,8 +918,9 @@ register(
             name="move_labware",
             kind="liquid_handler",
             description=(
-                "Record a labware move to a deck slot or OFF_DECK (bookkeeping; "
-                "no gripper on the OT-2). Home before any physical handoff."
+                "Move labware to a deck slot, module/adapter, or OFF_DECK. OT-2 "
+                "moves are manual bookkeeping; Flex may use its gripper with "
+                "explicit pickup/drop offsets."
             ),
             endpoint="/control/move-labware",
             args_schema=MoveLabwareArgs,
@@ -662,18 +1076,24 @@ register(
             requires_states=[],
             estimated_duration_s=0.2,
         ),
+        *_NEW_HTTP_SKILLS,
     ],
 )
 
 
 __all__ = [
     "DeckDeclareArgs",
+    "DispenseArgs",
+    "GripperMoveAbsoluteArgs",
+    "GripperMoveRelativeArgs",
+    "GripperOffset",
     "InstrumentSpec",
     "LabwareSpec",
     "LightsSetArgs",
     "LiquidMoveArgs",
     "ModuleSpec",
     "MoveLabwareArgs",
+    "MoveToArgs",
     "PlateLoadArgs",
     "SetupArgs",
     "StartupArgs",
@@ -682,6 +1102,7 @@ __all__ = [
     "TipArgs",
     "TipsMarkArgs",
     "TipsResetArgs",
+    "TrashBinArgs",
     "WellLocation",
     "WellUpdateArgs",
 ]
