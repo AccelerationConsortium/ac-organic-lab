@@ -13,7 +13,6 @@ import asyncio
 import logging
 import os
 import socket
-import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
@@ -22,6 +21,7 @@ import httpx
 from lab_skills import (
     EquipmentAggregator,
     PlatformsConfig,
+    Registry,
     load_locations,
     load_platforms,
     load_registry,
@@ -46,6 +46,7 @@ from .locations import build_locations_router
 from .workflow import build_workflow_router
 from .db import LabDatabase, resolve_db_path
 from .deck import build_deck_router
+from .equipment_docs import build_equipment_docs_router
 from .events import (
     ACTIVITY_TRANSITION,
     CYCLES_TOTAL_METRIC,
@@ -611,6 +612,9 @@ app.add_middleware(
 # device gateway named by ``equipment.yaml::base_url``. See
 # ``api/app/control.py`` for the routing rules.
 app.include_router(build_control_router())
+# Same-origin, read-only equipment documentation. Paths are explicitly
+# allowlisted in equipment.yaml; this is not a general device proxy.
+app.include_router(build_equipment_docs_router())
 
 # Phase F: authorized plan execution (D-20 — the runner lives here, not in
 # bitácora, because this app already owns the claim and the audit row).
@@ -734,7 +738,7 @@ async def skill_catalog() -> dict:
     available actions with JSON Schema descriptions of the request body.
     This endpoint is read-only and does not contact any device.
     """
-    registry: "Registry" = app.state.registry  # type: ignore[name-defined]
+    registry: Registry = app.state.registry
     platforms_config: "PlatformsConfig" = app.state.platforms_config  # type: ignore[name-defined]
 
     eq_to_section = platforms_config.equipment_to_section_id()
@@ -777,6 +781,18 @@ async def skill_catalog() -> dict:
             "adapter": entry.adapter,
             "base_url": entry.base_url or "",
             "protocol": entry.protocol,
+            "documentation": [
+                {
+                    "label": document.label,
+                    "kind": document.kind,
+                    "source_path": document.path,
+                    "url": (
+                        f"/api/equipment/{entry.id}/documentation"
+                        f"{document.path}"
+                    ),
+                }
+                for document in entry.documentation
+            ],
             "actions": _serialize_actions(entry.kind),
         })
 

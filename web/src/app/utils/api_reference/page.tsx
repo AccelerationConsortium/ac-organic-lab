@@ -36,6 +36,13 @@ interface ActionDef {
   estimated_duration_s: number | null;
 }
 
+interface DocumentationEndpoint {
+  label: string;
+  kind: "swagger" | "openapi" | "json";
+  source_path: string;
+  url: string;
+}
+
 interface InstrumentCatalog {
   id: string;
   name: string;
@@ -43,6 +50,7 @@ interface InstrumentCatalog {
   adapter: string;
   base_url: string;
   protocol: string;
+  documentation?: DocumentationEndpoint[];
   actions: ActionDef[];
 }
 
@@ -271,6 +279,7 @@ function ActionRow({ action }: { action: ActionDef }) {
 
 function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
   const [open, setOpen] = useState(false);
+  const documentation = instrument.documentation ?? [];
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
@@ -304,6 +313,8 @@ function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span className="text-xs text-ink-subtle dark:text-slate-400">
+            {documentation.length} doc{documentation.length !== 1 ? "s" : ""}
+            <span className="mx-1">·</span>
             {instrument.actions.length} action{instrument.actions.length !== 1 ? "s" : ""}
           </span>
           <span className="text-xs text-ink-subtle dark:text-slate-400">
@@ -314,6 +325,34 @@ function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
 
       {open && (
         <>
+          {documentation.length > 0 && (
+            <div className="border-b border-slate-100 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950/20">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-ink-subtle dark:text-slate-400">
+                Documentation endpoints
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {documentation.map((document) => (
+                  <a
+                    key={document.source_path}
+                    href={document.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-ink transition-colors hover:border-slate-300 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+                  >
+                    <span className="font-medium">{document.label}</span>
+                    <span className="font-mono text-[10px] text-ink-subtle dark:text-slate-400">
+                      GET {document.source_path}
+                    </span>
+                  </a>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] text-ink-subtle dark:text-slate-400">
+                Opened through the dashboard&apos;s read-only documentation proxy. Availability
+                comes from the running equipment server.
+              </p>
+            </div>
+          )}
+
           {/* Column header */}
           <div className="flex items-center gap-3 border-b border-slate-100 bg-white px-4 py-1.5 dark:border-slate-800 dark:bg-slate-950/30">
             <span className="w-12 shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle dark:text-slate-400">

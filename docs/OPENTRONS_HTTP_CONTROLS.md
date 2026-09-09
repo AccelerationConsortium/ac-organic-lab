@@ -15,6 +15,13 @@ a reachable older deployment. Transport errors, server errors and malformed
 documents still fail. On an older gateway the dashboard assistant shows only
 actions present in the live status and does not infer the new surface.
 
+Operators can open the same running-gateway documents from **Utils → API
+Reference**. The dashboard exposes the registry-allowlisted links through its
+same-origin, read-only documentation proxy, including `/docs`,
+`/openapi.json`, `/docs/agent`, and `/plans/actions`; see
+[`API_REFERENCE.md`](API_REFERENCE.md). This avoids direct browser access to
+equipment ports and preserves an older gateway's real 404 response.
+
 The SDK catalog contains the typed union of the OT-2 and Flex plan actions:
 liquid handling (`blow_out`, `touch_tip`, `mix`, `air_gap`, optional dispense
 `push_out`), pipette settings and homing, heater-shaker, temperature, magnetic

@@ -15,6 +15,7 @@ import type { Endpoint, OpenApiDoc, SubModule } from "./types";
 export const TAG_ORDER = [
   "meta",
   "equipment",
+  "equipment-docs",
   "equipment-control",
   "history",
   "workflow",
@@ -32,6 +33,7 @@ export const TAG_ORDER = [
 export const TAG_TITLE: Record<string, string> = {
   meta: "Server & reference",
   equipment: "Equipment state",
+  "equipment-docs": "Equipment documentation",
   "equipment-control": "Equipment control",
   history: "History & ingest",
   workflow: "Workflow runs",
@@ -47,6 +49,8 @@ export const TAG_TITLE: Record<string, string> = {
 export const TAG_BLURB: Record<string, string> = {
   meta: "Server identity, health, and the two reference documents (this one and the device catalog).",
   equipment: "Aggregated device state — the poll loop's view of the lab.",
+  "equipment-docs":
+    "Read-only, registry-allowlisted access to each equipment server's documentation.",
   "equipment-control":
     "Operator-initiated writes. Each call runs claim → action → release against the device and writes one audit row.",
   history: "Read the history DB; the /api/ingest/* routes are how device services write to it.",
@@ -149,4 +153,3 @@ export function groupByTag(doc: OpenApiDoc): [string, Endpoint[]][] {
     })
     .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
 }
-
