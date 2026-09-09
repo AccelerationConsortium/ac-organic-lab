@@ -16,6 +16,7 @@ shares the repo-root `.venv` with `skills/` and `auth/`.
 | Module | What it owns |
 |---|---|
 | `main.py` | FastAPI app + lifespan; `/api/equipment`, `/api/platforms`, `/api/health`; the 60 s background uptime/activity poll; root logging config (app INFO → journald). |
+| `equipment_docs.py` | Read-only, registry-allowlisted proxy for device Swagger, OpenAPI, and agent/action documents shown by the dashboard API Reference. |
 | `presentation.py` | `EquipmentSnapshot` and the `_snapshot()` compose step (tile, platform, pills, location decorations). |
 | `db.py` / `history.py` | `LabDatabase` (SQLite, `data/lab.db`, WAL, single writer) and the `/api/history/*` read + `/api/ingest/*` write routes. Schema in [`docs/LAB_MONITORING.md`](../docs/LAB_MONITORING.md). |
 | `events.py` | Event-row helpers + the reader-side v2 field projection (`derive_v2_fields`, STATUS_SPEC Appendix B.2). |

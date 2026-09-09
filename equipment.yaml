@@ -187,6 +187,11 @@ equipment:
     # _MAX_FETCH_SECONDS as a backstop.
     poll_timeout_seconds: 8.0
     do_not_call_connect: true
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /docs/agent, kind: json }
+      - { label: Typed plan actions, path: /plans/actions, kind: json }
     tiles:
       hte: { w: 2, h: 3}
     # "Open" pill -> the edge-gated OT-2 gateway operator SPA at
@@ -417,6 +422,11 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 8.0
     do_not_call_connect: true
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /docs/agent, kind: json }
+      - { label: Typed plan actions, path: /plans/actions, kind: json }
     # Robot transport (standing since 2026-09-05, confirmed 2026-09-06): the
     # OT-2 (Complexation) robot (`ot2training`, serial `weathered-dream`, board
     # rev 2.1) is reached over its **USB link** — the gateway on sdl2-pc-03
@@ -462,6 +472,9 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 3.0
     do_not_call_connect: true
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     tiles:
       web_services: { w: 2, h: 1 }
     pills:

@@ -23,6 +23,20 @@ from .models import EquipmentKind
 
 
 AdapterKind = Literal["http", "legacy_http", "mock"]
+DocumentationKind = Literal["swagger", "openapi", "json"]
+
+
+class DocumentationEndpoint(BaseModel):
+    """One read-only documentation resource exposed by an equipment server.
+
+    The dashboard proxies only paths declared here.  This keeps API-reference
+    discovery useful from a remote browser without turning the dashboard into
+    an unrestricted proxy to equipment networks.
+    """
+
+    label: str
+    path: str = Field(pattern=r"^/[^/].*")
+    kind: DocumentationKind = "json"
 
 
 class Tile(BaseModel):
@@ -215,6 +229,11 @@ class EquipmentEntry(BaseModel):
     #: a global ``DEVICE_EDGE_SHARED_SECRET`` when it is unset. See
     #: ``docs/AUTH_DESIGN.md`` → "How a device learns who the operator is".
     edge_secret_env: str | None = None
+
+    #: Read-only documentation paths that the dashboard may expose through its
+    #: same-origin API Reference. Availability still comes from the running
+    #: server: an older deployment's 404 is returned unchanged.
+    documentation: list[DocumentationEndpoint] = Field(default_factory=list)
 
     # Soft maintenance toggling. ``enabled: false`` (or a non-null
     # ``maintenance``) makes ``Lab.get(<id>)`` raise

@@ -49,9 +49,28 @@ def test_bambu_gateway_and_printers_are_registered() -> None:
     assert gateway.pills.link_label == "GO"
     assert gateway.pills.link_href == "/utils/devices"
     assert gateway.pills.internal is True
+    assert {(doc.path, doc.kind) for doc in gateway.documentation} == {
+        ("/docs", "swagger"),
+        ("/openapi.json", "openapi"),
+    }
 
     assert registry.by_id("bambu_p1s_01") is not None
     assert registry.by_id("bambu_h2d_01") is not None
+
+
+def test_opentrons_documentation_endpoints_are_registered() -> None:
+    registry = load_registry(REPO_ROOT / "equipment.yaml")
+    expected = {
+        ("/docs", "swagger"),
+        ("/openapi.json", "openapi"),
+        ("/docs/agent", "json"),
+        ("/plans/actions", "json"),
+    }
+
+    for equipment_id in ("ot2_hte", "ot2_complexation"):
+        entry = registry.by_id(equipment_id)
+        assert entry is not None
+        assert {(doc.path, doc.kind) for doc in entry.documentation} == expected
 
 
 def test_overview_link_labels_match_navigation_behavior() -> None:
