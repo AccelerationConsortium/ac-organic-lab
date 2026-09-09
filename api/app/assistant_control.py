@@ -7,7 +7,7 @@ control mode, Step 1). It is a *second* console script beside
 
 Safety
 ------
-**None of the three tools actuate hardware.** The most privileged thing this
+**None of the tools actuate hardware.** The most privileged thing this
 server can do is return a *validated proposal object*; the actual control
 POST happens later, in the browser, when the operator clicks *Authorize* over
 the existing ``/api/equipment/{id}/control/{action}`` passthrough. With no
@@ -82,6 +82,7 @@ without it.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -91,6 +92,7 @@ import sys
 from typing import Any
 
 import httpx
+import jsonschema
 from pydantic import ValidationError
 
 from lab_skills import Lab, load_registry
@@ -151,6 +153,8 @@ REFUSAL_CODES = frozenset(
         # registry place with several keys on this device.
         "wrong_device_location",
         "ambiguous_location",
+        "identity_mismatch",
+        "capability_unknown",
     }
 )
 
@@ -248,7 +252,7 @@ def _passthrough_action(sd: SkillDef) -> str:
     ep = sd.endpoint
     prefix = "/control/"
     if ep.startswith(prefix):
-        return ep[len(prefix):]
+        return ep[len(prefix) :]
     return ep.lstrip("/")
 
 
@@ -297,13 +301,14 @@ def _canonical_action(kind: str | None, action: str) -> str:
 #   that weakens an interlock or carries a credential is never model-settable:
 #   ``pick_up_tip.force`` overrides the gateway's cross-contamination guard
 #   (AGENTIC_LAB_DESIGN.md §1.2: never weaken an interlock at any layer),
-#   ``move_to.force_direct`` opts out of the arced collision-safe path, and
 #   ``startup.password`` / ``host_alias`` are the gateway's to supply from its
 #   own service env — a model-supplied secret would render on the confirm card
 #   and land in the ``assistant_proposal`` audit row. Supplying any of them
 #   refuses the whole proposal (code ``forbidden_field``), and
 #   list_available_actions strips them from the advertised schema so the model
-#   never sees them as settable.
+#   never sees them as settable. ``move_to.force_direct`` is intentionally
+#   reviewable: preserving direct XY motion without an inserted Z retract is
+#   part of the gateway contract, and the human approval card remains the gate.
 # * **Card evaluability.** Nested argument sets (``setup`` labware lists,
 #   ``plate.load`` wells) render on the confirm card as full pretty-printed
 #   JSON, never a truncated one-liner — a card nobody can check is a rubber
@@ -320,50 +325,15 @@ def _canonical_action(kind: str | None, action: str) -> str:
 # steps strictly in order, one at a time, and to recommend a workflow plan
 # once a sequence grows beyond a handful of steps — execute_plan (UI_DESIGN
 # §5.5) remains the right surface for real multi-step work.
+_LIQUID_HANDLER_PLAN_ACTIONS = frozenset(
+    skill.name
+    for skill in skills_for("liquid_handler")
+    if skill.name not in {"startup", "shutdown", "pause", "resume"}
+)
+
+
 _PROPOSABLE: dict[str, frozenset[str]] = {
-    "liquid_handler": frozenset(
-        {
-            # Session lifecycle. ``startup`` is only proposable because the
-            # guard forbids ``password``/``host_alias`` (the gateway uses its
-            # own env); a human authorizing it is the "explicit invocation"
-            # the catalog blesses despite ``do_not_call_connect: true``.
-            "startup",
-            "shutdown",
-            # Deck state / convenience.
-            "lights.set",
-            "home",
-            "pause",
-            "resume",
-            "setup",
-            # Liquid handling — sequence-bound; the operator sequences via
-            # consecutive confirm cards (Step 1c above).
-            "move_to",
-            "pick_up_tip",
-            "aspirate",
-            "dispense",
-            "drop_tip",
-            "move_labware",
-            # Record edits — no motion, but they mutate the lab's *belief*
-            # about the deck; a wrong one silently desyncs belief from
-            # reality, which is why they still confirm. ``tips.reset``
-            # additionally re-arms/disarms the contamination guard's input
-            # (a physical rack swap), so its card deserves a careful read;
-            # ``tips.mark`` is the partial-rack form of the same edit — the
-            # repair for a tracker that has drifted from the bench, which
-            # ``tips.reset`` can only fix by over-claiming a full rack.
-            "plate.load",
-            "plate.unload",
-            "well.update",
-            "tips.reset",
-            "tips.mark",
-            "deck.declare",
-            # Temperature module — hardware-driving (the gateway withholds
-            # both in DRY_RUN and while a run is starting), one scalar arg,
-            # range-clamped by the schema.
-            "tempmod.set",
-            "tempmod.deactivate",
-        }
-    ),
+    "liquid_handler": frozenset(_LIQUID_HANDLER_PLAN_ACTIONS),
     # Step 1d (2026-08-12): three more bench kinds, same criterion, no new
     # mechanism. Every admitted action is one card-evaluable act with zero or
     # a few scalar, range-clamped args, and no schema in these kinds carries
@@ -531,7 +501,7 @@ _PROPOSABLE: dict[str, frozenset[str]] = {
 # action of the kind, and a flat set cannot drift when a schema is reused
 # across actions (TipArgs serves both tip verbs).
 _FORBIDDEN_ARG_FIELDS: dict[str, frozenset[str]] = {
-    "liquid_handler": frozenset({"force", "force_direct", "password", "host_alias"}),
+    "liquid_handler": frozenset({"force", "password", "host_alias"}),
 }
 
 # Per-(kind, action) cap on how many entries a collection-valued argument may
@@ -612,6 +582,10 @@ _DECK_ACTIONS = frozenset(
         "tips.reset",
         "tips.mark",
         "home",
+        "blow_out",
+        "touch_tip",
+        "mix",
+        "air_gap",
     }
 )
 
@@ -673,7 +647,12 @@ def _deck_check(status: Any, touched: list[str]) -> dict[str, Any]:
     }
 
 
-def _ot2_deck_check(status: Any, action: str, resolved_args: dict[str, Any], resolved_locations: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _ot2_deck_check(
+    status: Any,
+    action: str,
+    resolved_args: dict[str, Any],
+    resolved_locations: list[dict[str, Any]],
+) -> dict[str, Any] | None:
     """The deck check for one OT-2 step, or ``None`` when the verb does not
     touch the deck. Touched slots come from the slot arguments and, for
     nickname-addressed verbs, from the snapshot."""
@@ -734,7 +713,9 @@ def _merge_deck_checks(checks: list[dict[str, Any] | None]) -> list[dict[str, An
     return list(merged.values())
 
 
-def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[SkillDef, str, dict[str, Any]]:
+def _resolve(
+    entry: EquipmentEntry, action: str, args: dict[str, Any]
+) -> tuple[SkillDef, str, dict[str, Any]]:
     """Map a device ``allowed_actions`` string to a proposable action.
 
     Returns ``(skill_def, passthrough_action, resolved_args)`` or raises
@@ -757,7 +738,7 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
     action = _canonical_action(entry.kind, action)
 
     if entry.kind == "robot_arm" and action.startswith("move."):
-        node_id = action[len("move."):]
+        node_id = action[len("move.") :]
         if not node_id:
             raise ProposalRefused("unmappable_action", f"malformed move action {action!r}")
         sd = _find_skill_def("robot_arm", "graph.move_to")
@@ -778,7 +759,7 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
     # (see :func:`_action_startable`) and the device's own path check (409
     # when no whitelisted path exists) is the authority at execution time.
     if entry.kind == "robot_arm" and action.startswith("travel."):
-        node_id = action[len("travel."):]
+        node_id = action[len("travel.") :]
         if not node_id:
             raise ProposalRefused("unmappable_action", f"malformed travel action {action!r}")
         sd = _find_skill_def("robot_arm", "graph.travel_to")
@@ -803,7 +784,7 @@ def _resolve(entry: EquipmentEntry, action: str, args: dict[str, Any]) -> tuple[
     # _FORBIDDEN_ARG_FIELDS gains nothing), and the device's own STRICT-mode
     # whitelist remains the authority on what is reachable.
     if entry.kind == "robot_arm" and action.startswith("gripper."):
-        state = action[len("gripper."):]
+        state = action[len("gripper.") :]
         if not state:
             raise ProposalRefused("unmappable_action", f"malformed gripper action {action!r}")
         sd = _find_skill_def("robot_arm", "graph.gripper")
@@ -877,7 +858,7 @@ def _action_startable(entry: EquipmentEntry, status: Any, action: str) -> bool:
     if action in (status.allowed_actions or []):
         return True
     if entry.kind == "robot_arm" and action.startswith("travel."):
-        return action[len("travel."):] in _travel_targets(status)
+        return action[len("travel.") :] in _travel_targets(status)
     return False
 
 
@@ -930,6 +911,148 @@ async def _read_status(registry: Registry, equipment_id: str):
         return await client.status()
 
 
+async def _read_status_and_discovery(registry: Registry, equipment_id: str):
+    """Read live state and optional gateway documentation over one SDK session."""
+
+    async with Lab.connect(registry=registry) as lab:
+        client = lab.get(equipment_id)
+        status = await client.status()
+        discovery = await client.discover()
+    return status, discovery
+
+
+def _identity_problem(entry: EquipmentEntry, status: Any, docs: Any | None = None) -> str | None:
+    """Return a truthful mismatch instead of applying one robot's schemas to another."""
+
+    if status.equipment_id != entry.id:
+        return f"/status identified {status.equipment_id!r}, expected {entry.id!r}"
+    if status.equipment_kind != entry.kind:
+        return f"/status kind is {status.equipment_kind!r}, expected {entry.kind!r}"
+    if docs is not None and docs.equipment_kind != status.equipment_kind:
+        return (
+            f"/docs/agent kind is {docs.equipment_kind!r}, but /status kind is "
+            f"{status.equipment_kind!r}"
+        )
+    return None
+
+
+def _remote_action_map(discovery: Any | None) -> dict[str, Any] | None:
+    if discovery is None or discovery.action_catalog is None:
+        return None
+    return {item.action: item for item in discovery.action_catalog.actions}
+
+
+def _openapi_covers(discovery: Any | None, endpoint: str) -> bool:
+    return discovery is None or discovery.openapi is None or endpoint in discovery.openapi.paths
+
+
+def _validate_remote_args(action: str, args: dict[str, Any], remote_actions: Any) -> None:
+    """Apply the running profile's exact JSON Schema after local validation."""
+
+    if remote_actions is None:
+        return
+    item = remote_actions.get(action)
+    if item is None:
+        raise ProposalRefused(
+            "capability_unknown",
+            f"the running gateway's /plans/actions does not publish {action!r}",
+        )
+    if item.args_schema is None:
+        if args:
+            raise ProposalRefused("invalid_args", f"{action!r} takes no arguments")
+        return
+    try:
+        jsonschema.Draft202012Validator(item.args_schema).validate(args)
+    except jsonschema.ValidationError as exc:
+        raise ProposalRefused(
+            "invalid_args",
+            f"args do not validate against the running gateway's {action!r} schema: {exc.message}",
+        ) from exc
+
+
+def _assistant_schema(schema: dict[str, Any], kind: str | None) -> tuple[dict[str, Any], list[str]]:
+    """Copy a device schema and remove fields outside the assistant boundary."""
+
+    visible = copy.deepcopy(schema)
+    forbidden = _FORBIDDEN_ARG_FIELDS.get(kind or "", frozenset())
+    stripped = sorted(field for field in forbidden if field in visible.get("properties", {}))
+    for field in stripped:
+        visible["properties"].pop(field)
+        if field in visible.get("required", []):
+            visible["required"].remove(field)
+    return visible, stripped
+
+
+async def _get_equipment_docs(registry: Registry, equipment_id: str) -> str:
+    """Return running-gateway guidance plus the live safety/state envelope."""
+
+    entry = registry.by_id(equipment_id)
+    if entry is None:
+        return _err("unknown_equipment", f"no equipment with id {equipment_id!r}")
+    if entry.kind != "liquid_handler":
+        return _err(
+            "capability_unknown",
+            "equipment documentation discovery is currently defined for liquid handlers",
+        )
+    try:
+        status, discovery = await _read_status_and_discovery(registry, equipment_id)
+    except EquipmentInMaintenance:
+        return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
+    except (EquipmentUnreachable, LabError) as exc:
+        return _err("unreachable", f"could not discover {equipment_id!r}: {exc}")
+
+    problem = _identity_problem(entry, status, discovery.agent_docs)
+    if problem:
+        return _err("identity_mismatch", problem)
+    payload: dict[str, Any] = {
+        "equipment_id": entry.id,
+        "source": "running_gateway",
+        "live_status": {
+            "equipment_id": status.equipment_id,
+            "equipment_kind": status.equipment_kind,
+            "equipment_status": status.equipment_status,
+            "activity": status.activity,
+            "allowed_actions": status.allowed_actions,
+            "last_error": status.last_error.model_dump(mode="json") if status.last_error else None,
+            "details": status.details,
+        },
+        "unavailable": discovery.unavailable,
+    }
+    if discovery.agent_docs is not None:
+        agent_docs = discovery.agent_docs.model_dump(mode="json")
+        agent_docs.pop("actions", None)
+        payload["agent_docs"] = agent_docs
+    if discovery.action_catalog is not None:
+        catalog = discovery.action_catalog.model_dump(mode="json")
+        for item in catalog["actions"]:
+            if item.get("args_schema") is not None:
+                item["args_schema"], stripped = _assistant_schema(item["args_schema"], entry.kind)
+                if stripped:
+                    item["operator_only_fields"] = stripped
+        payload["action_catalog"] = catalog
+    if discovery.openapi is not None:
+        payload["openapi"] = {
+            "openapi": discovery.openapi.openapi,
+            "info": discovery.openapi.info,
+            "paths": {
+                path: sorted(
+                    method
+                    for method in operations
+                    if method.lower()
+                    in {"get", "put", "post", "delete", "options", "head", "patch"}
+                )
+                for path, operations in discovery.openapi.paths.items()
+                if isinstance(operations, dict)
+            },
+        }
+    if discovery.unavailable:
+        payload["capability_warning"] = (
+            "This reachable gateway predates one or more discovery endpoints. "
+            "Do not infer actions or schemas that the running deployment did not publish."
+        )
+    return _dumps(payload)
+
+
 async def _lookup_custom_labware(load_name: str) -> str:
     """One custom (non-standard) labware's full Opentrons schema-2 definition
     from the dashboard's labware store — the same store the deck-declare
@@ -956,13 +1079,10 @@ async def _lookup_custom_labware(load_name: str) -> str:
     if item is None:
         return _err(
             "unknown_labware",
-            f"no custom labware definition named {load_name!r} in the "
-            "dashboard's labware store",
+            f"no custom labware definition named {load_name!r} in the dashboard's labware store",
         )
     try:
-        definition = _require_complete_definition(
-            load_name, item["definition"], item["source"]
-        )
+        definition = _require_complete_definition(load_name, item["definition"], item["source"])
     except HTTPException as exc:
         return _err("incomplete_definition", str(exc.detail))
     return _dumps({"load_name": load_name, "source": item["source"], "definition": definition})
@@ -987,38 +1107,66 @@ async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
     entry = registry.by_id(equipment_id)
     if entry is None:
         return _err("unknown_equipment", f"no equipment with id {equipment_id!r}")
+    discovery = None
     try:
-        status = await _read_status(registry, equipment_id)
+        if entry.kind == "liquid_handler":
+            status, discovery = await _read_status_and_discovery(registry, equipment_id)
+        else:
+            status = await _read_status(registry, equipment_id)
     except EquipmentInMaintenance:
         return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
     except (EquipmentUnreachable, LabError) as exc:
         return _err("unreachable", f"could not read /status for {equipment_id!r}: {exc}")
 
+    problem = _identity_problem(entry, status, discovery.agent_docs if discovery else None)
+    if problem:
+        return _err("identity_mismatch", problem)
+
+    remote_actions = _remote_action_map(discovery)
+    advertised = list(status.allowed_actions or [])
+    action_names = list(remote_actions) if remote_actions is not None else advertised
+    for live_action in advertised:
+        if live_action not in action_names:
+            action_names.append(live_action)
+
     actions: list[dict[str, Any]] = []
-    for action in status.allowed_actions or []:
-        info: dict[str, Any] = {"action": action, "proposable": False}
+    for action in action_names:
+        info: dict[str, Any] = {
+            "action": action,
+            "currently_allowed": action in advertised,
+            "proposable": False,
+        }
         try:
             sd, passthrough, _ = _resolve(entry, action, {})
         except ProposalRefused:
+            actions.append(info)
+            continue
+        if remote_actions is not None and action not in remote_actions:
+            actions.append(info)
+            continue
+        if not _openapi_covers(discovery, sd.endpoint):
+            info["capability_error"] = f"running OpenAPI omits {sd.endpoint}"
             actions.append(info)
             continue
         # Operator-only fields are stripped from the schema the model sees —
         # advertising them as settable would invite a proposal the guard must
         # then refuse. They are reported by name so the model can explain the
         # omission if asked.
-        schema = sd.args_schema.model_json_schema()
-        forbidden = _FORBIDDEN_ARG_FIELDS.get(entry.kind or "", frozenset())
-        stripped = sorted(f for f in forbidden if f in schema.get("properties", {}))
-        for field in stripped:
-            schema["properties"].pop(field)
-            if field in schema.get("required", []):
-                schema["required"].remove(field)
+        remote = remote_actions.get(action) if remote_actions is not None else None
+        schema = (
+            remote.args_schema
+            if remote is not None and remote.args_schema is not None
+            else sd.args_schema.model_json_schema()
+        )
+        schema, stripped = _assistant_schema(schema, entry.kind)
         info.update(
             proposable=True,
             passthrough_action=passthrough,
             description=sd.description,
             args_schema=schema,
         )
+        if remote is not None:
+            info["idempotent"] = remote.idempotent
         if stripped:
             info["operator_only_fields"] = stripped
         actions.append(info)
@@ -1053,8 +1201,18 @@ async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
         "equipment_status": status.equipment_status,
         "activity": status.activity,
         "message": status.message,
+        "last_error": status.last_error.model_dump(mode="json") if status.last_error else None,
         "actions": actions,
     }
+    if discovery is not None:
+        payload["discovery_unavailable"] = discovery.unavailable
+        if discovery.agent_docs is not None:
+            payload["gateway_model"] = discovery.agent_docs.model
+        if discovery.unavailable:
+            payload["capability_warning"] = (
+                "This older running gateway lacks one or more discovery endpoints. Only actions "
+                "published by its live status are shown; do not assume newer capabilities."
+            )
     motion_graph = (status.details or {}).get("motion_graph")
     if isinstance(motion_graph, dict):
         payload["motion_graph"] = motion_graph
@@ -1105,12 +1263,20 @@ async def _propose_action(
     if not entry.enabled or entry.maintenance is not None:
         return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
 
+    discovery = None
     try:
-        status = await _read_status(registry, equipment_id)
+        if entry.kind == "liquid_handler":
+            status, discovery = await _read_status_and_discovery(registry, equipment_id)
+        else:
+            status = await _read_status(registry, equipment_id)
     except EquipmentInMaintenance:
         return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
     except (EquipmentUnreachable, LabError) as exc:
         return _err("unreachable", f"could not read /status for {equipment_id!r}: {exc}")
+
+    problem = _identity_problem(entry, status, discovery.agent_docs if discovery else None)
+    if problem:
+        return _err("identity_mismatch", problem)
 
     action = _canonical_action(entry.kind, action)
     if not _action_startable(entry, status, action):
@@ -1147,6 +1313,17 @@ async def _propose_action(
     except ProposalRefused as exc:
         return _err(exc.code, exc.message)
 
+    remote_actions = _remote_action_map(discovery)
+    try:
+        _validate_remote_args(action, resolved_args, remote_actions)
+    except ProposalRefused as exc:
+        return _err(exc.code, exc.message)
+    if not _openapi_covers(discovery, sd.endpoint):
+        return _err(
+            "capability_unknown",
+            f"the running gateway's OpenAPI does not publish {sd.endpoint!r}",
+        )
+
     ok, why = await _check_authz(actor, equipment_id)
     if not ok:
         return _err("not_authorized", why or "not authorized")
@@ -1155,9 +1332,7 @@ async def _propose_action(
     if entry.kind == "liquid_handler":
         deck_checks.append(_ot2_deck_check(status, action, resolved_args, resolved_locations))
     elif entry.kind == "robot_arm" and action.startswith(("travel.", "move.")):
-        deck_checks.append(
-            await _arm_target_deck_check(registry, entry, action.split(".", 1)[1])
-        )
+        deck_checks.append(await _arm_target_deck_check(registry, entry, action.split(".", 1)[1]))
 
     proposal = {
         "equipment_id": entry.id,
@@ -1275,12 +1450,21 @@ async def _propose_plan(
     if not entry.enabled or entry.maintenance is not None:
         return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
 
+    discovery = None
     try:
-        status = await _read_status(registry, equipment_id)
+        if entry.kind == "liquid_handler":
+            status, discovery = await _read_status_and_discovery(registry, equipment_id)
+        else:
+            status = await _read_status(registry, equipment_id)
     except EquipmentInMaintenance:
         return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
     except (EquipmentUnreachable, LabError) as exc:
         return _err("unreachable", f"could not read /status for {equipment_id!r}: {exc}")
+
+    problem = _identity_problem(entry, status, discovery.agent_docs if discovery else None)
+    if problem:
+        return _err("identity_mismatch", problem)
+    remote_actions = _remote_action_map(discovery)
 
     resolved_steps: list[dict[str, Any]] = []
     # Step-tagged place labels for the card. Kept OUTSIDE ``steps`` so the
@@ -1312,6 +1496,28 @@ async def _propose_plan(
             _validate_args(sd, resolved_args)
         except ProposalRefused as exc:
             return _err(exc.code, f"step {index} ({action}): {exc.message}", step=index)
+        if entry.kind == "liquid_handler":
+            try:
+                _validate_remote_args(action, resolved_args, remote_actions)
+            except ProposalRefused as exc:
+                return _err(
+                    exc.code,
+                    f"step {index} ({action}): {exc.message}",
+                    step=index,
+                )
+            if remote_actions is None and action not in (status.allowed_actions or []):
+                return _err(
+                    "capability_unknown",
+                    f"step {index} ({action}): this older gateway has no action catalog "
+                    "and its live status does not publish this action",
+                    step=index,
+                )
+            if not _openapi_covers(discovery, sd.endpoint):
+                return _err(
+                    "capability_unknown",
+                    f"step {index} ({action}): running OpenAPI omits {sd.endpoint}",
+                    step=index,
+                )
         plan_locations.extend({"step": index, **item} for item in step_locations)
         if entry.kind == "liquid_handler":
             deck_checks.append(_ot2_deck_check(status, action, resolved_args, step_locations))
@@ -1363,6 +1569,17 @@ def _build_server(registry: Registry):
     from mcp.server.fastmcp import FastMCP
 
     server = FastMCP("lab-control")
+
+    @server.tool()
+    async def get_equipment_docs(equipment_id: str) -> str:
+        """Read a liquid handler's live status and its self-published
+        ``/docs/agent``, ``/plans/actions`` and ``/openapi.json`` documents.
+        This is read-only. Missing endpoints are reported as an older gateway,
+        never filled from a source checkout or assumed from the local SDK.
+        Read this before proposing liquid-handler work, and resolve installed
+        labware/pipettes from ``live_status.details.snapshot``."""
+
+        return await _get_equipment_docs(registry, equipment_id)
 
     @server.tool()
     async def list_available_actions(equipment_id: str) -> str:

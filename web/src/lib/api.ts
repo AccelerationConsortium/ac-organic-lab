@@ -937,6 +937,12 @@ export interface DeviceDeckSlot {
     nickname?: string | null;
   } | null;
   module: { module_name: string; status?: string | null; serial_number?: string | null } | null;
+  /** Sticky operator declaration, retained even after a run observes the module. */
+  declared_module?: {
+    module_name: string;
+    status?: string | null;
+    serial_number?: string | null;
+  } | null;
   slot_state: "empty" | "declared" | "occupied" | "in_use" | "mismatch";
   source: "run" | "repl" | "declared" | "empty";
   declared?: { kind: string; load_name: string } | null;

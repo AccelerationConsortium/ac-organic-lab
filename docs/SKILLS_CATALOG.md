@@ -160,7 +160,7 @@ The result is a snapshot — calling `lab.skills()` again returns fresh availabi
 | Source | Authority | When it's used |
 |---|---|---|
 | **Local `requires_states` per `SkillDef`** | SDK's hard-coded knowledge of equipment kinds | v0.2: only source until devices ship v1.1 |
-| **Device's `/openapi.json`** | What the device actually accepts | optional cross-check / auto-discovery (v0.4+) |
+| **Device's `/plans/actions` + `/openapi.json`** | What a self-documenting device actually exposes for proposals and HTTP | runtime schema/route discovery where available |
 | **Device's `/status.allowed_actions`** | Authoritative runtime list from the device | v0.3+: source of truth wherever available |
 
 The SDK uses these in priority order:
@@ -171,6 +171,14 @@ The SDK uses these in priority order:
    - **`plate_sealer.seal.start`** — `requires_components={"heater": "stable", "stage": "in"}`. Mirrors plateloc v1.3+'s two-precondition HTTP 412 (heater band + stage interlock). The dashboard tile pre-checks both client-side; `lab.skills()` would also report `available=False` if either condition fails. Plateloc v1.4+ adds a **third** device-side gate — `seal.start` is refused with 412 while an uncleared `last_error` sits inside the device's recent-failure window — which `requires_components` cannot express (it is not a component state). No catalog change is needed: the device withholds `seal.start` from `allowed_actions`, and the SDK prefers that list. This is the intended division of labour — `requires_components` is a *hint* for over-permissive states, never a mirror of the device's full precondition set.
    - **`shaker.shake.start`** — `requires_components={"motor": "idle"}`. Motor-only AND-gate so a heater-side `degraded` (e.g. SC25XR `cal3` RTD fault) doesn't block shaking. The corresponding heater-side action `shaker.shake.set_temperature` carries the complementary `requires_components={"heater": "stable"}` so it stays unavailable when the heater is the failing subsystem.
    - **`liquid_handler.lights.set`** (OT-2 deck-light) — `requires_states=[]`, no `requires_components`. Convenience-class control; advertised in `allowed_actions` whenever the robot is reachable regardless of `equipment_status`.
+   - **Self-documenting Opentrons gateways** — `EquipmentClient.discover()`
+     reads `/docs/agent`, `/plans/actions` and `/openapi.json`. The local
+     liquid-handler catalog contains the typed OT-2/Flex union, while the
+     running action catalog selects the model-specific subset and live
+     `allowed_actions` determines current startability. Missing discovery
+     endpoints are reported as an older deployment; they are never filled from
+     source-checkout assumptions. See
+     [OPENTRONS_HTTP_CONTROLS.md](OPENTRONS_HTTP_CONTROLS.md).
    - **`hplc.run.submit`** / **`hplc.instrument.standby`** / **`hplc.workflow.start`** (Agilent UPLC-MS) — enqueue verbs gated by the device's FIFO queue (the sidecar owns the queue; OpenLab is reserved for technician servicing). The sidecar drops them from `allowed_actions` when the queue is full (HTTP 412 `queue_full` with a `Retry-After`), when OpenLab is down (409 `requires_init`), or when a technician is servicing the instrument directly (409 `instrument_servicing`). `instrument.standby` parks the instrument in low-flow standby — a true power-down is a deliberate manual procedure, deliberately not exposed as a skill. `workflow.start` takes the equipment-blocking workflow lock for a robot/agent campaign (requires the claim owner's role to be `automation` → 403 `role_forbidden` otherwise; while held, non-holder submits get 423 `workflow_active`); it is offered only while no workflow is active. The non-enqueue verbs **`hplc.run.abort`**, **`hplc.queue.cancel`** (the latter a `DELETE /control/queue/{queue_id}`), and **`hplc.workflow.end`** (idempotent lock release, offered exactly while a workflow is active) carry no such precondition and stay listed whenever the instrument is operational. The operator/dashboard service-mode toggles (`POST /control/service/start|end`) are technician controls, deliberately **not** modelled as agent skills.
 
 This means devices migrating to v1.1 progressively make the catalog more accurate without any SDK rebuild. The SDK never needs to "know" the precondition rules of a specific device — the device declares them. `requires_components` is a curated SDK-side hint for the cases where the device's coarse state (or `allowed_actions`) is too permissive for a specific action.

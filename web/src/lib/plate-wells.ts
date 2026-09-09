@@ -31,6 +31,8 @@ export type WellKind =
   | "touched"
   /** Tip rack: used and dropped — the well is an empty hole. */
   | "empty"
+  /** Tip rack: this tip is currently held by a pipette. */
+  | "mounted"
   /** Plate: a tracked sample sits in this well. */
   | "sample"
   /** Plate: no sample recorded for this well. */
@@ -38,7 +40,7 @@ export type WellKind =
   /** Nothing is known about this well (an unregistered rack). */
   | "unknown";
 
-export const TIP_KINDS: readonly WellKind[] = ["fresh", "touched", "empty"] as const;
+export const TIP_KINDS: readonly WellKind[] = ["fresh", "touched", "mounted", "empty"] as const;
 export const PLATE_KINDS: readonly WellKind[] = ["sample", "vacant"] as const;
 
 export interface WellCell {
@@ -104,6 +106,7 @@ function tipKind(status: string | undefined): { kind: WellKind; detail?: string 
   const normalized = status.trim().toLowerCase();
   if (FRESH_STATUSES.has(normalized)) return { kind: "fresh" };
   if (normalized === "empty") return { kind: "empty" };
+  if (normalized === "on_pipette") return { kind: "mounted" };
   return { kind: "touched", detail: status };
 }
 
@@ -119,7 +122,9 @@ export interface BuildWellModelArgs {
   samples: WellSample[] | null;
   /** Live mounted tips, used to ring the wells whose tips are on a head. */
   mountedTips?: MountedTip[];
-  /** This slot's nickname, for matching mounted tips to this rack. */
+  /** This slot's deck key, the primary mounted-tip rack identity. */
+  slot?: string | number | null;
+  /** Recipe nickname, accepted as a secondary mounted-tip identity. */
   nickname?: string | null;
 }
 
@@ -136,6 +141,7 @@ export function buildWellModel({
   tipRack,
   samples,
   mountedTips = [],
+  slot,
   nickname,
 }: BuildWellModelArgs): PlateWellModel {
   const order = wellOrder(geometry, rows, columns);
@@ -144,9 +150,14 @@ export function buildWellModel({
 
   // Wells whose tips are on a pipette right now. `wells` is the covered span
   // (a whole column for a multi-channel head); older gateways send only `well`.
+  const owners = new Set(
+    [slot == null ? null : String(slot), nickname].filter(
+      (value): value is string => value != null && value !== "",
+    ),
+  );
   const mountedWells = new Set<string>();
   for (const tip of mountedTips) {
-    if (nickname != null && tip.rack != null && tip.rack !== nickname) continue;
+    if (tip.rack == null || !owners.has(tip.rack)) continue;
     for (const well of tip.wells ?? (tip.well ? [tip.well] : [])) mountedWells.add(well);
   }
 
@@ -177,7 +188,7 @@ export function buildWellModel({
       kind,
       detail,
       volumeUl,
-      mounted: mountedWells.has(well) || undefined,
+      mounted: mountedWells.has(well) || kind === "mounted" || undefined,
     };
   });
 

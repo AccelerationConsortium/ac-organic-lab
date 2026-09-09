@@ -182,9 +182,7 @@ async def test_propose_gripper_success() -> None:
     _mock_status(["stop", "gripper.grip_120"])
     _mock_authz(True)
     out = json.loads(
-        await ac._propose_action(
-            _registry(), "xarm", "gripper.grip_120", None, "grip the plate"
-        )
+        await ac._propose_action(_registry(), "xarm", "gripper.grip_120", None, "grip the plate")
     )
     prop = out["proposal"]
     assert prop["action"] == "gripper.grip_120"
@@ -197,14 +195,10 @@ async def test_propose_travel_target_via_motion_graph() -> None:
     """travel.<node_id> is startable when the destination is in the device's
     motion_graph snapshot (reachable_nodes or travel_targets), even though the
     device never lists travel actions in allowed_actions (Step 1k)."""
-    _mock_status(
-        ["stop", "move.uplc_draw_home"], details={"motion_graph": _MOTION_GRAPH}
-    )
+    _mock_status(["stop", "move.uplc_draw_home"], details={"motion_graph": _MOTION_GRAPH})
     _mock_authz(True)
     out = json.loads(
-        await ac._propose_action(
-            _registry(), "xarm", "travel.deck_home", None, "route to the deck"
-        )
+        await ac._propose_action(_registry(), "xarm", "travel.deck_home", None, "route to the deck")
     )
     prop = out["proposal"]
     assert prop["action"] == "travel.deck_home"
@@ -217,13 +211,9 @@ async def test_propose_travel_refused_for_unreachable_node() -> None:
     """A destination outside the snapshot is refused with the valid travel
     targets in the payload — never sent on to earn the device's 409."""
     _mock_status(["stop"], details={"motion_graph": _MOTION_GRAPH})
-    out = json.loads(
-        await ac._propose_action(_registry(), "xarm", "travel.nowhere", None, "")
-    )
+    out = json.loads(await ac._propose_action(_registry(), "xarm", "travel.nowhere", None, ""))
     assert out["code"] == "not_allowed"
-    assert out["travel_targets"] == sorted(
-        {"uplc_draw_home", "uplc_draw_up", "deck_home"}
-    )
+    assert out["travel_targets"] == sorted({"uplc_draw_home", "uplc_draw_up", "deck_home"})
 
 
 @respx.mock
@@ -231,9 +221,7 @@ async def test_propose_travel_refused_without_motion_graph() -> None:
     """No snapshot -> no travel surface (fail closed; an arm with no graph
     loaded cannot route anywhere)."""
     _mock_status(["stop", "move.deck"])
-    out = json.loads(
-        await ac._propose_action(_registry(), "xarm", "travel.deck_home", None, "")
-    )
+    out = json.loads(await ac._propose_action(_registry(), "xarm", "travel.deck_home", None, ""))
     assert out["code"] == "not_allowed"
 
 
@@ -245,9 +233,7 @@ async def test_propose_gripper_state_the_device_withholds() -> None:
     the whole reason the state rides in the action name."""
     _mock_status(["stop", "gripper.empty"])
     out = json.loads(
-        await ac._propose_action(
-            _registry(), "xarm", "gripper.grip_120", None, "grip the plate"
-        )
+        await ac._propose_action(_registry(), "xarm", "gripper.grip_120", None, "grip the plate")
     )
     assert out["code"] == "not_allowed"
     assert out["allowed_actions"] == ["stop", "gripper.empty"]
@@ -260,33 +246,25 @@ async def test_propose_gripper_state_the_device_withholds() -> None:
 
 async def test_propose_no_actor(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LAB_ACTOR", raising=False)
-    out = json.loads(
-        await ac._propose_action(_registry(), "xarm", "move.n1", None, "")
-    )
+    out = json.loads(await ac._propose_action(_registry(), "xarm", "move.n1", None, ""))
     assert out["code"] == "no_actor"
 
 
 async def test_propose_unknown_equipment() -> None:
-    out = json.loads(
-        await ac._propose_action(_registry(), "nope", "move.n1", None, "")
-    )
+    out = json.loads(await ac._propose_action(_registry(), "nope", "move.n1", None, ""))
     assert out["code"] == "unknown_equipment"
 
 
 async def test_propose_multi_equipment_is_unknown() -> None:
     # The tool signature takes exactly one id; a comma-joined "batch" is simply
     # not a known equipment id, so it is refused rather than fanned out.
-    out = json.loads(
-        await ac._propose_action(_registry(), "xarm,plateloc", "move.n1", None, "")
-    )
+    out = json.loads(await ac._propose_action(_registry(), "xarm,plateloc", "move.n1", None, ""))
     assert out["code"] == "unknown_equipment"
 
 
 async def test_propose_disabled_equipment() -> None:
     out = json.loads(
-        await ac._propose_action(
-            _registry(enabled=False), "xarm", "move.n1", None, ""
-        )
+        await ac._propose_action(_registry(enabled=False), "xarm", "move.n1", None, "")
     )
     assert out["code"] == "disabled"
 
@@ -294,18 +272,14 @@ async def test_propose_disabled_equipment() -> None:
 @respx.mock
 async def test_propose_unreachable() -> None:
     respx.get(f"{ARM_BASE}/status").mock(side_effect=httpx.ConnectError("boom"))
-    out = json.loads(
-        await ac._propose_action(_registry(), "xarm", "move.n1", None, "")
-    )
+    out = json.loads(await ac._propose_action(_registry(), "xarm", "move.n1", None, ""))
     assert out["code"] == "unreachable"
 
 
 @respx.mock
 async def test_propose_action_not_allowed() -> None:
     _mock_status(["stop"])  # move target withheld (e.g. not STRICT, or busy)
-    out = json.loads(
-        await ac._propose_action(_registry(), "xarm", "move.n1", None, "")
-    )
+    out = json.loads(await ac._propose_action(_registry(), "xarm", "move.n1", None, ""))
     assert out["code"] == "not_allowed"
     assert out["allowed_actions"] == ["stop"]
 
@@ -313,9 +287,7 @@ async def test_propose_action_not_allowed() -> None:
 @respx.mock
 async def test_propose_unmappable_action() -> None:
     _mock_status(["stop", "clear_errors"])
-    out = json.loads(
-        await ac._propose_action(_registry(), "xarm", "stop", None, "")
-    )
+    out = json.loads(await ac._propose_action(_registry(), "xarm", "stop", None, ""))
     assert out["code"] == "unmappable_action"
 
 
@@ -324,9 +296,7 @@ async def test_propose_bad_args() -> None:
     _mock_status(["move.n1"])
     # speed must be a float; a string fails the GraphMoveToArgs schema.
     out = json.loads(
-        await ac._propose_action(
-            _registry(), "xarm", "move.n1", {"speed": "fast"}, ""
-        )
+        await ac._propose_action(_registry(), "xarm", "move.n1", {"speed": "fast"}, "")
     )
     assert out["code"] == "invalid_args"
 
@@ -335,9 +305,7 @@ async def test_propose_bad_args() -> None:
 async def test_propose_not_authorized() -> None:
     _mock_status(["move.n1"])
     _mock_authz(False)
-    out = json.loads(
-        await ac._propose_action(_registry(), "xarm", "move.n1", None, "")
-    )
+    out = json.loads(await ac._propose_action(_registry(), "xarm", "move.n1", None, ""))
     assert out["code"] == "not_authorized"
 
 
@@ -345,9 +313,7 @@ async def test_propose_not_authorized() -> None:
 async def test_propose_authz_fails_closed() -> None:
     _mock_status(["move.n1"])
     respx.get(AUTHZ).mock(side_effect=httpx.ConnectError("sidecar down"))
-    out = json.loads(
-        await ac._propose_action(_registry(), "xarm", "move.n1", None, "")
-    )
+    out = json.loads(await ac._propose_action(_registry(), "xarm", "move.n1", None, ""))
     assert out["code"] == "not_authorized"
 
 
@@ -355,9 +321,7 @@ async def test_propose_authz_fails_closed() -> None:
 async def test_propose_authz_disabled_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTROL_AUTHZ_ENFORCE", "false")
     _mock_status(["move.n1"])
-    out = json.loads(
-        await ac._propose_action(_registry(), "xarm", "move.n1", None, "")
-    )
+    out = json.loads(await ac._propose_action(_registry(), "xarm", "move.n1", None, ""))
     assert "proposal" in out  # no authz round-trip needed
 
 
@@ -408,9 +372,7 @@ async def test_list_available_actions_forwards_motion_graph() -> None:
     bridging to the device's own multi-hop planner (graph.travel_to) — the
     model proposes a destination, never a guessed hop sequence."""
 
-    _mock_status(
-        ["stop", "move.uplc_draw_home"], details={"motion_graph": _MOTION_GRAPH}
-    )
+    _mock_status(["stop", "move.uplc_draw_home"], details={"motion_graph": _MOTION_GRAPH})
     out = json.loads(await ac._list_available_actions(_registry(), "xarm"))
     assert out["motion_graph"] == _MOTION_GRAPH
     by_action = {a["action"]: a for a in out["actions"]}
@@ -455,18 +417,12 @@ async def test_list_available_actions_no_motion_graph_key_when_absent() -> None:
 
 OT2_BASE = "http://ot2.test:8020"
 
-# Every OT-2 action the gateway can advertise, mapped to the passthrough URL
-# segment its proposal must carry. Step 1c scoped the full surface, so this is
-# also the scoping decision, pinned: an entry leaving this map must be a
-# deliberate re-scoping, and a new gateway verb is refused until added here
-# AND to _PROPOSABLE.
+# Every plan action published by the pinned OT-2 gateway, mapped to the
+# dashboard passthrough segment. Lifecycle and software-stop actions remain
+# operator-only and therefore are deliberately absent.
 _OT2_SURFACE = {
-    "startup": "startup",
-    "shutdown": "shutdown",
     "home": "home",
     "setup": "setup",
-    "pause": "pause",
-    "resume": "resume",
     "move_to": "move-to",
     "pick_up_tip": "pick-up-tip",
     "aspirate": "aspirate",
@@ -482,6 +438,36 @@ _OT2_SURFACE = {
     "tempmod.deactivate": "tempmod/deactivate",
     "lights.set": "lights",
     "deck.declare": "deck/declare",
+    "comment": "comment",
+    "delay": "delay",
+    "blow_out": "blow-out",
+    "touch_tip": "touch-tip",
+    "mix": "mix",
+    "air_gap": "air-gap",
+    "prepare_aspirate": "prepare-aspirate",
+    "home_pipette": "home-pipette",
+    "home_plunger": "home-plunger",
+    "set_flow_rate": "set-flow-rate",
+    "set_speed": "set-speed",
+    "hs_latch_open": "hs-latch-open",
+    "hs_latch_close": "hs-latch-close",
+    "hs_set_and_wait_shake_speed": "hs-set-and-wait-shake-speed",
+    "hs_deactivate_shaker": "hs-deactivate-shaker",
+    "hs_set_target_temperature": "hs-set-target-temperature",
+    "hs_set_and_wait_temperature": "hs-set-and-wait-temperature",
+    "hs_wait_for_temperature": "hs-wait-for-temperature",
+    "hs_deactivate_heater": "hs-deactivate-heater",
+    "hs_deactivate": "hs-deactivate",
+    "tempmod_await_temperature": "tempmod-await-temperature",
+    "magmod_engage": "magmod-engage",
+    "magmod_disengage": "magmod-disengage",
+    "thermocycler_open_lid": "thermocycler-open-lid",
+    "thermocycler_close_lid": "thermocycler-close-lid",
+    "thermocycler_set_block_temperature": "thermocycler-set-block-temperature",
+    "thermocycler_set_lid_temperature": "thermocycler-set-lid-temperature",
+    "thermocycler_deactivate_block": "thermocycler-deactivate-block",
+    "thermocycler_deactivate_lid": "thermocycler-deactivate-lid",
+    "thermocycler_deactivate": "thermocycler-deactivate",
 }
 _OT2_ADVERTISED = list(_OT2_SURFACE)
 
@@ -502,7 +488,57 @@ def _ot2_registry() -> Registry:
     )
 
 
-def _mock_ot2_status(allowed_actions: list[str]) -> None:
+def _mock_ot2_discovery(
+    actions: dict[str, str] | None = None,
+    *,
+    model: str = "Opentrons OT-2",
+    schema_overrides: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    surface = actions or _OT2_SURFACE
+    catalog = []
+    paths: dict[str, Any] = {}
+    for action in surface:
+        sd = ac._find_skill_def("liquid_handler", action)
+        assert sd is not None
+        catalog.append(
+            {
+                "action": action,
+                "idempotent": action in {"home", "comment"},
+                "args_schema": (schema_overrides or {}).get(
+                    action, sd.args_schema.model_json_schema()
+                ),
+            }
+        )
+        paths[sd.endpoint] = {"post": {}}
+    respx.get(f"{OT2_BASE}/docs/agent").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "documentation_version": "1",
+                "equipment_kind": "liquid_handler",
+                "model": model,
+                "actions": catalog,
+            },
+        )
+    )
+    respx.get(f"{OT2_BASE}/plans/actions").mock(
+        return_value=httpx.Response(200, json={"actions": catalog})
+    )
+    respx.get(f"{OT2_BASE}/openapi.json").mock(
+        return_value=httpx.Response(
+            200,
+            json={"openapi": "3.1.0", "info": {"title": "test"}, "paths": paths},
+        )
+    )
+
+
+def _mock_ot2_status(
+    allowed_actions: list[str],
+    *,
+    discovery_actions: dict[str, str] | None = None,
+    model: str = "Opentrons OT-2",
+    old_gateway: bool = False,
+) -> None:
     respx.get(f"{OT2_BASE}/status").mock(
         return_value=httpx.Response(
             200,
@@ -518,6 +554,11 @@ def _mock_ot2_status(allowed_actions: list[str]) -> None:
             },
         )
     )
+    if old_gateway:
+        for path in ("/docs/agent", "/plans/actions", "/openapi.json"):
+            respx.get(f"{OT2_BASE}{path}").mock(return_value=httpx.Response(404))
+    else:
+        _mock_ot2_discovery(discovery_actions, model=model)
 
 
 @pytest.mark.parametrize(("action", "passthrough"), sorted(_OT2_SURFACE.items()))
@@ -547,14 +588,11 @@ def test_resolve_ot2_refuses_unscoped_verb() -> None:
 @pytest.mark.parametrize(
     ("action", "args"),
     [
-        ("startup", {"password": "hunter2"}),
-        ("startup", {"simulation": True, "host_alias": "ot2-evil"}),
         ("pick_up_tip", {"pipette": "p300", "force": True}),
         # force=False is still refused: "never model-settable" means the field,
         # not the value — the invariant must not depend on reading a boolean.
         ("pick_up_tip", {"pipette": "p300", "force": False}),
         ("drop_tip", {"pipette": "p300", "force": True}),
-        ("move_to", {"pipette": "p300", "force_direct": True}),
     ],
 )
 def test_resolve_refuses_forbidden_fields(action: str, args: dict) -> None:
@@ -567,15 +605,11 @@ def test_resolve_refuses_forbidden_fields(action: str, args: dict) -> None:
     assert exc.value.code == "forbidden_field"
 
 
-def test_resolve_startup_without_credentials_ok() -> None:
-    """``startup`` is proposable exactly because the guard keeps credentials
-    out: the gateway supplies its own from service env."""
-
+def test_resolve_operator_lifecycle_and_stop_are_not_proposable() -> None:
     entry = _ot2_registry().equipment[0]
-    sd, passthrough, args = ac._resolve(entry, "startup", {"simulation": True})
-    assert sd.name == "startup"
-    assert passthrough == "startup"
-    assert args == {"simulation": True}
+    for action in ("startup", "shutdown", "pause", "resume", "stop", "reconcile"):
+        with pytest.raises(ac.ProposalRefused):
+            ac._resolve(entry, action, {})
 
 
 def test_proposable_names_are_all_cataloged() -> None:
@@ -588,10 +622,17 @@ def test_proposable_names_are_all_cataloged() -> None:
 
 
 def test_proposable_liquid_handler_equals_gateway_surface() -> None:
-    """Step 1c admitted the full advertised surface — pinned as equality so a
-    silent narrowing or an allowlisted-but-never-advertised name both fail."""
+    """The local union includes both profiles; live discovery filters each robot."""
 
-    assert ac._PROPOSABLE["liquid_handler"] == set(_OT2_ADVERTISED)
+    assert set(_OT2_ADVERTISED) < ac._PROPOSABLE["liquid_handler"]
+    assert {
+        "gripper_move_to_relative",
+        "gripper_move_to_absolute",
+        "gripper_open_jaw",
+        "gripper_close_jaw",
+        "home_gripper",
+        "load_trash_bin",
+    } <= ac._PROPOSABLE["liquid_handler"]
 
 
 def test_risky_schema_fields_are_all_guarded() -> None:
@@ -600,7 +641,7 @@ def test_risky_schema_fields_are_all_guarded() -> None:
     A new proposable action carrying such a field fails here until the guard
     knows it (see the ``_FORBIDDEN_ARG_FIELDS`` docstring)."""
 
-    risky = {"force", "force_direct", "password", "host_alias"}
+    risky = {"force", "password", "host_alias"}
     for kind, actions in ac._PROPOSABLE.items():
         guarded = ac._FORBIDDEN_ARG_FIELDS.get(kind, frozenset())
         for action in actions:
@@ -610,6 +651,20 @@ def test_risky_schema_fields_are_all_guarded() -> None:
             assert exposed <= guarded, f"{kind}/{action} exposes unguarded {exposed - guarded}"
     # And the guard is doing real work, not vacuously satisfied.
     assert ac._FORBIDDEN_ARG_FIELDS["liquid_handler"] == risky
+
+
+def test_direct_xy_motion_arguments_are_preserved() -> None:
+    entry = _ot2_registry().equipment[0]
+    args = {
+        "pipette": "p300",
+        "coordinates": {"x": 120, "y": 80, "z": 42},
+        "force_direct": True,
+        "speed": 35,
+        "minimum_z_height": 0,
+    }
+    sd, _, resolved = ac._resolve(entry, "move_to", args)
+    ac._validate_args(sd, resolved)
+    assert resolved == args
 
 
 @respx.mock
@@ -644,8 +699,11 @@ async def test_propose_ot2_aspirate() -> None:
             _ot2_registry(),
             "ot2_hte",
             "aspirate",
-            {"pipette": "p300", "volume_ul": 50.0,
-             "location": {"labware_nickname": "plate", "position": "A1"}},
+            {
+                "pipette": "p300",
+                "volume_ul": 50.0,
+                "location": {"labware_nickname": "plate", "position": "A1"},
+            },
             "step 2 of 4: draw 50 uL from the stock plate",
         )
     )
@@ -749,9 +807,7 @@ async def test_propose_ot2_tempmod_out_of_range_rejected() -> None:
     _mock_ot2_status(_OT2_ADVERTISED)
     _mock_authz(True)
     out = json.loads(
-        await ac._propose_action(
-            _ot2_registry(), "ot2_hte", "tempmod.set", {"celsius": 120.0}, ""
-        )
+        await ac._propose_action(_ot2_registry(), "ot2_hte", "tempmod.set", {"celsius": 120.0}, "")
     )
     assert out["code"] == "invalid_args"
 
@@ -764,7 +820,11 @@ async def test_propose_ot2_forbidden_field_refused_end_to_end() -> None:
     _mock_ot2_status(_OT2_ADVERTISED)
     out = json.loads(
         await ac._propose_action(
-            _ot2_registry(), "ot2_hte", "startup", {"password": "hunter2"}, ""
+            _ot2_registry(),
+            "ot2_hte",
+            "pick_up_tip",
+            {"pipette": "left", "force": True},
+            "",
         )
     )
     assert out["code"] == "forbidden_field"
@@ -776,9 +836,7 @@ async def test_propose_ot2_bad_args_rejected() -> None:
     _mock_ot2_status(_OT2_ADVERTISED)
     _mock_authz(True)
     out = json.loads(
-        await ac._propose_action(
-            _ot2_registry(), "ot2_hte", "lights.set", {"on": "maybe"}, ""
-        )
+        await ac._propose_action(_ot2_registry(), "ot2_hte", "lights.set", {"on": "maybe"}, "")
     )
     assert out["code"] == "invalid_args"
 
@@ -880,9 +938,7 @@ def test_resolve_bench_surfaces(kind: str, action: str, passthrough: str) -> Non
         if passthrough != catalog
     ],
 )
-def test_resolve_passthrough_alias(
-    kind: str, passthrough: str, catalog: str
-) -> None:
+def test_resolve_passthrough_alias(kind: str, passthrough: str, catalog: str) -> None:
     """Models often pass ``passthrough_action`` (``press/up``) instead of the
     advertised name (``press.up``). That used to fail ``allowed_actions``
     membership and never raise a confirm card."""
@@ -907,8 +963,14 @@ def test_resolve_refuses_stop_verbs(kind: str, action: str) -> None:
 
 @pytest.mark.parametrize(
     "action",
-    ["run.submit", "run.abort", "queue.cancel", "instrument.standby",
-     "workflow.start", "workflow.end"],
+    [
+        "run.submit",
+        "run.abort",
+        "queue.cancel",
+        "instrument.standby",
+        "workflow.start",
+        "workflow.end",
+    ],
 )
 def test_resolve_refuses_all_hplc_actions(action: str) -> None:
     """The hplc kind is deliberately absent from _PROPOSABLE (operator
@@ -927,9 +989,7 @@ async def test_propose_press_up_accepts_slash_alias(action: str) -> None:
     used the advertised name or the URL segment list_available_actions also
     returns. Live filter_every_well advertises press.up even when already UP."""
 
-    _mock_bench_status(
-        "press", ["stop", "press.up", "press.down", "plate.in", "plate.out"]
-    )
+    _mock_bench_status("press", ["stop", "press.up", "press.down", "plate.in", "plate.out"])
     _mock_authz(True)
     out = json.loads(
         await ac._propose_action(
@@ -992,8 +1052,7 @@ async def test_propose_bench_bad_args_rejected() -> None:
     _mock_authz(True)
     out = json.loads(
         await ac._propose_action(
-            _bench_registry("fume_hood"), "fume_hood_test", "sash.move",
-            {"position": 9}, ""
+            _bench_registry("fume_hood"), "fume_hood_test", "sash.move", {"position": 9}, ""
         )
     )
     assert out["code"] == "invalid_args"
@@ -1133,8 +1192,7 @@ async def test_propose_camera_bad_ptz_args_rejected() -> None:
     _mock_authz(True)
     out = json.loads(
         await ac._propose_action(
-            _camera_registry(), "cam_lab499_west", "ptz",
-            {"direction": "left", "speed": 5.0}, ""
+            _camera_registry(), "cam_lab499_west", "ptz", {"direction": "left", "speed": 5.0}, ""
         )
     )
     assert out["code"] == "invalid_args"
@@ -1149,8 +1207,7 @@ async def test_propose_camera_not_advertised_is_refused() -> None:
     _mock_camera_status(["privacy", "streaming"])
     out = json.loads(
         await ac._propose_action(
-            _camera_registry(), "cam_lab499_west", "ptz",
-            {"direction": "left"}, ""
+            _camera_registry(), "cam_lab499_west", "ptz", {"direction": "left"}, ""
         )
     )
     assert out["code"] == "not_allowed"
@@ -1207,12 +1264,8 @@ _PLATE_READER_WORKFLOW_ONLY = {
 }
 
 
-@pytest.mark.parametrize(
-    ("action", "passthrough"), sorted(_PLATE_READER_SURFACE.items())
-)
-def test_resolve_plate_reader_finite_surface(
-    action: str, passthrough: str
-) -> None:
+@pytest.mark.parametrize(("action", "passthrough"), sorted(_PLATE_READER_SURFACE.items()))
+def test_resolve_plate_reader_finite_surface(action: str, passthrough: str) -> None:
     entry = _bench_registry("plate_reader").equipment[0]
     sd, resolved_passthrough, args = ac._resolve(entry, action, {})
     assert sd.name == action
@@ -1308,9 +1361,7 @@ async def test_list_available_actions_plate_reader_marks_workflow_only() -> None
     advertised = list(_PLATE_READER_SURFACE) + list(_PLATE_READER_WORKFLOW_ONLY)
     _mock_bench_status("plate_reader", advertised)
     out = json.loads(
-        await ac._list_available_actions(
-            _bench_registry("plate_reader"), "plate_reader_test"
-        )
+        await ac._list_available_actions(_bench_registry("plate_reader"), "plate_reader_test")
     )
     by_action = {a["action"]: a for a in out["actions"]}
     for action, passthrough in _PLATE_READER_SURFACE.items():
@@ -1338,12 +1389,8 @@ _PLATE_SEALER_SURFACE = {
 }
 
 
-@pytest.mark.parametrize(
-    ("action", "passthrough"), sorted(_PLATE_SEALER_SURFACE.items())
-)
-def test_resolve_plate_sealer_finite_surface(
-    action: str, passthrough: str
-) -> None:
+@pytest.mark.parametrize(("action", "passthrough"), sorted(_PLATE_SEALER_SURFACE.items()))
+def test_resolve_plate_sealer_finite_surface(action: str, passthrough: str) -> None:
     entry = _bench_registry("plate_sealer").equipment[0]
     sd, resolved_passthrough, args = ac._resolve(entry, action, {})
     assert sd.name == action
@@ -1395,9 +1442,7 @@ async def test_list_available_actions_plate_sealer_marks_stop_operator_only() ->
     advertised = list(_PLATE_SEALER_SURFACE) + ["seal.stop"]
     _mock_bench_status("plate_sealer", advertised)
     out = json.loads(
-        await ac._list_available_actions(
-            _bench_registry("plate_sealer"), "plate_sealer_test"
-        )
+        await ac._list_available_actions(_bench_registry("plate_sealer"), "plate_sealer_test")
     )
     by_action = {a["action"]: a for a in out["actions"]}
     for action, passthrough in _PLATE_SEALER_SURFACE.items():
@@ -1408,25 +1453,142 @@ async def test_list_available_actions_plate_sealer_marks_stop_operator_only() ->
 
 @respx.mock
 async def test_list_available_actions_ot2_full_surface_and_stripped_schemas() -> None:
-    _mock_ot2_status(_OT2_ADVERTISED)
+    _mock_ot2_status([*_OT2_ADVERTISED, "stop", "startup"])
     out = json.loads(await ac._list_available_actions(_ot2_registry(), "ot2_hte"))
     by_action = {a["action"]: a for a in out["actions"]}
     # Everything advertised is proposable (Step 1c), with the right passthrough.
     for action, passthrough in _OT2_SURFACE.items():
         assert by_action[action]["proposable"] is True, action
         assert by_action[action]["passthrough_action"] == passthrough
-    # Operator-only fields are stripped from what the model is shown, and
-    # reported by name so their absence is explainable.
-    startup = by_action["startup"]
-    assert startup["operator_only_fields"] == ["host_alias", "password"]
-    assert "password" not in startup["args_schema"]["properties"]
-    assert "host_alias" not in startup["args_schema"]["properties"]
-    assert "simulation" in startup["args_schema"]["properties"]
+    assert by_action["stop"]["proposable"] is False
+    assert by_action["startup"]["proposable"] is False
     assert by_action["pick_up_tip"]["operator_only_fields"] == ["force"]
     assert "force" not in by_action["pick_up_tip"]["args_schema"]["properties"]
-    assert by_action["move_to"]["operator_only_fields"] == ["force_direct"]
+    assert "force_direct" in by_action["move_to"]["args_schema"]["properties"]
     # Actions with no risky fields carry no operator_only_fields key at all.
     assert "operator_only_fields" not in by_action["home"]
+
+
+@respx.mock
+async def test_liquid_handler_discovery_is_model_aware_for_flex() -> None:
+    flex_surface = {
+        name: ac._passthrough_action(ac._find_skill_def("liquid_handler", name))
+        for name in (
+            "home",
+            "move_to",
+            "gripper_move_to_relative",
+            "gripper_move_to_absolute",
+            "gripper_open_jaw",
+            "gripper_close_jaw",
+            "home_gripper",
+            "load_trash_bin",
+        )
+    }
+    _mock_ot2_status(
+        ["gripper_move_to_relative", "stop"],
+        discovery_actions=flex_surface,
+        model="Opentrons Flex",
+    )
+    out = json.loads(await ac._list_available_actions(_ot2_registry(), "ot2_hte"))
+    by_action = {item["action"]: item for item in out["actions"]}
+    assert out["gateway_model"] == "Opentrons Flex"
+    assert by_action["gripper_move_to_relative"]["proposable"] is True
+    assert by_action["gripper_move_to_relative"]["currently_allowed"] is True
+    assert "magmod_engage" not in by_action
+    assert by_action["stop"]["proposable"] is False
+
+
+@respx.mock
+async def test_older_gateway_reports_missing_discovery_without_inventing_actions() -> None:
+    _mock_ot2_status(["home", "stop"], old_gateway=True)
+    out = json.loads(await ac._list_available_actions(_ot2_registry(), "ot2_hte"))
+    assert set(out["discovery_unavailable"]) == {
+        "/docs/agent",
+        "/plans/actions",
+        "/openapi.json",
+    }
+    assert "older" in out["capability_warning"]
+    assert {item["action"] for item in out["actions"]} == {"home", "stop"}
+    assert next(item for item in out["actions"] if item["action"] == "stop")["proposable"] is False
+
+
+@respx.mock
+async def test_equipment_docs_are_read_only_running_gateway_evidence() -> None:
+    _mock_ot2_status(["home", "stop"])
+    out = json.loads(await ac._get_equipment_docs(_ot2_registry(), "ot2_hte"))
+    assert out["source"] == "running_gateway"
+    assert out["agent_docs"]["model"] == "Opentrons OT-2"
+    assert "actions" not in out["agent_docs"]
+    assert out["live_status"]["allowed_actions"] == ["home", "stop"]
+    assert out["live_status"]["activity"] == "idle"
+    pick = next(
+        item for item in out["action_catalog"]["actions"] if item["action"] == "pick_up_tip"
+    )
+    assert "force" not in pick["args_schema"]["properties"]
+    assert pick["operator_only_fields"] == ["force"]
+
+
+@respx.mock
+async def test_status_identity_mismatch_refuses_proposal() -> None:
+    _mock_ot2_status(["home"])
+    route = respx.get(f"{OT2_BASE}/status")
+    route.mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "equipment_id": "some_other_robot",
+                "equipment_name": "Wrong robot",
+                "equipment_kind": "liquid_handler",
+                "equipment_status": "ready",
+                "message": "idle",
+                "allowed_actions": ["home"],
+                "activity": "idle",
+                "device_time": "2026-09-09T12:00:00Z",
+            },
+        )
+    )
+    out = json.loads(await ac._propose_action(_ot2_registry(), "ot2_hte", "home", {}, "home"))
+    assert out["code"] == "identity_mismatch"
+
+
+@respx.mock
+async def test_running_gateway_schema_is_applied_to_proposal() -> None:
+    _mock_ot2_status(["move_to"])
+    _mock_ot2_discovery(
+        schema_overrides={
+            "move_to": {
+                "type": "object",
+                "required": ["pipette", "coordinates"],
+                "properties": {
+                    "pipette": {"type": "string"},
+                    "coordinates": {
+                        "type": "object",
+                        "required": ["x", "y", "z"],
+                        "properties": {
+                            "x": {"type": "number", "maximum": 10},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"},
+                        },
+                    },
+                },
+            }
+        }
+    )
+    out = json.loads(
+        await ac._propose_action(
+            _ot2_registry(),
+            "ot2_hte",
+            "move_to",
+            {
+                "pipette": "left",
+                "coordinates": {"x": 100, "y": 20, "z": 30},
+                "force_direct": True,
+            },
+            "direct move",
+        )
+    )
+    assert out["code"] == "invalid_args"
+    assert "greater than the maximum" in out["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -1479,9 +1641,7 @@ async def test_propose_plan_travel_pick_and_place() -> None:
     vouched for by the motion_graph snapshot (travel is never in
     allowed_actions); later steps are the device's to re-check live."""
 
-    _mock_status(
-        ["stop", "move.uplc_draw_home"], details={"motion_graph": _MOTION_GRAPH}
-    )
+    _mock_status(["stop", "move.uplc_draw_home"], details={"motion_graph": _MOTION_GRAPH})
     _mock_authz(True)
     out = json.loads(
         await ac._propose_plan(
@@ -1514,9 +1674,7 @@ async def test_propose_plan_refuses_travel_step_one_outside_snapshot() -> None:
     _mock_status(["stop"], details={"motion_graph": _MOTION_GRAPH})
     _mock_authz(True)
     out = json.loads(
-        await ac._propose_plan(
-            _registry(), "xarm", [{"action": "travel.nowhere"}], ""
-        )
+        await ac._propose_plan(_registry(), "xarm", [{"action": "travel.nowhere"}], "")
     )
     assert out["code"] == "not_allowed"
     assert out["step"] == 1
@@ -1528,7 +1686,10 @@ async def test_propose_plan_refuses_when_step_one_cannot_start() -> None:
     _mock_authz(True)
     out = json.loads(
         await ac._propose_plan(
-            _registry(), "xarm", [{"action": "move.reader_in"}, {"action": "move.uplc_draw_home"}], ""
+            _registry(),
+            "xarm",
+            [{"action": "move.reader_in"}, {"action": "move.uplc_draw_home"}],
+            "",
         )
     )
     assert out["code"] == "not_allowed"
@@ -1859,10 +2020,16 @@ async def test_propose_plan_solid_doser_place_dose_lift() -> None:
     )
     plan = out["plan"]
     assert [s["action"] for s in plan["steps"]] == [
-        "plate.lower", "tare", "dose.multiple", "plate.raise",
+        "plate.lower",
+        "tare",
+        "dose.multiple",
+        "plate.raise",
     ]
     assert [s["passthrough_action"] for s in plan["steps"]] == [
-        "plate/lower", "tare", "dose/multiple", "plate/raise",
+        "plate/lower",
+        "tare",
+        "dose/multiple",
+        "plate/raise",
     ]
     assert plan["steps"][2]["args"]["well_targets"] == {"A1": 5.0, "A2": 5.0}
     assert plan["kind"] == "solid_doser"
@@ -1918,17 +2085,25 @@ def _locations() -> LocationsConfig:
     return LocationsConfig(
         locations=[
             LocationEntry(
-                name="ot2_hte/slot_1", type="deck", equipment="ot2_hte",
-                aliases={"ot2_hte": "1"}, label="OT-2 HTE · slot 1",
+                name="ot2_hte/slot_1",
+                type="deck",
+                equipment="ot2_hte",
+                aliases={"ot2_hte": "1"},
+                label="OT-2 HTE · slot 1",
             ),
             LocationEntry(
-                name="ot2_hte/slot_2", type="deck", equipment="ot2_hte",
+                name="ot2_hte/slot_2",
+                type="deck",
+                equipment="ot2_hte",
                 aliases={"ot2_hte": "2", "xarm": ["opentrons_2_low", "opentrons_2_high"]},
                 label="OT-2 HTE · slot 2",
             ),
             LocationEntry(
-                name="ot2_complexation/slot_2", type="deck", equipment="ot2_complexation",
-                aliases={"ot2_complexation": "2"}, label="OT-2 complexation · slot 2",
+                name="ot2_complexation/slot_2",
+                type="deck",
+                equipment="ot2_complexation",
+                aliases={"ot2_complexation": "2"},
+                label="OT-2 complexation · slot 2",
             ),
         ]
     )
@@ -1975,7 +2150,10 @@ async def test_propose_plan_tags_place_labels_by_step_outside_the_hash(_locs) ->
     _mock_ot2_status(["deck.declare"])
     _mock_authz(True)
     steps = [
-        {"action": "deck.declare", "args": {"slots": {"slot_2": "corning_96_wellplate_360ul_flat"}}},
+        {
+            "action": "deck.declare",
+            "args": {"slots": {"slot_2": "corning_96_wellplate_360ul_flat"}},
+        },
         {"action": "tips.reset", "args": {"slot": "opentrons_2_low"}},
     ]
     out = json.loads(await ac._propose_plan(_ot2_registry(), "ot2_hte", steps, ""))
@@ -2005,13 +2183,23 @@ async def test_list_available_actions_shows_the_slot_vocabulary(_locs) -> None:
 async def test_arm_travel_to_an_ot2_place_name_gets_the_node_hint(_locs) -> None:
     """``travel.ot2_hte/slot_2`` is not a graph node; the refusal names the
     nodes that reach that shelf instead of only listing what is allowed."""
-    _mock_status(["move.deck_home"], details={"motion_graph": {"current_node": "deck_home", "reachable_nodes": [], "travel_targets": []}})
+    _mock_status(
+        ["move.deck_home"],
+        details={
+            "motion_graph": {
+                "current_node": "deck_home",
+                "reachable_nodes": [],
+                "travel_targets": [],
+            }
+        },
+    )
     _mock_authz(True)
-    out = json.loads(await ac._propose_action(_registry(), "xarm", "travel.ot2_hte/slot_2", None, ""))
+    out = json.loads(
+        await ac._propose_action(_registry(), "xarm", "travel.ot2_hte/slot_2", None, "")
+    )
     assert out["code"] == "not_allowed"
     assert out["location_nodes"] == {"ot2_hte/slot_2": ["opentrons_2_low", "opentrons_2_high"]}
     assert "opentrons_2_low" in out["error"]
-
 
 
 # ---------------------------------------------------------------------------
@@ -2022,8 +2210,16 @@ async def test_arm_travel_to_an_ot2_place_name_gets_the_node_hint(_locs) -> None
 _OT2_DETAILS = {
     "snapshot": {
         "labwares": {
-            "4": {"id": "slot_4", "loadName": "agilent_96_2ml_deep_square", "location": {"slotName": "4"}},
-            "11": {"id": "slot_11", "loadName": "opentrons_96_tiprack_1000ul", "location": {"slotName": "11"}},
+            "4": {
+                "id": "slot_4",
+                "loadName": "agilent_96_2ml_deep_square",
+                "location": {"slotName": "4"},
+            },
+            "11": {
+                "id": "slot_11",
+                "loadName": "opentrons_96_tiprack_1000ul",
+                "location": {"slotName": "11"},
+            },
         },
         "pipettes": {},
     },
@@ -2048,6 +2244,7 @@ def _mock_ot2_status_with_deck(allowed_actions: list[str]) -> None:
             },
         )
     )
+    _mock_ot2_discovery()
 
 
 @respx.mock
@@ -2074,7 +2271,11 @@ async def test_ot2_nickname_verb_finds_its_slot_from_the_snapshot(_locs) -> None
     _mock_authz(True)
     out = json.loads(
         await ac._propose_action(
-            _ot2_registry(), "ot2_hte", "pick_up_tip", {"pipette": "p1000", "labware_nickname": "slot_11"}, ""
+            _ot2_registry(),
+            "ot2_hte",
+            "pick_up_tip",
+            {"pipette": "p1000", "labware_nickname": "slot_11"},
+            "",
         )
     )
     [check] = out["proposal"]["deck_checks"]
@@ -2104,7 +2305,13 @@ async def test_arm_travel_into_an_ot2_slot_reads_that_deck(_locs) -> None:
     marked, read live from that device."""
     _mock_status(
         ["move.deck_home"],
-        details={"motion_graph": {"current_node": "deck_home", "reachable_nodes": [], "travel_targets": ["opentrons_2_low"]}},
+        details={
+            "motion_graph": {
+                "current_node": "deck_home",
+                "reachable_nodes": [],
+                "travel_targets": ["opentrons_2_low"],
+            }
+        },
     )
     _mock_ot2_status_with_deck([])
     _mock_authz(True)
@@ -2122,7 +2329,13 @@ async def test_arm_travel_into_an_ot2_slot_reads_that_deck(_locs) -> None:
 async def test_arm_travel_into_an_unreachable_ot2_says_so(_locs) -> None:
     _mock_status(
         ["move.deck_home"],
-        details={"motion_graph": {"current_node": "deck_home", "reachable_nodes": [], "travel_targets": ["opentrons_2_low"]}},
+        details={
+            "motion_graph": {
+                "current_node": "deck_home",
+                "reachable_nodes": [],
+                "travel_targets": ["opentrons_2_low"],
+            }
+        },
     )
     respx.get(f"{OT2_BASE}/status").mock(side_effect=httpx.ConnectError("boom"))
     _mock_authz(True)
@@ -2139,7 +2352,10 @@ async def test_ot2_plan_merges_one_deck_check_across_steps(_locs) -> None:
     _mock_ot2_status_with_deck(["deck.declare"])
     _mock_authz(True)
     steps = [
-        {"action": "deck.declare", "args": {"slots": {"slot_2": "corning_96_wellplate_360ul_flat"}}},
+        {
+            "action": "deck.declare",
+            "args": {"slots": {"slot_2": "corning_96_wellplate_360ul_flat"}},
+        },
         {"action": "tips.reset", "args": {"slot": "11"}},
         {"action": "lights.set", "args": {"on": False}},
     ]

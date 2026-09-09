@@ -13,6 +13,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
     "pyyaml>=6.0",
+    "jsonschema>=4.23",
     "mcp>=1.0",
     # Official Opentrons labware definitions (schema-2 JSON) — read-only
     # "standard" source for the labware store/builder.

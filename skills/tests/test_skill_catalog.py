@@ -142,7 +142,10 @@ def test_liquid_handler_protocol_surface_endpoints() -> None:
     # explicit-tip location (required by the HTTP run-engine transport).
     move_fields = by_name["aspirate"].args_schema.model_fields
     assert {"pipette", "volume_ul", "location", "flow_rate"} <= set(move_fields)
-    assert by_name["dispense"].args_schema is by_name["aspirate"].args_schema
+    assert set(by_name["aspirate"].args_schema.model_fields) < set(
+        by_name["dispense"].args_schema.model_fields
+    )
+    assert "push_out" in by_name["dispense"].args_schema.model_fields
     tip_fields = by_name["pick_up_tip"].args_schema.model_fields
     assert {"pipette", "labware_nickname", "position"} <= set(tip_fields)
 
@@ -252,37 +255,36 @@ def test_liquid_handler_tempmod_is_hardware_driving() -> None:
     assert by_name["tips.mark"].endpoint == "/control/tips/mark"
 
 
-def test_liquid_handler_names_match_gateway_allowed_actions() -> None:
-    """Availability is ``def.name in allowed_actions`` (session.py), so every
-    OT-2 skill name must be one the gateway actually advertises. This encodes
-    the union of ``opentrons-server`` ``service.allowed_actions`` across
-    **every** branch — ready / requires_init / dry_run / paused *and* error —
-    as the contract; a rename on either side breaks ``lab.skills()`` matching
-    and must fail here.
+def test_liquid_handler_catalog_covers_gateway_profile_union() -> None:
+    """The SDK keeps the OT-2/Flex union; runtime discovery selects a profile."""
 
-    Naming the error branch is not pedantry: it is one of only two branches
-    that advertise ``tempmod.*``, and an earlier version of this docstring
-    omitted it, which is how those verbs stayed missing from the catalog (and
-    so unproposable by the assistant) after the gateway shipped them.
-    """
-
-    # The exact strings opentrons-server gateway/service.py::allowed_actions
-    # can emit, plus the two convenience controls it appends unconditionally.
     gateway_advertised = {
-        "startup", "shutdown", "home", "setup", "pause", "resume",
-        "move_to", "pick_up_tip", "aspirate", "dispense", "drop_tip", "move_labware",
-        "plate.load", "plate.unload", "well.update",
-        "tips.reset", "tips.mark",
-        "tempmod.set", "tempmod.deactivate",
-        "lights.set", "deck.declare",
+        "startup",
+        "shutdown",
+        "home",
+        "setup",
+        "pause",
+        "resume",
+        "move_to",
+        "pick_up_tip",
+        "aspirate",
+        "dispense",
+        "drop_tip",
+        "move_labware",
+        "plate.load",
+        "plate.unload",
+        "well.update",
+        "tips.reset",
+        "tips.mark",
+        "tempmod.set",
+        "tempmod.deactivate",
+        "lights.set",
+        "deck.declare",
     }
     catalog_names = {d.name for d in SKILL_REGISTRY["liquid_handler"]}
-    # Every cataloged skill is something the gateway will honor by name.
-    orphans = catalog_names - gateway_advertised
-    assert not orphans, f"catalog names the gateway never advertises: {orphans}"
-    # And we cover the whole advertised surface (reconcile is intentionally
-    # excluded — it is an operator recovery hook, never in allowed_actions).
-    assert catalog_names == gateway_advertised
+    assert gateway_advertised <= catalog_names
+    assert "reconcile" not in catalog_names
+    assert "stop" not in catalog_names
 
 
 def test_robot_arm_graph_control_surface() -> None:
@@ -599,3 +601,131 @@ def test_skill_runtime_model_accepts_args_schema_class() -> None:
     assert sk.args_schema is SealStartArgs
     assert sk.available is True
     assert sk.reason is None
+
+def test_opentrons_http_action_catalog_matches_gateway_paths() -> None:
+    """Pinned against opentrons-server e5936de's PLAN_ACTIONS/ADVANCED_ACTIONS."""
+
+    expected = {
+        "blow_out": "/control/blow-out",
+        "touch_tip": "/control/touch-tip",
+        "mix": "/control/mix",
+        "air_gap": "/control/air-gap",
+        "prepare_aspirate": "/control/prepare-aspirate",
+        "home_pipette": "/control/home-pipette",
+        "home_plunger": "/control/home-plunger",
+        "set_flow_rate": "/control/set-flow-rate",
+        "set_speed": "/control/set-speed",
+        "hs_latch_open": "/control/hs-latch-open",
+        "hs_latch_close": "/control/hs-latch-close",
+        "hs_set_and_wait_shake_speed": "/control/hs-set-and-wait-shake-speed",
+        "hs_deactivate_shaker": "/control/hs-deactivate-shaker",
+        "hs_set_target_temperature": "/control/hs-set-target-temperature",
+        "hs_set_and_wait_temperature": "/control/hs-set-and-wait-temperature",
+        "hs_wait_for_temperature": "/control/hs-wait-for-temperature",
+        "hs_deactivate_heater": "/control/hs-deactivate-heater",
+        "hs_deactivate": "/control/hs-deactivate",
+        "tempmod_await_temperature": "/control/tempmod-await-temperature",
+        "magmod_engage": "/control/magmod-engage",
+        "magmod_disengage": "/control/magmod-disengage",
+        "thermocycler_open_lid": "/control/thermocycler-open-lid",
+        "thermocycler_close_lid": "/control/thermocycler-close-lid",
+        "thermocycler_set_block_temperature": "/control/thermocycler-set-block-temperature",
+        "thermocycler_set_lid_temperature": "/control/thermocycler-set-lid-temperature",
+        "thermocycler_deactivate_block": "/control/thermocycler-deactivate-block",
+        "thermocycler_deactivate_lid": "/control/thermocycler-deactivate-lid",
+        "thermocycler_deactivate": "/control/thermocycler-deactivate",
+        "comment": "/control/comment",
+        "delay": "/control/delay",
+        "gripper_move_to_relative": "/control/gripper-move-to-relative",
+        "gripper_move_to_absolute": "/control/gripper-move-to-absolute",
+        "gripper_open_jaw": "/control/gripper-open-jaw",
+        "gripper_close_jaw": "/control/gripper-close-jaw",
+        "home_gripper": "/control/home-gripper",
+        "load_trash_bin": "/control/load-trash-bin",
+    }
+    actual = {s.name: s.endpoint for s in SKILL_REGISTRY["liquid_handler"]}
+    assert {name: actual[name] for name in expected} == expected
+
+
+def test_opentrons_new_schemas_enforce_gateway_ranges() -> None:
+    from pydantic import ValidationError
+
+    from lab_skills.skill_catalog.liquid_handler import (
+        AirGapArgs,
+        BlowOutArgs,
+        DispenseArgs,
+        FlowRateArgs,
+        HeaterShakerTemperatureArgs,
+        MixArgs,
+        ShakeSpeedArgs,
+        TouchTipArgs,
+    )
+
+    location = {"labware_nickname": "plate", "position": "A1"}
+    assert DispenseArgs(pipette="left", volume_ul=1000, location=location, push_out=0).push_out == 0
+    with pytest.raises(ValidationError):
+        DispenseArgs(pipette="left", volume_ul=1001, location=location)
+    with pytest.raises(ValidationError):
+        BlowOutArgs(pipette="left", location=location, in_place=True)
+    with pytest.raises(ValidationError):
+        AirGapArgs(pipette="left", volume_ul=10, location={**location, "top": 1})
+    with pytest.raises(ValidationError):
+        MixArgs(pipette="left", volume_ul=10, location=location, repetitions=0)
+    with pytest.raises(ValidationError):
+        FlowRateArgs(pipette="left")
+    with pytest.raises(ValidationError):
+        TouchTipArgs(pipette="left", labware_nickname="plate", position="A1", radius=1.1)
+    with pytest.raises(ValidationError):
+        ShakeSpeedArgs(module="hs", rpm=199)
+    with pytest.raises(ValidationError):
+        HeaterShakerTemperatureArgs(module="hs", celsius=96)
+
+
+def test_opentrons_direct_motion_and_zero_offsets_round_trip() -> None:
+    from lab_skills.skill_catalog.liquid_handler import (
+        GripperMoveAbsoluteArgs,
+        GripperMoveRelativeArgs,
+        MoveLabwareArgs,
+        MoveToArgs,
+    )
+
+    pipette = MoveToArgs(
+        pipette="left",
+        coordinates={"x": 100, "y": 200, "z": 30},
+        speed=25,
+        force_direct=True,
+        minimum_z_height=0,
+    ).model_dump()
+    assert pipette["force_direct"] is True
+    assert pipette["minimum_z_height"] == 0
+
+    absolute = GripperMoveAbsoluteArgs(x=100, y=200, z=30, speed=50).model_dump()
+    assert absolute["force_direct"] is True
+    relative = GripperMoveRelativeArgs(dx=10, dy=0, dz=0, speed=20).model_dump()
+    assert relative["dz"] == 0
+
+    move = MoveLabwareArgs(
+        labware_nickname="plate",
+        new_location="B2",
+        use_gripper=True,
+        pick_up_offset={"x": 0, "y": 0, "z": 0},
+        drop_offset={"x": 0, "y": 0, "z": 0},
+    ).model_dump()
+    assert move["pick_up_offset"] == {"x": 0.0, "y": 0.0, "z": 0.0}
+
+
+def test_opentrons_flex_head_and_trash_limits() -> None:
+    from pydantic import ValidationError
+
+    from lab_skills.skill_catalog.liquid_handler import InstrumentSpec, TrashBinArgs
+
+    assert (
+        InstrumentSpec(
+            nickname="left", mount="left", instrument_name="flex_8channel_1000"
+        ).instrument_name
+        == "flex_8channel_1000"
+    )
+    with pytest.raises(ValidationError):
+        InstrumentSpec(nickname="left", mount="left", instrument_name="flex_96channel_1000")
+    with pytest.raises(ValidationError):
+        TrashBinArgs(location="A2")

@@ -14,6 +14,7 @@ ergonomic sugar over this primitive.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Mapping
 
 import httpx
@@ -21,10 +22,17 @@ from pydantic import BaseModel, ValidationError
 
 from .exceptions import (
     BadRequest,
+    CapabilityUnavailable,
     CommandOutcomeUnknown,
     EquipmentBusy,
     EquipmentUnreachable,
     RequiresInit,
+)
+from .discovery import (
+    ActionCatalog,
+    AgentDocumentation,
+    EquipmentDiscovery,
+    OpenAPIDocument,
 )
 from .models import EquipmentStatus, HealthResponse, ProbeResponse
 from .registry import EquipmentEntry
@@ -83,9 +91,7 @@ class EquipmentClient:
         cache staleness measured in seconds is forever in robotics.
         """
 
-        return await self._fetch_envelope(
-            self._entry.status_path, EquipmentStatus, label="status"
-        )
+        return await self._fetch_envelope(self._entry.status_path, EquipmentStatus, label="status")
 
     async def probe(self) -> ProbeResponse:
         """Return the device's ``GET /`` identity probe."""
@@ -96,6 +102,61 @@ class EquipmentClient:
         """Return the device's ``GET /health`` liveness response."""
 
         return await self._fetch_envelope("/health", HealthResponse, label="health")
+
+    # -- Optional read-only discovery ---------------------------------------
+
+    async def agent_documentation(self) -> AgentDocumentation:
+        """Return ``GET /docs/agent`` from a self-documenting gateway."""
+
+        return await self._fetch_document(
+            "/docs/agent", AgentDocumentation, label="agent documentation"
+        )
+
+    async def action_catalog(self) -> ActionCatalog:
+        """Return the gateway's proposal schemas from ``GET /plans/actions``."""
+
+        return await self._fetch_document("/plans/actions", ActionCatalog, label="action catalog")
+
+    async def openapi(self) -> OpenAPIDocument:
+        """Return the running device's ``GET /openapi.json`` document."""
+
+        return await self._fetch_document(
+            "/openapi.json", OpenAPIDocument, label="OpenAPI document"
+        )
+
+    async def discover(self) -> EquipmentDiscovery:
+        """Read all optional documentation endpoints without hiding old versions.
+
+        HTTP 404/405 is recorded under ``unavailable`` and means the reachable
+        deployment predates that capability. Network, server, and validation
+        failures still raise because they do not establish an older version.
+        """
+
+        async def optional(path: str, fetch):
+            try:
+                return await fetch(), None
+            except CapabilityUnavailable as exc:
+                return None, exc.message
+
+        docs, actions, openapi = await asyncio.gather(
+            optional("/docs/agent", self.agent_documentation),
+            optional("/plans/actions", self.action_catalog),
+            optional("/openapi.json", self.openapi),
+        )
+        unavailable = {
+            path: reason
+            for path, (_, reason) in zip(
+                ("/docs/agent", "/plans/actions", "/openapi.json"),
+                (docs, actions, openapi),
+            )
+            if reason is not None
+        }
+        return EquipmentDiscovery(
+            agent_docs=docs[0],
+            action_catalog=actions[0],
+            openapi=openapi[0],
+            unavailable=unavailable,
+        )
 
     # -- Control-side: generic typed POST ------------------------------------
 
@@ -146,9 +207,7 @@ class EquipmentClient:
                 url,
                 json=payload,
                 headers=headers,
-                timeout=(
-                    self._entry.command_timeout_seconds if timeout is None else timeout
-                ),
+                timeout=(self._entry.command_timeout_seconds if timeout is None else timeout),
             )
         except httpx.TimeoutException as exc:
             # NOT EquipmentUnreachable, and not a failure: the request left the
@@ -159,13 +218,9 @@ class EquipmentClient:
                 self._entry.id, f"no response within the timeout from {url}"
             ) from exc
         except httpx.ConnectError as exc:
-            raise EquipmentUnreachable(
-                self._entry.id, f"cannot connect to {url}: {exc}"
-            ) from exc
+            raise EquipmentUnreachable(self._entry.id, f"cannot connect to {url}: {exc}") from exc
         except httpx.HTTPError as exc:
-            raise EquipmentUnreachable(
-                self._entry.id, f"HTTP error calling {url}: {exc}"
-            ) from exc
+            raise EquipmentUnreachable(self._entry.id, f"HTTP error calling {url}: {exc}") from exc
 
         if response.status_code >= 500:
             raise EquipmentUnreachable(
@@ -261,9 +316,7 @@ class EquipmentClient:
         try:
             payload = response.json()
         except ValueError as exc:
-            raise EquipmentUnreachable(
-                self._entry.id, f"{url} did not return JSON: {exc}"
-            ) from exc
+            raise EquipmentUnreachable(self._entry.id, f"{url} did not return JSON: {exc}") from exc
 
         if response_schema is None:
             return payload
@@ -284,21 +337,13 @@ class EquipmentClient:
     ):
         url = self._url(path)
         try:
-            response = await self._http.get(
-                url, timeout=self._entry.poll_timeout_seconds
-            )
+            response = await self._http.get(url, timeout=self._entry.poll_timeout_seconds)
         except httpx.TimeoutException as exc:
-            raise EquipmentUnreachable(
-                self._entry.id, f"timeout calling {url}: {exc}"
-            ) from exc
+            raise EquipmentUnreachable(self._entry.id, f"timeout calling {url}: {exc}") from exc
         except httpx.ConnectError as exc:
-            raise EquipmentUnreachable(
-                self._entry.id, f"cannot connect to {url}: {exc}"
-            ) from exc
+            raise EquipmentUnreachable(self._entry.id, f"cannot connect to {url}: {exc}") from exc
         except httpx.HTTPError as exc:
-            raise EquipmentUnreachable(
-                self._entry.id, f"HTTP error calling {url}: {exc}"
-            ) from exc
+            raise EquipmentUnreachable(self._entry.id, f"HTTP error calling {url}: {exc}") from exc
 
         if response.status_code >= 500:
             raise EquipmentUnreachable(
@@ -308,16 +353,13 @@ class EquipmentClient:
         if response.status_code >= 400:
             raise EquipmentUnreachable(
                 self._entry.id,
-                f"{url} returned HTTP {response.status_code}: "
-                f"{response.text[:200]}",
+                f"{url} returned HTTP {response.status_code}: {response.text[:200]}",
             )
 
         try:
             payload = response.json()
         except ValueError as exc:
-            raise EquipmentUnreachable(
-                self._entry.id, f"{url} did not return JSON: {exc}"
-            ) from exc
+            raise EquipmentUnreachable(self._entry.id, f"{url} did not return JSON: {exc}") from exc
 
         try:
             return model.model_validate(payload)
@@ -325,6 +367,34 @@ class EquipmentClient:
             raise EquipmentUnreachable(
                 self._entry.id,
                 f"{url} {label} body does not match the spec: {exc}",
+            ) from exc
+
+    async def _fetch_document(self, path: str, model: type, *, label: str):
+        """Fetch one optional JSON document, distinguishing old deployments."""
+
+        url = self._url(path)
+        try:
+            response = await self._http.get(url, timeout=self._entry.poll_timeout_seconds)
+        except httpx.TimeoutException as exc:
+            raise EquipmentUnreachable(self._entry.id, f"timeout calling {url}: {exc}") from exc
+        except httpx.ConnectError as exc:
+            raise EquipmentUnreachable(self._entry.id, f"cannot connect to {url}: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise EquipmentUnreachable(self._entry.id, f"HTTP error calling {url}: {exc}") from exc
+
+        if response.status_code in (404, 405):
+            raise CapabilityUnavailable(self._entry.id, path, response.status_code)
+        if response.status_code >= 400:
+            raise EquipmentUnreachable(
+                self._entry.id,
+                f"{url} returned HTTP {response.status_code}: {response.text[:200]}",
+            )
+        try:
+            return model.model_validate(response.json())
+        except (ValueError, ValidationError) as exc:
+            raise EquipmentUnreachable(
+                self._entry.id,
+                f"{url} {label} body is not valid: {exc}",
             ) from exc
 
 
