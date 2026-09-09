@@ -763,15 +763,19 @@ async def skill_catalog() -> dict:
             })
         return result
 
-    # Group registry entries by section (exclude env sensors / cameras)
+    # Include monitoring devices when they publish documentation, even though
+    # they have no control skills. Undocumented sensors/cameras stay off this catalog.
     platforms: dict[str, dict] = {}
     for entry in registry.equipment:
-        if entry.kind in ("environmental_sensor", "camera"):
+        monitoring = entry.kind in ("environmental_sensor", "camera")
+        if monitoring and not entry.documentation:
             continue
-        section_id = eq_to_section.get(entry.id, "unknown")
+        section_id = eq_to_section.get(entry.id, "monitoring" if monitoring else "unknown")
         if section_id not in platforms:
             platforms[section_id] = {
-                "label": section_titles.get(section_id, section_id.upper()),
+                "label": section_titles.get(
+                    section_id, "Environmental monitoring" if section_id == "monitoring" else section_id.upper()
+                ),
                 "instruments": [],
             }
         platforms[section_id]["instruments"].append({

@@ -7,6 +7,7 @@ older-server 404 path without contacting equipment.
 from __future__ import annotations
 
 import httpx
+import pytest
 from fastapi import FastAPI
 from lab_skills import load_platforms, load_registry
 
@@ -35,6 +36,9 @@ def _app() -> FastAPI:
                         "kind": "openapi",
                     },
                     {"label": "Agent guide", "path": "/docs/agent", "kind": "json"},
+                    {"label": "Sensor guide", "path": "/agent-docs", "kind": "markdown"},
+                    {"label": "API reference", "path": "/agent-docs/api-reference", "kind": "markdown"},
+                    {"label": "Discovery", "path": "/llms.txt", "kind": "text"},
                 ],
             )
         ]
@@ -154,6 +158,32 @@ async def test_catalog_lists_opentrons_and_bambu_documentation() -> None:
     assert {
         doc["source_path"] for doc in instruments["ot2_hte"]["documentation"]
     } == {"/docs", "/openapi.json", "/docs/agent", "/plans/actions"}
+    sensor = instruments["env_hte"]
+    assert sensor["actions"] == []
+    assert {doc["source_path"] for doc in sensor["documentation"]} == {
+        "/docs", "/openapi.json", "/agent-docs", "/agent-docs/api-reference", "/llms.txt",
+    }
+    assert all(doc["url"].startswith("/api/equipment/env_hte/documentation/") for doc in sensor["documentation"])
+    assert "env_storage" not in instruments
     assert instruments["ot2_hte"]["documentation"][0]["url"].startswith(
         "/api/equipment/ot2_hte/documentation/"
     )
+
+
+@pytest.mark.parametrize("path,media_type", [
+    ("/agent-docs", "text/markdown"),
+    ("/agent-docs/api-reference", "text/markdown"),
+    ("/llms.txt", "text/plain"),
+])
+async def test_proxies_text_documentation(path: str, media_type: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == f"{DEVICE_BASE}{path}"
+        assert request.headers["accept"] == media_type
+        return httpx.Response(200, text="# Sensor documentation\n", headers={"content-type": f"{media_type}; charset=utf-8"})
+
+    response = await _request(
+        f"/api/equipment/ot2_hte/documentation{path}", httpx.MockTransport(handler),
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == f"{media_type}; charset=utf-8"
+    assert response.text == "# Sensor documentation\n"

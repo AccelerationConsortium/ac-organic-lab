@@ -23,7 +23,7 @@ from .models import EquipmentKind
 
 
 AdapterKind = Literal["http", "legacy_http", "mock"]
-DocumentationKind = Literal["swagger", "openapi", "json"]
+DocumentationKind = Literal["swagger", "openapi", "json", "markdown", "text"]
 
 
 class DocumentationEndpoint(BaseModel):

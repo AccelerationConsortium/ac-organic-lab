@@ -86,7 +86,13 @@ def build_equipment_docs_router() -> APIRouter:
             for headers in _device_auth_candidates(request, entry):
                 upstream = await client.get(
                     f"{entry.base_url.rstrip('/')}{document.path}",
-                    headers={"Accept": "application/json", **headers},
+                    headers={
+                        "Accept": {
+                            "markdown": "text/markdown",
+                            "text": "text/plain",
+                        }.get(document.kind, "application/json"),
+                        **headers,
+                    },
                 )
                 if upstream.status_code not in _AUTH_FALLBACK_STATUS:
                     break

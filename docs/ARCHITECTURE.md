@@ -560,3 +560,20 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 - [`skills/README.md`](../skills/README.md) — SDK usage and module map
 - [`api/README.md`](../api/README.md) — dashboard server package map
 - `.cursor/plans/build_lab-skills_*.plan.md` — current working milestone plan
+
+
+## Equipment documentation in the API reference
+
+The dashboard API reference includes registered documentation from read-only
+monitoring devices as well as instruments with control skills. The live HTE
+Sense Every Zone entry exposes Swagger, OpenAPI, the Markdown agent guide
+(`/agent-docs`), Markdown API reference (`/agent-docs/api-reference`), and
+plain-text discovery (`/llms.txt`). Mock sensor entries have no documentation
+links. Adding documentation does not add control actions.
+
+`equipment.yaml` declares each allowed document path and kind (`swagger`,
+`openapi`, `json`, `markdown`, or `text`). The browser opens same-origin
+`/api/equipment/{equipment_id}/documentation/...` links; the API selects the
+appropriate Accept header and preserves upstream content types and failures.
+Swagger uses the proxied schema with submission disabled. An older sensor
+service may return 404 until its documentation endpoints are deployed.

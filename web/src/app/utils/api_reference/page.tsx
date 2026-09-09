@@ -38,7 +38,7 @@ interface ActionDef {
 
 interface DocumentationEndpoint {
   label: string;
-  kind: "swagger" | "openapi" | "json";
+  kind: "swagger" | "openapi" | "json" | "markdown" | "text";
   source_path: string;
   url: string;
 }
