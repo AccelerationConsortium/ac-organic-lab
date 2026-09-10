@@ -946,6 +946,12 @@ equipment:
     base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.17
     status_path: /devices/gibbie_balance/status
+    # These documents describe the current reachability monitor.
+    # XPR control-service integration: mt-xpr-balance-server README,
+    # "Agent documentation and dashboard reference".
+    documentation:
+      - { label: Monitor Swagger UI, path: /docs, kind: swagger }
+      - { label: Monitor OpenAPI JSON, path: /openapi.json, kind: openapi }
     poll_timeout_seconds: 5.0
     tiles:
       sample_prep: { w: 2, h: 1 }
@@ -1021,6 +1027,12 @@ equipment:
     base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.13
     status_path: /devices/lle_xpr_balance/status
+    # These documents describe the current reachability monitor.
+    # XPR control-service integration: mt-xpr-balance-server README,
+    # "Agent documentation and dashboard reference".
+    documentation:
+      - { label: Monitor Swagger UI, path: /docs, kind: swagger }
+      - { label: Monitor OpenAPI JSON, path: /openapi.json, kind: openapi }
     poll_timeout_seconds: 5.0
     tiles:
       process_chemistry: { w: 2, h: 1 }
