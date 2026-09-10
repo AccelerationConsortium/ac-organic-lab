@@ -166,6 +166,30 @@ describe("DeckPanel declared vs observed rendering", () => {
     expect(container.textContent).not.toContain("Orange outline");
   });
 
+  it("names the labware under each slot on the compact tile, not just on the page", () => {
+    const deck = deckWith({
+      "3": labwareSlot("observed", {
+        kind: "96-well",
+        load_name: "corning_96_wellplate_360ul_flat",
+        rows: 8,
+        columns: 12,
+      }),
+    });
+    const { container } = render(<DeckPanel deviceDeck={deck} variant="tile" />);
+    // The tile used to render the bare box, so "what is in slot 3" needed the
+    // gateway panel. The label row is the page treatment, adopted here.
+    expect(container.textContent).toContain("corning_96_wellplate_360ul_flat");
+  });
+
+  it("lays the tile deck out in responsive columns rather than a fixed-width strip", () => {
+    const { container } = render(<DeckPanel deviceDeck={deckWith({})} variant="tile" />);
+    const grid = container.querySelector<HTMLElement>(".grid");
+    // A fixed `repeat(n, 160px)` track overflowed the tile and scrolled
+    // sideways once the cells became deck-proportioned.
+    expect(grid?.style.gridTemplateColumns).toBe("repeat(3, minmax(0, 1fr))");
+    expect(grid?.className).not.toContain("overflow-x-auto");
+  });
+
   it("keeps a temperature module and readout in its assigned slot", () => {
     const deck = deckWith({ "11": moduleSlot("declared", "temperature module gen2") });
     render(

@@ -104,7 +104,9 @@ export interface DeckPanelProps {
   selectedSlot?: number | string | null;
   /** Omit for a read-only deck (cells render as plain, non-clickable tiles). */
   onSelectSlot?: (slot: number | string | null) => void;
-  /** "tile" = fixed 160×120 cells; "page" = responsive full-width cells. */
+  /** Both variants lay out responsive, deck-proportioned cells. "page" adds
+   *  the declared-slot outline, its legend, and the front/back orientation
+   *  labels — chrome that reads as noise at tile size. */
   variant?: "tile" | "page";
   /** Tip-tracker summaries (`details.tip_racks`). When given, a tip rack's
    *  wells are tinted by real state instead of drawn uniformly full. */
@@ -141,9 +143,9 @@ export function DeckPanel({
       className={
         page
           ? "grid w-full gap-x-2 gap-y-1 sm:gap-x-3 sm:gap-y-1.5"
-          : "grid justify-center gap-[10px] overflow-x-auto"
+          : "grid w-full gap-x-1.5 gap-y-1"
       }
-      style={{ gridTemplateColumns: page ? `repeat(${columns}, minmax(0, 1fr))` : `repeat(${columns}, 160px)` }}
+      style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
     >
       {rows.flat().map((slot) => {
         const v = buildSlotView(slot, deviceDeck, legacyLabware);
@@ -263,11 +265,14 @@ export function DeckPanel({
             )}
           </>
         );
-        // On the full-width deck the slot number sits in the cell's top-left
-        // corner and the labware label BELOW the box. The compact tile keeps
-        // the bare box: there is no room for a text row at 160x120.
+        // The slot number sits in the cell's top-left corner and the labware
+        // label BELOW the box, on both variants. The tile used to omit the
+        // label row for want of space at a fixed 160x120; the cell is now
+        // responsive and the OT-2 tile spans three grid rows, so the row fits
+        // and the tile can answer "what is in slot 6" without a round trip to
+        // the gateway panel.
         const box = <div className={cellClassName}>{cellBody}</div>;
-        const content = page ? (
+        const content = (
           <div className="flex w-full flex-col gap-0.5">
             {box}
             {/* Reserve the row even when blank so every plate box lines up. */}
@@ -282,8 +287,6 @@ export function DeckPanel({
                   : "\u00a0"}
             </span>
           </div>
-        ) : (
-          box
         );
         return interactive ? (
           <button
