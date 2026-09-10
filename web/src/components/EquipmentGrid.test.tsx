@@ -9,6 +9,7 @@ import { EquipmentStatusCard } from "./EquipmentStatusCard";
 
 // The kind tiles are stubbed: this file tests which tile the grid picks, not
 // what the tiles draw.
+vi.mock("./XprBalanceTile", () => ({ XprBalanceTile: () => <div>XPR_TILE</div> }));
 vi.mock("./RobotArmTile", () => ({ RobotArmTile: () => <div>ROBOT_ARM_TILE</div> }));
 vi.mock("./LiquidHandlerTile", () => ({ LiquidHandlerTile: () => <div>LIQUID_HANDLER_TILE</div> }));
 vi.mock("@/lib/use-control-lock", () => ({
@@ -108,4 +109,11 @@ describe("EquipmentStatusCard lock chip", () => {
     render(<EquipmentStatusCard snapshot={snap("gibbie_ur_arm", "robot_arm", { monitoring_only: true })} />);
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
+});
+
+it("shows XPR controls only for the control service, not its reachability monitor", () => {
+  const { rerender } = render(<EquipmentGrid snapshots={[snap("lle_xpr_balance", "other", { monitoring_only: true })]} />);
+  expect(screen.queryByText("XPR_TILE")).toBeNull();
+  rerender(<EquipmentGrid snapshots={[snap("lle_xpr_balance", "other", {})]} />);
+  expect(screen.getByText("XPR_TILE")).toBeTruthy();
 });

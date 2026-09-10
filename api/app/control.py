@@ -783,6 +783,8 @@ async def _proxy(
         "robot_arm": _ROBOT_ARM_CONTROL_TIMEOUT_SECONDS,
         "solid_doser": _SOLID_DOSER_CONTROL_TIMEOUT_SECONDS,
     }.get(getattr(entry, "kind", None) or "", _CONTROL_TIMEOUT_SECONDS)
+    if equipment_id in {"lle_xpr_balance", "gibbie_balance", "gibbie_xpr_balance"}:
+        action_timeout = 90.0  # Stable captures can wait up to the SOAP timeout.
     # Wall-clock of the whole device interaction (claim → action → release),
     # stamped into the audit payload as `duration_s`. Started here — after
     # auth, before the first device hop — so refusals that never reach the

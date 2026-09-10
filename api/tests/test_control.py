@@ -407,11 +407,12 @@ def test_v12_control_still_runs_the_claim_dance() -> None:
     assert action_route.calls.last.request.headers["x-claim-token"] == "tok-v12"
 
 
+@pytest.mark.parametrize("equipment_id, kind, action", [("cytation_5", "plate_reader", "read/absorbance"), ("lle_xpr_balance", "other", "weigh"), ("gibbie_balance", "other", "weigh")])
 @respx.mock
-def test_plate_reader_control_heartbeats_during_synchronous_read() -> None:
+def test_control_heartbeats_during_synchronous_read(equipment_id, kind, action) -> None:
     """A Cytation read may exceed the dashboard's normal 15 s budget. Keep its
     claim alive and use the plate-reader-specific request timeout."""
-    entry = _v11_entry(id="cytation_5", kind="plate_reader", protocol="1.2")
+    entry = _v11_entry(id=equipment_id, kind=kind, protocol="1.2")
     app = _make_app(entry)
 
     respx.post("http://127.0.0.1:9999/control/claim").mock(
@@ -436,7 +437,7 @@ def test_plate_reader_control_heartbeats_during_synchronous_read() -> None:
         )
 
     action_route = respx.post(
-        "http://127.0.0.1:9999/control/read/absorbance"
+        f"http://127.0.0.1:9999/control/{action}"
     ).mock(side_effect=slow_read)
     respx.post("http://127.0.0.1:9999/control/release").mock(
         return_value=httpx.Response(204)
@@ -444,8 +445,8 @@ def test_plate_reader_control_heartbeats_during_synchronous_read() -> None:
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/equipment/cytation_5/control/read/absorbance",
-            json={"wells": ["A1"], "wavelength_nm": 600.0},
+            f"/api/equipment/{equipment_id}/control/{action}",
+            json={"wells": ["A1"], "wavelength_nm": 600.0} if kind == "plate_reader" else {},
         )
 
     assert response.status_code == 200
