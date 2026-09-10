@@ -1,6 +1,7 @@
 import type { EquipmentSnapshot } from "@/types/api";
 import { isMonitoringOnly } from "@/lib/tile-policy";
 import { CameraTile } from "./CameraTile";
+import { EasyMaxTile } from "./EasyMaxTile";
 import { EquipmentStatusCard } from "./EquipmentStatusCard";
 import { FumeHoodTile } from "./FumeHoodTile";
 import { HplcTile } from "./HplcTile";
@@ -78,6 +79,8 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
           >
             {isMonitoringOnly(snapshot) ? (
               <EquipmentStatusCard snapshot={snapshot} />
+            ) : snapshot.id === "lle_easymax" ? (
+              <EasyMaxTile snapshot={snapshot} />
             ) : snapshot.kind === "camera" ? (
               <CameraTile snapshot={snapshot} />
             ) : snapshot.kind === "power_strip" || snapshot.kind === "smart_plug" ? (

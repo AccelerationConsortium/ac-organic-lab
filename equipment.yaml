@@ -1048,8 +1048,13 @@ equipment:
     tailscale_ip: 100.64.254.13
     status_path: /status
     poll_timeout_seconds: 5.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /docs/agent, kind: json }
+      - { label: Capabilities and limits, path: /capabilities, kind: json }
     tiles:
-      process_chemistry: { w: 2, h: 1 }
+      process_chemistry: { w: 2, h: 2 }
     pills: {}
 
   - id: lle_hplc

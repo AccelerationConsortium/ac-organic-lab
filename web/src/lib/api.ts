@@ -450,6 +450,19 @@ export async function postGenericStartup(equipmentId: string): Promise<ControlAc
 // STATUS_SPEC v1.1; per-request claim/release is handled by the dashboard's
 // control passthrough.
 
+// Human-operated EasyMax controls use the dashboard's authenticated,
+// audited claim/release path, just like the other device tiles.
+export type EasyMaxCommand =
+  | { action: "temp/set"; body: { reactor: number; mode: "Tr" | "Tj"; ramp_mode: "duration" | "rate"; end_value_c: number; rate_or_duration: number } }
+  | { action: "temp/reflux" | "temp/distill"; body: { reactor: number; tj_end_c: number; tj_minus_tr_k: number } }
+  | { action: "stir/start"; body: { reactor: number; rate_rpm: number; duration_s: number } }
+  | { action: "temp/stop" | "stir/stop"; body: { reactor: number } }
+  | { action: "startup"; body: Record<string, never> };
+
+export function postEasyMaxAction(equipmentId: string, command: EasyMaxCommand): Promise<ControlAck> {
+  return controlPost(equipmentId, command.action, command.body);
+}
+
 export async function postShakerStartup(equipmentId: string): Promise<ControlAck> {
   return controlPost(equipmentId, "startup", {});
 }
