@@ -23,7 +23,7 @@ function LabEnvironmentCard({
   pending?: boolean;
 }) {
   return (
-    <section className="flex flex-col rounded-2xl border border-slate-200 bg-surface-raised p-4 dark:border-slate-800 dark:bg-slate-900">
+    <section className="flex flex-col rounded-2xl border border-slate-200 bg-surface-raised p-3 dark:border-slate-800 dark:bg-slate-900">
       <header className="mb-3">
         <h2 className="text-base font-semibold text-ink dark:text-slate-100">
           {section.title}
@@ -120,7 +120,7 @@ export default function OverviewPage() {
   ];
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       {equipmentError && (
         <p className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
           Failed to load equipment status: {equipmentError.message}
@@ -183,9 +183,9 @@ export default function OverviewPage() {
         })}
       </div>
       {/* Independent columns keep the headline cards pinned as content grows. */}
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
         {columns.map((column, columnIndex) => (
-          <div key={columnIndex} className="min-w-0 space-y-4">
+          <div key={columnIndex} className="min-w-0 space-y-3">
             {/* Headline "Accounts & Activities" tile: visible to every signed-in
                 user (its roster/session figures come from the aggregate /overview/*
                 endpoints, readable by any role). The GO → link into /admin is

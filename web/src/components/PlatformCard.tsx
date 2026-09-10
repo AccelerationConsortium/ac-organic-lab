@@ -185,7 +185,7 @@ export function PlatformCard({
   const count = snapshots.length > 0 ? snapshots.length : (expectedCount ?? 0);
 
   return (
-    <article className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-surface-raised p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <article className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-surface-raised p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-base font-semibold text-ink dark:text-slate-100">

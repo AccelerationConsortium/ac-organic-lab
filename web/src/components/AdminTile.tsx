@@ -4,9 +4,9 @@ import type { ReactNode } from "react";
 
 // ---------------------------------------------------------------------------
 // Card chrome for the admin console's tiles, in the Overview page's
-// vocabulary (PlatformCard / LabEnvironmentCard): rounded-xl card, p-5,
+// vocabulary (PlatformCard / LabEnvironmentCard): rounded-xl card, p-4,
 // shadow-sm, a `text-base` semibold title over a `text-xs` subtle
-// description, `gap-4` rhythm. The body is a framed, fixed-height scroll
+// description, `gap-3` rhythm. The body is a framed, fixed-height scroll
 // panel (`max-h-80`) so a tile keeps its footprint while a long table
 // scrolls under a sticky header — pass `frame={false}` for content that is
 // not a table (the KPI grid).
@@ -31,7 +31,7 @@ export function AdminTile({
 }) {
   return (
     <section
-      className={`flex flex-col gap-3 rounded-xl border border-slate-200 bg-surface-raised p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 ${className}`}
+      className={`flex flex-col gap-3 rounded-xl border border-slate-200 bg-surface-raised p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 ${className}`}
     >
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">

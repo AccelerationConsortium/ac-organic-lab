@@ -44,7 +44,7 @@ import { SolidDoserTile } from "./SolidDoserTile";
  * affordances would 404. The generic card shows what such a device does
  * publish — state, message, components, metrics — and nothing it cannot do.
  */
-const ROW_HEIGHT_PX = 232;
+const ROW_HEIGHT_PX = 220;
 
 export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] }) {
   if (snapshots.length === 0) {
@@ -61,7 +61,7 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
       // (and left/right alignment) as an Overview platform card, edge-to-edge
       // with the page heading. (Columns were previously capped at 262px,
       // which left the grid ~120px short of the container's right edge.)
-      className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+      className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
       // Rows snap to the 220px module but grow to fit content, so a tile
       // whose content is taller than its yaml h never clips — its height
       // snaps up and the grid reflows.

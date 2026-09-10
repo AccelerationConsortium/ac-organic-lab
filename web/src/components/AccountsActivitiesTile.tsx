@@ -180,9 +180,9 @@ export function AccountsActivitiesTile({
       {state.error ? (
         <ErrorNote error={state.error} />
       ) : (
-        <dl className="grid grid-cols-2 gap-x-5 gap-y-5 sm:grid-cols-4">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4">
           {pairs.map((pair, i) => (
-            <div key={i} className="flex flex-col gap-4">
+            <div key={i} className="flex flex-col gap-3">
               {pair}
             </div>
           ))}
