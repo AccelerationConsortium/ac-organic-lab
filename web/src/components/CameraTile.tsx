@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -285,6 +285,9 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       }
     >
       {/*
+        Process Chemistry keeps a full-width 16:9 frame, with expandable
+        controls below, so the shorter tile cannot squeeze the live image.
+        Other cameras retain their existing flexible sizing.
         The grid that hosts this tile uses fixed-height rows (see
         `EquipmentGrid`), so the article reliably gets more vertical
         space than the natural content height. Letting the video absorb
@@ -295,7 +298,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       <CameraPlayer
         src={activeLens?.mse_url ?? null}
         disabled={!streamingEnabled || privacyMode}
-        className="flex-1 min-h-0 w-full"
+        className={snapshot.platform === "process_chemistry" ? "aspect-video w-full shrink-0" : "flex-1 min-h-0 w-full"}
       />
 
       {/*
@@ -306,6 +309,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         Capture column is pinned shrink-0 so the buttons keep the same
         width regardless of how cramped the preset row gets.
       */}
+      <CameraControls collapsible={snapshot.platform === "process_chemistry"}>
       {!authorized && (
         <p className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-ink-muted dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300">
           {authenticated
@@ -424,6 +428,7 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </div>
       </div>
       </fieldset>
+      </CameraControls>
 
       {lastSnapshot && (
         <a
@@ -560,5 +565,17 @@ function PresetModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function CameraControls({ collapsible, children }: { collapsible: boolean; children: ReactNode }) {
+  if (!collapsible) return <>{children}</>;
+  return (
+    <details className="rounded-md border border-slate-200 px-2 py-1.5 dark:border-slate-700">
+      <summary className="cursor-pointer text-xs font-medium text-ink-muted dark:text-slate-300">
+        Camera controls
+      </summary>
+      <div className="mt-2 space-y-2">{children}</div>
+    </details>
   );
 }

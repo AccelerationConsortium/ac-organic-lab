@@ -343,13 +343,10 @@ equipment:
   # The `tiles.complexation` values drive tile sizes on /platforms/complexation.
   # ---------------------------------------------------------------------
 
-  # Second Tapo C245D (device alias "Tapo for MG400"), hosted by the same
-  # `kasa-tapo-services` gateway as the HTE camera. Registered + polled, but
-  # since 2026-08-23 NOT listed in platforms.yaml — it is hidden from the
-  # Complexation platform (Overview card, Platforms tab, /platforms/
-  # complexation). Add it back to that section's equipment list to show it.
+  # Tapo C245D moved from Complexation to the Process Chemistry / LLE bench.
+  # Keep the gateway ID stable so the existing camera streams keep working.
   - id: cam_echem_tapo_c245
-    name: Echem Platform Camera
+    name: Process Chemistry Camera
     kind: camera
     adapter: http
     protocol: "1.0"
@@ -361,7 +358,7 @@ equipment:
     # for the first request after a gateway restart.
     poll_timeout_seconds: 5.0
     tiles:
-      complexation: { w: 2, h: 3 }
+      process_chemistry: { w: 2, h: 3 }
     pills: {}
     camera:
       host: 172.31.60.15
@@ -373,10 +370,8 @@ equipment:
         - { id: wide, label: Wide, rtsp_path: stream1, ptz_capable: false }
         - { id: tele, label: Tele, rtsp_path: stream6 }
 
-  # Echem camera: a single-lens Tapo C100 watching the OT-2. With
-  # cam_echem_tapo_c245 hidden it is the only camera the complexation
-  # section lists, so it is the one the Overview card streams (and the
-  # camera tile on /platforms/complexation).
+  # Echem camera: a single-lens Tapo C100 watching the OT-2, shown on the
+  # Complexation Overview card and /platforms/complexation.
   - id: cam_echem_tapo_c100
     name: Echem OT2 Camera
     kind: camera

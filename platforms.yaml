@@ -49,11 +49,6 @@ sections:
     href: /platforms/complexation
     kind: platform
     equipment:
-      # cam_echem_tapo_c245 ("Echem Platform Camera") is deliberately NOT
-      # listed (hidden from this platform since 2026-08-23). It stays
-      # registered + polled in equipment.yaml; re-add it here to show it.
-      # The Overview card streams only the FIRST camera in this list, so the
-      # OT-2 camera is now the one that streams.
       - cam_echem_tapo_c100
       - ot2_complexation
 
@@ -65,6 +60,8 @@ sections:
     # Monitoring only (2026-09-06): the tiles come from a read-only gateway on
     # the bench PC, and the bench is driven by automated-lle and ChemStation.
     equipment:
+      # First camera supplies the Overview card's live feed.
+      - cam_echem_tapo_c245
       - lle_ur5_arm
       - lle_easymax
       - lle_hplc
