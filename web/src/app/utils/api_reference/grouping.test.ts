@@ -5,6 +5,7 @@ import {
   endpointMatches,
   groupByTag,
   sharedDepth,
+  splitColumns,
   splitSubModules,
   subModuleOf,
 } from "./grouping";
@@ -170,5 +171,58 @@ describe("groupByTag", () => {
       "POST /api/history/runs",
       "GET /api/history/uptime",
     ]);
+  });
+});
+
+describe("splitColumns", () => {
+  const weight = (n: number) => n;
+
+  it("keeps display order down one column and then the next", () => {
+    // The caller's order is deliberate (TAG_ORDER, registry platform order),
+    // so a reader must be able to follow it without hopping columns.
+    expect(splitColumns([1, 1, 1, 1, 1, 1], weight)).toEqual([
+      [1, 1, 1],
+      [1, 1, 1],
+    ]);
+  });
+
+  it("balances by weight rather than by item count", () => {
+    // One heavy tile is a column's worth on its own; three light ones share
+    // the other. Counting items would have put two heavy tiles together.
+    expect(splitColumns([10, 1, 1, 1], weight)).toEqual([[10], [1, 1, 1]]);
+  });
+
+  it("treats all-zero weights as an even split", () => {
+    expect(splitColumns([0, 0, 0, 0], weight)).toEqual([
+      [0, 0],
+      [0, 0],
+    ]);
+  });
+
+  it("never strands a column empty, even when the first item outweighs the rest", () => {
+    expect(splitColumns([100, 1], weight)).toEqual([[100], [1]]);
+  });
+
+  it("puts a lone item in the first column and leaves the second empty", () => {
+    expect(splitColumns([5], weight)).toEqual([[5], []]);
+    expect(splitColumns([], weight)).toEqual([[], []]);
+  });
+
+  it("collapses to one column when asked for one", () => {
+    expect(splitColumns([3, 2, 1], weight, 1)).toEqual([[3, 2, 1]]);
+    expect(splitColumns([3, 2, 1], weight, 0)).toEqual([[3, 2, 1]]);
+  });
+
+  it("fills every column when items are only just enough to go round", () => {
+    expect(splitColumns([9, 1, 1], weight, 3)).toEqual([[9], [1], [1]]);
+  });
+
+  it("loses nothing, whatever the weights", () => {
+    const items = [7, 0, 3, 12, 1, 1, 4];
+    for (const count of [2, 3, 4]) {
+      const columns = splitColumns(items, weight, count);
+      expect(columns.flat()).toEqual(items);
+      expect(columns).toHaveLength(count);
+    }
   });
 });

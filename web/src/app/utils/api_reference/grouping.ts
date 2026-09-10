@@ -153,3 +153,67 @@ export function groupByTag(doc: OpenApiDoc): [string, Endpoint[]][] {
     })
     .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
 }
+
+/** Deal an ordered list into `count` independent vertical columns, keeping
+ *  display order and balancing by `weight`.
+ *
+ *  Why the page lays columns out this way rather than with a CSS grid or
+ *  `columns-2`: every tile here folds open. A two-cell grid row is as tall as
+ *  its taller cell, so a short tile beside a tall one is padded out to match —
+ *  that padding is the white space this replaces. CSS multi-column has no such
+ *  padding but reflows items *between* columns as one grows, so opening a tile
+ *  makes unrelated tiles jump. Independent stacks do neither: a tile is as
+ *  tall as its content, and opening one moves only what is below it in its own
+ *  column.
+ *
+ *  Order-preserving rather than greedy-shortest-column, because the caller's
+ *  order is deliberate (`TAG_ORDER`, and the registry's platform order) and
+ *  greedy placement interleaves it. Reading order stays down the first column,
+ *  then down the second, which is also the single-column order when the grid
+ *  collapses on a narrow screen.
+ *
+ *  Weight is a height *proxy* supplied by the caller (a platform's instrument
+ *  count; 1 per tag group, which is all a collapsed group costs), not a
+ *  measurement — the split is chosen at render time, before anything is laid
+ *  out, so it cannot depend on real heights.
+ */
+export function splitColumns<T>(
+  items: T[],
+  weight: (item: T) => number,
+  count = 2,
+): T[][] {
+  const columnCount = Math.max(1, Math.floor(count));
+  const columns: T[][] = Array.from({ length: columnCount }, () => []);
+  if (items.length === 0 || columnCount === 1) {
+    if (columnCount === 1) columns[0] = [...items];
+    return columns;
+  }
+
+  // A caller whose weights are all zero still wants an even split, not one
+  // full column — treat that as "every item costs the same".
+  const raw = items.map((item) => Math.max(0, weight(item)));
+  const total = raw.reduce((sum, w) => sum + w, 0);
+  const weights = total > 0 ? raw : raw.map(() => 1);
+  const sum = total > 0 ? total : items.length;
+
+  // Walk in order, placing each item in the current column and advancing once
+  // that column holds its share of the total weight. The decision is made
+  // *after* placing, so the first item can never be pushed out of column one.
+  const perColumn = sum / columnCount;
+  let column = 0;
+  let placed = 0;
+  items.forEach((item, index) => {
+    columns[column].push(item);
+    placed += weights[index];
+    if (column >= columnCount - 1) return;
+    const itemsAfter = items.length - 1 - index;
+    const columnsAfter = columnCount - 1 - column;
+    // Advance on either "this column has its share" or "the tail is only just
+    // long enough to give every remaining column one item" — the second is
+    // what stops a heavy head from stranding a column empty.
+    if (placed >= perColumn * (column + 1) || itemsAfter <= columnsAfter) {
+      column += 1;
+    }
+  });
+  return columns;
+}

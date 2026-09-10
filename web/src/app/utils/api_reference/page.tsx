@@ -8,6 +8,7 @@ import {
   TAG_TITLE,
   endpointMatches,
   groupByTag,
+  splitColumns,
   splitSubModules,
 } from "./grouping";
 import type {
@@ -702,15 +703,22 @@ function DashboardApiSection() {
           Nothing matches “{query}”.
         </p>
       ) : (
-        <div className="flex flex-col gap-3">
-          {groups.map(([tag, endpoints]) => (
-            <TagGroup
-              key={tag}
-              tag={tag}
-              endpoints={endpoints}
-              doc={data}
-              forceOpen={expandAll || filtering}
-            />
+        // Two columns of narrower tiles. A collapsed group costs the same
+        // height whatever its endpoint count, so they weigh 1 each; the split
+        // is even at rest, which is how the page is usually read.
+        <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-2">
+          {splitColumns(groups, () => 1).map((column, index) => (
+            <div key={index} className="flex flex-col gap-3">
+              {column.map(([tag, endpoints]) => (
+                <TagGroup
+                  key={tag}
+                  tag={tag}
+                  endpoints={endpoints}
+                  doc={data}
+                  forceOpen={expandAll || filtering}
+                />
+              ))}
+            </div>
           ))}
         </div>
       )}
@@ -786,10 +794,21 @@ function DeviceCatalogSection() {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-      {platforms.map(([id, catalog]) => (
-        <PlatformTile key={id} catalog={catalog} />
-      ))}
+    // Platform tiles open by default and their instrument counts are wildly
+    // uneven (HTE has twelve, monitoring one), so a plain two-cell grid row
+    // padded the short tile out to the tall one's height. Weighing by
+    // instrument count splits them into two stacks of similar length instead,
+    // each tile only as tall as its content.
+    <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+      {splitColumns(platforms, ([, catalog]) => catalog.instruments.length || 1).map(
+        (column, index) => (
+          <div key={index} className="flex flex-col gap-4">
+            {column.map(([id, catalog]) => (
+              <PlatformTile key={id} catalog={catalog} />
+            ))}
+          </div>
+        ),
+      )}
     </div>
   );
 }
