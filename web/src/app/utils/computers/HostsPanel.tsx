@@ -359,13 +359,6 @@ export function HostsPanel({
         <h1 className="text-lg font-semibold text-ink dark:text-slate-100">
           Computers and Servers
         </h1>
-        <p className="text-sm text-ink-subtle dark:text-slate-300">
-          The machines the lab&apos;s services run on — every port and domain
-          below comes from <span className="font-mono">equipment.yaml</span>.
-          Hosts running the sdl-lab-hostops agent carry its live status pill
-          and whitelist. Admins get an in-browser SSH terminal per machine;
-          every session is audited.
-        </p>
         <div
           className="flex flex-wrap items-center gap-1.5"
           role="list"
