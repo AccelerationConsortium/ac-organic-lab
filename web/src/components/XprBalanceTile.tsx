@@ -9,7 +9,7 @@ import { useActionError } from "@/lib/use-action-error";
 import { TileShell } from "./TileShell";
 import { TileButton } from "./TileButton";
 
-const inputClass = "h-9 min-w-0 rounded border px-2 text-sm dark:bg-slate-900 disabled:opacity-50";
+const inputClass = "h-9 w-full min-w-0 rounded border px-2 text-xs dark:bg-slate-900 disabled:opacity-50";
 export function XprBalanceTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const { identity } = useUserAuth();
   const { locked, unlock } = useControlLock(snapshot.id);
@@ -63,19 +63,19 @@ export function XprBalanceTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   return <TileShell snapshot={snapshot} actionError={actionError} headerRight={
     <TileButton onClick={() => void unlock()} disabled={!locked}>{authorized ? "Owner access" : "Controls locked"}</TileButton>
   }>
-    <div className="space-y-3">
-      <div className="text-2xl font-semibold tabular-nums">{typeof weight?.value === "number" ? weight.value.toFixed(4) : "—"} <span className="text-sm">g</span></div>
+    <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
+      <div className="text-lg font-semibold tabular-nums">{typeof weight?.value === "number" ? weight.value.toFixed(4) : "—"} <span className="text-sm">g</span></div>
       {typeof details.readback_age_s === "number" && <p className="text-xs">Readback age: {details.readback_age_s.toFixed(1)} s</p>}
       {!authorized && <p className="text-xs">{locked ? "Sign in with the permitted owner account to control this balance." : access?.key === accessKey ? access.message : "Checking control access…"}</p>}
       <div className="flex flex-wrap gap-2">
         {(["startup", "shutdown", "weigh", "tare", "zero", "cancel"] as XprAction[]).map(action => <TileButton key={action} disabled={disabled(action)} variant={action === "cancel" ? "danger" : "default"} onClick={() => void send(action)}>{({ startup: "Connect", shutdown: "Disconnect", weigh: "Weigh", tare: "Tare", zero: "Zero", cancel: "Cancel" } as Record<string, string>)[action]}</TileButton>)}
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="grid grid-cols-2 gap-2">
         {(["left", "right"] as const).flatMap(door => (["open", "close"] as const).map(verb => <TileButton key={`${door}-${verb}`} disabled={disabled(`door/${verb}`)} onClick={() => void send(`door/${verb}`, { door })}>{verb === "open" ? "Open" : "Close"} {door} door</TileButton>))}
       </div>
-      <form className="flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); if (!disabled("dose/start") && substance.trim() && Number(amount) > 0 && Number(amount) <= 5000) setReview({ substance: substance.trim(), amount: Number(amount) }); }}>
+      <form className="grid grid-cols-2 gap-2" onSubmit={event => { event.preventDefault(); if (!disabled("dose/start") && substance.trim() && Number(amount) > 0 && Number(amount) <= 5000) setReview({ substance: substance.trim(), amount: Number(amount) }); }}>
         <input aria-label="Substance" className={inputClass} placeholder="Substance" maxLength={80} required value={substance} disabled={disabled("dose/start")} onChange={event => { setSubstance(event.target.value); setReview(null); }} />
-        <input aria-label="Dose amount (mg)" className={`${inputClass} w-28`} placeholder="mg" type="number" min={0.001} max={5000} step="any" required value={amount} disabled={disabled("dose/start")} onChange={event => { setAmount(event.target.value); setReview(null); }} />
+        <input aria-label="Dose amount (mg)" className={inputClass} placeholder="mg" type="number" min={0.001} max={5000} step="any" required value={amount} disabled={disabled("dose/start")} onChange={event => { setAmount(event.target.value); setReview(null); }} />
         <TileButton type="submit" disabled={disabled("dose/start")}>Review dose</TileButton>
       </form>
       {review && <div role="group" aria-label="Confirm dosing" className="space-y-2 rounded border border-amber-300 p-2 text-sm">

@@ -16,9 +16,9 @@ const number = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
 const fmt = (v: unknown, decimals = 1) => number(v)?.toFixed(decimals) ?? "—";
 const stateLabel = (v: unknown) => (typeof v === "string" ? v : "unknown");
-// Touch-sized inputs; the device remains the authority for operating limits.
+// Compact inputs; the device remains the authority for operating limits.
 const inputClass =
-  "h-11 w-full min-w-0 rounded-md border border-slate-300 bg-white px-2 text-sm tabular-nums disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100";
+  "h-9 w-full min-w-0 rounded-md border border-slate-300 bg-white px-2 text-xs tabular-nums disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100";
 
 function Reading({
   label,
@@ -30,11 +30,11 @@ function Reading({
   unit: string;
 }) {
   return (
-    <div>
-      <div className="text-xs uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+    <div className="min-w-0">
+      <div className="text-[10px] uppercase tracking-wide text-ink-subtle dark:text-slate-400">
         {label}
       </div>
-      <div className="mt-1 text-2xl font-semibold tabular-nums tracking-tight text-ink dark:text-slate-100">
+      <div className="mt-0.5 text-base font-semibold tabular-nums tracking-tight text-ink dark:text-slate-100">
         {fmt(value, unit === "rpm" ? 0 : 1)}{" "}
         <span className="text-xs font-normal text-ink-subtle dark:text-slate-400">
           {unit}
@@ -87,7 +87,7 @@ function ZoneControls({
     Number(s) >= min &&
     Number(s) <= max;
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -113,10 +113,11 @@ function ZoneControls({
           );
         }}
       >
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-1">
           <span className="text-sm font-medium">Temperature</span>
           <TileButton
             variant="danger"
+            ariaLabel="Stop temperature"
             disabled={disabled || !can("temp/stop")}
             onClick={() =>
               propose(
@@ -125,10 +126,10 @@ function ZoneControls({
               )
             }
           >
-            Stop temperature
+            Stop
           </TileButton>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-2">
           <label className="text-xs">
             Control
             <select
@@ -198,7 +199,7 @@ function ZoneControls({
         </div>
       </form>
       <form
-        className="border-t border-slate-200 pt-3 dark:border-slate-700"
+        className="border-t border-slate-200 pt-2 dark:border-slate-700"
         onSubmit={(e) => {
           e.preventDefault();
           if (
@@ -221,10 +222,11 @@ function ZoneControls({
           );
         }}
       >
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-1">
           <span className="text-sm font-medium">Stirring</span>
           <TileButton
             variant="danger"
+            ariaLabel="Stop stirring"
             disabled={disabled || !can("stir/stop")}
             onClick={() =>
               propose(
@@ -233,7 +235,7 @@ function ZoneControls({
               )
             }
           >
-            Stop stirring
+            Stop
           </TileButton>
         </div>
         <div className="grid grid-cols-2 gap-2">
@@ -283,8 +285,7 @@ function ZoneControls({
           </TileButton>
         </div>
       </form>
-      <p className="text-xs text-ink-subtle">Switching temperature control off can chill the jacket and cause condensation. To park, set an appropriate room temperature and leave control on.</p>
-      <details className="border-t border-slate-200 pt-3 dark:border-slate-700">
+      <details className="border-t border-slate-200 pt-2 dark:border-slate-700">
         <summary className="cursor-pointer py-2 text-sm font-medium">Reflux / Distillation</summary>
         <form className="space-y-2" onSubmit={(e) => {
           e.preventDefault();
@@ -321,7 +322,6 @@ function ZoneControls({
 export function EasyMaxTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const { locked, countdown, toggle } = useControlLock(snapshot.id);
   const { actionError, reportError, clearError } = useActionError();
-  const [selected, setSelected] = useState<"1" | "2">("1");
   const [pending, setPending] = useState(false);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -336,12 +336,6 @@ export function EasyMaxTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const [accepted, setAccepted] = useState<string | null>(null);
   const details = fields(snapshot.status.details);
   const zones = fields(details.zones);
-  const keys = Object.keys(zones).filter((k) => k === "1" || k === "2");
-  const active = keys.includes(selected) ? selected : keys[0];
-  const zone = fields(zones[active]);
-  const thermo = fields(zone.thermostat);
-  const stir = fields(zone.stirrer);
-  const progress = fields(fields(zone.progress).thermostat);
   const claim = fields(details.claimed_by);
   const offline =
     !!snapshot.fetch_error || snapshot.status.equipment_status === "unknown";
@@ -398,70 +392,82 @@ export function EasyMaxTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         />
       }
     >
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto text-ink dark:text-slate-200">
-        <div className="flex gap-2" role="group" aria-label="Reactor zone">
-          {keys.map((key) => (
-            <button
-              type="button"
-              key={key}
-              aria-pressed={active === key}
-              disabled={pending}
-              onClick={() => {
-                setSelected(key);
-                setReview(null);
-                setAccepted(null);
-              }}
-              className={`flex-1 rounded-lg border px-3 py-2 text-left ${active === key ? "border-sky-400 bg-sky-50 dark:border-sky-600 dark:bg-sky-950/40" : "border-slate-200 dark:border-slate-700"}`}
-            >
-              <span className="text-sm font-semibold">Reactor {key}</span>
-              <span className="ml-2 text-xs text-ink-subtle dark:text-slate-400">
-                {key === "1" ? "Left" : "Right"} ·{" "}
-                {unavailable
-                  ? "—"
-                  : `${fmt(fields(fields(zones[key]).thermostat).tr_c)} °C`}
-              </span>
-            </button>
-          ))}
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto text-ink dark:text-slate-200">
+        <div className="grid grid-cols-2 gap-2">
+          {["1", "2"].map((key) => {
+            const reactorZone = fields(zones[key]);
+            const thermo = fields(reactorZone.thermostat);
+            const stir = fields(reactorZone.stirrer);
+            const progress = fields(fields(reactorZone.progress).thermostat);
+            return (
+              <section
+                key={key}
+                aria-label={`Reactor ${key}`}
+                className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800/50"
+              >
+                <h3 className="mb-2 text-sm font-semibold">
+                  Reactor {key}
+                  <span className="ml-2 text-xs font-normal text-ink-subtle dark:text-slate-400">
+                    {key === "1" ? "Left" : "Right"}
+                  </span>
+                </h3>
+                <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                  <Reading
+                    label="Reactor · Tr"
+                    value={unavailable ? null : thermo.tr_c}
+                    unit="°C"
+                  />
+                  <Reading
+                    label="Jacket · Tj"
+                    value={unavailable ? null : thermo.tj_c}
+                    unit="°C"
+                  />
+                  <Reading label="Tr − Tj" value={unavailable ? null : thermo.tr_minus_tj_c} unit="K" />
+                  <Reading
+                    label="Stir speed"
+                    value={unavailable ? null : stir.rate_rpm}
+                    unit="rpm"
+                  />
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 border-t border-slate-200 pt-2 text-xs dark:border-slate-700">
+                  <span>
+                    Temperature: {unavailable ? "unknown" : stateLabel(thermo.state)}
+                    {!unavailable && progress.stable === true ? " · stable" : ""}
+                  </span>
+                  <span>
+                    Stirrer: {unavailable ? "unknown" : stateLabel(stir.state)}
+                  </span>
+                  {!unavailable && number(thermo.end_value_c) !== null && (
+                    <span>
+                      Setpoint: {fmt(thermo.end_value_c)} °C ({stateLabel(thermo.mode)})
+                    </span>
+                  )}
+                  {!unavailable &&
+                    thermo.state === "ramp" &&
+                    number(thermo.remaining_s) !== null && (
+                      <span>{fmt(thermo.remaining_s, 0)} s remaining</span>
+                    )}
+                </div>
+                <div className="mt-2 border-t border-slate-200 pt-2 dark:border-slate-700">
+                  {Object.keys(reactorZone).length > 0 ? (
+                    <ZoneControls
+                      key={`${snapshot.id}-${key}`}
+                      reactor={Number(key)}
+                      zone={reactorZone}
+                      limits={fields(details.limits)}
+                      disabled={disabled}
+                      can={can}
+                      propose={propose}
+                    />
+                  ) : (
+                    <p className="text-xs">Waiting for reactor zone readback.</p>
+                  )}
+                </div>
+              </section>
+            );
+          })}
         </div>
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
-          <div className="grid grid-cols-2 gap-3">
-            <Reading
-              label="Reactor · Tr"
-              value={unavailable ? null : thermo.tr_c}
-              unit="°C"
-            />
-            <Reading
-              label="Jacket · Tj"
-              value={unavailable ? null : thermo.tj_c}
-              unit="°C"
-            />
-            <Reading label="Tr − Tj" value={unavailable ? null : thermo.tr_minus_tj_c} unit="K" />
-            <Reading
-              label="Stir speed"
-              value={unavailable ? null : stir.rate_rpm}
-              unit="rpm"
-            />
-          </div>
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-200 pt-2 text-xs dark:border-slate-700">
-            <span>
-              Temperature: {unavailable ? "unknown" : stateLabel(thermo.state)}
-              {!unavailable && progress.stable === true ? " · stable" : ""}
-            </span>
-            <span>
-              Stirrer: {unavailable ? "unknown" : stateLabel(stir.state)}
-            </span>
-            {!unavailable && number(thermo.end_value_c) !== null && (
-              <span>
-                Setpoint: {fmt(thermo.end_value_c)} °C ({stateLabel(thermo.mode)})
-              </span>
-            )}
-            {!unavailable &&
-              thermo.state === "ramp" &&
-              number(thermo.remaining_s) !== null && (
-                <span>{fmt(thermo.remaining_s, 0)} s remaining</span>
-              )}
-          </div>
-        </div>
+        <p className="text-xs text-ink-subtle">Switching temperature control off can chill the jacket and cause condensation. To park, set an appropriate room temperature and leave control on.</p>
         {Array.isArray(details.dosing_units) && details.dosing_units.length > 0 && (
           <details className="text-xs">
             <summary className="cursor-pointer py-2">Dosing units · read only</summary>
@@ -484,19 +490,6 @@ export function EasyMaxTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             Controlled by{" "}
             {typeof claim.owner === "string" ? claim.owner : "another session"}.
           </p>
-        )}
-        {active ? (
-          <ZoneControls
-            key={`${snapshot.id}-${active}`}
-            reactor={Number(active)}
-            zone={zone}
-            limits={fields(details.limits)}
-            disabled={disabled}
-            can={can}
-            propose={propose}
-          />
-        ) : (
-          <p className="text-sm">Waiting for reactor zone readback.</p>
         )}
         {can("startup") && (
           <TileButton

@@ -362,7 +362,7 @@ equipment:
     # for the first request after a gateway restart.
     poll_timeout_seconds: 5.0
     tiles:
-      process_chemistry: { w: 2, h: 3 }
+      process_chemistry: { w: 2, h: 2 }
     pills: {}
     camera:
       host: 172.31.60.15

@@ -56,6 +56,8 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const queryClient = useQueryClient();
   const { authenticated, canControl } = useUserAuth();
   const authorized = authenticated && canControl(snapshot.id);
+  const fixedViewAspect = snapshot.platform === "process_chemistry" ||
+    ["cam_hte_tapo_c245", "cam_echem_tapo_c100"].includes(snapshot.id);
 
   const details = (snapshot.status.details ?? {}) as CameraStatusDetails;
   const lenses: LensStatusEntry[] = Array.isArray(details.lenses) ? details.lenses : [];
@@ -284,21 +286,12 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </>
       }
     >
-      {/*
-        Process Chemistry keeps a full-width 16:9 frame, with expandable
-        controls below, so the shorter tile cannot squeeze the live image.
-        Other cameras retain their existing flexible sizing.
-        The grid that hosts this tile uses fixed-height rows (see
-        `EquipmentGrid`), so the article reliably gets more vertical
-        space than the natural content height. Letting the video absorb
-        the surplus (`flex-1 min-h-0`) keeps the 16:9 frame centered and
-        the control row pinned above the template footer - no awkward
-        gap below the controls.
-      */}
+      {/* Match the bench camera views with full-width 16:9 frames,
+          independent of each tile's height and remaining vertical space. */}
       <CameraPlayer
         src={activeLens?.mse_url ?? null}
         disabled={!streamingEnabled || privacyMode}
-        className={snapshot.platform === "process_chemistry" ? "aspect-video w-full shrink-0" : "flex-1 min-h-0 w-full"}
+        className={fixedViewAspect ? "aspect-video w-full shrink-0" : "flex-1 min-h-0 w-full"}
       />
 
       {/*

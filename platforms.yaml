@@ -7,8 +7,8 @@ sections:
 
   # Overview order (operator decision 2026-09-06): Services → HTE →
   # Complexation → Process Chemistry → Gibbie. The headline "Accounts &
-  # Activities" tile is rendered by the Overview page ahead of every section,
-  # so the full page order is Accounts & Activities → these. Nav tabs follow
+  # Activities" tile is pinned to the left column top and Services to the
+  # right column top; remaining sections alternate columns. Nav tabs follow
   # the same order but list only sections with an `href`, so Services (which
   # has none) does not appear there.
   - id: web_services

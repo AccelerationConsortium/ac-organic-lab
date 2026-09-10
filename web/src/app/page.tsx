@@ -110,7 +110,14 @@ export default function OverviewPage() {
 
   const sections = platforms.sections;
   const allSectionIds = sections.map((s) => s.id);
-  const visibleSections = sections.filter((s) => !hidden.has(s.id));
+  const services = sections.find((section) => section.id === "web_services");
+  // Assign columns before applying visibility so hiding a card cannot move
+  // the remaining cards into the other column.
+  const otherSections = sections.filter((section) => section.id !== "web_services");
+  const columns = [
+    otherSections.filter((_, index) => index % 2 === 0),
+    [...(services ? [services] : []), ...otherSections.filter((_, index) => index % 2 === 1)],
+  ];
 
   return (
     <div className="flex flex-col gap-4">
@@ -175,59 +182,59 @@ export default function OverviewPage() {
           );
         })}
       </div>
-      {/* CSS multi-column masonry: every card sits at its own content height
-          and packs tightly into the columns (no stretching to match a taller
-          neighbour, no gaps below a short one). `break-inside-avoid` keeps a
-          card from splitting across the column boundary; `mb-4` is the vertical
-          gap between stacked cards (multicol uses margins, not `gap`). */}
-      <div className="columns-1 gap-4 lg:columns-2">
-        {/* Headline "Accounts & Activities" tile: visible to every signed-in
-            user (its roster/session figures come from the aggregate /overview/*
-            endpoints, readable by any role). The GO → link into /admin is
-            admins-only — non-admins would be bounced back by the middleware.
-            Wrapper gated on `authenticated` (not just the tile) so signed-out
-            viewers get no empty spacer in the first column. */}
-        {authenticated && (
-          <div className="mb-4 break-inside-avoid">
-            <AccountsActivitiesTile adminLink={isAdmin} />
+      {/* Independent columns keep the headline cards pinned as content grows. */}
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+        {columns.map((column, columnIndex) => (
+          <div key={columnIndex} className="min-w-0 space-y-4">
+            {/* Headline "Accounts & Activities" tile: visible to every signed-in
+                user (its roster/session figures come from the aggregate /overview/*
+                endpoints, readable by any role). The GO → link into /admin is
+                admins-only — non-admins would be bounced back by the middleware.
+                Wrapper gated on `authenticated` (not just the tile) so signed-out
+                viewers get no empty spacer in the first column. */}
+            {columnIndex === 0 && authenticated && (
+              <div>
+                <AccountsActivitiesTile adminLink={isAdmin} />
+              </div>
+            )}
+            {column.filter((section) => !hidden.has(section.id)).map((section) => {
+              let card;
+              if (section.kind === "environmental_map") {
+                const sensors = section.equipment
+                  .map((id) => snapshotById.get(id))
+                  .filter((s): s is EquipmentSnapshot => s !== undefined && s.location != null);
+                card = (
+                  <LabEnvironmentCard
+                    section={section}
+                    sensors={sensors}
+                    pending={!equipmentReady}
+                  />
+                );
+              } else {
+                // kind === "platform"
+                const snapshots = section.equipment
+                  .map((id) => snapshotById.get(id))
+                  .filter((s): s is EquipmentSnapshot => s !== undefined);
+                card = (
+                  <PlatformCard
+                    id={section.id}
+                    title={section.title}
+                    description={section.description ?? undefined}
+                    href={section.href ?? undefined}
+                    snapshots={snapshots}
+                    pending={!equipmentReady}
+                    expectedCount={section.equipment.length}
+                  />
+                );
+              }
+              return (
+                <div key={section.id}>
+                  {card}
+                </div>
+              );
+            })}
           </div>
-        )}
-        {visibleSections.map((section) => {
-          let card;
-          if (section.kind === "environmental_map") {
-            const sensors = section.equipment
-              .map((id) => snapshotById.get(id))
-              .filter((s): s is EquipmentSnapshot => s !== undefined && s.location != null);
-            card = (
-              <LabEnvironmentCard
-                section={section}
-                sensors={sensors}
-                pending={!equipmentReady}
-              />
-            );
-          } else {
-            // kind === "platform"
-            const snapshots = section.equipment
-              .map((id) => snapshotById.get(id))
-              .filter((s): s is EquipmentSnapshot => s !== undefined);
-            card = (
-              <PlatformCard
-                id={section.id}
-                title={section.title}
-                description={section.description ?? undefined}
-                href={section.href ?? undefined}
-                snapshots={snapshots}
-                pending={!equipmentReady}
-                expectedCount={section.equipment.length}
-              />
-            );
-          }
-          return (
-            <div key={section.id} className="mb-4 break-inside-avoid">
-              {card}
-            </div>
-          );
-        })}
+        ))}
       </div>
     </div>
   );
