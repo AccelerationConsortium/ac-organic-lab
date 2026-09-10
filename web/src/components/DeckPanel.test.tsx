@@ -168,7 +168,7 @@ describe("DeckPanel declared vs observed rendering", () => {
 
   it("names the labware under each slot on the compact tile, not just on the page", () => {
     const deck = deckWith({
-      "3": labwareSlot("observed", {
+      "3": labwareSlot("occupied", {
         kind: "96-well",
         load_name: "corning_96_wellplate_360ul_flat",
         rows: 8,

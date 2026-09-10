@@ -1,8 +1,11 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getDeckLayout } from "@/lib/api";
+import { getDeckLayout, postOt2Lights } from "@/lib/api";
+import { useActionError } from "@/lib/use-action-error";
+import { useUserAuth } from "@/lib/user-auth";
 import { devicePanelPath } from "@/lib/device-panels";
 import type { EquipmentSnapshot } from "@/types/api";
 import {
@@ -21,6 +24,48 @@ import { StatusPill } from "./StatusPill";
 import { TileShell } from "./TileShell";
 
 type LightsState = "on" | "off" | "unknown";
+
+const LIGHT_DOT: Record<LightsState, string> = {
+  on: "bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.7)]",
+  off: "bg-slate-900 dark:bg-black",
+  unknown: "bg-slate-400 dark:bg-slate-500",
+};
+
+function LightsPill({
+  state,
+  interactive,
+  onToggle,
+}: {
+  state: LightsState;
+  interactive: boolean;
+  onToggle: () => void;
+}) {
+  const base =
+    "flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-ink dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100";
+  const dot = (
+    <span className={`mr-1.5 inline-block h-2.5 w-2.5 rounded-full ${LIGHT_DOT[state]}`} aria-hidden />
+  );
+  if (!interactive) {
+    return (
+      <span className={base} title={`Deck lights: ${state} (sign in with a role on this robot to switch them)`}>
+        {dot}
+        Light
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`${base} transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/60`}
+      title={`Deck lights: ${state} — click to turn ${state === "on" ? "off" : "on"}`}
+      aria-pressed={state === "on"}
+    >
+      {dot}
+      Light
+    </button>
+  );
+}
 
 function parseLights(snapshot: EquipmentSnapshot): LightsState {
   const raw = snapshot.status.components?.["lights"]?.state;
@@ -79,6 +124,38 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
     enabled: !migrated,
   });
   const legacyLabware = legacyDeck?.slots ?? {};
+
+  // Deck light. Convenience-class, so no lock chip and no auto-relock
+  // countdown — those guard destructive controls. It still needs a role on
+  // this robot, because the passthrough authorizes every action alike.
+  const queryClient = useQueryClient();
+  const { authenticated, canControl, requestLogin } = useUserAuth();
+  const mayToggleLights = authenticated && canControl(snapshot.id);
+  const { actionError, exec } = useActionError();
+  const [pendingLights, setPendingLights] = useState<boolean | null>(null);
+  // Drop the optimistic value once the 2.5 s poll reports the device agreeing,
+  // so a refused or externally-reverted toggle cannot leave the pill lying.
+  useEffect(() => {
+    if (pendingLights != null && lights === (pendingLights ? "on" : "off")) {
+      setPendingLights(null);
+    }
+  }, [lights, pendingLights]);
+  const shownLights: LightsState =
+    pendingLights == null ? lights : pendingLights ? "on" : "off";
+
+  function toggleLights() {
+    if (!authenticated) {
+      requestLogin();
+      return;
+    }
+    if (!mayToggleLights) return;
+    const next = shownLights !== "on";
+    setPendingLights(next);
+    exec(() => postOt2Lights(snapshot.id, next).then(() => queryClient.invalidateQueries({ queryKey: ["equipment"] })), {
+      action: "lights.set",
+      onError: () => setPendingLights(null),
+    });
+  }
   const robotModules = robotModulesFromStatus(status);
 
   // The gateway can answer while its robot is offline; an explicit
@@ -90,6 +167,7 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
   return (
     <TileShell
       snapshot={snapshot}
+      actionError={actionError}
       headerRight={
         <>
           {robotOffline && (
@@ -115,24 +193,13 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
             </AuthGatedLink>
           )}
           <div className="ml-auto flex items-center gap-1.5">
-            {/* Read-only lights indicator (the toggle lives in the device panel). */}
-            <span
-              className="flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-ink dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"
-              title={`Deck lights: ${lights}`}
-            >
-              <span
-                className={[
-                  "mr-1.5 inline-block h-2.5 w-2.5 rounded-full",
-                  lights === "on"
-                    ? "bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.7)]"
-                    : lights === "off"
-                      ? "bg-slate-900 dark:bg-black"
-                      : "bg-slate-400 dark:bg-slate-500",
-                ].join(" ")}
-                aria-hidden
-              />
-              Light
-            </span>
+            {/* Deck light. A plain indicator without a role on this robot;
+                a toggle with one. */}
+            <LightsPill
+              state={shownLights}
+              interactive={mayToggleLights}
+              onToggle={toggleLights}
+            />
             <span
               className="flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-ink dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"
               title={`Left mount: ${pipLeft?.state ?? "empty"}`}

@@ -501,10 +501,21 @@ export async function postShakerSetSpeed(
   return controlPost(equipmentId, "shake/set_speed", { speed_level });
 }
 
-// The OT-2's write surface (lifecycle, lights, pause, deck declaration) lives
-// in the gateway's own panel, framed at /ot2/{hte,complexation}/ui/ — see
+// The OT-2's write surface (lifecycle, pause, deck declaration) lives in the
+// gateway's own panel, framed at /ot2/{hte,complexation}/ui/ — see
 // `lib/device-panels.ts`. `getDeckLayout` below stays: the tile reads deck
 // state, it just no longer writes it.
+//
+// The deck light is the one exception. It is convenience-class — it actuates
+// nothing and cannot spoil a sample — so `tile-policy.ts` exempts
+// `/control/lights*` from the CONTROL_PASSWORD gate, and the tile drives it
+// directly rather than sending an operator to the panel to turn a lamp on.
+// Note the exemption is only that gate: the passthrough's per-equipment role
+// check (`_authorize_control`) has no action-level carve-out, so this still
+// needs a role on the robot and 403s without one.
+export function postOt2Lights(equipmentId: string, on: boolean): Promise<ControlAck> {
+  return controlPost(equipmentId, "lights", { on });
+}
 
 // -- HPLC (Agilent UPLC-MS sidecar) ------------------------------------------
 //
