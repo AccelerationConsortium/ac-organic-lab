@@ -146,6 +146,30 @@ def test_committed_registry_groups_cleanly():
     assert not any(h.startswith("sdl2-pc-") for h in unlisted_hosts)
 
 
+def test_dobot_pc_groups_the_mg400_by_hostname_and_tailnet_ip():
+    registry = Registry(
+        equipment=[
+            _entry(
+                "dobot_mg400",
+                "robot_arm",
+                "http://sdl2-pc-05-dobot.tail6a1dd7.ts.net:8050",
+                name="Dobot MG400",
+            ),
+            _entry("dobot_later", "other", "http://100.64.254.18:8099"),
+        ]
+    )
+    payload = group_hosts(registry)
+    dobot = _by_id(payload, "dobot-pc")
+    assert dobot["label"] == "Ligand Development Platform"
+    assert dobot["kind"] == "Windows PC"
+    assert [s["id"] for s in dobot["services"]] == ["dobot_mg400", "dobot_later"]
+    assert {s["id"]: s["role"] for s in dobot["services"]} == {
+        "dobot_mg400": "equipment",
+        "dobot_later": "service",
+    }
+    assert [g for g in payload["other_hosts"] if not g.get("id")] == []
+
+
 def test_gibbie_pc_groups_its_bench_monitor_and_hostops_by_name_and_lab_switch_ip():
     registry = Registry(
         equipment=[

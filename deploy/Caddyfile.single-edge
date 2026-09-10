@@ -118,6 +118,40 @@ http://100.64.254.6 {
 		}
 	}
 
+	# Dobot MG400 native panel lives at :8050 on sdl2-pc-05-dobot, mounted at
+	# BOTH /ui and /web (the panel's JS derives its base-path from /(ui|web)/),
+	# with the API at the device root (/status, /ws, /control/*). Same shape as
+	# the xArm above: STRIP ONLY the /mg400 prefix (no /web rewrite) so the
+	# panel AND /mg400/status, /mg400/ws, /mg400/control/* all resolve.
+	#   edge:   MG400_EDGE_SHARED_SECRET=…  in caddy's systemd EnvironmentFile
+	#   device: MG400_EDGE_SHARED_SECRET=…  in the mg400 NSSM/service env
+	# /mg400/ws is EXEMPT from forward_auth for the same reason as /xarm5/ws:
+	# Caddy forwards the Connection/Upgrade headers into the /auth/verify
+	# subrequest and Starlette answers a WS upgrade on a non-WS route with a
+	# bare 403 before any cookie check, killing every handshake, signed in or
+	# not. /ws is read-only telemetry either way.
+	@mg400_ui {
+		path /mg400 /mg400/*
+		not path /mg400/ws
+	}
+	forward_auth @mg400_ui 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
+	# Normalize the entrypoints to the panel's canonical trailing-slash URL,
+	# same rationale as the xArm. /mg400/ui is here too because the panel also
+	# answers there (StaticFiles would otherwise slash-redirect and drop the
+	# prefix).
+	redir /mg400 /mg400/web/ 308
+	redir /mg400/ /mg400/web/ 308
+	redir /mg400/web /mg400/web/ 308
+	redir /mg400/ui /mg400/web/ 308
+	handle_path /mg400/* {
+		reverse_proxy sdl2-pc-05-dobot.tail6a1dd7.ts.net:8050 {
+			header_up X-Edge-Auth {env.MG400_EDGE_SHARED_SECRET}
+		}
+	}
+
 	# ---- Opentrons OT-2 gateway operator UIs, path-routed ONTO this origin --
 	# opentrons-server (device PC sdl2-pc-03-cytation) serves an operator SPA
 	# at /ui, edge-gated: /ui and /labware return 404 unless the request carries

@@ -270,6 +270,26 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         ),
     ),
     SshHost(
+        id="dobot-pc",
+        label="Ligand Development Platform",
+        kind="Windows PC",
+        hostname="sdl2-pc-05-dobot.tail6a1dd7.ts.net",
+        user="sdl2",
+        target="dobot-pc",
+        shell="cmd.exe (Windows OpenSSH)",
+        note=(
+            "Ligand Development Platform PC. Hosts the Dobot MG400 gateway "
+            "(dobot-mg400-server) on :8050; more bench services will land "
+            "here. Service control is `C:\\SDL_Tools\\nssm.exe` — prefer "
+            "the whitelisted host-ops surface for routine restarts."
+        ),
+        profiles=(
+            SshProfile(id="cmd", label="cmd", args=(), description="Windows cmd.exe (the OpenSSH default shell)."),
+            _PROFILE_WSL,
+            _PROFILE_WSL_TMUX,
+        ),
+    ),
+    SshHost(
         id="uplc-pc",
         label="UPLC PC",
         kind="Windows PC",

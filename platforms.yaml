@@ -5,12 +5,13 @@ sections:
   #   kind: environmental_map
   #   equipment: [env_hte, env_storage, env_lab499_west, env_lab499_east]
 
-  # Overview order (operator decision 2026-09-06): Services → HTE →
-  # Complexation → Process Chemistry → Gibbie. The headline "Accounts &
-  # Activities" tile is pinned to the left column top and Services to the
-  # right column top; remaining sections alternate columns. Nav tabs follow
-  # the same order but list only sections with an `href`, so Services (which
-  # has none) does not appear there.
+  # Overview order (operator decision 2026-09-06, Ligand Development added
+  # 2026-09-10): Services → HTE → Complexation → Ligand Development →
+  # Process Chemistry → Gibbie. The headline "Accounts & Activities" tile
+  # is pinned to the left column top and Services to the right column top;
+  # remaining sections alternate columns. Nav tabs follow the same order
+  # but list only sections with an `href`, so Services (which has none)
+  # does not appear there.
   - id: web_services
     title: Services
     description: Lab web UIs and dashboards
@@ -51,6 +52,14 @@ sections:
     equipment:
       - cam_echem_tapo_c100
       - ot2_complexation
+
+  - id: ligand_development
+    title: Ligand Development Platform
+    description: Ligand-development bench; MG400 first, more equipment later
+    href: /platforms/ligand_development
+    kind: platform
+    equipment:
+      - dobot_mg400
 
   - id: process_chemistry
     title: Process Chemistry Platform

@@ -545,7 +545,8 @@ device kinds (plate sealer + robot arm).
 
 ### Tile layout
 
-Three rows, each leading with a `w-14` caption pill:
+Rows render only when the device publishes the component they describe
+(the MG400 omits Track). Each row leads with a `w-14` caption pill:
 
 | Row | Cells |
 |-----|-------|
@@ -605,6 +606,47 @@ state, track position).
   publish current stroke. The tile already prefers a live value over
   the static range; the slot lights up automatically once the device
   emits the metric.
+
+### Dobot MG400 (`dobot_mg400`)
+
+A second `kind: robot_arm` on the Ligand Development Platform PC
+(`sdl2-pc-05-dobot.tail6a1dd7.ts.net:8050`, `100.64.254.18`, STATUS_SPEC
+**v1.2**). It inherits the same skill
+catalog, typed client, assistant `move.` / `gripper.` bridging, tile
+routing, and device-action allowlist — all keyed by kind, not id. The
+tile is data-driven: rows and metric pills render only when the device
+publishes the component or datum they describe, so the MG400 (bolted
+down, a suction cup, no force-torque sensor) shows Arm + Gripper and
+omits Track.
+
+Differences from the xArm that the dashboard has to know about:
+
+| | xArm | MG400 |
+|---|---|---|
+| Lifecycle + safety-floor verbs | root-level `connect` / `disconnect` / `move/stop` / `clear/errors` | `/control/startup` / `disable` / `stop` / `clear_error` (`stop` and `clear_error` are claim-exempt) |
+| Dialect declaration | (default) | `extras.control_dialect: control` in `equipment.yaml` — the tile still POSTs the generic verbs; `api/app/control.py` rewrites them. Declared in extras rather than sniffed from `allowed_actions` because those verbs vanish mid-motion, when STOP most needs to reach the arm. |
+| End effector | jaw gripper (`gripper_config`, stroke, force) | suction cup; `components.gripper.state` is `empty` / `holding`; `gripper_verified` is *unconfirmed* unless a vacuum sensor is wired |
+| Rail | `components.track` + `details.motion_graph.rail_location_name` | none (`has_rail: false`; that key is deliberately absent) |
+| Panel | `/xarm5/web/` | `/mg400/web/` (device also mounts `/ui`; the edge normalises `/mg400/ui` → `/mg400/web/`) |
+| Host | `sdl2-pc-03-cytation:8000` | Ligand Development Platform (`sdl2-pc-05-dobot:8050`) — its own PC, not the cytation concentration |
+
+Graph verbs use the same wire names (`graph.move_to`, `graph.travel_to`,
+`graph.gripper`, `graph.recover_to`, `graph.mode`, plus `move.<node>` /
+`gripper.<state>` in STRICT). `POST /control/graph/gripper` is canonical,
+not an alias — the catalog registers `graph.gripper` for every
+`kind: robot_arm`.
+
+`do_not_call_connect: true` stays: STARTUP energises the servos. The
+edge block in `deploy/Caddyfile.single-edge` strips only the `/mg400`
+prefix and exempts `/mg400/ws` from `forward_auth` (Caddy would
+otherwise forward `Connection: Upgrade` into `/auth/verify` and
+Starlette would 403 the handshake).
+
+The device-hosted panel's `/auth/*` proxy, `X-Edge-Auth` HMAC trust,
+and `control_action` events exporter are **not** on this device yet.
+`docs/UI_DESIGN.md` is explicit that without the exporter every write
+in the panel is invisible to the audit trail — those must land before
+real operators use `/mg400/web/`.
 
 ## 11) Liquid handler (`kind: liquid_handler`) — OT-2
 

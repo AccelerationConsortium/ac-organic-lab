@@ -181,7 +181,8 @@ def test_every_host_is_addressable_by_its_id() -> None:
     assert set(HOSTS_BY_ID) == {h.id for h in SSH_HOSTS}
     # These ids are the /utils/computers/ssh/<id> route the host tiles link to
     # (web/src/app/utils/computers/HostsPanel.tsx); keep both sides in step.
-    assert {"gaia", "cytation-pc", "uplc-pc"} <= set(HOSTS_BY_ID)
+    assert {"gaia", "cytation-pc", "dobot-pc", "uplc-pc"} <= set(HOSTS_BY_ID)
+    assert HOSTS_BY_ID["dobot-pc"].label == "Ligand Development Platform"
 
 
 def test_argv_never_prompts_and_never_learns_a_host_key() -> None:
@@ -220,7 +221,7 @@ def test_every_host_defaults_to_a_plain_shell_and_windows_offers_wsl() -> None:
         assert host.profile(None) is host.profiles[0]
         assert host.profile("") is host.profiles[0]
     assert HOSTS_BY_ID["gaia"].profile("tmux") is not None
-    for win in ("cytation-pc", "uplc-pc"):
+    for win in ("cytation-pc", "dobot-pc", "uplc-pc"):
         assert HOSTS_BY_ID[win].profile("wsl") is not None
         assert HOSTS_BY_ID[win].profile("wsl-tmux") is not None
 

@@ -48,6 +48,8 @@ HOST_ALIASES: dict[str, frozenset[str]] = {
     # (pypoe, kuma, auth, BitacoraDB, the edge paths) are all this machine.
     "gaia": frozenset({"localhost", "127.0.0.1", "100.64.254.6"}),
     "cytation-pc": frozenset({"100.64.254.16"}),
+    # Ligand Development Platform PC (hostname still sdl2-pc-05-dobot).
+    "dobot-pc": frozenset({"100.64.254.18"}),
     "uplc-pc": frozenset({"100.64.254.19"}),
     # Tailnet IP and the lab-switch address (192.168.254.79, wired).
     "gibbie-pc": frozenset({"100.64.254.17", "192.168.254.79"}),
