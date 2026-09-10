@@ -397,7 +397,7 @@ def test_hplc_catalog_registered() -> None:
     assert "plate_format" in submit_fields
     assert "submitter" in submit_fields  # robot-reserved-tray flag
     from lab_skills.skill_catalog.hplc import SampleConfig
-    assert {"tray", "well"} <= set(SampleConfig.model_fields)
+    assert "sample_position" in SampleConfig.model_fields
 
 
 def test_hplc_run_submit_args_validate_ranges() -> None:
@@ -414,7 +414,7 @@ def test_hplc_run_submit_args_validate_ranges() -> None:
     ok = RunSubmitArgs(
         output_dir="C:/CDSProjects/Installation/Results/Batch",
         gradient=grad,
-        samples=[SampleConfig(sample_name="cpd_01", tray="front", well="A1", injection_volume=2.0)],
+        samples=[SampleConfig(sample_name="cpd_01", sample_position="D4B-A1", injection_volume=2.0)],
     )
     assert ok.ms_mode == "positive_negative"
     # plate_format defaults to None (trust the device's configured labware); the
@@ -423,35 +423,35 @@ def test_hplc_run_submit_args_validate_ranges() -> None:
     assert ok.submitter == "manual"
 
     with pytest.raises(Exception):
-        SampleConfig(sample_name="has spaces", tray="front", well="A1", injection_volume=2.0)
+        SampleConfig(sample_name="has spaces", sample_position="D4B-A1", injection_volume=2.0)
     with pytest.raises(Exception):
-        SampleConfig(sample_name="cpd", tray="front", well="A1", injection_volume=999.0)  # > 20 uL
+        SampleConfig(sample_name="cpd", sample_position="D4B-A1", injection_volume=999.0)  # > 20 uL
 
     # Well geometry is validated against plate_format (A13 / I1 are off a 96-well plate).
     with pytest.raises(Exception):
         RunSubmitArgs(
             output_dir="x", gradient=grad,
-            samples=[SampleConfig(sample_name="c", tray="front", well="A13", injection_volume=2.0)],
+            samples=[SampleConfig(sample_name="c", sample_position="D4B-A13", injection_volume=2.0)],
         )
     # ...but a 384-well plate accepts P24.
     RunSubmitArgs(
         output_dir="x", gradient=grad, plate_format="384-well",
-        samples=[SampleConfig(sample_name="c", tray="rear", well="P24", injection_volume=2.0)],
+        samples=[SampleConfig(sample_name="c", sample_position="D4B-P24", injection_volume=2.0)],
     )
     # A 6x9 54-vial plate accepts F9 but rejects G1 (off the plate).
     RunSubmitArgs(
         output_dir="x", gradient=grad, plate_format="54-vial",
-        samples=[SampleConfig(sample_name="c", tray="rear", well="F9", injection_volume=2.0)],
+        samples=[SampleConfig(sample_name="c", sample_position="D4B-F9", injection_volume=2.0)],
     )
     with pytest.raises(Exception):
         RunSubmitArgs(
             output_dir="x", gradient=grad, plate_format="54-vial",
-            samples=[SampleConfig(sample_name="c", tray="rear", well="G1", injection_volume=2.0)],
+            samples=[SampleConfig(sample_name="c", sample_position="D4B-G1", injection_volume=2.0)],
         )
     # A custom/unknown plate type is deferred to the device (no client-side raise).
     RunSubmitArgs(
         output_dir="x", gradient=grad, plate_format="custom-24",
-        samples=[SampleConfig(sample_name="c", tray="rear", well="Z9", injection_volume=2.0)],
+        samples=[SampleConfig(sample_name="c", sample_position="D4B-Z9", injection_volume=2.0)],
     )
 
     with pytest.raises(Exception):
@@ -729,3 +729,20 @@ def test_opentrons_flex_head_and_trash_limits() -> None:
         InstrumentSpec(nickname="left", mount="left", instrument_name="flex_96channel_1000")
     with pytest.raises(ValidationError):
         TrashBinArgs(location="A2")
+
+
+def test_hplc_openlab_serialization_matches_device_contract():
+    from lab_skills.skill_catalog.hplc import RunSubmitArgs
+    from pydantic import ValidationError
+    body = dict(output_dir="C:/results", dispatch="openlab",
+                gradient=dict(name="test", solvent_a="water", solvent_b="ACN",
+                              run_time=1, flow_rate=0.2, gradient_table=[[0, 0.1]]),
+                samples=[dict(sample_name="s1", sample_position="D4B-A1", injection_volume=1)])
+    args = RunSubmitArgs(**body)
+    wire = args.model_dump(mode="json")
+    assert "script_name" not in wire
+    assert wire["samples"][0]["sample_position"] == "D4B-A1"
+    assert "tray" not in wire["samples"][0]
+    assert RunSubmitArgs(**wire).dispatch == "openlab"
+    with pytest.raises(ValidationError, match="Omit script_name"):
+        RunSubmitArgs(**body, script_name="examples/agent_agilent.py")

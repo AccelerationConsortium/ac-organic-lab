@@ -1,50 +1,15 @@
-"""Skill catalog entries for ``kind=hplc``.
+"""HPLC skills for the Agilent UPLC-MS STATUS_SPEC v1.2 sidecar.
 
-Reference device: :mod:`agilent_hplcms_server` — the Agilent UPLC-MS status +
-control sidecar (instrument ``SDL2_LC1290``). It implements STATUS_SPEC v1.1 and
-hard-enforces ``X-Claim-Token`` on ``/control/*`` (the aggregator's per-request
-claim dance handles that transparently). Endpoint paths and arg ranges mirror
-the device's Pydantic ``Field(gt=, le=)`` constraints in
-``agilent_hplcms_server/control/models.py``.
+The SDK manages claims and preconditions. Sample addresses are single
+``sample_position`` strings (D4B-A1), forwarded verbatim. Default sidecar
+submissions queue during auto-detected technician acquisition; explicit
+service mode refuses them. Standby and workflow.start are refused under
+both servicing sources. Workflow.start requires the hte role.
 
-The sidecar OWNS the job queue: its MosesRunner is the sole FIFO queue for our
-runs (process-exit authoritative), while OpenLab CDS is reserved for technician
-servicing/maintenance. Control surface:
-
-* ``POST   /control/run``               - submit a batch run (starts if idle, else queues)
-* ``POST   /control/abort``             - abort the active run and clear the queue
-* ``DELETE /control/queue/{queue_id}``  - cancel one *pending* (not-yet-started) job
-* ``POST   /control/standby``           - park the instrument in low-flow standby
-                                          (NOT a full shutdown — that is a manual
-                                          operator procedure at the instrument)
-* ``POST   /control/workflow/start``    - take the equipment-blocking workflow lock
-                                          for a robot/agent campaign (``automation`` role only)
-* ``POST   /control/workflow/end``      - release the workflow lock (claim retained)
-
-``Skill.name`` matches the device's ``allowed_actions`` (``run.submit`` /
-``run.abort`` / ``queue.cancel`` / ``instrument.standby`` / ``workflow.start`` /
-``workflow.end``). The device drops the *enqueue* verbs (``run.submit``,
-``instrument.standby``, ``workflow.start``) from ``allowed_actions`` whenever it
-would refuse them — queue full → 412, OpenLab core down → 409 ``requires_init``,
-or a technician is servicing the instrument directly in OpenLab → 409
-``instrument_servicing`` — so availability stays truthful. ``workflow.start`` is
-additionally offered only while no workflow is active, and ``workflow.end`` exactly
-while one is.
-
-**Workflow lock (queue-ownership precedence #2):** an ``automation``-role caller
-(a robot/agent campaign account) takes the equipment-blocking lock for a
-campaign — a series of runs — via ``workflow.start``;
-while held, the device refuses sample submits from anyone but the lock holder with
-``423 workflow_active``. The lock rides on the caller's claim, so it inherits the
-claim's TTL/heartbeat/auto-expiry (a crashed holder loses it). ``workflow.start``
-requires the claim owner's role to be ``automation`` (else ``403 role_forbidden``);
-``workflow.end`` is idempotent. (Operator/dashboard service-mode toggles —
-``/control/service/start|end`` — are deliberately NOT skills: they are technician
-controls, not agent actions.)
-
-Not modelled as skills: ``GET /control/queue`` (read-only status, surfaced via
-the aggregator) and ``POST /control/startup`` (a read-only readiness probe that
-never starts hardware).
+Opt-in OpenLab dispatch reports only handoff, never acquisition completion.
+Its submit script is selected by the device, so serialization omits
+script_name. Operator service toggles and fault acknowledgments are not skills.
+The installed device's /docs/agent and /openapi.json describe the full API.
 """
 
 from __future__ import annotations
@@ -53,21 +18,13 @@ import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_serializer, model_validator
 
 from .models import SkillDef
 from .registry import register
 
 
-# Autosampler tray + plate geometry. Mirrors agilent_hplcms_server's
-# control/models.py: the device composes the Agilent "{drawer}-{well}" position
-# string from {tray, well} and validates wells against plate_format.
-#
-# ``_BUILTIN_PLATE_GEOMETRY`` covers the canonical formats a caller may declare;
-# this is a friendly client-side pre-check. The device is authoritative and can
-# additionally enforce the ACTUAL labware loaded per tray (its LABWARE_CONFIG_PATH),
-# so a plate_format outside this set is a custom type validated only on the device.
-TrayName = Literal["front", "rear"]
+# Client-side well bounds; configured device labware remains authoritative.
 _BUILTIN_PLATE_GEOMETRY: dict[str, tuple[int, int]] = {
     "96-well": (8, 12),
     "384-well": (16, 24),
@@ -102,12 +59,15 @@ class SampleConfig(BaseModel):
         pattern=r"^[A-Za-z0-9_\-]+$",
         description="Alphanumeric identifier (no spaces).",
     )
-    tray: TrayName = Field(description="Autosampler tray holding this sample (front or rear).")
-    well: str = Field(
-        min_length=2,
-        max_length=4,
-        description='Plate well, e.g. "A1" or "H12". Validated against plate_format.',
+    sample_position: str = Field(
+        pattern=r"^D[1-4][FB]-[A-Za-z]\d{1,2}$",
+        description="Agilent drawer and well, e.g. D4B-A1. Sent verbatim to the device.",
     )
+
+    @property
+    def well(self) -> str:
+        return self.sample_position.split("-", 1)[1]
+
     injection_volume: float = Field(gt=0, le=20.0, description="Injection volume in uL (max 20).")
 
 
@@ -123,7 +83,7 @@ class RunSubmitArgs(BaseModel):
         default=None,
         description=(
             "Declared plate type for all samples, asserted by the device against the "
-            "tray's configured labware. None trusts the device's configured labware; "
+            "drawer's configured labware. None trusts the device's configured labware; "
             "when unset it assumes '96-well' for this client-side well-range pre-check. "
             "Canonical types: '96-well', '384-well', '54-vial'."
         ),
@@ -131,7 +91,7 @@ class RunSubmitArgs(BaseModel):
     submitter: Literal["manual", "robot"] = Field(
         default="manual",
         description=(
-            "Runs targeting a tray reserved for robotic submission are refused (HTTP 412) "
+            "Runs targeting a drawer reserved for robotic submission are refused (HTTP 412) "
             "unless submitter='robot'."
         ),
     )
@@ -145,6 +105,24 @@ class RunSubmitArgs(BaseModel):
         default="examples/agent_agilent.py",
         description="Moses controller script (must be in the device's MOSES_ALLOWED_SCRIPTS).",
     )
+
+    dispatch: Literal["sidecar", "openlab"] = Field(
+        default="sidecar",
+        description="sidecar tracks acquisition completion; openlab tracks only handoff (dispatching -> handed_off/failed). Omit script_name for openlab.",
+    )
+
+    @model_validator(mode="after")
+    def _dispatch_script(self) -> "RunSubmitArgs":
+        if self.dispatch == "openlab" and "script_name" in self.model_fields_set:
+            raise ValueError("Omit script_name for dispatch='openlab'; the device selects it.")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _wire_body(self, handler):
+        body = handler(self)
+        if self.dispatch == "openlab":
+            body.pop("script_name", None)
+        return body
 
     @model_validator(mode="after")
     def _validate_wells(self) -> "RunSubmitArgs":
@@ -172,7 +150,7 @@ class RunSubmitResult(BaseModel):
     """Response body for ``run.submit``."""
 
     run_id: str
-    status: Literal["accepted", "queued"]
+    status: Literal["accepted", "queued", "dispatching"]
     message: str
     queue_position: int | None = None
 
@@ -237,7 +215,9 @@ register(
             kind="hplc",
             description=(
                 "Submit a batch LC-MS run. Starts immediately if the instrument is "
-                "idle, otherwise queues behind the active run (FIFO)."
+                "idle, otherwise queues behind the active run (FIFO), including technician "
+                "acquisitions. Explicit service mode refuses submissions. OpenLab dispatch "
+                "tracks handoff only; handed_off does not mean acquisition completed."
             ),
             endpoint="/control/run",
             args_schema=RunSubmitArgs,

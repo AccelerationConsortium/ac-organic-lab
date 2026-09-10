@@ -310,6 +310,10 @@ equipment:
     base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8010
     tailscale_ip: 100.64.254.19
     status_path: /status
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /docs/agent, kind: json }
     # 8 s: Wi-Fi path to this PC (see xarm_translocation note). Was 5 s.
     poll_timeout_seconds: 8.0
     # protocol >= "1.1" turns on the aggregator's per-request claim dance
