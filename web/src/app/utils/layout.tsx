@@ -10,7 +10,7 @@ import { pillClass, stickyPillRow } from "@/lib/pill";
  * between them (same pill pattern as the Platforms tab). The /utils index
  * redirects to Computers and Servers, the default utility. Register new
  * utilities in UTILS below. (Inventory graduated back to a top-level
- * /inventory page with its own Nav tab, next to Notebooks.)
+ * /inventory page with its own Nav tab, after Platforms.)
  *
  * `Devices` used to be one pill carrying both the host machines and the Bambu
  * printers; they are separate pills now, and /utils/devices redirects to the

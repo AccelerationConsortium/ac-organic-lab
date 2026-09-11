@@ -4,8 +4,9 @@
  * A read-only, chrome-less embed (/bitacora/inventory/embed). The embed has no
  * Bitácora banner/heading, and its reads are public — so this page requires no
  * sign-in; anyone can browse the shelf (uploading stays admin-only, enforced by
- * Bitácora's API). Notebooks, by contrast, opens the full Bitácora app in its
- * own browser tab.
+ * Bitácora's API). The full Bitácora app (the notebook), by contrast, opens in
+ * its own browser tab — from the admin-only link on the Admin page while it is
+ * under test.
  */
 export default function InventoryPage() {
   return (

@@ -370,6 +370,14 @@ export default function AdminPage() {
     // two-column grid uses items-start so each tile sits at its own content
     // height like the Overview's masonry cards, with pairs preserved.
     <>
+    {/* The notebook is hidden from the tab row while it is under test (see
+        components/Nav.tsx); this admin-only link is its one dashboard entry
+        point. Visibility only — /bitacora/ itself is gated at the edge by
+        sign-in, not by role; the beta prefix below is the account-gated one. */}
+    <p className="pt-3 text-sm">
+      <a href="/bitacora/" target="_blank" rel="noopener noreferrer" className="font-medium text-sky-700 underline dark:text-sky-300">Open the notebook (Bitácora)</a>
+      <span className="ml-2 text-ink-subtle">Hidden from the tab row while under test · opens in a new browser tab</span>
+    </p>
     {beta.data?.href === "/bitacora-beta" && beta.data.user === identity?.email?.trim().toLowerCase() && <p className="pt-3 text-sm">
       <a href="/bitacora-beta" target="_blank" rel="noopener noreferrer" className="font-medium text-sky-700 underline dark:text-sky-300">Open Bitácora Beta</a>
       <span className="ml-2 text-ink-subtle">Private test instance · separate data</span>

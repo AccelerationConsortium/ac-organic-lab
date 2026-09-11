@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 
 import { usePlatforms } from "@/lib/use-platforms";
-import { useUserAuth } from "@/lib/user-auth";
 
 /**
  * Placeholder for the per-platform **workflow UI** (`/platforms/{name}`).
@@ -19,7 +18,6 @@ import { useUserAuth } from "@/lib/user-auth";
 export default function PlatformWorkflowPlaceholder() {
   const params = useParams<{ platform: string }>();
   const { data: platforms } = usePlatforms();
-  const { loading, authenticated } = useUserAuth();
 
   const section = platforms?.sections.find(
     (s) => s.href === `/platforms/${params.platform}` || s.id === params.platform,
@@ -36,23 +34,13 @@ export default function PlatformWorkflowPlaceholder() {
       </h2>
       <p className="max-w-md text-sm text-ink-muted dark:text-slate-300">
         This page will host the {title} workflow interface (plan, run, and
-        monitor experiments). Until then, experiments are planned and run in the
-        Notebooks tab (Bitácora), and live equipment tiles and controls are on
-        the Platforms tab.
+        monitor experiments). Until then, live equipment tiles and controls are
+        on the Platforms tab.
       </p>
+      {/* The notebook (Bitácora) is hidden from the dashboard while it is
+          under test — its only entry point is the Admin page link — so this
+          placeholder no longer offers an "Open the notebook" button. */}
       <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-        {/* Same visibility rule as the Nav's Notebooks tab, which now opens
-            Bitácora in its own browser tab. */} 
-        {!loading && authenticated && (
-          <a
-            href="/bitacora/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-md bg-orange-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-orange-700 dark:bg-orange-500 dark:hover:bg-orange-600"
-          >
-            Open the notebook →
-          </a>
-        )}
         <Link
           href="/platforms"
           className="rounded-md border border-sky-400 bg-sky-100 px-3 py-1.5 text-sm font-medium text-sky-900 transition-colors hover:bg-sky-200 dark:border-sky-600 dark:bg-sky-900/60 dark:text-sky-100 dark:hover:bg-sky-900/80"
@@ -60,11 +48,6 @@ export default function PlatformWorkflowPlaceholder() {
           Go to Platforms →
         </Link>
       </div>
-      {!loading && !authenticated && (
-        <p className="text-xs text-ink-subtle dark:text-slate-400">
-          Sign in to open the lab notebook.
-        </p>
-      )}
     </div>
   );
 }

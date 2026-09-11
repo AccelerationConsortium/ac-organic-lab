@@ -19,7 +19,7 @@ type Tab = { href: string; label: string; external?: boolean };
 export function Nav() {
   const pathname = usePathname();
   const { data: platforms } = usePlatforms();
-  const { authenticated, identity } = useUserAuth();
+  const { identity } = useUserAuth();
 
   // One "Platforms" tab groups every `kind: platform` section — the page's
   // pill row switches between them (the old per-platform routes still exist
@@ -28,13 +28,11 @@ export function Nav() {
     ? [{ href: "/platforms", label: "Platforms" }]
     : [];
 
-  // Notebooks opens Bitácora (a separate app, own auth/routing) in its own
-  // browser tab, only after sign-in so an anonymous visitor never lands on the
-  // ELN's auth screen. Inventory is a public, chrome-less read-only embed — it
-  // stays inside the dashboard at /inventory and is visible to everyone.
-  const notebooksTab = authenticated
-    ? [{ href: "/bitacora/", label: "Notebooks", external: true }]
-    : [];
+  // The notebook (Bitácora — a separate app with its own auth/routing) is
+  // hidden from the tab row while it is under test: its only dashboard entry
+  // point is the admin-only link on the Admin page (see app/admin/page.tsx).
+  // Inventory is a public, chrome-less read-only embed — it stays inside the
+  // dashboard at /inventory and is visible to everyone.
   const inventoryTab = [{ href: "/inventory", label: "Inventory" }];
 
   // Visibility only — the /admin route is enforced by the middleware + sidecar.
@@ -44,7 +42,6 @@ export function Nav() {
   const tabs: Tab[] = [
     ...STATIC_BEFORE,
     ...platformTabs,
-    ...notebooksTab,
     ...inventoryTab,
     ...STATIC_AFTER,
     ...adminTabs,
@@ -63,7 +60,8 @@ export function Nav() {
             ? "border-sky-600 text-ink dark:border-sky-400 dark:text-slate-100"
             : "border-transparent text-ink-muted hover:text-ink dark:text-slate-300 dark:hover:text-slate-200"
         }`;
-        // External tabs (Notebooks → Bitácora) open in a new browser tab.
+        // External tabs (none today; the Notebooks tab used this) open in a
+        // new browser tab.
         return tab.external ? (
           <a
             key={tab.href}

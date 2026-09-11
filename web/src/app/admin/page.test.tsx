@@ -206,6 +206,12 @@ afterEach(() => {
 });
 
 describe("AdminPage", () => {
+  it("links the admin to the notebook hidden from the tab row", async () => {
+    renderPage();
+    const link = await screen.findByRole("link", { name: "Open the notebook (Bitácora)" });
+    expect(link.getAttribute("href")).toBe("/bitacora/");
+    expect(link.getAttribute("target")).toBe("_blank");
+  });
   it("shows the private beta link only after the server permits access", async () => {
     bodies["/api/admin/bitacora-beta"] = { href: "/bitacora-beta", label: "Bitácora Beta", user: "yang@lab.ca" };
     renderPage();

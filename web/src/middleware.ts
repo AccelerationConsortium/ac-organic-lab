@@ -118,11 +118,12 @@ const SSH_WS_PATH = "/api/ssh/ws";
 const SSH_PAGE_RE = /^\/utils\/computers\/ssh(?:\/.*)?$/;
 
 // Stale Notebooks bookmark. /notebooks no longer exists as an in-dashboard
-// route (Bitácora opens in its own browser tab). An old bookmark (or a direct
-// URL) is redirected to Bitácora for a signed-in visitor, or back to the
-// dashboard Overview when they aren't — they may not have Bitácora access, and
-// the Overview is where they'd sign in. (/inventory is a real public page
-// again — a chrome-less embed — so it is not redirected.)
+// route, and while the notebook is under test its only dashboard entry point
+// is the admin-only link on the Admin page. An old bookmark (or a direct URL)
+// is redirected to Bitácora for a signed-in admin, and back to the dashboard
+// Overview for everyone else — the Overview is where they'd sign in.
+// (/inventory is a real public page again — a chrome-less embed — so it is
+// not redirected.)
 const STALE_ELN_REDIRECT_RE = /^\/notebooks(?:\/.*)?$/;
 
 const AUTH_SERVICE_BASE =
@@ -166,7 +167,12 @@ export async function middleware(request: NextRequest) {
   // ---- Stale /notebooks → Bitácora (or Overview) --------------------------
   if (STALE_ELN_REDIRECT_RE.test(pathname)) {
     let to = "/";
-    if (CONTROL_OPEN || (await verifySession(request)).ok) to = "/bitacora/";
+    if (CONTROL_OPEN) {
+      to = "/bitacora/";
+    } else {
+      const v = await verifySession(request);
+      if (v.ok && v.role === "admin") to = "/bitacora/";
+    }
     const url = request.nextUrl.clone();
     url.pathname = to;
     url.search = "";
