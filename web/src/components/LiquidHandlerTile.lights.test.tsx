@@ -67,14 +67,18 @@ describe("OT-2 HTTP status", () => {
     [undefined, undefined, "unknown"],
   ] as const)("reports %s / %s as %s", (state, connected, expected) => {
     const snapshot = snap("off");
+    snapshot.status.message = "OT-2 service state: ready";
     snapshot.status.components = {
       ssh: { connected: false, state: "disconnected" },
       ...(state ? { control: { state, connected: connected! } } : {}),
     };
     draw(snapshot);
-    const http = screen.getByTitle(`HTTP: ${expected}`);
-    expect(screen.getByTitle("SSH: disconnected").nextElementSibling).toBe(http);
-    expect(http.querySelector(".bg-emerald-400") !== null).toBe(expected === "connected");
+    const footer = screen.getByText("OT-2 service state: ready");
+    expect(footer.title).toContain(`HTTP: ${expected}`);
+    expect(footer.title).toContain("SSH: disconnected");
+    expect(screen.queryByText("SSH")).toBeNull();
+    expect(screen.queryByText("HTTP")).toBeNull();
+    expect(screen.queryByText("Protocol")).toBeNull();
   });
 });
 

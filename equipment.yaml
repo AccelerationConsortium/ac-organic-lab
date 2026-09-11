@@ -46,7 +46,7 @@ equipment:
     # restart (cache empty, route falls back to a live build).
     poll_timeout_seconds: 5.0
     tiles:
-      hte: { w: 2, h: 2.5 }
+      hte: { w: 2, h: 3 }
     pills: {}
     camera:
       host: 172.31.60.16
@@ -228,7 +228,7 @@ equipment:
       - { label: Agent guide, path: /docs/agent, kind: json }
       - { label: Typed plan actions, path: /plans/actions, kind: json }
     tiles:
-      hte: { w: 2, h: 3}
+      hte: { w: 2, h: 3 }
     # "Open" pill -> the edge-gated OT-2 gateway operator SPA at
     # /ot2/hte/ui/ (Caddy: forward_auth @ot2_hte -> ac_auth, header_up
     # X-Edge-Key). ROOT-RELATIVE so it follows the operator's current edge
@@ -397,7 +397,7 @@ equipment:
     # for the first request after a gateway restart.
     poll_timeout_seconds: 5.0
     tiles:
-      process_chemistry: { w: 2, h: 2.5 }
+      process_chemistry: { w: 2, h: 3 }
     pills: {}
     camera:
       host: 172.31.60.15
@@ -424,7 +424,7 @@ equipment:
     # for the first request after a gateway restart.
     poll_timeout_seconds: 5.0
     tiles:
-      complexation: { w: 2, h: 2.5 }
+      complexation: { w: 2, h: 3 }
     pills: {}
     camera:
       host: 172.31.60.22
@@ -449,7 +449,7 @@ equipment:
       - { label: Agent guide, path: /agent-guide, kind: markdown }
     enabled: true
     tiles:
-      complexation: { w: 2, h: 1.5 }
+      ligand_development: { w: 2, h: 1.5 }
     pills:
       link_label: "GO"
       link_href: /utils/computers/ssh/lumastir-pi
@@ -968,7 +968,7 @@ equipment:
     status_path: /cameras/cam_gibbie_tapo_c100/status
     poll_timeout_seconds: 5.0
     tiles:
-      sample_prep: { w: 2, h: 2.5 }
+      sample_prep: { w: 2, h: 3 }
     pills: {}
     camera:
       host: 172.31.33.16
@@ -992,7 +992,7 @@ equipment:
     status_path: /cameras/cam_ligand_tapo_d246/status
     poll_timeout_seconds: 5.0
     tiles:
-      ligand_development: { w: 2, h: 2.5 }
+      ligand_development: { w: 2, h: 3 }
     pills: {}
     camera:
       host: 172.31.60.21
@@ -1032,7 +1032,7 @@ equipment:
     status_path: /devices/gibbie_flex/status
     poll_timeout_seconds: 5.0
     tiles:
-      sample_prep: { w: 2, h: 2 }
+      sample_prep: { w: 2, h: 1 }
     pills: {}
 
   - id: gibbie_ur_arm

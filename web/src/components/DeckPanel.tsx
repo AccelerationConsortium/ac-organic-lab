@@ -143,7 +143,7 @@ export function DeckPanel({
       className={
         page
           ? "grid w-full gap-x-2 gap-y-1 sm:gap-x-3 sm:gap-y-1.5"
-          : "grid w-full gap-x-1.5 gap-y-1"
+          : "mx-auto grid w-full max-w-[560px] gap-x-1.5 gap-y-1"
       }
       style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
     >
@@ -268,9 +268,8 @@ export function DeckPanel({
         // The slot number sits in the cell's top-left corner and the labware
         // label BELOW the box, on both variants. The tile used to omit the
         // label row for want of space at a fixed 160x120; the cell is now
-        // responsive and the OT-2 tile spans three grid rows, so the row fits
-        // and the tile can answer "what is in slot 6" without a round trip to
-        // the gateway panel.
+        // responsive; the compact preview retains labels so the tile answers
+        // "what is in slot 6" without a round trip to the gateway panel.
         const box = <div className={cellClassName}>{cellBody}</div>;
         const content = (
           <div className="flex w-full flex-col gap-0.5">

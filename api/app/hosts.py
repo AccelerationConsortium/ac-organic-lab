@@ -60,6 +60,7 @@ HOST_ALIASES: dict[str, frozenset[str]] = {
     # Device Pis the registry reaches by tailnet IP rather than by name.
     "fumehood-pi": frozenset({"100.64.254.100"}),
     "press-pi": frozenset({"100.64.254.104"}),
+    "lumastir-pi": frozenset({"100.64.254.103"}),
 }
 
 #: Registry-id convention marking a ``sdl-lab-hostops`` agent entry. Its live

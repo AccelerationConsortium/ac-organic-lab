@@ -59,6 +59,8 @@ export interface TileShellProps {
    * (e.g. a fetch_error variant) but should keep to one or two lines.
    */
   footerLeft?: ReactNode;
+  /** Extra status detail on hover over the footer message. */
+  footerMessageTitle?: string;
   /** Extra inline content in the subtitle line after "kind · id". */
   subtitleExtra?: ReactNode;
   /**
@@ -144,6 +146,7 @@ export function TileShell({
   displayStatus,
   children,
   footerLeft,
+  footerMessageTitle,
   subtitleExtra,
   lastErrorInterpret,
   actionError = null,
@@ -306,7 +309,7 @@ export function TileShell({
             (hasMessage || hasActions ? (
               <>
                 {hasMessage && (
-                  <div className="truncate" title={status.message ?? undefined}>
+                  <div className="truncate" title={footerMessageTitle ?? status.message ?? undefined}>
                     {status.message}
                   </div>
                 )}

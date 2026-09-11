@@ -30,8 +30,10 @@ sections:
     equipment:
       - cam_hte_tapo_c245
       - xarm_translocation
-      - fume_hood_actuator
       - ot2_hte
+      # The right stack (xArm + OT-2) exceeds the camera height, placing
+      # the actuator next in the left stack, directly below the HTE camera.
+      - fume_hood_actuator
       - dose_every_well
       - torry_pines_shaker
       - filter_every_well
@@ -51,7 +53,6 @@ sections:
     equipment:
       - cam_echem_tapo_c100
       - ot2_complexation
-      - lumastir
 
   - id: sample_prep
     title: Gibbie Platform
@@ -61,9 +62,9 @@ sections:
     equipment:
       - cam_gibbie_tapo_c100
       - gibbie_workflow
+      - gibbie_balance
       - gibbie_flex
       - gibbie_ur_arm
-      - gibbie_balance
       - gibbie_hotplate
 
   - id: process_chemistry
@@ -76,8 +77,8 @@ sections:
     equipment:
       # First camera supplies the Overview card's live feed.
       - cam_echem_tapo_c245
-      - lle_ur5_arm
       - lle_easymax
+      - lle_ur5_arm
       - lle_hplc
       - lle_xpr_balance
       - lle_ph_unit
@@ -91,3 +92,4 @@ sections:
       # First camera supplies the Overview card's live feed.
       - cam_ligand_tapo_d246
       - dobot_mg400
+      - lumastir

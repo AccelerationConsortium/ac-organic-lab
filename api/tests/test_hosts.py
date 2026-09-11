@@ -212,3 +212,20 @@ def test_lle_pc_groups_by_tailnet_lab_switch_and_campus_addresses():
     # Device hosts are always listed (they are machines, with or without a
     # registry service); what must be empty is the anonymous remainder.
     assert [g for g in payload["other_hosts"] if not g.get("id")] == []
+
+
+def test_lumastir_api_groups_onto_its_ssh_host():
+    registry = Registry(
+        equipment=[_entry("lumastir", "other", "http://100.64.254.103:8000")]
+    )
+    payload = group_hosts(registry)
+    matches = [
+        host for host in payload["other_hosts"]
+        if host.get("id") == "lumastir-pi"
+        or host["hostname"] == "100.64.254.103"
+    ]
+    assert len(matches) == 1
+    host = matches[0]
+    assert host["id"] == "lumastir-pi"
+    assert host["hostname"] == "lumastir-pi"
+    assert [(s["id"], s["port"]) for s in host["services"]] == [("lumastir", 8000)]
