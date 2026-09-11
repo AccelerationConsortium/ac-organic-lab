@@ -923,6 +923,31 @@ equipment:
   # 192.168.1.237) — see ROADMAP.
   # ---------------------------------------------------------------------
 
+  # Ligand Development Platform camera (Tapo at 172.31.60.21, on-device
+  # Camera Account "Ligand-dev-platform"). Physically moved from the Echem
+  # bench 2026-09-10; a distinct unit from cam_echem_tapo_c245. Fronted by
+  # the same kasa-tapo-services gateway. Dual-lens C245D: wide on /stream1,
+  # tele on /stream6 (ONVIF advertises only stream1/2/8, but /stream6
+  # carries the tele lens over RTSP — verified on the bench).
+  - id: cam_ligand_tapo_d246
+    name: Ligand Development Camera
+    kind: camera
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8002
+    status_path: /cameras/cam_ligand_tapo_d246/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      ligand_development: { w: 2, h: 2.5 }
+    pills: {}
+    camera:
+      host: 172.31.60.21
+      onvif_port: 2020
+      rtsp_port: 554
+      lenses:
+        - { id: wide, label: Wide, rtsp_path: stream1, ptz_capable: false }
+        - { id: tele, label: Tele, rtsp_path: stream6 }
+
   - id: gibbie_workflow
     name: Gibbie Workflow
     kind: other

@@ -59,6 +59,8 @@ sections:
     href: /platforms/ligand_development
     kind: platform
     equipment:
+      # First camera supplies the Overview card's live feed.
+      - cam_ligand_tapo_d246
       - dobot_mg400
 
   - id: process_chemistry
