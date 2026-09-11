@@ -236,13 +236,15 @@ describe("HostsPanel", () => {
     expect(uplc.textContent).toContain("No live details");
   });
 
-  it("falls back to the hostname for a host no whitelisted machine claims", () => {
+  it("uses the same name and address layout for a host without SSH", () => {
     render(<HostsPanel hosts={HOSTS} snapshots={[]} />);
 
     expect(screen.getByText("Other device hosts")).toBeTruthy();
     const pi = screen.getByText("100.64.254.100").closest("article")!;
-    const hood = within(pi).getByText("Fume Hood Actuator :5000");
+    const hood = within(pi).getByText("100.64.254.100:5000");
     expect(hood.getAttribute("data-kind")).toBe("equipment");
+    expect(within(pi).getByRole("heading", { name: "Fume Hood Actuator" })).toBeTruthy();
+    expect(within(pi).getByText("SSH not configured")).toBeTruthy();
     // No SSH link: without a console id there is no terminal to offer.
     expect(pi.querySelector("a[href^='/utils/computers/ssh/']")).toBeNull();
   });

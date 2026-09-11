@@ -37,10 +37,9 @@ import { STATE_META, effectiveState } from "@/lib/state-meta";
  * The second block, **"Other device hosts"**, is the Pis that carry one
  * instrument each, plus any registry hostname no whitelisted machine claims.
  * The split is presentation, not capability: a device host on the whitelist
- * carries its console id and gets the same SSH terminal link. Those tiles lead
- * with the machine's name and put the **address** in the chip
- * (`100.64.254.100:5000`), because on a single-instrument host the service
- * name is already the title.
+ * carries its console id and gets the same SSH terminal link. Those tiles share a name, kind, hostname, address chips, and footer layout.
+ * Hosts without a console entry use their single service name as the title
+ * where available and explicitly indicate that SSH is not configured.
  *
  * The SSH terminal link is admin-only, matching the gate in
  * `web/src/middleware.ts`; a non-admin sees no link at all. Host ids come
@@ -123,7 +122,7 @@ function CapChip({
     <span
       title={chipTitle(service, snapshot)}
       data-kind={service.role}
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${CAP_STYLE[service.role]}`}
+      className={`inline-flex max-w-full break-all items-center rounded-full border px-2 py-0.5 text-xs font-medium ${CAP_STYLE[service.role]}`}
     >
       {address ? addressChipLabel(service) : chipLabel(service)}
     </span>
@@ -302,21 +301,20 @@ function OtherHostTile({
   group: LabHostGroup;
   snapshotById: Map<string, EquipmentSnapshot>;
 }) {
-  // A whitelisted device host leads with its name and shows the address in the
-  // chip; an unclaimed hostname has no name to lead with, so it keeps the old
-  // shape (hostname as title, service name in the chip).
-  const named = Boolean(group.label);
+  const title = group.label ?? (group.services.length === 1 ? group.services[0].name : group.hostname);
   return (
-    <article className={TILE_CARD}>
-      <header className="flex min-w-0 flex-col gap-0.5">
+    <article className={`${TILE_CARD} min-h-[180px] min-w-0`}>
+      <header className="flex min-w-0 flex-col gap-1">
         <h3
-          className={`truncate text-sm font-semibold text-ink dark:text-slate-100 ${named ? "" : "font-mono"}`}
+          className="break-words text-sm font-semibold text-ink dark:text-slate-100"
         >
-          {group.label ?? group.hostname}
+          {title}
         </h3>
-        <p className="truncate text-xs text-ink-subtle dark:text-slate-400">
-          <span className="uppercase">{group.kind ?? "device host"}</span> ·{" "}
-          <span className="font-mono">{named ? group.hostname : "from equipment.yaml"}</span>
+        <p className="text-xs text-ink-subtle dark:text-slate-400">
+          {group.kind ?? "Device host"}
+        </p>
+        <p className="break-all font-mono text-xs text-ink-subtle dark:text-slate-400">
+          {group.hostname}
         </p>
       </header>
       <div className="flex flex-wrap content-start gap-1">
@@ -325,22 +323,29 @@ function OtherHostTile({
             key={service.id}
             service={service}
             snapshot={snapshotById.get(service.id)}
-            address={named}
+            address
           />
         ))}
       </div>
-      {group.id && (
-        <AuthGatedLink
-          href={`/utils/computers/ssh/${group.id}`}
-          external
-          adminOnly
-          hideUnauthorized
-          title={`Open an SSH terminal on ${group.hostname} (admins only, audited)`}
-          className="mt-auto w-fit rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-ink transition-colors hover:border-slate-400 hover:bg-surface-subtle dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
-        >
-          SSH terminal ↗
-        </AuthGatedLink>
+      {group.services.length === 0 && (
+        <p className="text-xs text-ink-subtle dark:text-slate-400">No registered services</p>
       )}
+      <footer className="mt-auto flex min-h-9 items-end border-t border-slate-200 pt-2 dark:border-slate-800">
+        {group.id ? (
+          <AuthGatedLink
+            href={`/utils/computers/ssh/${group.id}`}
+            external
+            adminOnly
+            hideUnauthorized
+            title={`Open an SSH terminal on ${group.hostname} (admins only, audited)`}
+            className="w-fit rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-ink transition-colors hover:border-slate-400 hover:bg-surface-subtle dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+          >
+            SSH terminal ↗
+          </AuthGatedLink>
+        ) : (
+          <span className="text-xs text-ink-subtle dark:text-slate-400">SSH not configured</span>
+        )}
+      </footer>
     </article>
   );
 }
@@ -386,8 +391,7 @@ export function HostsPanel({
         {hosts.hosts.map((host) => (
           <div
             key={host.id}
-            className="h-full"
-            style={{ gridColumn: "span 2", gridRow: "span 1" }}
+            className="h-full min-w-0 sm:col-span-2"
           >
             <HostTile host={host} snapshotById={byId} />
           </div>
@@ -405,9 +409,9 @@ export function HostsPanel({
               terminal too.
             </p>
           </header>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid auto-rows-fr grid-cols-1 gap-4 lg:grid-cols-2">
             {hosts.other_hosts.map((group) => (
-              <div key={group.hostname} className="h-full" style={{ gridColumn: "span 2" }}>
+              <div key={group.hostname} className="h-full min-w-0">
                 <OtherHostTile group={group} snapshotById={byId} />
               </div>
             ))}

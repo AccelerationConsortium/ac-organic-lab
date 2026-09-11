@@ -270,6 +270,26 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         ),
     ),
     SshHost(
+        id="dobot-pc",
+        label="Ligand Development Platform",
+        kind="Windows PC",
+        hostname="sdl2-pc-05-dobot.tail6a1dd7.ts.net",
+        user="sdl2",
+        target="dobot-pc",
+        shell="cmd.exe (Windows OpenSSH)",
+        note=(
+            "Ligand Development Platform PC. Hosts the Dobot MG400 gateway "
+            "(dobot-mg400-server) on :8050; more bench services will land "
+            "here. Service control is `C:\\SDL_Tools\\nssm.exe` — prefer "
+            "the whitelisted host-ops surface for routine restarts."
+        ),
+        profiles=(
+            SshProfile(id="cmd", label="cmd", args=(), description="Windows cmd.exe (the OpenSSH default shell)."),
+            _PROFILE_WSL,
+            _PROFILE_WSL_TMUX,
+        ),
+    ),
+    SshHost(
         id="uplc-pc",
         label="UPLC PC",
         kind="Windows PC",
@@ -401,6 +421,25 @@ SSH_HOSTS: tuple[SshHost, ...] = (
             "Login is `caoyang`. Its install is **editable**, so the checked-out "
             "branch IS the deploy: `develop-modular`, never `main` (see "
             "ROADMAP). No tmux."
+        ),
+        profiles=(
+            SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
+        ),
+    ),
+    SshHost(
+        id="lumastir-pi",
+        label="Lumastir",
+        kind="Raspberry Pi",
+        hostname="lumastir-pi",
+        user="sdl2",
+        target="lumastir-pi",
+        shell="bash",
+        group="device",
+        note=(
+            "Raspberry Pi running the Lumastir LED and motor controller on :8000. "
+            "Connection details use the dashboard host's lumastir-pi SSH alias. "
+            "OpenSSH login as sdl2 uses the authorized lab Pi key. "
+            "Tailscale supplies networking; its SSH server is disabled."
         ),
         profiles=(
             SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),

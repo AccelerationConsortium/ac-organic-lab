@@ -5,15 +5,15 @@ sections:
   #   kind: environmental_map
   #   equipment: [env_hte, env_storage, env_lab499_west, env_lab499_east]
 
-  # Overview order (operator decision 2026-09-06): Services → HTE →
-  # Complexation → Process Chemistry → Gibbie. The headline "Accounts &
-  # Activities" tile is rendered by the Overview page ahead of every section,
-  # so the full page order is Accounts & Activities → these. Nav tabs follow
-  # the same order but list only sections with an `href`, so Services (which
-  # has none) does not appear there.
+  # Overview order (operator decision 2026-09-06, Ligand Development added
+  # 2026-09-10): Services → HTE → Complexation → Gibbie →
+  # Process Chemistry → Ligand Development. The headline "Accounts & Activities" tile
+  # is pinned to the left column top and Services to the right column top;
+  # remaining sections alternate columns. Nav tabs follow the same order
+  # but list only sections with an `href`, so Services (which has none)
+  # does not appear there.
   - id: web_services
     title: Services
-    description: Lab web UIs and dashboards
     kind: platform
     # hostops_* stay registered + polled in equipment.yaml but render on
     # /utils/devices (the PCs & Servers panel), not on this card.
@@ -30,8 +30,10 @@ sections:
     equipment:
       - cam_hte_tapo_c245
       - xarm_translocation
-      - fume_hood_actuator
       - ot2_hte
+      # The right stack (xArm + OT-2) exceeds the camera height, placing
+      # the actuator next in the left stack, directly below the HTE camera.
+      - fume_hood_actuator
       - dose_every_well
       - torry_pines_shaker
       - filter_every_well
@@ -52,6 +54,19 @@ sections:
       - cam_echem_tapo_c100
       - ot2_complexation
 
+  - id: sample_prep
+    title: Gibbie Platform
+    description: Multi-phase Reaction Platform based on Opentrons Flex
+    href: /platforms/sample_prep
+    kind: platform
+    equipment:
+      - cam_gibbie_tapo_c100
+      - gibbie_workflow
+      - gibbie_balance
+      - gibbie_flex
+      - gibbie_ur_arm
+      - gibbie_hotplate
+
   - id: process_chemistry
     title: Process Chemistry Platform
     description: Reaction, workup and analysis bench driven by automated-lle
@@ -62,22 +77,19 @@ sections:
     equipment:
       # First camera supplies the Overview card's live feed.
       - cam_echem_tapo_c245
-      - lle_ur5_arm
       - lle_easymax
+      - lle_ur5_arm
       - lle_hplc
       - lle_xpr_balance
       - lle_ph_unit
 
-  - id: sample_prep
-    title: Gibbie Platform
-    description: Multi-phase Reaction Platform based on Opentrons Flex
-    href: /platforms/sample_prep
+  - id: ligand_development
+    title: Ligand Development Platform
+    description: Ligand-development bench; MG400 first, more equipment later
+    href: /platforms/ligand_development
     kind: platform
-    # Last on purpose (operator decision 2026-09-06): the Overview card and
-    # the Nav tab both follow this order, and the bench is monitoring-only.
     equipment:
-      - gibbie_workflow
-      - gibbie_flex
-      - gibbie_ur_arm
-      - gibbie_balance
-      - gibbie_hotplate
+      # First camera supplies the Overview card's live feed.
+      - cam_ligand_tapo_d246
+      - dobot_mg400
+      - lumastir

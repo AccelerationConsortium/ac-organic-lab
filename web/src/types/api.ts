@@ -109,6 +109,14 @@ export interface CameraDetails {
   onvif_reachable?: boolean;
   tapo_reachable?: boolean;
   go2rtc_reachable?: boolean;
+  /**
+   * True when the camera's ONVIF PTZ node advertises a zoom axis, so
+   * `zoom_in` / `zoom_out` nudges actually move something. False (or absent)
+   * on every Tapo dual-lens head in the fleet — C245D / C246D have no zoom
+   * axis; their "zoom" is the Wide → Tele lens switch — so the tile offers a
+   * digital zoom on the stream instead.
+   */
+  has_zoom?: boolean;
 }
 
 // ---------------------------------------------------------------------
@@ -257,6 +265,9 @@ export type PtzDirection =
   | "up_right"
   | "down_left"
   | "down_right"
+  /** Drive the ONVIF zoom axis. 409 from the gateway unless `CameraDetails.has_zoom`. */
+  | "zoom_in"
+  | "zoom_out"
   | "stop";
 
 export interface PtzNudgeRequest {

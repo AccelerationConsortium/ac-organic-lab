@@ -34,7 +34,7 @@ const SLOW_LATENCY_MS = 500;
  *      - Left: status.message + required_actions ("Action needed: …")
  *      - Right: latency_ms + <StalenessIndicator />
  *
- * Padding is p-4 across the board (the grid's 232px row module budgets for
+ * Padding is p-3 across the board (the grid's 220px row module budgets for
  * it); tile cards are h-full and overflow-hidden so the parent's grid row
  * height controls vertical clipping. If a tile needs more height, bump
  * `tiles.<section>.h` in equipment.yaml.
@@ -59,6 +59,8 @@ export interface TileShellProps {
    * (e.g. a fetch_error variant) but should keep to one or two lines.
    */
   footerLeft?: ReactNode;
+  /** Extra status detail on hover over the footer message. */
+  footerMessageTitle?: string;
   /** Extra inline content in the subtitle line after "kind · id". */
   subtitleExtra?: ReactNode;
   /**
@@ -144,6 +146,7 @@ export function TileShell({
   displayStatus,
   children,
   footerLeft,
+  footerMessageTitle,
   subtitleExtra,
   lastErrorInterpret,
   actionError = null,
@@ -176,7 +179,7 @@ export function TileShell({
   const address = snapshot.tailscale_ip || null;
 
   return (
-    <article className="flex h-full flex-col gap-2 overflow-hidden rounded-xl border border-slate-200 bg-surface-raised p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <article className="flex h-full flex-col gap-1.5 overflow-hidden rounded-xl border border-slate-200 bg-surface-raised p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
       {/* Header */}
       <header className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-0.5">
@@ -306,7 +309,7 @@ export function TileShell({
             (hasMessage || hasActions ? (
               <>
                 {hasMessage && (
-                  <div className="truncate" title={status.message ?? undefined}>
+                  <div className="truncate" title={footerMessageTitle ?? status.message ?? undefined}>
                     {status.message}
                   </div>
                 )}

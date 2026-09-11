@@ -192,7 +192,7 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       href={controlPanelUrl}
       equipmentId={snapshot.id}
       external
-      title={locked ? `${lockTitle} to open the xArm control panel` : undefined}
+      title={locked ? `${lockTitle} to open the ${snapshot.name} control panel` : undefined}
       className={[
         "inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md border px-2.5 text-xs font-semibold transition-colors",
         "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500",
@@ -290,88 +290,102 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       }
     >
       <div className="flex flex-col gap-1.5">
+        {/* Each row renders only when the device publishes the component it
+            describes. Both arms report `arm` + `gripper`; only the xArm reports
+            `track` and a force-torque sensor, so the MG400 (bolted down, a
+            suction cup, no FT) simply omits those rather than showing a row of
+            "—". Within a row, xArm-specific metric pills (TCP/angular speed,
+            stroke range, grip force) appear only when their datum is present. */}
+
         {/* ARM: state · TCP speed · angular speed */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
-            Arm
-          </span>
-          <Pill
-            value={arm?.state ?? "—"}
-            tone={componentTone(arm?.state)}
-            title={arm?.message ?? undefined}
-          />
-          <Pill caption="TCP" value={fmt(tcpSpeed)} />
-          <Pill caption="Ang" value={fmt(angleSpeed)} />
-        </div>
-
-        {/* GRIPPER: state · position · force */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
-            Gripper
-          </span>
-          <Pill
-            value={gripper?.state ?? "—"}
-            tone={componentTone(gripper?.state)}
-            title={gripper?.message ?? undefined}
-          />
-          <Pill
-            caption={gripperPos ? "Stroke" : "Range"}
-            value={
-              gripperPos
-                ? fmt(gripperPos, 1)
-                : strokeMin != null && strokeMax != null
-                  ? `${strokeMin}–${strokeMax} mm`
-                  : "—"
-            }
-            title={
-              gripperPos
-                ? "Current gripper stroke (opening width)"
-                : "Configured stroke range; device does not publish current position yet"
-            }
-            tone={gripperPos ? "neutral" : "muted"}
-          />
-          <Pill
-            caption="Force"
-            value={
-              ftEnabled && ftForce
-                ? fmt(ftForce, 1)
-                : configForce != null
-                  ? `${configForce} cfg`
-                  : "—"
-            }
-            tone={ftEnabled && ftForce ? "neutral" : "muted"}
-            title={
-              ftEnabled
-                ? "Wrist force-torque sensor reading"
-                : configForce != null
-                  ? `Configured grip force (FT sensor disabled)`
-                  : "No force reading available"
-            }
-          />
-        </div>
-
-        {/* TRACK: position · preset (only when parked at a named location) */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
-            Track
-          </span>
-          <Pill
-            value={track?.state ?? "—"}
-            tone={componentTone(track?.state)}
-            title={track?.message ?? undefined}
-          />
-          <Pill caption="Pos" value={fmt(trackPos, 1)} />
-          {railPreset ? (
-            <Pill caption="At" value={railPreset} tone="ok" />
-          ) : (
+        {arm && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+              Arm
+            </span>
             <Pill
-              caption="At"
-              value="—"
-              tone="muted"
-              title="Track is between named rail locations"
+              value={arm.state ?? "—"}
+              tone={componentTone(arm.state)}
+              title={arm.message ?? undefined}
             />
-          )}
-        </div>
+            {tcpSpeed && <Pill caption="TCP" value={fmt(tcpSpeed)} />}
+            {angleSpeed && <Pill caption="Ang" value={fmt(angleSpeed)} />}
+          </div>
+        )}
+
+        {/* GRIPPER / end-effector: state · position · force */}
+        {gripper && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+              Gripper
+            </span>
+            <Pill
+              value={gripper.state ?? "—"}
+              tone={componentTone(gripper.state)}
+              title={gripper.message ?? undefined}
+            />
+            {(gripperPos || (strokeMin != null && strokeMax != null)) && (
+              <Pill
+                caption={gripperPos ? "Stroke" : "Range"}
+                value={
+                  gripperPos
+                    ? fmt(gripperPos, 1)
+                    : `${strokeMin}–${strokeMax} mm`
+                }
+                title={
+                  gripperPos
+                    ? "Current gripper stroke (opening width)"
+                    : "Configured stroke range; device does not publish current position yet"
+                }
+                tone={gripperPos ? "neutral" : "muted"}
+              />
+            )}
+            {((ftEnabled && ftForce) || configForce != null) && (
+              <Pill
+                caption="Force"
+                value={
+                  ftEnabled && ftForce
+                    ? fmt(ftForce, 1)
+                    : `${configForce} cfg`
+                }
+                tone={ftEnabled && ftForce ? "neutral" : "muted"}
+                title={
+                  ftEnabled && ftForce
+                    ? "Wrist force-torque sensor reading"
+                    : `Configured grip force (FT sensor disabled)`
+                }
+              />
+            )}
+          </div>
+        )}
+
+        {/* TRACK: state · position · preset. xArm-only — the MG400 is bolted
+            down and publishes no `track` component, so this whole row is
+            absent for it (that absence is the signal, same as
+            motion_graph.rail_location_name). */}
+        {track && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-14 shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+              Track
+            </span>
+            <Pill
+              value={track.state ?? "—"}
+              tone={componentTone(track.state)}
+              title={track.message ?? undefined}
+            />
+            <Pill caption="Pos" value={fmt(trackPos, 1)} />
+            {railPreset ? (
+              <Pill caption="At" value={railPreset} tone="ok" />
+            ) : (
+              <Pill
+                caption="At"
+                value="—"
+                tone="muted"
+                title="Track is between named rail locations"
+              />
+            )}
+          </div>
+        )}
       </div>
 
       {snapshot.fetch_error && <FetchErrorBand error={snapshot.fetch_error} />}

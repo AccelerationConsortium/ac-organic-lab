@@ -167,7 +167,7 @@ bytes sent, so it cannot disturb whatever owns the socket). The UR probe also
 learned to fall back from `safetystatus` to `safetymode` for CB3 controllers;
 this arm answers the newer command anyway. The balance tile opens no SOAP
 session, so it cannot collide with the LLE workflow's own, and
-`mt-xpr-balance-server` replaces it when deployed here. Steps taken 2026-09-06 at the
+`mt-xpr-balance-server` replaced it on 2026-09-10 (see *First modular piece* below). Steps taken 2026-09-06 at the
 operator's request: the PC (`SDL2Win02`) and the pH Pi are on the **PCs &
 Servers** page as `lle-pc` and `lle-pi` (console hosts + `HOST_ALIASES`),
 both key grants are in (LLE PC: lab-ops key; Pi: lab Pi key under user
@@ -214,12 +214,92 @@ device fault), and no re-dosing loop. Mettler's WSDL template is vendored
 (byte-identical in both lineages), so the `xpr` extra is suds-py3 + pprp +
 jinja2 rather than a git dependency. 99 tests, including a tier that drives
 real suds over the vendored WSDL with a canned transport. Registered as `kind: other`
-(no `balance` kind in the spec yet) with `gateway_fronted: true`. **Not yet
-deployed** — first instance planned for the LLE PC as NSSM `mt-xpr-balance`
-on :8081 (`lle_xpr_balance`); Gibbie's balance follows as a second instance
-and retires the Gibbie monitor's reachability-only tile. Deploying opens a
-SOAP session on a shared instrument, so it waits for a moment when the LLE
-workflow is not using the balance.
+(no `balance` kind in the spec yet) with `gateway_fronted: true`.
+
+**Both instances are deployed.** Gibbie's went first (`gibbie_balance`,
+`sdl2-pc-04:8081`; owner-only control activated in #41), retiring the Gibbie
+monitor's reachability-only balance tile; it moved from a tree copy to its own
+read-only deploy key at the 0.1.1 upgrade on 2026-09-10, so both instances now
+upgrade with `git pull`. The Process Chemistry instance
+followed on **2026-09-10**: NSSM `mt-xpr-balance` on `sdl2-pc-00-lle:8081`,
+cloned over a read-only deploy key (DEVICE_PC_SETUP §2.5 option 2, so `git
+pull` works there, unlike the EasyMax tree copy), whitelisted and restartable
+in that PC's `sdl-lab-hostops` (probe port 8081 added), and verified from
+gaia — session open with the balance at `192.168.254.13:81`, `ready` / `idle`,
+doors closed, no dosing head, the four documentation paths served, and
+`/control/access` answering 401 / 200 / 403 for untrusted / owner /
+other-account requests. `lle_xpr_balance` moved off the `process-chem-monitor`
+reachability tile to `:8081/status` with `edge_secret_env` the same day; the
+monitor still serves its `/devices/lle_xpr_balance/status` envelope, now
+unpolled. The deploy ran with the bench idle — no workflow process and no
+connection to the balance from that PC — because the service holds one SOAP
+session with a shared instrument. As with the EasyMax, `automated-lle` opens
+its own session and does not participate in claims, so a claim here excludes
+only dashboard / `lab-skills` writers. Two things worth keeping: the XPR
+web-service password is the lab-standard one `automated-lle` drives the
+balance with (its `balance_wrapper.py` default) and lives only in the two
+service environments, never in a repo; and the lab's `nssm.exe` supports
+`AppEnvironmentExtra +KEY=VALUE`, so a deploy assembles the env one key at a
+time and adds the password last, from one of those places. A first attempt
+stored a 12-character hex *fingerprint* of the password (quoted as a
+checksum to confirm the copy) as the password itself — a wrong value the
+balance would simply have refused (`auth_failed`), caught before the service
+was started; fingerprints are for comparing, not for typing.
+
+**Dashboard-side defect found by the LLE activation (fixed 2026-09-10,
+`web/src/middleware.ts`).** With the entry live, the XPR tile read "Trusted
+dashboard authentication required" for the configured owner — on *both*
+balances. The tile's owner check is `GET /api/equipment/{id}/control/access`,
+and the Next.js middleware injected a verified `X-Auth-User` for
+POST/PUT/PATCH/DELETE only, so the probe reached `control.py` anonymous, the
+passthrough had no trusted-edge candidate, and the device correctly answered
+401. The same gap ran the other way: nothing stripped a *client-supplied*
+`X-Auth-User` on control GETs, so a bare `curl` with a forged owner header got
+`{allowed: true}` back through the running build (measured before the fix;
+read-only, but the passthrough would have presented that identity to any
+device on any control GET). The middleware now strips identity headers on
+every control-path GET and, for the access probe alone, verifies the session
+and injects the real identity; a signed-out probe stays anonymous so the tile
+still renders "Controls locked". Five tests in `middleware.access.test.ts`.
+`#41`'s "verified" was evidently a header-carrying curl against the API, not a
+browser round-trip.
+
+**First operator session on the live tiles (2026-09-10 evening) — two more
+findings, both fixed in `mt-xpr-balance-server` 0.1.1 + the tile.** (1) A
+stable *tare* on Gibbie's balance ran the full 60 s `request_timeout_s` and
+was recorded as `link_failed` — while `/status` polls were answering the whole
+time. A stable Tare / Zero blocks the balance's web service until the pan
+settles and has no balance-side timeout parameter, so an unsettled balance is
+indistinguishable at the socket from a dead link; worse, the command stays
+pending on the balance and would have executed whenever the pan settled. The
+client now sends `Session.Cancel` on such a timeout and, if the Cancel is
+answered, reports `request_failed` / `error_state: not_stable` with a message
+that says what to do; only an unanswered Cancel is `link_failed`. (2) There
+was no way to dismiss `last_error`: §6.4 clears it on the next successful
+action, but `error` withholds the run actions for `recent_error_window_s`
+(60 s) and the tile stayed red meanwhile. A claim-gated
+`POST /control/clear_error` (advertised exactly while `last_error` is set, not
+while running or link-down) and a **Clear error** button close that. The
+tile also gained a "Wait for a stable reading (up to 60 s)" toggle (off →
+`immediately: true`) and pending copy that says what a 60 s wait is doing —
+the "very slow response" was almost entirely stability waits (door moves
+measure 0.4–2.5 s end-to-end in the audit rows).
+
+**Status lag after a button press (same evening, both sides).** Click → the
+tile showing the new door state was three cadences stacked: the action itself
+(2–2.5 s, `SetPosition` blocks until the door has moved), the aggregator's next
+2.5 s poll paying ~0.5 s for a fresh readback, then the browser's 2.5 s list
+refetch — 5–8 s from click to updated door row, nothing wrong anywhere. Fixed
+at both ends: the tile now reads the device live
+(`GET /api/equipment/{id}/status`, ~0.6 s) right after every action and shows
+that until the polled snapshot is newer, and its door buttons are gated on the
+reported door state (the balance does know — `components.door_left/right`,
+0–100 %; the device deliberately keeps advertising `door.open`/`door.close`
+because a redundant move is a harmless no-op, so the gating is presentation).
+`mt-xpr-balance-server` 0.1.2 refreshes its readback in the background the
+moment an operation finishes, and a `/status` racing that refresh waits for it
+instead of answering with pre-operation values. Gibbie's service logs moved to
+`C:\SDL_Logs` the same evening (history carried over as NSSM rotations).
 
 **Second modular piece, 2026-09-06:**
 [`AccelerationConsortium/mt-easymax-server`](https://github.com/AccelerationConsortium/mt-easymax-server)

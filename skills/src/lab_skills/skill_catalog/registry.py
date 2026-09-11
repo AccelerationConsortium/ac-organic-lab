@@ -36,14 +36,21 @@ def register(kind: EquipmentKind, defs: list[SkillDef]) -> None:
     SKILL_REGISTRY[kind] = list(defs)
 
 
-def skills_for(kind: EquipmentKind) -> list[SkillDef]:
+def skills_for(kind: EquipmentKind, equipment_id: str | None = None) -> list[SkillDef]:
     """Return the registered :class:`SkillDef`s for an equipment kind.
+
+    Pass equipment_id for equipment-specific capabilities such as Lumastir;
+    omitting it never adds those capabilities to a generic kind.
 
     Returns an empty list (not ``None``) when the kind has no registered
     capabilities. Reads return a copy so callers cannot mutate the registry
     by accident.
     """
 
+    if kind == "other" and equipment_id == "lumastir":
+        from .lumastir import LUMASTIR_SKILLS
+
+        return list(LUMASTIR_SKILLS)
     return list(SKILL_REGISTRY.get(kind, []))
 
 

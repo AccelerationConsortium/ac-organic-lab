@@ -745,6 +745,10 @@ async def _proxy(
             ),
         )
 
+    if entry.id == "lumastir" and entry.kind == "other":
+        from .lumastir_control import proxy as lumastir_proxy
+        return await lumastir_proxy(request, entry, action, method, body)
+
     target = _control_url(entry.base_url, entry.status_path, action)
 
     # v1.1 devices may enforce X-Claim-Token on /control/*. We acquire a
@@ -943,9 +947,95 @@ async def _proxy(
 #
 # TODO(xarm): retire once the device exposes ``/control/*`` aliases for these
 # and the tile can go back through the standard claim-gated passthrough.
+#
+# Two robot-arm dialects share this allowlist. The xArm serves its lifecycle +
+# safety floor at the device ROOT (``/connect``, ``/disconnect``, ``/move/stop``,
+# ``/clear/errors`` — all claim-exempt there). The Dobot MG400 serves the same
+# intents under ``/control/*`` with its own verb names (``startup``, ``disable``,
+# ``stop``, ``clear_error``); ``stop`` and ``clear_error`` are its claim-exempt
+# safety floor, so they belong on this device-action path (never the claim-gated
+# passthrough — see ``web/src/lib/api.ts``). The tile still POSTs the four
+# generic verbs; ``_resolve_robot_arm_device_action`` rewrites them per device.
 _DEVICE_ACTION_ALLOWLIST: dict[str, frozenset[str]] = {
-    "robot_arm": frozenset({"connect", "disconnect", "move/stop", "clear/errors"}),
+    "robot_arm": frozenset(
+        {
+            "connect",
+            "disconnect",
+            "move/stop",
+            "clear/errors",
+            "control/startup",
+            "control/disable",
+            "control/stop",
+            "control/clear_error",
+        }
+    ),
 }
+
+# Generic (tile) device action -> the concrete path each dialect exposes.
+_ROBOT_ARM_ACTION_ROUTES: dict[str, dict[str, str]] = {
+    "connect": {"root": "connect", "control": "control/startup"},
+    "disconnect": {"root": "disconnect", "control": "control/disable"},
+    "move/stop": {"root": "move/stop", "control": "control/stop"},
+    "clear/errors": {"root": "clear/errors", "control": "control/clear_error"},
+}
+
+# Verbs only the ``control``-dialect arm (Dobot MG400) advertises. Their
+# presence identifies the dialect for a device that hasn't declared
+# ``extras.control_dialect`` — but note they vanish mid-motion (when
+# ``allowed_actions`` narrows to ``["stop"]``), which is exactly why the
+# explicit ``extras`` declaration is preferred.
+_CONTROL_DIALECT_MARKERS = frozenset({"startup", "disable", "clear_error"})
+
+
+def _robot_arm_control_dialect(entry: Any, advertised: set[str]) -> str:
+    """``"control"`` (MG400, verbs under ``/control/*``) or ``"root"`` (xArm).
+
+    Prefer an explicit ``extras.control_dialect`` on the equipment entry — it is
+    stable even mid-motion, when the marker verbs are absent from
+    ``allowed_actions``. Fall back to sniffing the advertised verbs, defaulting
+    to the xArm's root dialect so any device we have not tagged behaves exactly
+    as it does today.
+    """
+    extras = getattr(entry, "extras", None) or {}
+    declared = extras.get("control_dialect")
+    if declared in ("root", "control"):
+        return declared
+    return "control" if (advertised & _CONTROL_DIALECT_MARKERS) else "root"
+
+
+def _resolve_robot_arm_device_action(
+    entry: Any, action: str, advertised: set[str]
+) -> str:
+    """Map a tile's generic device action to the path THIS arm actually exposes.
+
+    Unrecognised actions pass through unchanged (the allowlist has already
+    gated them).
+    """
+    routes = _ROBOT_ARM_ACTION_ROUTES.get(action)
+    if routes is None:
+        return action
+    return routes[_robot_arm_control_dialect(entry, advertised)]
+
+
+def _advertised_actions(request: Request, equipment_id: str) -> set[str]:
+    """The device's currently-advertised verbs (allowed + required actions).
+
+    Read from the aggregator's cached snapshot so this adds no device I/O.
+    Empty when nothing is cached yet — the resolver treats that as the xArm
+    default, which is the safe fallback.
+    """
+    aggregator = getattr(request.app.state, "aggregator", None)
+    snapshot = aggregator.cached_snapshot() if aggregator is not None else None
+    for item in getattr(snapshot, "equipment", None) or []:
+        if getattr(item, "id", None) != equipment_id:
+            continue
+        status = getattr(item, "status", None)
+        if status is None:
+            return set()
+        return set(getattr(status, "allowed_actions", None) or []) | set(
+            getattr(status, "required_actions", None) or []
+        )
+    return set()
 
 
 async def _device_action_proxy(
@@ -992,9 +1082,16 @@ async def _device_action_proxy(
     owner = _claim_owner(request)
     client = _get_control_client(request)
     # Auth precedes the call (claim-exempt on the device ≠ auth-exempt here).
+    # Audit keeps the generic verb the caller sent (`normalized`) so the trail
+    # is uniform across arms; only the URL uses the device-specific path.
     await _authorize_control(request, client, equipment_id, normalized, "POST", owner)
 
-    target = _device_url(entry.base_url, entry.status_path, normalized)
+    device_action = normalized
+    if getattr(entry, "kind", None) == "robot_arm":
+        device_action = _resolve_robot_arm_device_action(
+            entry, normalized, _advertised_actions(request, equipment_id)
+        )
+    target = _device_url(entry.base_url, entry.status_path, device_action)
     # Forward the operator's credential so the device's `require_login` passes
     # and its audit records the real actor (empty when unauthenticated).
     auth_candidates = _device_auth_candidates(request, entry)

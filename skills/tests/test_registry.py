@@ -9,7 +9,19 @@ import pytest
 import yaml
 
 from lab_skills import load_registry
-from lab_skills.registry import Maintenance
+from lab_skills.registry import Maintenance, Tile
+from pydantic import ValidationError
+
+
+@pytest.mark.parametrize("height", [1, 1.5, 2, 2.5, 3, 3.5, 4])
+def test_tile_accepts_half_row_heights(height: float) -> None:
+    assert Tile(h=height).h == height
+
+
+@pytest.mark.parametrize("height", [0.5, 2.25, 4.5])
+def test_tile_rejects_invalid_heights(height: float) -> None:
+    with pytest.raises(ValidationError):
+        Tile(h=height)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

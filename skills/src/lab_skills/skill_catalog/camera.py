@@ -41,6 +41,7 @@ from .registry import register
 PtzDirection = Literal[
     "up", "down", "left", "right",
     "up_left", "up_right", "down_left", "down_right",
+    "zoom_in", "zoom_out",
     "stop",
 ]
 
@@ -50,7 +51,15 @@ class PtzNudgeArgs(BaseModel):
     ``kasa_tapo_services.models.PtzNudgeRequest``, the shape a chat-driven
     "pan left" / "zoom in" instruction maps onto directly. The gateway also
     accepts a continuous pan/tilt/zoom vector body, not modeled here — that
-    shape is for a joystick UI, not a discrete proposal)."""
+    shape is for a joystick UI, not a discrete proposal).
+
+    ``zoom_in`` / ``zoom_out`` drive the ONVIF zoom axis and succeed only on
+    a camera whose ``/status`` reports ``details.has_zoom: true``; otherwise
+    the gateway answers 409. No camera in the fleet has one today — the Tapo
+    C245D / C246D heads are pan/tilt only, and their "zoom" is the Wide →
+    Tele lens switch — so a proposal to zoom should be checked against
+    ``has_zoom`` first (the dashboard's digital zoom is view-side and not a
+    device action)."""
 
     direction: PtzDirection
     speed: float = Field(default=0.5, ge=0.0, le=1.0)

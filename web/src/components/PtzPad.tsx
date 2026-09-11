@@ -14,15 +14,23 @@ import type { PtzDirection } from "@/types/api";
  * We rely on pointer events (works for mouse + touch + pen) and on the
  * pointerCancel/pointerLeave events to trigger the matching `stop` even
  * if the user drags out of the button while still holding.
+ *
+ * `zoomAxis` adds a fourth column of optical zoom cells (`zoom_in` /
+ * `zoom_out`, same press-and-hold semantics). Only render it when the
+ * camera reports `details.has_zoom` — the gateway answers 409 otherwise,
+ * and none of the lab's Tapo dual-lens heads has a zoom axis today; the
+ * tile's digital zoom (`ZoomControls`) is the view-side substitute.
  */
 export function PtzPad({
   onMove,
   onStop,
   disabled = false,
+  zoomAxis = false,
 }: {
   onMove: (direction: PtzDirection) => void;
   onStop: () => void;
   disabled?: boolean;
+  zoomAxis?: boolean;
 }) {
   const [active, setActive] = useState<PtzDirection | null>(null);
 
@@ -49,11 +57,16 @@ export function PtzPad({
     [active, disabled, onStop],
   );
 
+  const ariaLabel = (direction: PtzDirection) =>
+    direction === "zoom_in" || direction === "zoom_out"
+      ? `Optical ${direction.replace("_", " ")}`
+      : `Pan/tilt ${direction.replace("_", " ")}`;
+
   const cell = (direction: PtzDirection, label: string, gridArea: string) => (
     <button
       type="button"
       key={direction}
-      aria-label={`Pan/tilt ${direction.replace("_", " ")}`}
+      aria-label={ariaLabel(direction)}
       onPointerDown={start(direction)}
       onPointerUp={finish}
       onPointerLeave={(e) => {
@@ -75,14 +88,19 @@ export function PtzPad({
   );
 
   // 3x3 grid; the center cell is a "stop" button so users can interrupt
-  // an in-flight move.
+  // an in-flight move. With a zoom axis, a fourth column carries the
+  // optical zoom cells (+ above, − below, a caption between).
+  const columns = zoomAxis ? 4 : 3;
+  const areas = zoomAxis
+    ? '"ul u ur zi" "l c r zl" "dl d dr zo"'
+    : '"ul u ur" "l c r" "dl d dr"';
   return (
     <div
       className="grid gap-1"
       style={{
-        gridTemplateColumns: "repeat(3, minmax(0, 2.5rem))",
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 2.5rem))`,
         gridTemplateRows: "repeat(3, minmax(0, 2.5rem))",
-        gridTemplateAreas: '"ul u ur" "l c r" "dl d dr"',
+        gridTemplateAreas: areas,
       }}
     >
       {cell("up_left", "↖", "ul")}
@@ -111,6 +129,19 @@ export function PtzPad({
       {cell("down_left", "↙", "dl")}
       {cell("down", "↓", "d")}
       {cell("down_right", "↘", "dr")}
+      {zoomAxis && (
+        <>
+          {cell("zoom_in", "+", "zi")}
+          <span
+            aria-hidden="true"
+            style={{ gridArea: "zl" }}
+            className="flex items-center justify-center text-[9px] font-semibold uppercase tracking-wider text-ink-muted"
+          >
+            Zoom
+          </span>
+          {cell("zoom_out", "−", "zo")}
+        </>
+      )}
     </div>
   );
 }

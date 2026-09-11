@@ -146,6 +146,30 @@ def test_committed_registry_groups_cleanly():
     assert not any(h.startswith("sdl2-pc-") for h in unlisted_hosts)
 
 
+def test_dobot_pc_groups_the_mg400_by_hostname_and_tailnet_ip():
+    registry = Registry(
+        equipment=[
+            _entry(
+                "dobot_mg400",
+                "robot_arm",
+                "http://sdl2-pc-05-dobot.tail6a1dd7.ts.net:8050",
+                name="Dobot MG400",
+            ),
+            _entry("dobot_later", "other", "http://100.64.254.18:8099"),
+        ]
+    )
+    payload = group_hosts(registry)
+    dobot = _by_id(payload, "dobot-pc")
+    assert dobot["label"] == "Ligand Development Platform"
+    assert dobot["kind"] == "Windows PC"
+    assert [s["id"] for s in dobot["services"]] == ["dobot_mg400", "dobot_later"]
+    assert {s["id"]: s["role"] for s in dobot["services"]} == {
+        "dobot_mg400": "equipment",
+        "dobot_later": "service",
+    }
+    assert [g for g in payload["other_hosts"] if not g.get("id")] == []
+
+
 def test_gibbie_pc_groups_its_bench_monitor_and_hostops_by_name_and_lab_switch_ip():
     registry = Registry(
         equipment=[
@@ -188,3 +212,20 @@ def test_lle_pc_groups_by_tailnet_lab_switch_and_campus_addresses():
     # Device hosts are always listed (they are machines, with or without a
     # registry service); what must be empty is the anonymous remainder.
     assert [g for g in payload["other_hosts"] if not g.get("id")] == []
+
+
+def test_lumastir_api_groups_onto_its_ssh_host():
+    registry = Registry(
+        equipment=[_entry("lumastir", "other", "http://100.64.254.103:8000")]
+    )
+    payload = group_hosts(registry)
+    matches = [
+        host for host in payload["other_hosts"]
+        if host.get("id") == "lumastir-pi"
+        or host["hostname"] == "100.64.254.103"
+    ]
+    assert len(matches) == 1
+    host = matches[0]
+    assert host["id"] == "lumastir-pi"
+    assert host["hostname"] == "lumastir-pi"
+    assert [(s["id"], s["port"]) for s in host["services"]] == [("lumastir", 8000)]

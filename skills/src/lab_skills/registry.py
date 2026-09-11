@@ -44,11 +44,11 @@ class Tile(BaseModel):
 
     The platform card lays equipment out on a 4-column CSS grid with
     fixed-height rows.  ``w`` is the number of columns (1..4) and ``h``
-    is the number of rows (1..4).  Default 2×1.
+    is the number of rows (1..4, in steps of 0.5).  Default 2×1.
     """
 
     w: int = Field(default=2, ge=1, le=4)
-    h: int = Field(default=1, ge=1, le=4)
+    h: float = Field(default=1, ge=1, le=4, multiple_of=0.5)
 
 
 class PillConfig(BaseModel):

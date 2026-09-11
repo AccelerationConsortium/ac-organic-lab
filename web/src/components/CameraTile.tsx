@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -31,12 +31,15 @@ import type {
 import { ackFailureMessage } from "@/lib/control-ack";
 import { useActionError } from "@/lib/use-action-error";
 import { useUserAuth } from "@/lib/user-auth";
+import { zoomIn, zoomOut } from "@/lib/video-zoom";
 
 import { CameraPlayer } from "./CameraPlayer";
 import { PtzPad } from "./PtzPad";
 import { StatusPill } from "./StatusPill";
 import { TileButton } from "./TileButton";
 import { TileShell } from "./TileShell";
+import { VideoZoom } from "./VideoZoom";
+import { ZoomControls } from "./ZoomControls";
 
 type CameraStatusDetails = CameraDetails & Record<string, unknown>;
 
@@ -48,8 +51,12 @@ type CameraStatusDetails = CameraDetails & Record<string, unknown>;
  *   - lifecycle ON/OFF = streaming on/off (a camera's "power" from the
  *     dashboard's perspective is whether it is streaming)
  *   - banner extras: Privacy + Rolling toggles, lens tabs pushed right
- *   - body: <CameraPlayer> (absorbs vertical slack), then the control row
- *     (PtzPad · preset column · capture column)
+ *   - body: <CameraPlayer> inside a <VideoZoom> (absorbs vertical slack),
+ *     then the control row (PtzPad · ZoomControls · preset column · capture
+ *     column). The zoom is digital: the Tapo dual-lens heads have no zoom
+ *     axis (`details.has_zoom` is false), so "zoom" on the hardware side is
+ *     the Wide → Tele lens switch. A camera that does report a zoom axis
+ *     also gets optical zoom cells on the pad.
  *   - footer (message, latency, staleness) comes from the template
  */
 export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
@@ -83,6 +90,23 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
     (l) => l.id === activeLens?.id,
   );
   const ptzCapable = onvifReachable && (activeLensConfig?.ptz_capable !== false);
+  // Optical zoom cells only when the gateway confirms a zoom axis on the
+  // PTZ node; otherwise `zoom_in` would be a button that 409s.
+  const zoomAxis = details.has_zoom === true;
+
+  // Digital zoom on the live view — view-side, so not gated on `authorized`.
+  // Reset when the operator switches lens: the two lenses look at different
+  // fields of view, so a crop chosen on one means nothing on the other.
+  const [zoomLevel, setZoomLevel] = useState(1);
+  // Bumping this remounts <CameraPlayer>, tearing down the wedged
+  // MediaSource + WebSocket and rebuilding a fresh one — the recovery
+  // for the "appendBuffer … HTMLMediaElement.error is not null" MSE stall.
+  const [reloadKey, setReloadKey] = useState(0);
+  const activeLensKey = activeLens?.id ?? null;
+  useEffect(() => {
+    setZoomLevel(1);
+  }, [activeLensKey]);
+  const streamShowing = Boolean(activeLens?.mse_url) && streamingEnabled && !privacyMode;
 
   const [presetSelection, setPresetSelection] = useState<string>("");
   const [presetModalOpen, setPresetModalOpen] = useState(false);
@@ -255,6 +279,14 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             }
             onChange={(value) => rollingMutation.mutate(value)}
           />
+          <button
+            type="button"
+            onClick={() => setReloadKey((k) => k + 1)}
+            title="Reload the video stream (clears a wedged MSE playback error)"
+            className="shrink-0 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-ink-muted transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            Clear errors
+          </button>
           {lenses.length > 1 && (
             <div className="ml-auto flex gap-1">
               {lenses.map((lens) => {
@@ -284,32 +316,30 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </>
       }
     >
-      {/*
-        Process Chemistry keeps a full-width 16:9 frame, with expandable
-        controls below, so the shorter tile cannot squeeze the live image.
-        Other cameras retain their existing flexible sizing.
-        The grid that hosts this tile uses fixed-height rows (see
-        `EquipmentGrid`), so the article reliably gets more vertical
-        space than the natural content height. Letting the video absorb
-        the surplus (`flex-1 min-h-0`) keeps the 16:9 frame centered and
-        the control row pinned above the template footer - no awkward
-        gap below the controls.
-      */}
-      <CameraPlayer
-        src={activeLens?.mse_url ?? null}
-        disabled={!streamingEnabled || privacyMode}
-        className={snapshot.platform === "process_chemistry" ? "aspect-video w-full shrink-0" : "flex-1 min-h-0 w-full"}
-      />
+      {/* Use the tile's remaining height for video after reserving controls.
+          VideoZoom owns the outer sizing and crops the scaled player. */}
+      <VideoZoom
+        level={zoomLevel}
+        onToggle={() => setZoomLevel((level) => (level > 1 ? 1 : zoomIn(level)))}
+        className="min-h-[220px] w-full flex-1"
+      >
+        <CameraPlayer
+          key={reloadKey}
+          src={activeLens?.mse_url ?? null}
+          disabled={!streamingEnabled || privacyMode}
+          className="h-full w-full"
+        />
+      </VideoZoom>
 
       {/*
-        Below-video controls: three columns side-by-side.
-        - Left: PTZ pad pinned at its natural ~7.5rem size.
+        Below-video controls: four columns side-by-side.
+        - Left: PTZ pad pinned at its natural ~7.5rem size (~10rem with an
+          optical zoom column), then the digital zoom column (2.5rem).
         - Middle: preset selector column (flex-1, shrinks gracefully).
         - Right: capture column (snapshot, record/stop, "Recent ->").
         Capture column is pinned shrink-0 so the buttons keep the same
         width regardless of how cramped the preset row gets.
       */}
-      <CameraControls collapsible={snapshot.platform === "process_chemistry"}>
       {!authorized && (
         <p className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-ink-muted dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300">
           {authenticated
@@ -317,17 +347,28 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             : "View-only — sign in to control this camera."}
         </p>
       )}
-      {/* All camera controls require a signed-in session with a role on this
-          equipment. A disabled <fieldset> (display:contents → no layout
-          change) natively disables every nested button / select / toggle. */}
-      <fieldset disabled={!authorized} className="contents">
+      {/* Camera *controls* require a signed-in session with a role on this
+          equipment: the PTZ pad gates itself on `authorized`, and a disabled
+          <fieldset> (display:contents → no layout change) natively disables
+          every button / select in the preset + capture columns. The digital
+          zoom sits outside the fieldset on purpose — it only crops the view
+          in this browser, so view-only visitors may use it. */}
       <div className="flex items-start gap-3">
         <PtzPad
           disabled={!ptzCapable || !authorized}
+          zoomAxis={zoomAxis}
           onMove={(direction) => ptzMutation.mutate(direction)}
           onStop={() => stopMutation.mutate()}
         />
+        <ZoomControls
+          level={zoomLevel}
+          disabled={!streamShowing}
+          onZoomIn={() => setZoomLevel(zoomIn)}
+          onZoomOut={() => setZoomLevel(zoomOut)}
+          onReset={() => setZoomLevel(1)}
+        />
 
+        <fieldset disabled={!authorized} className="contents">
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           <div className="flex items-center gap-1.5">
             <select
@@ -426,9 +467,8 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             Recent captures →
           </Link>
         </div>
+        </fieldset>
       </div>
-      </fieldset>
-      </CameraControls>
 
       {lastSnapshot && (
         <a
@@ -565,17 +605,5 @@ function PresetModal({
         </div>
       </div>
     </div>
-  );
-}
-
-function CameraControls({ collapsible, children }: { collapsible: boolean; children: ReactNode }) {
-  if (!collapsible) return <>{children}</>;
-  return (
-    <details className="rounded-md border border-slate-200 px-2 py-1.5 dark:border-slate-700">
-      <summary className="cursor-pointer text-xs font-medium text-ink-muted dark:text-slate-300">
-        Camera controls
-      </summary>
-      <div className="mt-2 space-y-2">{children}</div>
-    </details>
   );
 }

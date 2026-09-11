@@ -146,6 +146,41 @@ equipment:
       link_label: "Open"
       link_href: /xarm5/web/
 
+  - id: dobot_mg400
+    name: Dobot MG400
+    kind: robot_arm
+    adapter: http
+    protocol: "1.2"                 # models.PROTOCOL_VERSION on the device is "1.2"
+    edge_secret_env: MG400_EDGE_SHARED_SECRET
+    base_url: http://sdl2-pc-05-dobot.tail6a1dd7.ts.net:8050
+    tailscale_ip: 100.64.254.18     # read off the box via `tailscale status`
+    status_path: /status
+    # Same reach profile as the xArm (Wi-Fi to a device PC on this tailnet);
+    # keep the aggregator hard-cap so a slow poll doesn't get truncated.
+    poll_timeout_seconds: 8.0
+    # A claim is only issuable while the controller is connected, and STARTUP
+    # energises the servos -- the SDK must never auto-connect a robot arm, so
+    # do_not_call_connect stays, exactly as on the xArm.
+    do_not_call_connect: true
+    tiles:
+      ligand_development: { w: 2, h: 1 }
+    # Root-relative, edge-gated panel URL (Caddy: forward_auth @mg400_ui ->
+    # ac_auth), same shape as the xArm. Never the device's :8050/web side-door
+    # -- the edge is the audited path. The device panel mounts at both /ui and
+    # /web; /mg400/web/ is the canonical one the edge normalises to.
+    pills:
+      link_label: "Open"
+      link_href: /mg400/web/
+    extras:
+      # This arm serves its lifecycle + safety floor under /control/* with
+      # MG400 verb names (startup/disable/stop/clear_error), unlike the xArm's
+      # root-level connect/disconnect/move-stop/clear-errors. The dashboard's
+      # device-action proxy reads this to route the tile's generic INIT / OFF /
+      # STOP / CLEAR to the right path (api/app/control.py). Declared here
+      # rather than sniffed from allowed_actions because those verbs disappear
+      # mid-motion, when STOP most needs to reach the arm.
+      control_dialect: control
+
   - id: fume_hood_actuator
     name: Fume Hood Actuator
     kind: fume_hood
@@ -193,7 +228,7 @@ equipment:
       - { label: Agent guide, path: /docs/agent, kind: json }
       - { label: Typed plan actions, path: /plans/actions, kind: json }
     tiles:
-      hte: { w: 2, h: 3}
+      hte: { w: 2, h: 3 }
     # "Open" pill -> the edge-gated OT-2 gateway operator SPA at
     # /ot2/hte/ui/ (Caddy: forward_auth @ot2_hte -> ac_auth, header_up
     # X-Edge-Key). ROOT-RELATIVE so it follows the operator's current edge
@@ -399,6 +434,27 @@ equipment:
         # Single-lens C100: /stream1 (HD) only; /stream2 is the SD copy.
         # Fixed lens — no PTZ.
         - { id: main, label: Main, rtsp_path: stream1, ptz_capable: false }
+
+  # Lumastir uses equipment-specific SDK skills and a shared claim across its outputs.
+  - id: lumastir
+    name: Lumastir
+    kind: other
+    adapter: http
+    protocol: "1.1"
+    base_url: http://100.64.254.103:8000
+    status_path: /status
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-guide, kind: markdown }
+    enabled: true
+    tiles:
+      ligand_development: { w: 2, h: 1.5 }
+    pills:
+      link_label: "GO"
+      link_href: /utils/computers/ssh/lumastir-pi
+      internal: true
+      admin_only: true
 
   # Second Opentrons OT-2 (robot `sdl2-ot2-complexation`, Tailscale
   # 100.64.254.91) on the Echem bench for complexation work. Fronted by the
@@ -775,6 +831,21 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills: {}
 
+  - id: hostops_dobot_pc
+    name: Ligand Development Platform PC
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    # Read-only host-ops: service status/logs and local Dobot status probe.
+    # No services are restartable through this instance.
+    base_url: http://sdl2-pc-05-dobot.tail6a1dd7.ts.net:8060
+    tailscale_ip: 100.64.254.18
+    status_path: /status
+    poll_timeout_seconds: 5.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
   - id: hostops_lle_pc
     name: LLE PC (Process Chemistry)
     kind: other
@@ -888,6 +959,49 @@ equipment:
   # 192.168.1.237) — see ROADMAP.
   # ---------------------------------------------------------------------
 
+  - id: cam_gibbie_tapo_c100
+    name: Gibbie Camera
+    kind: camera
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8002
+    status_path: /cameras/cam_gibbie_tapo_c100/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      sample_prep: { w: 2, h: 3 }
+    pills: {}
+    camera:
+      host: 172.31.33.16
+      onvif_port: 2020
+      rtsp_port: 554
+      lenses:
+        - { id: main, label: Main, rtsp_path: stream1, ptz_capable: false }
+
+  # Ligand Development Platform camera (Tapo at 172.31.60.21, on-device
+  # Camera Account "Ligand-dev-platform"). Physically moved from the Echem
+  # bench 2026-09-10; a distinct unit from cam_echem_tapo_c245. Fronted by
+  # the same kasa-tapo-services gateway. Dual-lens C245D: wide on /stream1,
+  # tele on /stream6 (ONVIF advertises only stream1/2/8, but /stream6
+  # carries the tele lens over RTSP — verified on the bench).
+  - id: cam_ligand_tapo_d246
+    name: Ligand Development Camera
+    kind: camera
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8002
+    status_path: /cameras/cam_ligand_tapo_d246/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      ligand_development: { w: 2, h: 3 }
+    pills: {}
+    camera:
+      host: 172.31.60.21
+      onvif_port: 2020
+      rtsp_port: 554
+      lenses:
+        - { id: wide, label: Wide, rtsp_path: stream1, ptz_capable: false }
+        - { id: tele, label: Tele, rtsp_path: stream6 }
+
   - id: gibbie_workflow
     name: Gibbie Workflow
     kind: other
@@ -918,7 +1032,7 @@ equipment:
     status_path: /devices/gibbie_flex/status
     poll_timeout_seconds: 5.0
     tiles:
-      sample_prep: { w: 2, h: 2 }
+      sample_prep: { w: 2, h: 1 }
     pills: {}
 
   - id: gibbie_ur_arm
@@ -1018,27 +1132,30 @@ equipment:
     pills: {}
 
   - id: lle_xpr_balance
-    name: XPR Balance (LLE)
+    name: XPR Balance (Process Chemistry)
     kind: other
     adapter: http
     protocol: "1.2"
     gateway_fronted: true
-    # Reachability of the Mettler XPR SOAP endpoint (port 81) only. The monitor
-    # opens no SOAP session, so it cannot collide with the LLE workflow's own.
-    # mt-xpr-balance-server replaces this tile with a real control surface when
-    # it is deployed on this PC (planned NSSM `mt-xpr-balance` :8081).
-    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    # mt-xpr-balance-server on the LLE PC (NSSM `mt-xpr-balance`, deployed and
+    # verified 2026-09-10) fronts the Mettler XPR SOAP web service at
+    # 192.168.254.13:81 and holds one SOAP session with it. Live control
+    # requires the trusted dashboard identity and the configured owner
+    # (XPR_CONTROL_USER in the device's service env). The process-chem-monitor's
+    # reachability-only envelope for this balance still exists at
+    # :8070/devices/lle_xpr_balance/status but is no longer polled.
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8081
     tailscale_ip: 100.64.254.13
-    status_path: /devices/lle_xpr_balance/status
-    # These documents describe the current reachability monitor.
-    # XPR control-service integration: mt-xpr-balance-server README,
-    # "Agent documentation and dashboard reference".
+    status_path: /status
+    edge_secret_env: XPR_EDGE_SHARED_SECRET
     documentation:
-      - { label: Monitor Swagger UI, path: /docs, kind: swagger }
-      - { label: Monitor OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     poll_timeout_seconds: 5.0
     tiles:
-      process_chemistry: { w: 2, h: 1 }
+      process_chemistry: { w: 2, h: 2 }
     pills: {}
 
   - id: lle_easymax

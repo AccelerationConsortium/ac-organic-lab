@@ -1201,7 +1201,7 @@ export interface components {
          *
          *     The platform card lays equipment out on a 4-column CSS grid with
          *     fixed-height rows.  ``w`` is the number of columns (1..4) and ``h``
-         *     is the number of rows (1..4).  Default 2×1.
+         *     is the number of rows (1..4, in steps of 0.5).  Default 2×1.
          */
         Tile: {
             /**

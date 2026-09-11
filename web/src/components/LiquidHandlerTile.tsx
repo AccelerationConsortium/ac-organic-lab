@@ -73,14 +73,15 @@ function parseLights(snapshot: EquipmentSnapshot): LightsState {
   return "unknown";
 }
 
-// Rendered on the tile as their own pills, so they are excluded from the
-// generic ComponentList below to avoid duplication.
+// Already represented by the tile's status, pipette pills, and footer details.
 const TILE_OWNED_COMPONENTS = new Set([
   "lights",
   "pipette_left",
   "pipette_right",
   "ssh",
   "protocol",
+  "control",
+  "robot",
 ]);
 
 /**
@@ -92,7 +93,9 @@ const TILE_OWNED_COMPONENTS = new Set([
  */
 export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const { status } = snapshot;
-  const metrics = status.metrics ?? {};
+  const metrics = Object.fromEntries(
+    Object.entries(status.metrics ?? {}).filter(([key]) => key !== "cycles_total"),
+  );
   const components = status.components ?? {};
   const otherComponents = Object.fromEntries(
     Object.entries(components).filter(([k]) => !TILE_OWNED_COMPONENTS.has(k)),
@@ -163,11 +166,22 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
   // so the tile never reads merely "Needs init" when the robot is actually gone.
 
   const robotOffline = robotReachable === false;
+  const control = components.control;
+  const httpState = !control ? "unknown"
+    : control.state === "http" && control.connected ? "connected"
+    : "disconnected";
+  const connectionDetails = [
+    components.ssh && `SSH: ${components.ssh.state}`,
+    `HTTP: ${httpState}`,
+    components.protocol && `Protocol: ${components.protocol.state}`,
+  ].filter(Boolean).join(" · ");
+
 
   return (
     <TileShell
       snapshot={snapshot}
       actionError={actionError}
+      footerMessageTitle={[status.message, connectionDetails].filter(Boolean).join(" · ")}
       headerRight={
         <>
           {robotOffline && (
@@ -226,32 +240,6 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
         variant="tile"
         tipRacks={tipRacksFromStatus(status)}
       />
-
-      {/* SSH / Protocol status pills. */}
-      <div className="flex flex-wrap items-center justify-end gap-1.5">
-        {(["ssh", "protocol"] as const).map((key) => {
-          const c = components[key];
-          if (!c) return null;
-          const ok = c.state === "connected" || c.state === "ready";
-          return (
-            <span
-              key={key}
-              className="flex h-7 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 dark:border-slate-700 dark:bg-slate-800/60"
-              title={`${key === "ssh" ? "SSH" : "Protocol"}: ${c.state}`}
-            >
-              <span
-                className={`inline-block h-2 w-2 rounded-full ${
-                  ok ? "bg-emerald-400" : "bg-slate-400 dark:bg-slate-500"
-                }`}
-                aria-hidden
-              />
-              <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
-                {key === "ssh" ? "SSH" : "Protocol"}
-              </span>
-            </span>
-          );
-        })}
-      </div>
 
       {Object.keys(metrics).length > 0 && <MetricList metrics={metrics} />}
       {Object.keys(otherComponents).length > 0 && (

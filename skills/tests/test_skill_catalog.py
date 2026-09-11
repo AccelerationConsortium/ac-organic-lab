@@ -530,6 +530,8 @@ def test_camera_ptz_args_schema_validates_ranges() -> None:
 
     PtzNudgeArgs(direction="left")  # ok, defaults fill in
     PtzNudgeArgs(direction="up_right", speed=1.0, duration_ms=5000)  # ok, at bounds
+    PtzNudgeArgs(direction="zoom_in")  # ok — gateway 409s it unless details.has_zoom
+    PtzNudgeArgs(direction="zoom_out")
     with pytest.raises(Exception):
         PtzNudgeArgs(direction="left", speed=1.5)  # > 1.0
     with pytest.raises(Exception):
