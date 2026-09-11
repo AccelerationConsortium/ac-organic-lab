@@ -85,7 +85,6 @@ export function XprBalanceTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       </div>}
       {message && <p role="status" className="text-xs">{message}</p>}
       {lastDose && <p className="text-xs">Last dose ({lastDose.finished_at ?? "time unknown"}): {lastDose.ok ? `${lastDose.dosed_mg ?? "—"} mg` : lastDose.message ?? "Failed or cancelled"}. This is the latest result, not a job history.</p>}
-      <a className="text-xs underline" href={`/api/equipment/${encodeURIComponent(snapshot.id)}/documentation/agent-docs`} target="_blank" rel="noreferrer">Agent API guide</a>
     </div>
   </TileShell>;
 }

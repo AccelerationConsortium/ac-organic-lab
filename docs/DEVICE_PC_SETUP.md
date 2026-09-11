@@ -96,6 +96,13 @@ Granted keys (one per line, keep this list current):
 | `lab-ops@sdl2-server-gaia` (ed25519) | central ops agent — deploy/maintain `sdl-lab-hostops`, incident diagnosis | `sdl2-pc-03-cytation`, 2026-08-11; `sdl2-pc-06-uplc`, 2026-08-11; `sdl2-pc-04` (Gibbie PC), 2026-09-06 — used the same day to install `sdl-lab-hostops` there; the `gibbie-pc` console host resolves through it; `sdl2-pc-00-lle` (LLE / Process Chemistry PC, `SDL2Win02`), 2026-09-06 — same: host-ops installed and the `lle-pc` console host |
 | `lab-agents@sdl2-server-gaia` (ed25519, the Pi key) | sensor / bench Pis — host-ops lite mode, console | `sdl2-pi0-lle-pizerocam` (pH Pi), 2026-09-06, under user **`caoyang`** (like the doser Pi) — host-ops lite installed, `lle-pi` console host |
 
+The Ligand Development PC also trusts the lab-ops key. Its host-ops service
+is installed with automatic startup and token-protected HTTP on port 8060.
+It is read-only: only host-ops itself is in the service inspection whitelist,
+no services are restartable, and the local status probe allows port 8050.
+The dashboard registers it as `hostops_dobot_pc`. The Dobot gateway remains a
+separate, manually launched process; host-ops cannot restart that process.
+
 Routine host operations should go through the `sdl-lab-hostops` MCP surface
 (whitelisted, audited — see [`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md)); SSH is the
 maintenance/deploy path, not the everyday one.

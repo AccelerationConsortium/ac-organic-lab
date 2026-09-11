@@ -26,7 +26,7 @@ from lab_skills import (
     load_platforms,
     load_registry,
 )
-from lab_skills.skill_catalog import SKILL_REGISTRY
+from lab_skills.skill_catalog import skills_for
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -744,8 +744,8 @@ async def skill_catalog() -> dict:
     eq_to_section = platforms_config.equipment_to_section_id()
     section_titles = {s.id: s.title for s in platforms_config.sections}
 
-    def _serialize_actions(kind: str) -> list[dict]:
-        defs = SKILL_REGISTRY.get(kind, [])
+    def _serialize_actions(kind: str, equipment_id: str) -> list[dict]:
+        defs = skills_for(kind, equipment_id)
         result = []
         for d in defs:
             try:
@@ -797,7 +797,7 @@ async def skill_catalog() -> dict:
                 }
                 for document in entry.documentation
             ],
-            "actions": _serialize_actions(entry.kind),
+            "actions": _serialize_actions(entry.kind, entry.id),
         })
 
     return {"platforms": platforms}

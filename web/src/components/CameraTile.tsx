@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -56,8 +56,6 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const queryClient = useQueryClient();
   const { authenticated, canControl } = useUserAuth();
   const authorized = authenticated && canControl(snapshot.id);
-  const fixedViewAspect = snapshot.platform === "process_chemistry" ||
-    ["cam_hte_tapo_c245", "cam_echem_tapo_c100"].includes(snapshot.id);
 
   const details = (snapshot.status.details ?? {}) as CameraStatusDetails;
   const lenses: LensStatusEntry[] = Array.isArray(details.lenses) ? details.lenses : [];
@@ -286,12 +284,11 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </>
       }
     >
-      {/* Match the bench camera views with full-width 16:9 frames,
-          independent of each tile's height and remaining vertical space. */}
+      {/* Use the tile's remaining height for video after reserving controls. */}
       <CameraPlayer
         src={activeLens?.mse_url ?? null}
         disabled={!streamingEnabled || privacyMode}
-        className={fixedViewAspect ? "aspect-video w-full shrink-0" : "flex-1 min-h-0 w-full"}
+        className="min-h-[220px] w-full flex-1"
       />
 
       {/*
@@ -302,7 +299,6 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         Capture column is pinned shrink-0 so the buttons keep the same
         width regardless of how cramped the preset row gets.
       */}
-      <CameraControls collapsible={snapshot.platform === "process_chemistry"}>
       {!authorized && (
         <p className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-ink-muted dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300">
           {authenticated
@@ -421,7 +417,6 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         </div>
       </div>
       </fieldset>
-      </CameraControls>
 
       {lastSnapshot && (
         <a
@@ -558,17 +553,5 @@ function PresetModal({
         </div>
       </div>
     </div>
-  );
-}
-
-function CameraControls({ collapsible, children }: { collapsible: boolean; children: ReactNode }) {
-  if (!collapsible) return <>{children}</>;
-  return (
-    <details className="rounded-md border border-slate-200 px-2 py-1.5 dark:border-slate-700">
-      <summary className="cursor-pointer text-xs font-medium text-ink-muted dark:text-slate-300">
-        Camera controls
-      </summary>
-      <div className="mt-2 space-y-2">{children}</div>
-    </details>
   );
 }

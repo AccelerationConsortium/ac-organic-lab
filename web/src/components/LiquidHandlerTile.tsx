@@ -227,17 +227,25 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
         tipRacks={tipRacksFromStatus(status)}
       />
 
-      {/* SSH / Protocol status pills. */}
+      {/* SSH / HTTP / Protocol status pills. */}
       <div className="flex flex-wrap items-center justify-end gap-1.5">
-        {(["ssh", "protocol"] as const).map((key) => {
-          const c = components[key];
+        {(["ssh", "http", "protocol"] as const).map((key) => {
+          const control = components.control;
+          const c = key === "http"
+            ? {
+                state: !control ? "unknown"
+                  : control.state === "http" && control.connected ? "connected"
+                  : "disconnected",
+              }
+            : components[key];
           if (!c) return null;
+          const label = key === "protocol" ? "Protocol" : key.toUpperCase();
           const ok = c.state === "connected" || c.state === "ready";
           return (
             <span
               key={key}
               className="flex h-7 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 dark:border-slate-700 dark:bg-slate-800/60"
-              title={`${key === "ssh" ? "SSH" : "Protocol"}: ${c.state}`}
+              title={`${label}: ${c.state}`}
             >
               <span
                 className={`inline-block h-2 w-2 rounded-full ${
@@ -246,7 +254,7 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
                 aria-hidden
               />
               <span className="text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
-                {key === "ssh" ? "SSH" : "Protocol"}
+                {label}
               </span>
             </span>
           );

@@ -745,6 +745,10 @@ async def _proxy(
             ),
         )
 
+    if entry.id == "lumastir" and entry.kind == "other":
+        from .lumastir_control import proxy as lumastir_proxy
+        return await lumastir_proxy(request, entry, action, method, body)
+
     target = _control_url(entry.base_url, entry.status_path, action)
 
     # v1.1 devices may enforce X-Claim-Token on /control/*. We acquire a

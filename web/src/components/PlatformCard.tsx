@@ -226,9 +226,6 @@ export function PlatformCard({
         ))}
 
       <div>
-        <h4 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">
-          Equipment ({count})
-        </h4>
         {showSkeleton ? (
           <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {Array.from({ length: Math.max(count, 1) }).map((_, i) => (

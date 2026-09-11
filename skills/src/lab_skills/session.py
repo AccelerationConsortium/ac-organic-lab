@@ -189,7 +189,7 @@ class LabSession:
                     (role_name, None, [], f"unknown equipment id: {equipment_id}")
                 )
                 continue
-            defs = skills_for(entry.kind)
+            defs = skills_for(entry.kind, entry.id)
             if not entry.enabled or entry.maintenance is not None:
                 m = entry.maintenance
                 if m is not None:

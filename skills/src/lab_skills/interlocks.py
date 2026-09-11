@@ -256,7 +256,7 @@ def warn_if_skill_duration_unknown(
     entry = session.registry.by_id(equipment_id)
     if entry is None:
         return None
-    by_name = {d.name: d for d in skills_for(entry.kind)}
+    by_name = {d.name: d for d in skills_for(entry.kind, entry.id)}
     sd = by_name.get(step.skill)
     if sd is None:
         # validate_plan reports the unknown_skill case at error severity;

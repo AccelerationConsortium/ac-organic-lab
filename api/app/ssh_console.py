@@ -427,6 +427,25 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         ),
     ),
     SshHost(
+        id="lumastir-pi",
+        label="Lumastir",
+        kind="Raspberry Pi",
+        hostname="lumastir-pi",
+        user="sdl2",
+        target="lumastir-pi",
+        shell="bash",
+        group="device",
+        note=(
+            "Raspberry Pi running the Lumastir LED and motor controller on :8000. "
+            "Connection details use the dashboard host's lumastir-pi SSH alias. "
+            "OpenSSH login as sdl2 uses the authorized lab Pi key. "
+            "Tailscale supplies networking; its SSH server is disabled."
+        ),
+        profiles=(
+            SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
+        ),
+    ),
+    SshHost(
         id="environ-01",
         label="HTE Sensors",
         kind="Raspberry Pi",

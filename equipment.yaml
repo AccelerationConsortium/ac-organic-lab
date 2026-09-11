@@ -46,7 +46,7 @@ equipment:
     # restart (cache empty, route falls back to a live build).
     poll_timeout_seconds: 5.0
     tiles:
-      hte: { w: 2, h: 3 }
+      hte: { w: 2, h: 2.5 }
     pills: {}
     camera:
       host: 172.31.60.16
@@ -397,7 +397,7 @@ equipment:
     # for the first request after a gateway restart.
     poll_timeout_seconds: 5.0
     tiles:
-      process_chemistry: { w: 2, h: 2 }
+      process_chemistry: { w: 2, h: 2.5 }
     pills: {}
     camera:
       host: 172.31.60.15
@@ -424,7 +424,7 @@ equipment:
     # for the first request after a gateway restart.
     poll_timeout_seconds: 5.0
     tiles:
-      complexation: { w: 2, h: 3 }
+      complexation: { w: 2, h: 2.5 }
     pills: {}
     camera:
       host: 172.31.60.22
@@ -434,6 +434,27 @@ equipment:
         # Single-lens C100: /stream1 (HD) only; /stream2 is the SD copy.
         # Fixed lens — no PTZ.
         - { id: main, label: Main, rtsp_path: stream1, ptz_capable: false }
+
+  # Lumastir uses equipment-specific SDK skills and a shared claim across its outputs.
+  - id: lumastir
+    name: Lumastir
+    kind: other
+    adapter: http
+    protocol: "1.1"
+    base_url: http://100.64.254.103:8000
+    status_path: /status
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-guide, kind: markdown }
+    enabled: true
+    tiles:
+      complexation: { w: 2, h: 1.5 }
+    pills:
+      link_label: "GO"
+      link_href: /utils/computers/ssh/lumastir-pi
+      internal: true
+      admin_only: true
 
   # Second Opentrons OT-2 (robot `sdl2-ot2-complexation`, Tailscale
   # 100.64.254.91) on the Echem bench for complexation work. Fronted by the
@@ -810,6 +831,21 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills: {}
 
+  - id: hostops_dobot_pc
+    name: Ligand Development Platform PC
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    # Read-only host-ops: service status/logs and local Dobot status probe.
+    # No services are restartable through this instance.
+    base_url: http://sdl2-pc-05-dobot.tail6a1dd7.ts.net:8060
+    tailscale_ip: 100.64.254.18
+    status_path: /status
+    poll_timeout_seconds: 5.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
   - id: hostops_lle_pc
     name: LLE PC (Process Chemistry)
     kind: other
@@ -922,6 +958,24 @@ equipment:
   # separate 192.168.1.x segment behind the Cytation PC's USB adapter (a UR at
   # 192.168.1.237) — see ROADMAP.
   # ---------------------------------------------------------------------
+
+  - id: cam_gibbie_tapo_c100
+    name: Gibbie Camera
+    kind: camera
+    adapter: http
+    protocol: "1.0"
+    base_url: http://127.0.0.1:8002
+    status_path: /cameras/cam_gibbie_tapo_c100/status
+    poll_timeout_seconds: 5.0
+    tiles:
+      sample_prep: { w: 2, h: 2.5 }
+    pills: {}
+    camera:
+      host: 172.31.33.16
+      onvif_port: 2020
+      rtsp_port: 554
+      lenses:
+        - { id: main, label: Main, rtsp_path: stream1, ptz_capable: false }
 
   # Ligand Development Platform camera (Tapo at 172.31.60.21, on-device
   # Camera Account "Ligand-dev-platform"). Physically moved from the Echem
@@ -1078,7 +1132,7 @@ equipment:
     pills: {}
 
   - id: lle_xpr_balance
-    name: XPR Balance (LLE)
+    name: XPR Balance (Process Chemistry)
     kind: other
     adapter: http
     protocol: "1.2"

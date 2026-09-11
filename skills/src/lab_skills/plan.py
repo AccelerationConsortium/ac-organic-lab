@@ -239,7 +239,7 @@ def validate_plan(plan: Plan, session: LabSession) -> PlanReport:
                 )
             )
         else:
-            sd = _find_skill_def(entry.kind, step.skill)
+            sd = _find_skill_def(entry.kind, step.skill, entry.id)
             if sd is None:
                 violations.append(
                     _violation(
@@ -468,7 +468,7 @@ async def execute_plan(
             await _notify(on_step, steps_out[-1])
             continue
         base["equipment_id"] = client.equipment_id
-        sd = _find_skill_def(client.entry.kind, step.skill)  # not None post-validation
+        sd = _find_skill_def(client.entry.kind, step.skill, client.entry.id)  # not None post-validation
 
         # (b) layer-4 interlocks against live state.
         interlock_violations = await run_interlocks_async(plan, step, session)
@@ -632,8 +632,8 @@ def _violation(
     )
 
 
-def _find_skill_def(kind: str, skill_name: str) -> SkillDef | None:
-    by_name = {d.name: d for d in skills_for(kind)}
+def _find_skill_def(kind: str, skill_name: str, equipment_id: str | None = None) -> SkillDef | None:
+    by_name = {d.name: d for d in skills_for(kind, equipment_id)}
     return by_name.get(skill_name)
 
 

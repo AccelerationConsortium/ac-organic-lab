@@ -59,6 +59,25 @@ afterEach(() => {
   auth.authenticated = true;
 });
 
+describe("OT-2 HTTP status", () => {
+  it.each([
+    ["http", true, "connected"],
+    ["http", false, "disconnected"],
+    ["ssh", true, "disconnected"],
+    [undefined, undefined, "unknown"],
+  ] as const)("reports %s / %s as %s", (state, connected, expected) => {
+    const snapshot = snap("off");
+    snapshot.status.components = {
+      ssh: { connected: false, state: "disconnected" },
+      ...(state ? { control: { state, connected: connected! } } : {}),
+    };
+    draw(snapshot);
+    const http = screen.getByTitle(`HTTP: ${expected}`);
+    expect(screen.getByTitle("SSH: disconnected").nextElementSibling).toBe(http);
+    expect(http.querySelector(".bg-emerald-400") !== null).toBe(expected === "connected");
+  });
+});
+
 describe("OT-2 deck light", () => {
   it("sends the opposite of the reported state and shows it before the poll catches up", async () => {
     draw(snap("off"));

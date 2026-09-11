@@ -61,6 +61,16 @@ function snap(
 
 afterEach(() => cleanup());
 
+it("maps whole and half tile heights to integer CSS grid spans", () => {
+  const snapshots = [1, 2, 2.5].map((h) => ({
+    ...snap(`robot_${h}`, "robot_arm", {}),
+    tile: { w: 2, h },
+  }));
+  render(<EquipmentGrid snapshots={snapshots} />);
+  expect(screen.getAllByText("ROBOT_ARM_TILE").map((tile) => tile.parentElement?.style.gridRow))
+    .toEqual(["span 2", "span 4", "span 5"]);
+});
+
 describe("EquipmentGrid dispatch for monitoring-only devices", () => {
   it("gives a monitoring-only robot arm the generic card instead of the xArm tile", () => {
     render(

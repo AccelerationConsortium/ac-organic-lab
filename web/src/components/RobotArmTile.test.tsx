@@ -17,10 +17,10 @@ vi.mock("@/lib/use-control-lock", () => ({
   }),
 }));
 
-const postArmConnect = vi.fn(async () => ({ ok: true }));
-const postArmDisconnect = vi.fn(async () => ({ ok: true }));
-const postArmStop = vi.fn(async () => ({ ok: true }));
-const postArmClear = vi.fn(async () => ({ ok: true }));
+const postArmConnect = vi.fn(async (_id: string) => ({ ok: true }));
+const postArmDisconnect = vi.fn(async (_id: string) => ({ ok: true }));
+const postArmStop = vi.fn(async (_id: string) => ({ ok: true }));
+const postArmClear = vi.fn(async (_id: string) => ({ ok: true }));
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   postArmConnect: (id: string) => postArmConnect(id),
