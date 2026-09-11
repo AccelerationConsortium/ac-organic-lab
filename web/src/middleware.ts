@@ -26,6 +26,12 @@ import { NextRequest, NextResponse } from "next/server";
 // method), so it is never gated.
 const CONTROL_PATH_RE = /^\/api\/equipment\/[^/]+\/(?:control|sash|device|deck)(?:\/.*)?$/;
 const CONTROL_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+// Owner-access probe: GET /api/equipment/{id}/control/access asks a device
+// "may THIS signed-in account control you?" (mt-xpr-balance-server, and any
+// future owner-gated device). Read-only, so it is not gated — but it is
+// meaningless without an identity attached, and the guard below injects one
+// for writes only. Handled separately in `middleware` (see there).
+const ACCESS_PROBE_PATH_RE = /^\/api\/equipment\/[^/]+\/control\/access$/;
 
 // The central labware store: reads are public, but saving/deleting shared
 // definitions is a write (admin-enforced in the FastAPI handler via the
@@ -262,6 +268,31 @@ export async function middleware(request: NextRequest) {
       if (v.role) headers.set("x-auth-role", v.role);
     }
 
+    return NextResponse.next({ request: { headers } });
+  }
+
+  // ---- Read-side control routes ------------------------------------------
+  // Reads stay open (view-only until signed in), but a client-supplied
+  // identity header must never reach control.py on them either: the
+  // passthrough presents `X-Auth-User` to devices as trusted-edge identity,
+  // so a forged header on a GET would be laundered into a real one. Strip on
+  // every read. For the owner-access probe, additionally verify the session
+  // and inject the real identity — without it the device answers 401
+  // ("Trusted dashboard authentication required") even to the configured
+  // owner, which is what the XPR tiles showed before this block existed
+  // (2026-09-10). A signed-out probe falls through anonymous, exactly as
+  // before, and the tile renders it as "Controls locked".
+  if (request.method === "GET" && CONTROL_PATH_RE.test(pathname)) {
+    const headers = new Headers(request.headers);
+    headers.delete("x-auth-user");
+    headers.delete("x-auth-role");
+    if (ACCESS_PROBE_PATH_RE.test(pathname) && !CONTROL_OPEN) {
+      const v = await verifySession(request);
+      if (v.ok) {
+        if (v.user) headers.set("x-auth-user", v.user);
+        if (v.role) headers.set("x-auth-role", v.role);
+      }
+    }
     return NextResponse.next({ request: { headers } });
   }
 

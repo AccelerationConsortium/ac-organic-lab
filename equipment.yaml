@@ -1137,22 +1137,25 @@ equipment:
     adapter: http
     protocol: "1.2"
     gateway_fronted: true
-    # Reachability of the Mettler XPR SOAP endpoint (port 81) only. The monitor
-    # opens no SOAP session, so it cannot collide with the LLE workflow's own.
-    # mt-xpr-balance-server replaces this tile with a real control surface when
-    # it is deployed on this PC (planned NSSM `mt-xpr-balance` :8081).
-    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    # mt-xpr-balance-server on the LLE PC (NSSM `mt-xpr-balance`, deployed and
+    # verified 2026-09-10) fronts the Mettler XPR SOAP web service at
+    # 192.168.254.13:81 and holds one SOAP session with it. Live control
+    # requires the trusted dashboard identity and the configured owner
+    # (XPR_CONTROL_USER in the device's service env). The process-chem-monitor's
+    # reachability-only envelope for this balance still exists at
+    # :8070/devices/lle_xpr_balance/status but is no longer polled.
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8081
     tailscale_ip: 100.64.254.13
-    status_path: /devices/lle_xpr_balance/status
-    # These documents describe the current reachability monitor.
-    # XPR control-service integration: mt-xpr-balance-server README,
-    # "Agent documentation and dashboard reference".
+    status_path: /status
+    edge_secret_env: XPR_EDGE_SHARED_SECRET
     documentation:
-      - { label: Monitor Swagger UI, path: /docs, kind: swagger }
-      - { label: Monitor OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     poll_timeout_seconds: 5.0
     tiles:
-      process_chemistry: { w: 2, h: 1 }
+      process_chemistry: { w: 2, h: 2 }
     pills: {}
 
   - id: lle_easymax
