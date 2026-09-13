@@ -1292,6 +1292,19 @@ retries a failed boot auto-connect every 30 s until the first
 successful connect, so this failure mode now self-heals (see the
 *Operational regressions* watch item). Open:
 
+- [x] **Eight days in `requires_init`, 2026-09-04 → 09-12, and it was a
+  shutdown, not a fault.** `service.connected` is `self._driver is not None`,
+  and the only path that clears it is `shutdown()`; the service log shows the
+  5 s readings chatter stop at 11:50:16 EDT on 09-04, two seconds after agent
+  session `geyuanxie4` released its last claim (a `set_speed 0`), consistent
+  with that session ending on `/control/shutdown`. The v0.2.2 retry loop
+  deliberately never fights a shutdown, so nothing reconnected until the
+  operator's `POST startup` at 21:15 EDT on 09-12 (then `degraded`, as since
+  June). Two consequences: an agent that shuts a device down and leaves parks
+  it indefinitely — worth a rule, not a code change — and the service logs no
+  line for `shutdown()`, so this took a log gap to reconstruct; ask the device
+  repo to log it with the claim owner. The heater RTD `cal` fault has been the
+  standing reason for `degraded` since 2026-06-22 (last `ready`).
 - [ ] **Recalibrate the heater RTD at the instrument** — the `cal` fault
   is active again as of 2026-08-02 (`last_error.code:
   calibration_error`; device token `cal3`: high-point measured cal value
@@ -1561,6 +1574,20 @@ precisely these multi-minute waves — a reader-side debounce would only tidy
 the history table. The levers left are physical: the cable, the camera
 viewers, and the kasa gateway's own camera poll cadence
 (`KASA_TAPO_CAMERA_POLL_INTERVAL_S`, ~39 TLS handshakes/min today).
+
+**A regression of the scheduler's own, found and fixed the same night**
+(`e83e394`). Reusing connections exposed a race with the devices' uvicorn
+(`--timeout-keep-alive 5`): a poll sent on a pooled socket in the instant the
+server closes it fails `httpx.RemoteProtocolError` — "Server disconnected
+without sending a response" — which the adapter filed as `kind=unknown` and
+the dashboard rendered as *unreachable*: 159 such events in ~3 h, none
+before, and by the caps window they outnumbered real timeouts (58 vs 40).
+Reproduced on demand by reusing at idle 4.6–5.4 s: 1 in 14 fails on the
+shaker and plateloc, whose `/status` blocks the event loop on a serial or
+ActiveX readback so the idle-timer close and the incoming request collide;
+0 in 14 on a non-blocking service. Fix: the HTTP adapter retries that error
+exactly once (a fresh connection — httpcore has already dropped the dead
+socket), and the client's keepalive expiry is 4 s, under the server's 5 s.
 
 **The Cytation PC is not laggy** (checked 2026-09-12 21:40 EDT over SSH after
 it topped the flap list): CPU 0–3 %, disk idle, 355 GB free, no reboot pending;

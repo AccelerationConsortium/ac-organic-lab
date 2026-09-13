@@ -144,6 +144,15 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   the two paths the browser player needs — `/streams/api/ws` (MSE, and WebRTC
   signalling) and `/streams/api/webrtc`: `/api/streams` and `/api/config`
   return the RTSP source URLs with the camera credentials embedded.
+- **Device services close idle keep-alive sockets after 5 s (uvicorn's
+  default), and several block their event loop in `/status`** (shaker serial
+  readback ~1.3 s, plateloc ActiveX ~0.7 s). A client that reuses a pooled
+  connection can therefore send in the same instant the server closes it and
+  get `httpx.RemoteProtocolError` ("Server disconnected without sending a
+  response") — not a device fault. The aggregator keeps its keepalive expiry
+  under 5 s and its HTTP adapter retries that error once (2026-09-12,
+  `e83e394`); any new client that pools connections to devices must do the
+  same, or it will report healthy devices as unreachable.
 - **Mostly no app-level auth between aggregator and equipment** — Tailscale
   ACLs are the main gate; don't design as if every device authenticated its
   callers. The exceptions are per-device: hard claim enforcement
