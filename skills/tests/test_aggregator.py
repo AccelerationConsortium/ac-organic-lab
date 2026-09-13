@@ -293,3 +293,54 @@ async def test_a_slow_device_does_not_hold_back_a_fast_one() -> None:
     # Never two concurrent reads of one device: slow's second read (if any)
     # started only after its first completed, so its snapshot is a real answer.
     assert listing.equipment[1].fetch_error is None
+
+
+# -- Dead reused keep-alive connection ---------------------------------------
+#
+# uvicorn closes an idle keep-alive socket after 5 s. A poll sent on a pooled
+# socket in that same instant fails with "Server disconnected without sending
+# a response" (httpx.RemoteProtocolError) — a property of connection reuse, not
+# of the device. The adapter retries exactly once on a fresh connection.
+
+@pytest.mark.asyncio
+async def test_fetch_retries_once_when_the_reused_connection_was_closed() -> None:
+    dev = _http_entry("dev", "dev")
+    registry = Registry(equipment=[dev])
+    aggregator = EquipmentAggregator(registry)
+    await aggregator.startup()
+    try:
+        with respx.mock(base_url=dev.base_url) as router:
+            router.get("/status").mock(side_effect=[
+                httpx.RemoteProtocolError("Server disconnected without sending a response."),
+                httpx.Response(200, json=_spec_envelope(dev, "ready")),
+            ])
+            snap = await aggregator.fetch_one("dev")
+        assert snap is not None and snap.fetch_error is None
+        assert snap.status.equipment_status == "ready"
+    finally:
+        await aggregator.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_fetch_reports_a_second_disconnect_instead_of_looping() -> None:
+    dev = _http_entry("dev", "dev")
+    registry = Registry(equipment=[dev])
+    aggregator = EquipmentAggregator(registry)
+    await aggregator.startup()
+    try:
+        with respx.mock(base_url=dev.base_url) as router:
+            route = router.get("/status").mock(
+                side_effect=httpx.RemoteProtocolError("Server disconnected without sending a response.")
+            )
+            snap = await aggregator.fetch_one("dev")
+        assert route.call_count == 2            # one retry, no more
+        assert snap is not None and snap.fetch_error is not None
+        assert snap.fetch_error.kind == "unknown"
+        assert "disconnected" in snap.fetch_error.message
+    finally:
+        await aggregator.shutdown()
+
+
+def test_client_keepalive_expiry_is_below_uvicorns_idle_timeout() -> None:
+    from lab_skills import aggregator as agg
+    assert agg._KEEPALIVE_EXPIRY_S < 5.0

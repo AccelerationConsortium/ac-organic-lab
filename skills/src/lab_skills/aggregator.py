@@ -53,7 +53,14 @@ _DEFAULT_POLL_INTERVAL_S = 2.5
 # finish inside the device-side keep-alive window — either because the fleet is
 # polled less often (per-device intervals) or because the link is fast again.
 _MAX_POOL_CONNECTIONS = 100
-_KEEPALIVE_EXPIRY_S = 120.0
+# Below uvicorn's default ``--timeout-keep-alive 5``: a socket we have not used
+# for this long is dropped on our side before the device's server drops it, so
+# a poll never sets out on a connection the far end is closing. The 2.5 s
+# cadence still reuses; only stragglers pay a fresh handshake. Deployed at
+# 120 s on 2026-09-12 this produced 159 "Server disconnected without sending a
+# response" fetch failures in ~3 h (zero before), concentrated on services
+# whose /status blocks on device I/O; the adapter also retries that error once.
+_KEEPALIVE_EXPIRY_S = 4.0
 
 # Per-device cadence. The background loop is a scheduler, not a fixed-rate
 # fan-out: each device is re-read when *its* interval elapses, as its own

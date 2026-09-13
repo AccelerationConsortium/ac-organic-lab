@@ -21,9 +21,23 @@ class HttpStatusAdapter(EquipmentAdapter):
 
         url = self.entry.base_url.rstrip("/") + self.entry.status_path
         try:
-            http_status, body, elapsed_ms = await get_json(
-                client, url, timeout=self.entry.poll_timeout_seconds
-            )
+            try:
+                http_status, body, elapsed_ms = await get_json(
+                    client, url, timeout=self.entry.poll_timeout_seconds
+                )
+            except httpx.RemoteProtocolError:
+                # "Server disconnected without sending a response": the pooled
+                # keep-alive socket we reused was closed by the device's server
+                # (uvicorn's 5 s idle timeout) in the same instant we sent on it.
+                # This is a property of connection reuse, not of the device, and
+                # it is routine on services whose /status blocks their event
+                # loop on device I/O (a serial or ActiveX readback), because the
+                # idle-timer close and our new request then race. Retry exactly
+                # once; httpcore has dropped the dead socket, so this opens a
+                # fresh connection. A second failure is reported.
+                http_status, body, elapsed_ms = await get_json(
+                    client, url, timeout=self.entry.poll_timeout_seconds
+                )
         except httpx.TimeoutException:
             return self.fail(f"Timeout calling {url}", kind="timeout")
         except httpx.ConnectError as exc:
