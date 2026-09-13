@@ -1470,6 +1470,87 @@ always pair with a posted DOWN, the SIGKILL bounce is gated behind a
 cause — gaia's memory headroom — is only documented, not fixed**: see the
 watch item below.
 
+**Fleet-wide "unreachable" flapping, 2026-09-12 — gaia's Wi-Fi is the shared
+hop, and the load on it is camera video.** PyPoe posted a down/recovered pair
+for ~22 devices at once, roughly every other minute, from 08:26 EDT; 1,683
+down-events that day against ~60/day the week before. Every flapping device
+was reached over the tailnet and every non-flapping one over loopback, and
+Tailscale's direct path to each lab PC is its `172.31.x` campus-Wi-Fi
+address — so all of them share gaia's own `wlp9s0`: `compsci`, **2.4 GHz
+channel 1, −72 dBm, HE-MCS 2**, 1.4–2.0 s RTT to *every* wireless
+destination and independent of packet size (channel-access starvation, not
+link rate; power-save was on but DTIM 1 × 100 ms bounds it at ~100 ms). Gaia's
+wired `eno1` is 1 Gbps / 0.14 ms but on `10.21/16`, which has no route to the
+device subnets. A cold `/status` fetch measured 6.2–8.6 s (2–3 s of it TCP
+handshake) against a 5 s cap — hence the coin-flip flapping. What made it
+tip that day: the polled fleet went 31 → 54 entries in five weeks, all new
+arrivals over that radio, at a 2.5 s fan-out.
+
+The radio's real load turned out not to be polling. go2rtc's camera sources
+are on `172.31.60.x` / `.33.16`, so **5.1 Mbps of RTSP ingest** crossed the
+link continuously while anyone watched, and viewers on lab PCs pulled it back
+out over the same link — one kiosk on the Dobot PC had drawn **14 GB**, its
+own device poll sitting in `SYN-SENT` beside it. The kasa gateway's own
+camera poller adds ~39 TLS handshakes/min. Done the same day: the aggregator
+became a per-device scheduler (registry `poll_interval_seconds`, device
+`details.poll_interval_s` hint honoured, completion-anchored so uvicorn's 5 s
+keep-alive is finally reused — handshakes 12/s → 1.1/s, fetch latency
+halved; **the flap rate did not fall**, because the remaining timeouts are
+2.0/5.0 s caps below the link floor), and every player became opt-in (see
+ARCHITECTURE *Stream visibility*). **Open**, in order: the `/streams/*` proxy
+exposes go2rtc `/api/config` + `/api/streams` — RTSP URLs with the camera
+credentials — unauthenticated on the edge (allowlist `/streams/api/ws` +
+`/streams/api/webrtc`, then
+rotate the Tapo account); a cable from gaia to the lab switch, which is the
+actual fix. Done the same evening: `poll_timeout_seconds` raised to 8.0 (the
+aggregator ceiling) on all 19 Wi-Fi-reached entries — the 2.0 s Pis and the
+5.0 s Gibbie / LLE / hostops entries had been failing 100 % / ~45 % of reads
+against a 3.7–5.2 s cold-fetch floor — and the idle xArm simulator
+(`uf_software`, 16 % CPU for four weeks, no clients) stopped; its
+`unless-stopped` policy keeps it down across reboots. Also found:
+`balam-vllm-health` failing every minute — not a dead tunnel: the MFA SSH master
+to Balam is alive and the pool/admission services run, but the pool's active
+policy (`gaia-dsv4-vision-hybrid-cg1-20260911`, set 2026-09-11) demands a
+`dsv4_vision_qwen` composition whose DeepSeek head node is still the
+`REPLACE_WITH_CURRENT_DEEPSEEK_HEAD` placeholder, so all 17 discovered
+backends (`qwen38-01..16` + primary) sit quarantined `composition_unresolved`,
+`/readyz` on 18004 answers 503, and the legacy 18001 forward the health check
+tests is never opened in pooled mode; `ALERT_TO` is empty and msmtp is not
+installed, so the failure emails nobody — it was a failed unit every minute and
+nothing else. **Timer disabled 2026-09-12 evening** (`disable --now
+balam-vllm-health.timer`); tunnel, pool and admission stay up so the MFA master
+survives. Re-enable it once the composition is resolved (fill
+`DEEPSEEK_REMOTE_NODE` or revert to `--active-composition qwen38`). `/tmp`
+(1.8 GB) never age-cleaned, `/var` at 79 %. The Dobot
+gateway came back at 20:24 EDT (`dobot-mg400-serve` + DobotStudio Pro started
+at the bench; `ready`, RobotMode 5). With the caps in place the 30 s tier stopped
+timing out entirely (42 % → 0 %) and the 2.5 s tier fell 47 % → 22 %; what
+remains is not a cap: **both OT-2 gateways' `/status` takes 9.0–10.4 s from
+gaia** (1.6 s connect + the SSH deck snapshot) and so sits on the aggregator's
+hard `_MAX_FETCH_SECONDS = 8.0` — a ceiling the per-device scheduler no longer
+needs for its own loop, so raising it there (keeping 8 s for the batch path)
+is the open decision; and **`dobot_mg400` has been down since 2026-09-10
+19:48** — port 8050 refuses TCP while `hostops` on the same PC answers, i.e.
+the manually launched Dobot gateway process is not running (DEVICE_PC_SETUP
+§2.4: host-ops cannot restart it). Windows drops ICMP echo on the Cytation and
+Dobot PCs, so `ping` is not a path test there — use `tailscale ping`.
+
+Measured outcome, 15-minute windows of `service_uptime` down-events: pre-change
+**2.92/min** → batch scheduler 2.46 → per-device scheduler 4.31 (faster polling
+records more alternations) → per-device + 8 s caps **2.79/min**. Net: the
+polling work cut gaia's handshakes on the radio ~10× and halved fetch latency
+but did **not** move the recorded flap rate, because the flaps are the link:
+82 % of down→recovered spans last exactly one 60 s sweep, and a wave caught
+live at 00:22 UTC (26 of 31 Wi-Fi devices at once) showed the link unchanged
+(−71 dBm, no missed beacons, tailscaled healthy) while WireGuard-level RTT to
+every peer rose from ~1 s to 1.3–1.9 s with ~6 Mbps of camera ingest still
+flowing for two remaining viewers. The device-alert notifier already needs 2
+consecutive sweeps and storm-collapses at 3 devices, so what PyPoe posts is
+precisely these multi-minute waves — a reader-side debounce would only tidy
+the history table. The levers left are physical: the cable, the camera
+viewers, and the kasa gateway's own camera poll cadence
+(`KASA_TAPO_CAMERA_POLL_INTERVAL_S`, ~39 TLS handshakes/min today).
+
 Active watch items (not regressions; behavioural notes):
 
 - **gaia memory headroom** (from the 2026-08-30 incident above). ~62 GB with
