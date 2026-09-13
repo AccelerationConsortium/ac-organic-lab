@@ -82,6 +82,7 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
 
 ## 3. Working conventions
 
+- **Device documentation:** follow [EQUIP_GUIDE §1, Step B3](docs/EQUIP_GUIDE.md#step-b3---documentation-endpoints) for documentation endpoints, packaging, discovery, and compatibility.
 - **Environment: `uv`.** This is a uv virtual workspace (`skills/`, `api/`,
   `auth/` are members sharing one root `.venv/`). Use `uv sync` to set up,
   `uv run …` to execute.

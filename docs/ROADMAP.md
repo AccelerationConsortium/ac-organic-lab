@@ -12,6 +12,31 @@ Cursor plan UI.
 > migration histories are compressed to their outcomes — full detail is in
 > git history and the device repos. Open work is preserved verbatim.
 
+## Documentation rollout — 2026-09-13
+
+The baseline is [EQUIP_GUIDE Step B3](EQUIP_GUIDE.md#step-b3---documentation-endpoints):
+four required endpoints (`/docs`, `/openapi.json`, `/agent-docs`, `/llms.txt`),
+an optional Markdown API reference, and unchanged legacy documentation contracts.
+Index links are document-relative. `scripts/audit_documentation.py` reports
+registry coverage offline; it does not prove deployment or contact equipment.
+
+First batch, documentation source and tests only:
+
+| Repository | Published commit | Deployment outcome |
+|---|---|---|
+| `dose_every_well` (`develop-modular`) | `91e9953` | Deployed; all five existing documentation endpoints return 200 and index links resolve. Remains uninitialized; no hardware startup requested. |
+| `mt-xpr-balance-server` (`main`) | `408dad3` | Deployed to `gibbie_balance` and `lle_xpr_balance`; all four endpoints return 200 and index links resolve. Both services returned ready/idle and unclaimed after restart. |
+| `torry-pines-shaker-server` (`main`) | `14d6b9c` | Published, not restarted: pre-existing calibration warning; restart held for operator direction because teardown sends stop/idle commands. |
+| `sense-every-zone` (`main`) | `714617a` | Published, not deployed: node checkout predates documentation routes; restart needs operator sudo. Live `/llms.txt` still returns 404 despite registry declaration. |
+
+The dashboard proxy hardening and registrations require a reviewed dashboard
+release. Do not restart the shared working checkout merely to activate these
+changes while unrelated camera/auth/monitoring work is still in progress.
+No status/control contracts or hardware settings were changed in this batch.
+Remaining legacy-documentation services and gateways are subsequent batches,
+not implied complete by these releases. Wheel-install conformance remains a
+separate check; these deployments use their existing editable installations.
+
 ## Current state (last full fleet sweep: 2026-05-30; protocol-version + liveness re-probe: 2026-07-30)
 
 | Milestone | Scope | Status |
