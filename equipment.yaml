@@ -483,19 +483,21 @@ equipment:
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
       - { label: Agent guide, path: /docs/agent, kind: json }
       - { label: Typed plan actions, path: /plans/actions, kind: json }
-    # Robot transport (standing since 2026-09-05, confirmed 2026-09-06): the
-    # OT-2 (Complexation) robot (`ot2training`, serial `weathered-dream`, board
-    # rev 2.1) is reached over its **USB link** — the gateway on sdl2-pc-03
-    # points at the UPLC PC's portproxy, OT2_HTTP_BASE_URL=
-    # http://100.64.254.19:31951 -> 169.254.40.81:31950 (the robot's USB-B
-    # cable into sdl2-pc-06-uplc). This stays the path until a USB-to-Ethernet
-    # adapter puts the robot on the lab switch (ROADMAP → ot2_hte sub-tasks);
-    # then repoint the gateway with tools/ot2-set-robot-url.ps1 and retire the
-    # bridge. Do NOT repoint to the robot's own Tailscale/Wi-Fi address
-    # (`sdl2-ot2-complexation`, 100.64.254.91): the Pi 3B+ radio wedges on its
-    # own (2026-08-30, 2026-09-04) and only a hard reboot restores it. If the
-    # bridge port stops answering, `Restart-Service iphlpsvc` on the UPLC PC
-    # before blaming the robot. Identity rule (robot_serial + board_revision +
+    # Robot transport (since 2026-09-12, by decision): the OT-2 (Complexation)
+    # robot (`ot2training`, serial `weathered-dream`, board rev 2.1) is reached
+    # over its **own Wi-Fi + Tailscale address**, OT2_HTTP_BASE_URL=
+    # http://100.64.254.91:31950 (`sdl2-ot2-complexation`). Its USB-B link into
+    # the UPLC PC died on 2026-09-12 (the robot's USB NIC is a phantom device
+    # there; the 31951 portproxy still exists but forwards to nothing), so the
+    # 2026-09-05 bridge path is gone and the "never use the Wi-Fi address" rule
+    # that used to live here is withdrawn. Know what that costs: the Pi 3B+'s
+    # Broadcom firmware hangs 23–43 times a day on BOTH OT-2s (measured
+    # 09-08 → 13); the robot-side wifi-watchdog reloads the driver, tightened
+    # 2026-09-13 to a 1-min cycle so each hang costs ~1–2 min instead of 2–17
+    # (opentrons-server docs/OT2_TAILSCALE.md). The `gateway_fronted` flag
+    # above turns each hang into an "unreachable" span; that is the truth, not
+    # noise. The durable fix is still a USB-to-Ethernet adapter onto the lab
+    # switch (ROADMAP → ot2_hte sub-tasks). Identity rule (robot_serial + board_revision +
     # api/fw) still applies: 172.31.60.10 (`ot2cytation`, board rev A) is a
     # DIFFERENT OT-2.
     tiles:

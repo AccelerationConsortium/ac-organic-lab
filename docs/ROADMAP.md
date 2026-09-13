@@ -965,8 +965,9 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   surfaced are commits `5d064c4` and `e5bb24c`). Both robots' network
   paths were moved off campus Wi-Fi the same night — see *Operational
   regressions*.
-- [x] **USB bridge retired as the gateway's path (2026-09-12).** With the
-  robot reliably on the tailnet, `ot2-gateway-complexation` was repointed at
+- [x] **USB bridge retired as the gateway's path (2026-09-12) — because the
+  USB link died, not by choice; the decision that night was wireless +
+  Tailscale.** `ot2-gateway-complexation` was repointed at
   the robot's own address — `OT2_HTTP_BASE_URL=http://100.64.254.91:31950`,
   `OT2_HOST_ALIAS=100.64.254.91` (the PC's `known_hosts` already trusted it) —
   via `tools/ot2-set-robot-url.ps1 -Run` over SSH: 15 env variables preserved,
@@ -974,6 +975,21 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   `ready`, robot reachable, readback 0.7 s. The `31951` bridge rule on the UPLC
   PC is now unused; remove it when convenient. The wired-adapter item below
   stays open as the path that would not depend on the robot's Wi-Fi radio.
+  **"Reliably on the tailnet" was wrong (2026-09-13).** The next morning PyPoe
+  posted a down/recovered pair every 30–50 min (38 posts, 36 gateway
+  `robot_unreachable` events, ~3.2 h unreachable in 12.6 h). Cause, from the
+  robot's own kernel log: the Pi 3B+'s Broadcom `brcmfmac` firmware hangs
+  **23–43 times a day on each OT-2** and has since the 09-08 reboot; the
+  robot-side `wifi-watchdog` reloads the driver, but its 2-min cycle,
+  two-failure rule and 10-min lockout made each hang a 2–17 min outage. The
+  USB path had simply hidden it (zero gateway outages 09-06 → 09-12), and HTE's
+  wired path still hides the same fault there. Fix applied the same day on
+  the Complexation robot: watchdog tightened to a 1-min cycle, 15 s confirm,
+  2-min lockout, with a local hang detector (`-110` in dmesg / `iw link`) so an
+  internet blip never reloads a healthy radio — see `opentrons-server`
+  `docs/OT2_TAILSCALE.md` *Wi-Fi watchdog*. Not power, heat, AP or scans
+  (all checked). Only bypassing that radio — the wired adapter below, or a USB
+  Wi-Fi dongle — stops the hangs themselves.
 - [ ] **Wire `ot2_complexation` directly to the lab switch** (USB-to-Ethernet
   adapter in one of the robot's USB-A ports; the OT-2 has no spare RJ45, its
   `eth0` *is* the USB-B cable). The robot's Wi-Fi radio wedges on its own
