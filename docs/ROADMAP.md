@@ -987,7 +987,10 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   the Complexation robot: watchdog tightened to a 1-min cycle, 15 s confirm,
   2-min lockout, with a local hang detector (`-110` in dmesg / `iw link`) so an
   internet blip never reloads a healthy radio — see `opentrons-server`
-  `docs/OT2_TAILSCALE.md` *Wi-Fi watchdog*. Not power, heat, AP or scans
+  `docs/OT2_TAILSCALE.md` *Wi-Fi watchdog*. **Verified on the first hang after
+  the deploy (18:15 UTC): gateway outage 21 s** (was 2–17 min), reload 8 s
+  after the robot was lost, invisible to the 60 s uptime sweep, no PyPoe
+  alert. Not power, heat, AP or scans
   (all checked). Only bypassing that radio — the wired adapter below, or a USB
   Wi-Fi dongle — stops the hangs themselves.
 - [ ] **Wire `ot2_complexation` directly to the lab switch** (USB-to-Ethernet
