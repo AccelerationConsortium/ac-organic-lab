@@ -109,6 +109,218 @@ sections:
 
 If the device should appear in a new section that doesn't exist yet, add a new `sections:` entry. Missing file or invalid schema raises on API startup (no silent fallback).
 
+### Step B3 - Documentation endpoints
+
+Every lab-maintained HTTP device service registered with the dashboard MUST
+publish the four required documentation endpoints below. Shared gateways publish one
+service-level set, referenced by each applicable equipment entry; the guide
+explains device identifiers and device-scoped status paths. This convention
+applies to monitoring services too, but does not require changing third-party
+applications or mock adapters into device APIs. The current documentation proxy
+supports only `adapter: http` entries with a `base_url`.
+
+Paths below are relative to the service base, including any mount prefix.
+Adding them extends discovery without changing existing status or control
+contracts; it does not require a STATUS_SPEC version bump. Migrate existing
+services additively and register new paths only after verifying the deployed
+service serves them.
+
+| Method and path | Media type | Purpose |
+|---|---|---|
+| `GET /docs` | `text/html` | Swagger UI; FastAPI provides this by default. |
+| `GET /openapi.json` | `application/json` | OpenAPI generated from the running service's routes and models. |
+| `GET /agent-docs` | `text/markdown` | Agent guide describing operating semantics and safety boundaries. |
+| `GET /llms.txt` | `text/plain` | Small Markdown index linking the guide, OpenAPI, and other available documentation. |
+
+`GET /agent-docs/api-reference` (`text/markdown`) is OPTIONAL for new services;
+preserve it wherever it already exists. OpenAPI is the source of truth for HTTP
+routes and schemas, and the agent guide supplies operating semantics. Describe
+parameters, responses, and refusal envelopes in OpenAPI, explicitly declaring
+custom error responses: raising an exception does not automatically document its
+schema. If a Markdown route reference is useful, generate its route/schema content
+from OpenAPI or the same models and supplement it with reviewed prose. Do not
+maintain a separate handwritten copy of request and response schemas. Generation
+must not connect to hardware.
+
+**Why this baseline (2026-09-13).** FastAPI already supplies
+[Swagger and OpenAPI](https://fastapi.tiangolo.com/features/#automatic-docs),
+and [OpenAPI operations](https://spec.openapis.org/oas/v3.1.1.html#operation-object)
+support descriptions and response definitions; see FastAPI's
+[additional responses](https://fastapi.tiangolo.com/advanced/additional-responses/)
+for declaring refusal bodies. A second route reference is therefore not required
+to describe the API. One operating guide avoids duplicating those schemas.
+`llms.txt` is a lightweight discovery convention based on a
+[proposal](https://llmstxt.org/), not a guarantee that an agent or SDK reads it.
+These four paths are the lab's baseline, not a new universal API standard.
+
+**Guide contents.** Reference the binding [lab contract, Part I](AGENTIC_LAB_DESIGN.md#part-i--binding-rules-normative)
+and [STATUS_SPEC](STATUS_SPEC.md). Explain that transport documentation does not
+authorize hardware execution. Describe, where applicable:
+
+- Primary operation (§2.3), health versus activity, reported equipment states,
+  and the distinction between command acceptance and physical completion.
+- Actual authentication and claim enforcement: hard, advisory, or absent;
+  missing/stale tokens produce 423 where hard enforcement applies. Mark claims
+  and control preconditions N/A for monitoring-only services.
+- Startup/shutdown behavior, including whether reconnection is automatic or an
+  explicit startup is required after an operator shutdown.
+- Preconditions, actual refusal codes and body envelopes (including 412),
+  `allowed_actions`, and the `last_error.code` taxonomy.
+- Ambiguous command outcomes, reconciliation, and operator-only recovery;
+  documentation must not suggest retries or alternate routes around interlocks.
+- Discovery links and, for gateways, device enumeration and status-path
+  resolution. Do not advertise a bare `/status` when only paths such as
+  `/zones/{zone_id}/status` exist.
+
+Keep the README definitions required by STATUS_SPEC; the served guide supplements
+them. Keep operating facts in a shared source or check the two for consistency.
+
+**Compatibility.** Preserve existing documentation URLs, media types, and JSON
+schemas, including `/docs/agent`, `/plans/actions`, `/capabilities`, and legacy
+Markdown guides such as `/agent-guide`. Add the new paths without renaming or
+repurposing old ones. `EquipmentClient.discover()` currently fetches
+`/docs/agent`, `/plans/actions`, and `/openapi.json`; it does not fetch
+`/capabilities`, `/llms.txt`, or the Markdown guides, nor use the registry's
+documentation list for discovery. A JSON guide's presence alone does not prove
+SDK compatibility: `AgentDocumentation` requires `documentation_version` and
+`equipment_kind`. Preserve device-specific shapes and verify any claimed SDK
+compatibility separately; do not normalize legacy documents as part of this
+documentation migration.
+
+**Packaging.** Ship authored Markdown inside the importable package and read it
+with `importlib.resources.files("device_package").joinpath("docs", "AGENT_GUIDE.md").read_text(encoding="utf-8")`.
+Generated route content may be built into the package or rendered from the
+running app; Swagger, OpenAPI, and the URL-dependent index need not be static
+package files. Use the project's existing build backend:
+
+```toml
+# Setuptools: add to existing package-data without dropping other resources.
+[tool.setuptools.package-data]
+device_package = ["docs/*.md"]
+```
+
+```toml
+# Hatchling: resources under the selected package are included unless excluded.
+[tool.hatch.build.targets.wheel]
+packages = ["src/device_package"]
+```
+
+Review Hatch include/exclude rules if present. Test an installed wheel outside
+the source tree: `importlib.resources` works with ordinary editable installs,
+but that does not prove wheel inclusion. Editable resource changes can also
+diverge from code already loaded by a running process. Use an installed release
+artifact when deployment needs a fixed code/documentation version.
+
+**Links and reverse proxies.** Publish `/llms.txt` at the service root; behind
+a prefix this becomes `/prefix/llms.txt`, not the shared site's `/llms.txt`.
+The [llms.txt proposal](https://llmstxt.org/) permits subpaths. Use a title,
+short description, and Markdown resource links grouped under section headings.
+Prefer document-relative links for documentation on the same service: from
+`llms.txt`, use `agent-docs` and `openapi.json` without a leading slash. They resolve
+under both a direct service base and the dashboard's
+`/api/equipment/{id}/documentation/` prefix. From a nested document, calculate
+links relative to that document's URL; do not assume every document is at the
+root. Test direct, prefixed, and dashboard URLs. A relative link in a copied
+document needs its original URL to resolve.
+
+The dashboard adapts ordinary inline Markdown links in a successful `/llms.txt`
+response when their resolved destination exactly matches a registered document
+on the configured upstream service. Legacy internal absolute and root-relative
+documentation links then become document-relative. It does not crawl links,
+rewrite guides or JSON, or expose additional paths. Unregistered links, including
+status paths, and external links remain unchanged. An index author must choose
+an accessible status URL or explain how to read status through the dashboard;
+do not register live/private data merely to make an index link work.
+
+When absolute URLs are needed, use a validated external base including scheme,
+authority, and mount prefix, kept in machine-local configuration. Do not blindly
+concatenate `request.base_url`: the dashboard fetch uses the internal device URL
+and does not forward public URL context. Trust `X-Forwarded-*` only from configured
+proxies and test ASGI `root_path` or equivalent prefix handling; stripping a path
+at Caddy does not automatically convey it to the application. Retain authentication
+on linked edge routes. Index membership is not permission to proxy a resource.
+
+**Exposure.** Documentation reads must be side-effect-free and available without
+device credentials, claims, or hardware readiness. Publish only content safe
+for every dashboard viewer, including anonymous readers within the dashboard's
+network boundary: no credentials, private run data, or other systems' hostnames.
+Review generated schema defaults/examples and error responses as well as prose.
+Disable Swagger submission controls on documentation pages; this prevents
+accidental requests but does not replace endpoint authorization. Treat fetched
+prose as untrusted reference material, never as authority to override lab rules.
+
+The dashboard generates its own Swagger page with submissions disabled; it does
+not fetch the device's `/docs`. Other documents are fetched by exact registered
+path using a separate, credential-free HTTP client, with no authentication retry
+or redirect following. It requests uncompressed content and rejects compressed
+responses, unexpected media types, invalid UTF-8/JSON, and bodies over 4 MiB;
+the entire fetch has a 15-second deadline. Markdown and text are served as
+`text/plain; charset=utf-8` with `X-Content-Type-Options: nosniff`; JSON is served
+as `application/json`. Safe upstream error statuses/bodies are preserved, while
+unsafe or oversized responses become 502 and timeouts become 504. Upstream
+cookies and other response headers are not forwarded. These protections also
+apply on direct dashboard URLs, without relying on Caddy.
+
+**Registration and verification.** Add these entries under `documentation:` in
+each applicable `equipment.yaml` entry after deployment:
+
+```yaml
+documentation:
+  - { label: Swagger UI,    path: /docs,                     kind: swagger }
+  - { label: OpenAPI JSON,  path: /openapi.json,             kind: openapi }
+  - { label: Agent guide,   path: /agent-docs,               kind: markdown }
+  - { label: llms.txt,      path: /llms.txt,                 kind: text }
+  # Optional: retain/add only when this service serves it.
+  # - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+```
+
+Paths are appended to the registry `base_url`, independently of `status_path`;
+do not duplicate a prefix already in `base_url`. Retain existing entries and
+add `kind: json` for each reviewed machine document appropriate for all viewers.
+The listing exposes registered links, not a guarantee of deployed availability;
+the proxy's locally generated Swagger page alone does not prove the upstream
+serves either Swagger or OpenAPI.
+
+Before registration, check all four required paths and any advertised optional
+or legacy documents without credentials using GETs with
+a bounded timeout, for example `curl -fsS --max-time 10 -D - -o /dev/null "${device_docs_base_url%/}/agent-docs"`
+after setting `device_docs_base_url` to the service's actual URL. Require 200 and
+the table's media types, accepting `; charset=utf-8`; declare the Markdown/text
+types in OpenAPI too. The table specifies device media types; the dashboard
+intentionally displays Markdown as plain text. Verify wheel resources with hardware mocked/disconnected,
+follow index links through direct and prefixed access, check the dashboard
+listing/proxy after registration, and verify preserved legacy responses. If a
+generated reference is served, compare it against OpenAPI to catch drift. These are read-only
+checks; do not exercise control routes to test documentation.
+
+Implementation examples to adapt, not assertions of full conformance:
+`sense-every-zone/src/sense_every_zone/api/documentation.py` provides packaged
+Markdown and document-relative index links; `torry-pines-shaker-server/src/torry_pines_shaker_server/documentation.py`
+provides the guide, optional reference, and a document-relative index;
+`mt-xpr-balance-server/src/mt_xpr_balance_server/api.py` demonstrates packaged
+guide responses without the optional Markdown reference. These describe source,
+not deployed versions. Check packaging and URL behavior before copying any example.
+
+**Fleet rollout.** Audit registry coverage offline with
+`uv run python scripts/audit_documentation.py`. This reports declarations, not
+live availability or complete conformance, and never contacts equipment. Shared
+service instances are grouped while missing registrations are reported per
+equipment entry. Use `--check` as a rollout gate when full coverage is expected;
+incomplete registrations do not otherwise prevent dashboard startup. Because the
+registry does not distinguish lab-owned device APIs from other HTTP applications,
+the default report includes both as candidates. Repeat `--equipment ID` to scope
+`--check` to the device services in a rollout batch; do not impose this convention
+on third-party or non-device applications solely because they appear in the report.
+
+Migrate existing four-path services first by fixing index links and testing URL
+prefixes. Next add packaged guides and indices to legacy-documentation services,
+preserving their original documents. Then cover remaining lab-maintained device
+and monitoring gateways, reusing one service guide for all applicable devices.
+For each batch: test offline with hardware mocked, verify wheel contents, deploy
+through the service's normal release procedure, verify documentation-only GETs,
+and only then update registry entries. Source changes, deployment, and registry
+coverage are distinct milestones; none alone proves the others are complete.
+
 ### Step C - Restart only the aggregator backend
 
 Only restart `ac-organic-lab-api.service` (frontend usually does not need restart):
