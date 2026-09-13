@@ -965,6 +965,15 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   surfaced are commits `5d064c4` and `e5bb24c`). Both robots' network
   paths were moved off campus Wi-Fi the same night — see *Operational
   regressions*.
+- [x] **USB bridge retired as the gateway's path (2026-09-12).** With the
+  robot reliably on the tailnet, `ot2-gateway-complexation` was repointed at
+  the robot's own address — `OT2_HTTP_BASE_URL=http://100.64.254.91:31950`,
+  `OT2_HOST_ALIAS=100.64.254.91` (the PC's `known_hosts` already trusted it) —
+  via `tools/ot2-set-robot-url.ps1 -Run` over SSH: 15 env variables preserved,
+  service restarted, robot re-probed (`ot2training`, API 8.7.0); from gaia
+  `ready`, robot reachable, readback 0.7 s. The `31951` bridge rule on the UPLC
+  PC is now unused; remove it when convenient. The wired-adapter item below
+  stays open as the path that would not depend on the robot's Wi-Fi radio.
 - [ ] **Wire `ot2_complexation` directly to the lab switch** (USB-to-Ethernet
   adapter in one of the robot's USB-A ports; the OT-2 has no spare RJ45, its
   `eth0` *is* the USB-B cable). The robot's Wi-Fi radio wedges on its own
@@ -1419,7 +1428,9 @@ Pi 3B+ points at the Broadcom driver wedging rather than DHCP or the AP. On
 **`100.64.254.19:31951`** → `169.254.40.81:31950` and
 `ot2-gateway-complexation` repointed at it (`OT2_HOST_ALIAS=169.254.40.81`,
 via `tools/ot2-set-robot-url.ps1`); the robot answered in ~70 ms and the
-session came up. **This is now the standing path.** Its dependency is the
+session came up. **This was the standing path until 2026-09-12**, when the
+gateway was repointed at the robot's tailnet address (`100.64.254.91:31950`)
+and the bridge retired as its path; while it stood, its dependency was the
 UPLC PC staying up. The bind-order failure that killed the first bridge is
 gone: since 2026-09-06 both rules (`31951` → Complexation USB, `31952` →
 HTE's wired `192.168.254.50`) listen on `0.0.0.0`, so they come back on
@@ -1550,6 +1561,18 @@ precisely these multi-minute waves — a reader-side debounce would only tidy
 the history table. The levers left are physical: the cable, the camera
 viewers, and the kasa gateway's own camera poll cadence
 (`KASA_TAPO_CAMERA_POLL_INTERVAL_S`, ~39 TLS handshakes/min today).
+
+**The Cytation PC is not laggy** (checked 2026-09-12 21:40 EDT over SSH after
+it topped the flap list): CPU 0–3 %, disk idle, 355 GB free, no reboot pending;
+Wi-Fi on **5 GHz ch 149, 89 %, 287 Mbps** plus the wired lab-switch NIC; all
+eight services answer locally in 10–65 ms except the two serial readbacks
+(plateloc 0.7 s, shaker 1.3 s — the devices, not the PC). The lag was gaia's
+radio, and the natural experiment ran itself: as the last camera viewers
+closed, ingest fell 6.9 → 2.1 Mbps, WireGuard RTT to that PC fell **1.6 s →
+7 ms**, and Wi-Fi fetch errors went to zero. Two watch items from the same
+look: the shaker service's python has held ~3–4 % of a core since 08-16
+(73k CPU-s, its serial poll loop), and the PC has **no Defender exclusions**
+for `C:\Users\sdl2\Projects` / the uv cache (MsMpEng 33k CPU-s).
 
 Active watch items (not regressions; behavioural notes):
 
