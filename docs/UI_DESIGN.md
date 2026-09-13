@@ -1071,6 +1071,20 @@ Also fixed in the same change: `skills/tests/test_skills.py`'s
 example of an equipment kind with an empty skill catalog — no longer true —
 and was repointed at `smart_plug`, which still has none.
 
+**Streams are opt-in everywhere (2026-09-12).** The camera tile's `<CameraPlayer>`
+used to mount and connect the moment a platform page opened; it now starts
+with `streamOn = false`, a "Show stream" button in the banner, and a
+click-to-start overlay over the dark player, matching the Overview card
+(flipped the same day, 2026-09-12, in a working-tree change that shipped in
+the 12:45 build). Digital zoom follows the real player state. The choice is per
+visit and not persisted on purpose. The cause is physical, not aesthetic: the
+cameras live on the campus Wi-Fi, go2rtc pulls each open stream over gaia's
+own radio (5.1 Mbps measured across five cameras), and a viewer on a lab PC
+pulls it back out over the same radio — one kiosk on the Dobot PC had drawn
+14 GB of video that way, with its own device poll starving in `SYN-SENT`
+beside it. Agents proposing camera work should assume the operator has to
+turn the video on; nothing streams unattended.
+
 #### Step 1g — Cytation plate reader (2026-08-19)
 
 The Cytation (`kind: plate_reader`) is now available in Control mode after its

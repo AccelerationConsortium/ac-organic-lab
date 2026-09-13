@@ -131,6 +131,19 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   `"/api/ssh/((?!ws$).*)"`. Authenticate the socket with a short-lived ticket
   minted over plain HTTP instead — the same reason `/xarm5/ws` and
   `/hermes/api/ws` are `forward_auth`-exempt at the edge.
+- **Camera video rides gaia's campus-Wi-Fi radio — twice.** The Tapo cameras
+  are on `172.31.x` (campus Wi-Fi), so go2rtc pulls every open RTSP stream
+  over gaia's own 2.4 GHz link (~1 Mbps each), and a viewer on a lab PC
+  pulls the MSE/WebRTC feed back out over the same link. That radio also
+  carries the tailnet path to every device PC, so streaming starves the
+  status polls (measured 2026-09-12: 5.1 Mbps of RTSP ingest, a 14 GB
+  kiosk viewer, fleet-wide "unreachable" flapping). Therefore **no player
+  auto-plays** — Overview card and detail tile both start off with a "Show
+  stream" control, per visit, never persisted — and any new surface that
+  shows video must follow the same rule. Do not proxy more of go2rtc than
+  the two paths the browser player needs — `/streams/api/ws` (MSE, and WebRTC
+  signalling) and `/streams/api/webrtc`: `/api/streams` and `/api/config`
+  return the RTSP source URLs with the camera credentials embedded.
 - **Mostly no app-level auth between aggregator and equipment** — Tailscale
   ACLs are the main gate; don't design as if every device authenticated its
   callers. The exceptions are per-device: hard claim enforcement

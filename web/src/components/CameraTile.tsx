@@ -102,11 +102,21 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   // MediaSource + WebSocket and rebuilding a fresh one — the recovery
   // for the "appendBuffer … HTMLMediaElement.error is not null" MSE stall.
   const [reloadKey, setReloadKey] = useState(0);
+  // The live player is opt-in, per page visit, and deliberately not
+  // persisted. The cameras sit on the campus Wi-Fi (172.31.x), so go2rtc pulls
+  // every open stream over gaia's own 2.4 GHz radio (~1 Mbps each, 5.1 Mbps
+  // measured 2026-09-12) and a viewer on a lab PC pulls it back out over the
+  // same radio — each frame crosses the channel twice, starving the device
+  // polls that share it. A detail page left open on a bench PC therefore
+  // must not stream until someone asks; the Overview card was flipped to the
+  // same rule the same day.
+  const [streamOn, setStreamOn] = useState(false);
   const activeLensKey = activeLens?.id ?? null;
   useEffect(() => {
     setZoomLevel(1);
   }, [activeLensKey]);
-  const streamShowing = Boolean(activeLens?.mse_url) && streamingEnabled && !privacyMode;
+  const streamShowing =
+    streamOn && Boolean(activeLens?.mse_url) && streamingEnabled && !privacyMode;
 
   const [presetSelection, setPresetSelection] = useState<string>("");
   const [presetModalOpen, setPresetModalOpen] = useState(false);
@@ -281,6 +291,14 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           />
           <button
             type="button"
+            onClick={() => setStreamOn((v) => !v)}
+            title={streamOn ? "Hide camera stream" : "Show camera stream"}
+            className="shrink-0 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-ink-muted transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            {streamOn ? "Hide stream" : "Show stream"}
+          </button>
+          <button
+            type="button"
             onClick={() => setReloadKey((k) => k + 1)}
             title="Reload the video stream (clears a wedged MSE playback error)"
             className="shrink-0 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-ink-muted transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
@@ -323,12 +341,25 @@ export function CameraTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
         onToggle={() => setZoomLevel((level) => (level > 1 ? 1 : zoomIn(level)))}
         className="min-h-[220px] w-full flex-1"
       >
-        <CameraPlayer
-          key={reloadKey}
-          src={activeLens?.mse_url ?? null}
-          disabled={!streamingEnabled || privacyMode}
-          className="h-full w-full"
-        />
+        <div className="relative h-full w-full">
+          <CameraPlayer
+            key={reloadKey}
+            src={activeLens?.mse_url ?? null}
+            disabled={!streamOn || !streamingEnabled || privacyMode}
+            className="h-full w-full"
+          />
+          {!streamOn && (
+            <button
+              type="button"
+              onClick={() => setStreamOn(true)}
+              title="Show camera stream"
+              className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-slate-900/80 text-slate-400 transition-colors hover:text-slate-200"
+            >
+              <span className="text-xs uppercase tracking-wider">Stream off</span>
+              <span className="text-[11px]">Click to show the live view</span>
+            </button>
+          )}
+        </div>
       </VideoZoom>
 
       {/*

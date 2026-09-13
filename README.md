@@ -231,7 +231,9 @@ control (PTZ, presets, snapshot, recording) and Kasa plugs through
 `kasa-tapo-services`, and persistent history (`lab.db` + the
 `/api/history/*` endpoints). Overview page (`/`) is driven by
 `platforms.yaml`; per-platform detail pages (e.g. `/platforms/hte`) are
-also section-order-driven. Polling every 2-3 seconds. On top of the
+also section-order-driven. Devices are polled on their own cadence — 2.5 s
+by default, slower where the registry (`poll_interval_seconds`) or the device's
+own `details.poll_interval_s` says the data changes less often. On top of the
 monitoring core: the SDK's `execute_plan` + MCP surface (v0.4), the
 authorized-run executor (bitácora-authorized plans, filed to BitacoraDB),
 the lab assistant (Ask + propose-only Control), and the agent operations

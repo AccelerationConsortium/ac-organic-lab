@@ -179,9 +179,26 @@ class EquipmentEntry(BaseModel):
     tailscale_ip: str | None = None
     status_path: str = "/status"
     #: How long to wait for a `/status` READ before calling the device
-    #: unreachable. Small on purpose — the aggregator polls constantly and a
-    #: slow read should not stall it.
+    #: unreachable. The aggregator caps it at 8 s (``_MAX_FETCH_SECONDS``);
+    #: since the per-device scheduler (2026-09-12) a slow device stalls only
+    #: its own next read, so the old "keep it small" pressure is gone. Size it
+    #: to the *path*, not the device: entries reached over the lab's campus
+    #: Wi-Fi measure 3.7–5.2 s for a cold fetch on a bad day, so anything below
+    #: 8.0 there reports a healthy device as unreachable on a coin flip (the
+    #: 2026-09-12 flapping). Loopback / wired entries can stay at 2–3 s.
     poll_timeout_seconds: float = 2.0
+    #: How often the aggregator re-reads this device's `/status`. ``None`` (the
+    #: default) means the aggregator's own cadence (2.5 s, matching the
+    #: dashboard's refetch interval). Set it for devices whose state changes
+    #: slowly — host probes, service tiles, printers, sensors — so they stop
+    #: paying a round trip every 2.5 s for an answer that hasn't changed.
+    #:
+    #: Precedence: this field → the device's own ``details.poll_interval_s``
+    #: hint (which may only *slow* polling, never speed it up) → the default.
+    #: A gateway that refreshes its probe every 10 s and says so is polled
+    #: every 10 s without any registry edit; this field is for devices that
+    #: give no hint, or to override one.
+    poll_interval_seconds: float | None = Field(default=None, gt=0)
     #: How long a `/control/*` COMMAND may take. A separate number because it
     #: answers a different question: not "is this device answering" but "how
     #: long may this operation run".

@@ -217,13 +217,14 @@ describe("PlatformCard camera preview selection", () => {
 
     // Exactly one stream toggle and one preview region, and that region
     // names the first camera — the second appears as an equipment row only.
-    // The preview starts expanded, so collapse it and read the placeholder,
-    // which is where the previewed camera's name is rendered.
-    const toggles = screen.getAllByTitle("Hide camera stream");
+    // Streams stay off until the viewer explicitly asks to start one.
+    const toggles = screen.getAllByTitle("Show camera stream");
     expect(toggles).toHaveLength(1);
-    fireEvent.click(toggles[0]);
     const preview = screen.getByText("Stream hidden").parentElement!;
     expect(preview.textContent).toContain("Echem Platform Camera");
     expect(preview.textContent).not.toContain("Echem OT2 Camera");
+
+    fireEvent.click(toggles[0]);
+    expect(screen.getByTitle("Hide camera stream")).toBeTruthy();
   });
 });

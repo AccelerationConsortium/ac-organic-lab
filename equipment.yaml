@@ -189,7 +189,7 @@ equipment:
     base_url: http://100.64.254.100:5000
     tailscale_ip: 100.64.254.100
     status_path: /status
-    poll_timeout_seconds: 2.0
+    poll_timeout_seconds: 8.0
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -248,7 +248,7 @@ equipment:
     base_url: http://sdl2-pi5-minicnc.tail6a1dd7.ts.net:8000
     tailscale_ip: 100.64.254.85
     status_path: /status
-    poll_timeout_seconds: 2.0
+    poll_timeout_seconds: 8.0
     tiles:
       # Plate-type picker + a compact well-selection grid (small unlabelled
       # cells, only the corner wells labelled for orientation) on top of the
@@ -289,7 +289,7 @@ equipment:
     base_url: http://100.64.254.104:8000
     tailscale_ip: 100.64.254.104
     status_path: /status
-    poll_timeout_seconds: 2.0
+    poll_timeout_seconds: 8.0
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -440,6 +440,7 @@ equipment:
     name: Lumastir
     kind: other
     adapter: http
+    poll_timeout_seconds: 8.0
     protocol: "1.1"
     base_url: http://100.64.254.103:8000
     status_path: /status
@@ -526,6 +527,7 @@ equipment:
     base_url: http://127.0.0.1:8012
     status_path: /status
     poll_timeout_seconds: 3.0
+    poll_interval_seconds: 30.0
     do_not_call_connect: true
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
@@ -551,6 +553,7 @@ equipment:
     base_url: http://127.0.0.1:8012
     status_path: /printers/bambu_p1s_01/status
     poll_timeout_seconds: 3.0
+    poll_interval_seconds: 30.0
     do_not_call_connect: true
     tiles: {}
     pills: {}
@@ -563,6 +566,7 @@ equipment:
     base_url: http://127.0.0.1:8012
     status_path: /printers/bambu_h2d_01/status
     poll_timeout_seconds: 3.0
+    poll_interval_seconds: 30.0
     do_not_call_connect: true
     tiles: {}
     pills: {}
@@ -571,6 +575,7 @@ equipment:
     name: PyPoe Web
     kind: other
     adapter: http
+    poll_interval_seconds: 30.0
     protocol: "1.1"
     # base_url stays the direct :8006 origin — that's where the aggregator polls
     # /status. The browsable UI, however, is served through the single auth edge
@@ -602,6 +607,7 @@ equipment:
     base_url: http://127.0.0.1:8002
     status_path: /status
     poll_timeout_seconds: 2.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -620,6 +626,7 @@ equipment:
     base_url: http://100.64.254.6:8006
     status_path: /kuma/status
     poll_timeout_seconds: 3.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills:
@@ -650,6 +657,7 @@ equipment:
     adapter: mock
     base_url: http://100.64.254.6/hermes/
     poll_timeout_seconds: 3.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills:
@@ -669,6 +677,7 @@ equipment:
     adapter: mock
     base_url: http://100.64.254.6/agente/
     poll_timeout_seconds: 3.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     # link_href, not `open: true`: `open` links to base_url, which must stay
@@ -704,6 +713,7 @@ equipment:
     base_url: http://127.0.0.1:8050
     status_path: /status
     poll_timeout_seconds: 3.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     # No `open: true` — base_url is now loopback and useless to a browser. The
@@ -728,6 +738,7 @@ equipment:
     base_url: http://100.64.254.6:8010
     status_path: /status
     poll_timeout_seconds: 3.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -746,6 +757,7 @@ equipment:
     base_url: http://127.0.0.1:8013
     status_path: /status
     poll_timeout_seconds: 3.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -763,6 +775,7 @@ equipment:
     base_url: http://127.0.0.1:8001
     status_path: /status
     poll_timeout_seconds: 3.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -777,6 +790,7 @@ equipment:
     base_url: http://100.64.254.6:8009
     status_path: /status
     poll_timeout_seconds: 3.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -797,6 +811,7 @@ equipment:
     status_path: /status
     # 8 s: Wi-Fi path to this PC (see xarm_translocation note). Was 3 s.
     poll_timeout_seconds: 8.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -811,6 +826,7 @@ equipment:
     status_path: /status
     # 8 s: Wi-Fi path to this PC (see xarm_translocation note). Was 3 s.
     poll_timeout_seconds: 8.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -826,7 +842,8 @@ equipment:
     base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8060
     tailscale_ip: 100.64.254.17
     status_path: /status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -841,7 +858,8 @@ equipment:
     base_url: http://sdl2-pc-05-dobot.tail6a1dd7.ts.net:8060
     tailscale_ip: 100.64.254.18
     status_path: /status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -859,7 +877,8 @@ equipment:
     base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8060
     tailscale_ip: 100.64.254.13
     status_path: /status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -880,6 +899,7 @@ equipment:
     name: HTE Sensors
     kind: environmental_sensor
     adapter: http
+    poll_interval_seconds: 30.0
     protocol: "1.2"
     # sense-every-zone gateway on the pi0 node: one process, one zone per
     # path (like kasa-tapo-services). Bare /status 404s by design.
@@ -901,6 +921,7 @@ equipment:
     name: Storage Sensors
     kind: environmental_sensor
     adapter: mock
+    poll_interval_seconds: 30.0
     tiles: {}
     pills: {}
     location: { x: 50, y: 37, label: "Storage" }
@@ -909,6 +930,7 @@ equipment:
     name: Lab 499 (West) Sensors
     kind: environmental_sensor
     adapter: mock
+    poll_interval_seconds: 30.0
     tiles: {}
     pills: {}
     location: { x: 20, y: 75, label: "Lab 499 · West" }
@@ -917,6 +939,7 @@ equipment:
     name: Lab 499 (East) Sensors
     kind: environmental_sensor
     adapter: mock
+    poll_interval_seconds: 30.0
     tiles: {}
     pills: {}
     location: { x: 80, y: 75, label: "Lab 499 · East" }
@@ -1013,7 +1036,7 @@ equipment:
     base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.17
     status_path: /devices/gibbie_workflow/status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
     tiles:
       sample_prep: { w: 2, h: 1 }
     pills: {}
@@ -1030,7 +1053,7 @@ equipment:
     base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.92
     status_path: /devices/gibbie_flex/status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
     tiles:
       sample_prep: { w: 2, h: 1 }
     pills: {}
@@ -1047,7 +1070,7 @@ equipment:
     base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.17
     status_path: /devices/gibbie_ur_arm/status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
     tiles:
       sample_prep: { w: 2, h: 1 }
     pills: {}
@@ -1069,7 +1092,7 @@ equipment:
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
       - { label: Agent guide, path: /agent-docs, kind: markdown }
       - { label: Agent discovery, path: /llms.txt, kind: text }
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
     tiles:
       sample_prep: { w: 2, h: 2 }
     pills: {}
@@ -1085,7 +1108,7 @@ equipment:
     base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.17
     status_path: /devices/gibbie_hotplate/status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
     tiles:
       sample_prep: { w: 2, h: 1 }
     pills: {}
@@ -1099,7 +1122,8 @@ equipment:
     base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.17
     status_path: /status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -1126,7 +1150,7 @@ equipment:
     base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.13
     status_path: /devices/lle_ur5_arm/status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
     tiles:
       process_chemistry: { w: 2, h: 1 }
     pills: {}
@@ -1153,7 +1177,7 @@ equipment:
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
       - { label: Agent guide, path: /agent-docs, kind: markdown }
       - { label: Agent discovery, path: /llms.txt, kind: text }
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
     tiles:
       process_chemistry: { w: 2, h: 2 }
     pills: {}
@@ -1179,7 +1203,7 @@ equipment:
     base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8082
     tailscale_ip: 100.64.254.13
     status_path: /status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
@@ -1203,7 +1227,7 @@ equipment:
     base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.13
     status_path: /devices/lle_hplc/status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
     tiles:
       process_chemistry: { w: 2, h: 1 }
     pills: {}
@@ -1220,7 +1244,7 @@ equipment:
     base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.13
     status_path: /devices/lle_ph_unit/status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
     tiles:
       process_chemistry: { w: 2, h: 1 }
     pills: {}
@@ -1234,7 +1258,8 @@ equipment:
     base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
     tailscale_ip: 100.64.254.13
     status_path: /status
-    poll_timeout_seconds: 5.0
+    poll_timeout_seconds: 8.0
+    poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}

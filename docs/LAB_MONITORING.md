@@ -265,15 +265,21 @@ sub-minute trend plots.
 
 ## 5. Data flow to the dashboard
 
-Two poll cadences: the aggregator's **live poll** refreshes current device
-state every ~2.5 s (`AGGREGATOR_POLL_INTERVAL_S`, default 2.5); a separate
-**60 s sweep** writes uptime transitions to SQLite and feeds the alert
-notifier (§6b). The web dashboard is Next.js — `:3000` deployed, `:8000` in dev.
+Two poll cadences: the aggregator's **live poll** refreshes each device on its
+own interval — `AGGREGATOR_POLL_INTERVAL_S` (default 2.5 s) unless the registry
+entry sets `poll_interval_seconds` or the device publishes a slower
+`details.poll_interval_s` hint (per-device scheduler, 2026-09-12; slow tiles run
+at 10–30 s) — and a separate **60 s sweep** writes uptime transitions to SQLite
+and feeds the alert notifier (§6b). Note the sweep samples the cache: a device
+that times out on one 60 s sample and answers on the next records a
+down/recovered pair, so on a lossy link most recorded flaps are single-sample
+blips (82 % measured 2026-09-12); the notifier's 2-sweep rule is what keeps
+those out of Slack. The web dashboard is Next.js — `:3000` deployed, `:8000` in dev.
 
 ```
 Device service                Dashboard aggregator (FastAPI :8001)        Dashboard (Next.js)
 ─────────────────             ────────────────────────────────────        ─────────────────────────
-GET /status every ~2.5s ────► Live poll refreshes current state;          GET /api/history/uptime/{id}
+GET /status per-device   ────► Live poll refreshes current state;          GET /api/history/uptime/{id}
                               the 60 s sweep writes service_uptime        ──► uptime % over last 7 days
                               rows on state changes (up→down, down→up)
 

@@ -110,7 +110,13 @@ class EquipmentSnapshot(BaseModel):
 
 
 class EquipmentList(BaseModel):
-    """Batch view: one ``EquipmentSnapshot`` per registered equipment."""
+    """Batch view: one ``EquipmentSnapshot`` per registered equipment.
+
+    ``fetched_at`` is when this view was *assembled*. Devices are polled on
+    their own cadences, so a snapshot may be older than the list that carries
+    it — each ``EquipmentSnapshot.fetched_at`` is the time that device was
+    actually read.
+    """
 
     equipment: list[EquipmentSnapshot]
     fetched_at: datetime

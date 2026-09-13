@@ -166,7 +166,7 @@ Owns:
 - `equipment.yaml` parsing → `Registry` / `EquipmentEntry` model
 - `platforms.yaml` parsing → `PlatformsConfig` / `PlatformSection` model
 - `locations.yaml` parsing → `LocationsConfig` / `LocationEntry` model (the registry of places; `validate_against(registry)` cross-checks it with `equipment.yaml`)
-- One async polling loop per process (`EquipmentAggregator`) over all configured devices
+- One async poll scheduler per process (`EquipmentAggregator`): every device is read on its own cadence, as its own task, rescheduled from completion — registry `poll_interval_seconds` → device `details.poll_interval_s` hint → 2.5 s default
 - Per-device adapters for STATUS_SPEC v1.0, legacy pre-spec devices, and mocks
 - The `Lab.connect()` / `LabSession` / `EquipmentClient` API used by workflow code
 - `wait_until_state` and other state-machine helpers
@@ -362,7 +362,7 @@ The static inventory of "what equipment exists in this lab". Edited by humans wh
 
 - `id`, `name`, `kind`
 - `adapter` (`http` for spec-conformant, `legacy_http` for pre-spec, `mock` for not-yet-deployed)
-- `base_url`, `status_path`, `poll_timeout_seconds`
+- `base_url`, `status_path`, `poll_timeout_seconds` (read cap, ≤ 8 s), `poll_interval_seconds` (per-device cadence; unset = default)
 - `enabled: bool`, `maintenance: { reason, until, contact }` for soft maintenance toggling without commenting out
 - `tiles: dict[section_id, {w, h}]` — per-section tile sizing for the equipment grid. A missing key defaults to `{w:2, h:1}`. The section id matches `platforms.yaml`
 - `pills: {open: bool}` — shared Overview pill config. `open: true` renders an "Open ↗" link to `base_url` in the platform card pill row
@@ -371,7 +371,20 @@ The static inventory of "what equipment exists in this lab". Edited by humans wh
 
 > **`platform:` removed in schema v2.** Equipment entries no longer carry a `platform:` field. Section membership is declared exclusively in `platforms.yaml`; `EquipmentSnapshot.platform` is resolved by the API at compose time.
 
-> **Stream visibility** is not a YAML field. When a platform has a camera the platform card shows a "Show stream / Hide stream" toggle — the live feed is **expanded by default** and the toggle collapses it. There is no `hide_stream` flag; the toggle is purely a runtime UI control.
+> **Stream visibility** is not a YAML field, and **no camera stream plays until a
+> viewer turns it on.** The Overview platform card and the platform-detail
+> camera tile both start collapsed with a "Show stream" control; the choice is
+> per page visit and deliberately not persisted, so a dashboard left open on a
+> bench PC never streams unattended. Reason (measured 2026-09-12): the cameras
+> are on the campus Wi-Fi, so go2rtc pulls each open stream over gaia's own
+> 2.4 GHz radio (~1 Mbps per camera, 5.1 Mbps total) and a viewer on a lab PC
+> pulls it back out over the same radio — every frame crosses the channel
+> twice and starves the device polls sharing it. (Both flipped to opt-in on
+> 2026-09-12 — the Overview card in a working-tree change that shipped in that
+> day's 12:45 build, the detail tile the same evening; the last *committed*
+> state, `e6a35a2` 2026-08-27, had the preview expanded by default.) There is
+> no `hide_stream`
+> flag; the toggle is purely a runtime UI control.
 
 ### `platforms.yaml` (root)
 

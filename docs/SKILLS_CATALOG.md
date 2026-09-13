@@ -143,7 +143,7 @@ For each (role, equipment_id) in the binding:
 
 1. Look up `kind = registry.entry(equipment_id).kind`
 2. Look up `defs = SKILL_REGISTRY[kind]`
-3. Fetch the latest `/status` snapshot (via the aggregator's cache; refresh if older than `poll_timeout_seconds`)
+3. Fetch the latest `/status` snapshot from the aggregator's cache (kept warm by the per-device poll scheduler; each snapshot carries its own `fetched_at`)
 4. For each `SkillDef`, build a `Skill`:
    - **Available** if and only if all of:
      - `status.equipment_status in def.requires_states` (or `status.allowed_actions` contains `def.name` once v1.1 is in)

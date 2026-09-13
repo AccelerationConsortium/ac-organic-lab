@@ -59,7 +59,18 @@ Add/update an entry under `equipment:` with:
 - stable `id` (used by APIs and UI)
 - `kind`, `adapter`
 - `base_url` pointing to the real MagicDNS host
-- optional `status_path`, `protocol`, `poll_timeout_seconds`
+- optional `status_path`, `protocol`, `poll_timeout_seconds` — the read timeout,
+  capped at 8 s by the aggregator. Use `8.0` for anything reached over the
+  campus Wi-Fi (every device PC and Pi today): a cold fetch there is 3.7–5.2 s
+  on a bad day, and a smaller cap turns a healthy device into an
+  "unreachable" flap (2026-09-12). Loopback and wired entries can stay small.
+- optional `poll_interval_seconds` — how often the aggregator re-reads this
+  device (default 2.5 s). Set `30.0` for slow-changing tiles (host probes,
+  services, printers, sensors); leave unset for instruments under active
+  control. A device that publishes `details.poll_interval_s` on its own
+  envelope is polled no faster than that automatically, so gateway-fronted
+  devices usually need nothing here. Each poll is a full round trip, and on
+  the campus Wi-Fi path that is the cost that matters (2026-09-12).
 - `tiles:` — per-section tile sizing (keyed by the section id from `platforms.yaml`); omit a key to use the 2×1 default
 - `pills:` — Overview pill config; set `open: true` to render an "Open ↗" link to `base_url`
 
@@ -345,7 +356,7 @@ Steps:
    curl -fsS http://localhost:8001/api/equipment | python3 -c \
      'import sys,json; cam=[e for e in json.load(sys.stdin)["equipment"] if e["id"]=="cam_lab499_west"][0]; print(json.dumps({"status":cam["status"]["equipment_status"],"presets":cam["status"]["details"].get("presets"),"lenses":[l["stream_connected"] for l in cam["status"]["details"]["lenses"]]}, indent=2))'
    ```
-9. Open the dashboard's Lab Overview page (`/`) in the browser — the HTE platform card shows the live MSE feed inline and a **"Hide stream"** button in its header. The preview is **expanded by default**, so the overview page loads live video for every visitor; click **"Hide stream"** to collapse it (and **"Show stream"** to bring it back for that visit). The full camera tile with PTZ controls, presets, privacy/streaming toggles, snapshot, recording, and rolling-recording is always available on the platform detail page (`/platforms/<platform>`).
+9. Open the dashboard's Lab Overview page (`/`) in the browser — the platform card shows a **"Stream off"** placeholder with a **"Show stream"** button in its header; click it to start the live MSE feed for that visit ("Hide stream" collapses it again). **Streams never auto-play**, on the Overview or on the platform detail tile — the cameras are on the campus Wi-Fi, so every open stream costs ~1 Mbps of gaia's own radio and a viewer on a lab PC costs it again on the way out (see ARCHITECTURE *Stream visibility*). The choice is not persisted, so a page left open on a bench PC streams nothing. The full camera tile with PTZ controls, presets, privacy/streaming toggles, snapshot, recording, and rolling-recording is on the platform detail page (`/platforms/<platform>`); its video likewise starts off and has the same "Show stream" control plus a click-to-start overlay.
 
 ### Onboarding a Kasa plug
 
