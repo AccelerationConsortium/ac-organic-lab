@@ -578,15 +578,32 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 ## Equipment documentation in the API reference
 
 The dashboard API reference includes registered documentation from read-only
-monitoring devices as well as instruments with control skills. The live HTE
-Sense Every Zone entry exposes Swagger, OpenAPI, the Markdown agent guide
+monitoring devices as well as instruments with control skills. The HTE
+Sense Every Zone registry entry lists Swagger, OpenAPI, the Markdown agent guide
 (`/agent-docs`), Markdown API reference (`/agent-docs/api-reference`), and
-plain-text discovery (`/llms.txt`). Mock sensor entries have no documentation
-links. Adding documentation does not add control actions.
+plain-text discovery (`/llms.txt`). Registration is not deployment: the live
+sensor still returned 404 for `/llms.txt` on 2026-09-13, pending an operator-assisted
+update/restart. The Torrey Pines shaker (v0.2.3) and the
+Dose Every Well station (v0.9.1) serve the same five paths since 2026-09-12,
+and new device services follow [EQUIP_GUIDE Step B3](EQUIP_GUIDE.md#step-b3---documentation-endpoints).
+The baseline requires four paths: `/docs`, `/openapi.json`, `/agent-docs`, and
+`/llms.txt`. A separate Markdown API reference is optional; existing references
+and legacy JSON documents stay supported. OpenAPI owns route/schema definitions,
+and the packaged agent guide explains operating semantics. The guide also covers
+packaging, links, compatibility, and staged fleet rollout. Mock sensor entries have no documentation links. Adding
+documentation does not add control actions.
 
 `equipment.yaml` declares each allowed document path and kind (`swagger`,
 `openapi`, `json`, `markdown`, or `text`). The browser opens same-origin
 `/api/equipment/{equipment_id}/documentation/...` links; the API selects the
-appropriate Accept header and preserves upstream content types and failures.
-Swagger uses the proxied schema with submission disabled. An older sensor
-service may return 404 until its documentation endpoints are deployed.
+appropriate Accept header and fetches without viewer credentials, control-client
+state, authentication retries, or redirects. The proxy validates media types and
+UTF-8/JSON, limits uncompressed responses to 4 MiB and 15 seconds, and serves text
+as `text/plain` with `nosniff` (JSON remains `application/json`). Safe upstream
+failures, including an older deployment's 404, retain their status and body;
+unsupported content is 502 and timeouts are 504. Swagger uses the proxied schema
+with submission disabled. For `/llms.txt` only, inline links to exact registered
+upstream documents become relative links that resolve through the dashboard.
+Other links are unchanged and never expand the proxy allowlist. Device authors
+should prefer relative documentation links, which also work on direct services
+and behind path prefixes.

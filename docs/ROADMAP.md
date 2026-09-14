@@ -12,6 +12,33 @@ Cursor plan UI.
 > migration histories are compressed to their outcomes — full detail is in
 > git history and the device repos. Open work is preserved verbatim.
 
+## Documentation rollout — 2026-09-13
+
+The baseline is [EQUIP_GUIDE Step B3](EQUIP_GUIDE.md#step-b3---documentation-endpoints):
+four required endpoints (`/docs`, `/openapi.json`, `/agent-docs`, `/llms.txt`),
+an optional Markdown API reference, and unchanged legacy documentation contracts.
+Index links are document-relative. `scripts/audit_documentation.py` reports
+registry coverage offline; it does not prove deployment or contact equipment.
+
+First batch, documentation source, tests, and deployment outcomes:
+
+| Repository | Published commit | Deployment outcome |
+|---|---|---|
+| `dose_every_well` (`develop-modular`) | `91e9953` | Deployed; all five existing documentation endpoints return 200 and index links resolve. Remains uninitialized; no hardware startup requested. |
+| `mt-xpr-balance-server` (`main`) | `408dad3` | Deployed to `gibbie_balance` and `lle_xpr_balance`; all four endpoints return 200 and index links resolve. Both services returned ready/idle and unclaimed after restart. |
+| `torry-pines-shaker-server` (`main`) | `14d6b9c` | Published, not restarted: pre-existing calibration warning; restart held for operator direction because teardown sends stop/idle commands. |
+| `sense-every-zone` (`main`) | `714617a` | Published, not deployed: node checkout predates documentation routes; restart needs operator sudo. Live `/llms.txt` still returns 404 despite registry declaration. |
+
+The dashboard proxy hardening and registrations were included in the reviewed
+dashboard release and verified against its deployed source manifest. This does
+not deploy the pending device-side updates above. Later Robot Motion workspace
+changes require their own staged dashboard cutover; do not restart the shared
+working checkout merely to activate unrelated work.
+No status/control contracts or hardware settings were changed in this batch.
+Remaining legacy-documentation services and gateways are subsequent batches,
+not implied complete by these releases. Wheel-install conformance remains a
+separate check; these deployments use their existing editable installations.
+
 ## Current state (last full fleet sweep: 2026-05-30; protocol-version + liveness re-probe: 2026-07-30)
 
 | Milestone | Scope | Status |
@@ -300,6 +327,23 @@ because a redundant move is a harmless no-op, so the gating is presentation).
 moment an operation finishes, and a `/status` racing that refresh waits for it
 instead of answering with pre-operation values. Gibbie's service logs moved to
 `C:\SDL_Logs` the same evening (history carried over as NSSM rotations).
+
+**Does the Gibbie workflow lose the balance while the service holds a
+session? No — measured 2026-09-11 00:04.** The workflow's own client
+(`sdl2_solid_dose` → `matterlab_balances.MTXPRBalance`, run from its checkout
+and `ot_py312` env with its own `.env`) opened a session in 0.70 s, took an
+immediate reading in 0.06 s and closed, while `mt-xpr-balance` held its session
+on the same balance; the service read `ready` / `session_open` before, during
+and after, and logged no reopen. The workflow had in fact already run seven
+component-manager sessions that day (08:53–16:16) alongside the service's
+session, error-free. The XPR accepts concurrent sessions and arbitrates
+nothing: STATUS_SPEC claims here exclude only dashboard / `lab-skills` writers
+(the EasyMax caveat again), the web service exposes no "task running / session
+held" query the service could turn into `busy`, and a tile button pressed mid-run
+would interleave with the workflow on the instrument's one command queue.
+Operating rule until the workflow routes through the service: **Disconnect on
+the tile before a bench run, Connect after** — the service does not reconnect
+on its own after an operator shutdown.
 
 **Second modular piece, 2026-09-06:**
 [`AccelerationConsortium/mt-easymax-server`](https://github.com/AccelerationConsortium/mt-easymax-server)
@@ -799,9 +843,26 @@ intentional; both change what a poller sees.
   `/dev/serial/by-id` at `5c2d706`), so the dashboard's stray
   `config_name` is ignored — remove the dead param from
   `postDoserStartup` in `web/src/lib/api.ts` at the next quiet web build.
-- [ ] Cosmetic: `pyproject` version still `0.8.0` (`__version__` is
-  `0.9.0`); `fastapi`/`uvicorn` not yet declared as deps (present on the
-  Pi). Shipped state: branch `develop-modular`, now at `5c2d706`.
+- [x] **v0.9.1 deployed 2026-09-12**: agent documentation (`/agent-docs`,
+  `/agent-docs/api-reference`, `/llms.txt`), `/plate/status` with no plate →
+  **404** instead of 500 (it had lit the dashboard's error path ~50×/day while
+  the doser tile was open), FastAPI `version` follows `__version__`, `pyproject`
+  + `uv.lock` at 0.9.1. Deploying moved the Pi from `5c2d706` to `develop-modular`
+  HEAD, which includes the 07-30 `sdl-lab-contract` v1.2 migration — the wire
+  now reports **protocol 1.2** and the registry entry was flipped to match. The
+  repo is private and the Pi has no GitHub credential, so this was a tree copy
+  from the central server (DEVICE_PC_SETUP §2.5 option 1) plus `python -m pip install
+  'sdl-lab-contract @ git+…@v1.2.0'` and `pip install --no-deps -e .` into the
+  existing venv (which has no `pip` shim — use `python -m pip`); a rollback archive
+  remains on the Pi. The restart left the
+  station `requires_init`; it needs a claim-gated `startup`. Two residuals:
+  `/plate/status` while *uninitialised* is still a 500 ("system not
+  initialized" — a different message the 404 mapping does not cover), and the
+  API test modules skip everywhere but a Pi because `RPi.GPIO` raises at import.
+- [x] Package metadata reconciled: `pyproject` is now `0.9.1`, and
+  `fastapi`/`uvicorn` are declared in the optional `service` extra. This
+  supersedes the old `0.8.0` metadata / `5c2d706` deployment note; see the
+  v0.9.1 deployment above.
 
 #### `fume_hood_actuator`
 
@@ -1311,6 +1372,12 @@ retries a failed boot auto-connect every 30 s until the first
 successful connect, so this failure mode now self-heals (see the
 *Operational regressions* watch item). Open:
 
+- [x] **v0.2.3 (2026-09-12): agent documentation + owner-logged startup/shutdown.**
+  `GET /agent-docs`, `/agent-docs/api-reference`, `/llms.txt` (EQUIP_GUIDE §1
+  Step B3) shipped as package data; `/control/startup` and `/control/shutdown`
+  log the claim owner (shutdown at WARNING); FastAPI `version` follows
+  `__version__`. Deployed on the Cytation PC by `git pull` + `nssm restart`,
+  verified live; registered under `documentation:` in `equipment.yaml`.
 - [x] **Eight days in `requires_init`, 2026-09-04 → 09-12, and it was a
   shutdown, not a fault.** `service.connected` is `self._driver is not None`,
   and the only path that clears it is `shutdown()`; the service log shows the
