@@ -457,7 +457,7 @@ A missing section key defaults to `{ w: 2, h: 1 }`.
 
 Responsive behaviour: on mobile (< sm) every card is full-width; from sm to lg the grid is 2 columns and `w` is capped at 2; from lg+ the full 4-column grid applies.
 
-### Monitoring-only devices get the generic card
+### Monitoring-only devices use read-only cards
 
 The grid picks a tile by `kind` — a `robot_arm` gets the xArm tile with its
 STOP / CLEAR / INIT buttons and "Open control panel" link, a `liquid_handler`
@@ -465,9 +465,24 @@ gets the OT-2 tile with its panel link and deck layout. Those are that kind's
 *control* surface, and a device that is only **observed** from this dashboard
 has none of it: every button would 404. So a device whose `/status` carries
 `details.monitoring_only: true` is rendered with the generic
-`EquipmentStatusCard` regardless of `kind`, and the card drops its lock chip
+`EquipmentStatusCard` by default regardless of `kind`, and the card drops its lock chip
 (there is nothing to gate). The rule lives in `web/src/lib/tile-policy.ts`
 (`isMonitoringOnly`) and is applied in `EquipmentGrid.tsx`.
+
+The Process Chemistry HPLC (`lle_hplc`) instead uses `HplcMonitorTile`, a
+read-only presentation of ChemStation observations in the shared HTE
+`TileShell` style. It groups instrument activity, software processes, the
+observed queue, and the latest result into compact sections. Missing native
+readings or queue information are shown as not observed, never as ready or
+an empty queue. This ID always dispatches to the monitor tile, including
+failed polls without `details`; no UPLC lifecycle controls or lock chip are
+attached. Other HPLC tiles retain their existing behavior.
+
+The Process Chemistry UR5-CB3 (`lle_ur5_arm`) and Gibbie UR3e
+(`gibbie_ur_arm`) use `UrMonitorTile`: only controller mode, safety, and
+program state, with no lock, startup, motion, or control-panel link. Their
+identities remain read-only even when an unavailable monitor omits the
+`monitoring_only` flag. This does not apply to separately controlled UR arms.
 
 The first such devices are the Gibbie sample-prep bench (2026-09-06): a UR arm
 and an Opentrons Flex observed by the read-only `sdl2-gibbie-server` gateway,

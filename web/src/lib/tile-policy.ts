@@ -46,14 +46,24 @@ const DESTRUCTIVE_KINDS: ReadonlySet<Kind> = new Set<Kind>([
  * A device whose envelope says `details.monitoring_only: true` is observed,
  * never operated, from this dashboard (STATUS_SPEC §9 read-only devices — the
  * Gibbie bench monitor is the first). Two consequences, both presentation:
- * `EquipmentGrid` gives it the generic card instead of its kind's control
- * tile, and the generic card drops the lock chip, since there is nothing the
- * chip would ever gate. The flag is a `details` convention, not contract.
+ * `EquipmentGrid` gives it an observation card instead of its kind's control
+ * tile, and the generic card drops its lock and startup controls. Dedicated
+ * HPLC/UR observation tiles follow the same boundary. The flag is a `details`
+ * convention, not contract.
  */
+export function isReadOnlyUrArm(id: string | undefined): boolean {
+  // The Ligand UR5e is a read-only prototype until its controller is
+  // implemented and commissioned in a separate reviewed deployment.
+  return id === "lle_ur5_arm" || id === "gibbie_ur_arm" || id === "ligand_ur5e";
+}
+
 export function isMonitoringOnly(snapshot: {
+  id?: string;
   status?: { details?: Record<string, unknown> | null } | null;
 }): boolean {
-  return snapshot.status?.details?.["monitoring_only"] === true;
+  // A failed poll may omit details. These arms must never fall through
+  // to the xArm control surface, including the uncommissioned UR5e prototype.
+  return isReadOnlyUrArm(snapshot.id) || snapshot.status?.details?.["monitoring_only"] === true;
 }
 
 export function kindHasDestructiveControls(kind: Kind | string | undefined): boolean {

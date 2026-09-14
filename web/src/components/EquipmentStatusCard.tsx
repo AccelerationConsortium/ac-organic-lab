@@ -41,7 +41,7 @@ export function EquipmentStatusCard({ snapshot }: { snapshot: EquipmentSnapshot 
   const advertisesStartup =
     (status.allowed_actions ?? []).includes("startup") ||
     (status.required_actions ?? []).includes("startup");
-  const offersInit = requiresInit && advertisesStartup && !snapshot.fetch_error;
+  const offersInit = !isMonitoringOnly(snapshot) && requiresInit && advertisesStartup && !snapshot.fetch_error;
 
   return (
     <TileShell

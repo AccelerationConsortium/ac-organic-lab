@@ -271,16 +271,16 @@ SSH_HOSTS: tuple[SshHost, ...] = (
     ),
     SshHost(
         id="dobot-pc",
-        label="Ligand Development Platform",
+        label="Prototyping PC",
         kind="Windows PC",
         hostname="sdl2-pc-05-dobot.tail6a1dd7.ts.net",
         user="sdl2",
         target="dobot-pc",
         shell="cmd.exe (Windows OpenSSH)",
         note=(
-            "Ligand Development Platform PC. Hosts the Dobot MG400 gateway "
-            "(dobot-mg400-server) on :8050; more bench services will land "
-            "here. Service control is `C:\\SDL_Tools\\nssm.exe` — prefer "
+            "Prototyping PC. Hosts the Dobot MG400 gateway "
+            "(dobot-mg400-server) on :8050. Service control is "
+            "`C:\\SDL_Tools\\nssm.exe` — prefer "
             "the whitelisted host-ops surface for routine restarts."
         ),
         profiles=(
@@ -299,7 +299,8 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         shell="cmd.exe (Windows OpenSSH)",
         note=(
             "Hosts the UPLC-MS sidecar. The sidecar owns the run queue — do "
-            "not restart it mid-campaign. The OT-2 complexation robot's USB-B "
+            "not restart it mid-campaign. Also hosts the isolated read-only "
+            "UR5e Robot Motion prototype on :8075. The OT-2 complexation robot's USB-B "
             "cable stays plugged into this PC as a physical network fallback "
             "(the portproxy bridge itself was retired 2026-08-27; see ROADMAP)."
         ),

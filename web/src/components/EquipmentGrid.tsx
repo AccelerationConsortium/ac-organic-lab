@@ -1,5 +1,5 @@
 import type { EquipmentSnapshot } from "@/types/api";
-import { isMonitoringOnly } from "@/lib/tile-policy";
+import { isMonitoringOnly, isReadOnlyUrArm } from "@/lib/tile-policy";
 import { CameraTile } from "./CameraTile";
 import { XprBalanceTile } from "./XprBalanceTile";
 import { EasyMaxTile } from "./EasyMaxTile";
@@ -7,6 +7,7 @@ import { LumastirTile } from "./LumastirTile";
 import { EquipmentStatusCard } from "./EquipmentStatusCard";
 import { FumeHoodTile } from "./FumeHoodTile";
 import { HplcTile } from "./HplcTile";
+import { HplcMonitorTile } from "./HplcMonitorTile";
 import { LiquidHandlerTile } from "./LiquidHandlerTile";
 import { PlateReaderTile } from "./PlateReaderTile";
 import { PlateSealerTile } from "./PlateSealerTile";
@@ -14,6 +15,7 @@ import { PlateStackerTile } from "./PlateStackerTile";
 import { PowerStripTile } from "./PowerStripTile";
 import { PressTile } from "./PressTile";
 import { RobotArmTile } from "./RobotArmTile";
+import { UrMonitorTile } from "./UrMonitorTile";
 import { ShakerTile } from "./ShakerTile";
 import { SolidDoserTile } from "./SolidDoserTile";
 
@@ -75,7 +77,12 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
                     ? { height: tileHeight(snapshot) }
                     : { minHeight: tileHeight(snapshot) }}
                 >
-                  {isMonitoringOnly(snapshot) ? (
+                  {snapshot.id === "lle_hplc" ? (
+                    // Remain read-only even when a failed poll omits details.
+                    <HplcMonitorTile snapshot={snapshot} />
+                  ) : isReadOnlyUrArm(snapshot.id) ? (
+                    <UrMonitorTile snapshot={snapshot} />
+                  ) : isMonitoringOnly(snapshot) ? (
                     <EquipmentStatusCard snapshot={snapshot} />
                   ) : ["lle_xpr_balance", "gibbie_balance", "gibbie_xpr_balance"].includes(snapshot.id) ? (
                     <XprBalanceTile snapshot={snapshot} />

@@ -182,7 +182,12 @@ def test_every_host_is_addressable_by_its_id() -> None:
     # These ids are the /utils/computers/ssh/<id> route the host tiles link to
     # (web/src/app/utils/computers/HostsPanel.tsx); keep both sides in step.
     assert {"gaia", "cytation-pc", "dobot-pc", "uplc-pc"} <= set(HOSTS_BY_ID)
-    assert HOSTS_BY_ID["dobot-pc"].label == "Ligand Development Platform"
+    assert HOSTS_BY_ID["dobot-pc"].label == "Prototyping PC"
+
+
+def test_robot_motion_host_note_points_to_uplc_not_retired_dobot_copy() -> None:
+    assert "Robot Motion" not in HOSTS_BY_ID["dobot-pc"].note
+    assert "UR5e Robot Motion prototype on :8075" in HOSTS_BY_ID["uplc-pc"].note
 
 
 def test_argv_never_prompts_and_never_learns_a_host_key() -> None:

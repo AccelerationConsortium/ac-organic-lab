@@ -12,6 +12,8 @@ import { EquipmentStatusCard } from "./EquipmentStatusCard";
 vi.mock("./XprBalanceTile", () => ({ XprBalanceTile: () => <div>XPR_TILE</div> }));
 vi.mock("./RobotArmTile", () => ({ RobotArmTile: () => <div>ROBOT_ARM_TILE</div> }));
 vi.mock("./LiquidHandlerTile", () => ({ LiquidHandlerTile: () => <div>LIQUID_HANDLER_TILE</div> }));
+vi.mock("./HplcMonitorTile", () => ({ HplcMonitorTile: () => <div>HPLC_MONITOR_TILE</div> }));
+vi.mock("./HplcTile", () => ({ HplcTile: () => <div>HPLC_CONTROL_TILE</div> }));
 vi.mock("@/lib/use-control-lock", () => ({
   useControlLock: () => ({
     locked: true,
@@ -72,7 +74,27 @@ it("preserves whole and half tile heights as minimum card heights", () => {
 });
 
 describe("EquipmentGrid dispatch for monitoring-only devices", () => {
-  it("gives a monitoring-only robot arm the generic card instead of the xArm tile", () => {
+  it("keeps the Process Chemistry HPLC on its read-only tile even without monitoring details", () => {
+    const { rerender } = render(<EquipmentGrid snapshots={[snap("lle_hplc", "hplc", { monitoring_only: true })]} />);
+    expect(screen.getByText("HPLC_MONITOR_TILE")).toBeTruthy();
+    const failed = snap("lle_hplc", "hplc", {});
+    failed.fetch_error = { kind: "timeout", message: "timed out" } as EquipmentSnapshot["fetch_error"];
+    rerender(<EquipmentGrid snapshots={[failed]} />);
+    expect(screen.getByText("HPLC_MONITOR_TILE")).toBeTruthy();
+    expect(screen.queryByText("HPLC_CONTROL_TILE")).toBeNull();
+  });
+
+  it("leaves the operated UPLC tile and other generic HPLC monitors unchanged", () => {
+    render(<EquipmentGrid snapshots={[
+      snap("uplc", "hplc", {}),
+      snap("another_monitor", "hplc", { monitoring_only: true }, "Other HPLC monitor"),
+    ]} />);
+    expect(screen.getAllByText("HPLC_CONTROL_TILE")).toHaveLength(1);
+    expect(screen.getByText("Other HPLC monitor")).toBeTruthy();
+    expect(screen.queryByText("HPLC_MONITOR_TILE")).toBeNull();
+  });
+
+  it("gives the Gibbie UR arm a compact read-only card instead of the xArm tile", () => {
     render(
       <EquipmentGrid
         snapshots={[snap("gibbie_ur_arm", "robot_arm", { monitoring_only: true }, "UR Arm (Gibbie)")]}
@@ -81,7 +103,17 @@ describe("EquipmentGrid dispatch for monitoring-only devices", () => {
     expect(screen.queryByText("ROBOT_ARM_TILE")).toBeNull();
     expect(screen.getByText("UR Arm (Gibbie)")).toBeTruthy();
     expect(screen.getByText("observed only")).toBeTruthy();
+    expect(screen.getByText("Read-only monitoring")).toBeTruthy();
     // Nothing to gate: no lock chip, no controls of any kind.
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it.each(["lle_ur5_arm", "gibbie_ur_arm", "ligand_ur5e"])("never exposes xArm controls for %s after a failed poll", (id) => {
+    const failed = snap(id, "robot_arm", {});
+    failed.fetch_error = { kind: "timeout", message: "timed out" } as EquipmentSnapshot["fetch_error"];
+    render(<EquipmentGrid snapshots={[failed]} />);
+    expect(screen.queryByText("ROBOT_ARM_TILE")).toBeNull();
+    expect(screen.getByText("Read-only monitoring")).toBeTruthy();
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
@@ -112,6 +144,14 @@ describe("EquipmentGrid dispatch for monitoring-only devices", () => {
 });
 
 describe("EquipmentStatusCard lock chip", () => {
+  it("does not offer generic INIT to a read-only device even if an action is advertised", () => {
+    const monitored = snap("monitor", "robot_arm", { monitoring_only: true });
+    monitored.status.equipment_status = "requires_init";
+    monitored.status.allowed_actions = ["startup"];
+    monitored.status.required_actions = ["startup"];
+    render(<EquipmentStatusCard snapshot={monitored} />);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
   it("shows the chip for a destructive kind, and drops it when the device is monitoring-only", () => {
     const operated = render(<EquipmentStatusCard snapshot={snap("some_arm", "robot_arm", {})} />);
     expect(screen.getAllByRole("button").length).toBeGreaterThan(0);

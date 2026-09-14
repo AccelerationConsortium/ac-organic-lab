@@ -160,7 +160,7 @@ def test_dobot_pc_groups_the_mg400_by_hostname_and_tailnet_ip():
     )
     payload = group_hosts(registry)
     dobot = _by_id(payload, "dobot-pc")
-    assert dobot["label"] == "Ligand Development Platform"
+    assert dobot["label"] == "Prototyping PC"
     assert dobot["kind"] == "Windows PC"
     assert [s["id"] for s in dobot["services"]] == ["dobot_mg400", "dobot_later"]
     assert {s["id"]: s["role"] for s in dobot["services"]} == {

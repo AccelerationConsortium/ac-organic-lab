@@ -82,7 +82,6 @@ sections:
       - lle_ur5_arm
       - lle_hplc
       - lle_xpr_balance
-      - lle_ph_unit
 
   - id: ligand_development
     title: Ligand Development Platform
@@ -94,3 +93,4 @@ sections:
       - cam_ligand_tapo_d246
       - dobot_mg400
       - lumastir
+      - lle_ph_unit

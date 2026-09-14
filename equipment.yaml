@@ -863,7 +863,7 @@ equipment:
     pills: {}
 
   - id: hostops_dobot_pc
-    name: Ligand Development Platform PC
+    name: Prototyping PC
     kind: other
     adapter: http
     protocol: "1.2"
@@ -1073,7 +1073,7 @@ equipment:
     pills: {}
 
   - id: gibbie_ur_arm
-    name: UR-3e Arm (Gibbie)
+    name: UR3e Arm (Gibbie)
     kind: robot_arm
     adapter: http
     protocol: "1.2"
@@ -1153,7 +1153,7 @@ equipment:
   # -------------------------------------------------------------------------
 
   - id: lle_ur5_arm
-    name: UR5-CB3 Arm (LLE)
+    name: UR5-CB3 Arm (Process Chemistry)
     kind: robot_arm
     adapter: http
     protocol: "1.2"
@@ -1260,7 +1260,7 @@ equipment:
     status_path: /devices/lle_ph_unit/status
     poll_timeout_seconds: 8.0
     tiles:
-      process_chemistry: { w: 2, h: 1 }
+      ligand_development: { w: 2, h: 1 }
     pills: {}
 
   - id: lle_server
