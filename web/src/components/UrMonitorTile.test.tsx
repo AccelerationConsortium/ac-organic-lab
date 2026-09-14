@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EquipmentSnapshot } from "@/types/api";
 import { isMonitoringOnly } from "@/lib/tile-policy";
 import { UrMonitorTile } from "./UrMonitorTile";
+
+const auth = { authenticated: true, loading: false, role: "operator", canControl: () => auth.authenticated, requestLogin: vi.fn() };
+vi.mock("@/lib/user-auth", () => ({ useUserAuth: () => auth }));
 
 function snapshot(): EquipmentSnapshot {
   return {
@@ -20,9 +23,31 @@ function snapshot(): EquipmentSnapshot {
   };
 }
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); auth.authenticated = true; auth.requestLogin.mockClear(); });
 
 describe("read-only UR arms", () => {
+  it("links only the Ligand UR5e to its SDL2-authenticated workspace in a new tab", () => {
+    const value = { ...snapshot(), id: "ligand_ur5e" };
+    render(<UrMonitorTile snapshot={value} />);
+    const link = screen.getByRole("link", { name: "Open control panel ↗" });
+    expect(link.getAttribute("href")).toBe("/utils/robot_motion");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.className).toContain("border-orange-300");
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getByText("Read-only monitoring")).toBeTruthy();
+  });
+
+  it("prompts SDL2 login when the UR5e link is clicked while signed out", () => {
+    auth.authenticated = false;
+    render(<UrMonitorTile snapshot={{ ...snapshot(), id: "ligand_ur5e" }} />);
+    fireEvent.click(screen.getByRole("link", { name: "Open control panel ↗" }));
+    expect(auth.requestLogin).toHaveBeenCalledOnce();
+  });
+
+  it("does not add a workspace link to the Gibbie arm", () => {
+    render(<UrMonitorTile snapshot={{ ...snapshot(), id: "gibbie_ur_arm" }} />);
+    expect(screen.queryAllByRole("link")).toHaveLength(0);
+  });
   it("shows only the three status readings and no robot controls", () => {
     render(<UrMonitorTile snapshot={snapshot()} />);
     for (const label of ["Mode", "Safety", "Program", "RUNNING", "NORMAL", "PLAYING", "Read-only monitoring"]) {

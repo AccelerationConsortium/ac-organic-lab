@@ -52,6 +52,13 @@ const nextConfig = {
   },
   async rewrites() {
     return [
+      // Caddy already serves this shared sign-in surface. Mirror only its
+      // public routes on direct dashboard URLs, using our existing session
+      // handlers; never expose the sidecar's admin/authz/verification APIs.
+      { source: "/auth/banner.js", destination: "/api/auth/banner" },
+      ...["me", "users", "login", "verify-code", "logout"].map((path) => ({
+        source: `/auth/${path}`, destination: `/api/auth/${path}`,
+      })),
       {
         source: "/api/:path*",
         destination: `${apiBase}/api/:path*`,

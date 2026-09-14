@@ -48,6 +48,7 @@ from .workflow import build_workflow_router
 from .db import LabDatabase, resolve_db_path
 from .deck import build_deck_router
 from .equipment_docs import build_equipment_docs_router
+from .robot_motion import build_robot_motion_router
 from .events import (
     ACTIVITY_TRANSITION,
     CYCLES_TOTAL_METRIC,
@@ -624,6 +625,7 @@ app.include_router(build_camera_streams_router())
 # Same-origin, read-only equipment documentation. Paths are explicitly
 # allowlisted in equipment.yaml; this is not a general device proxy.
 app.include_router(build_equipment_docs_router())
+app.include_router(build_robot_motion_router())
 
 # Phase F: authorized plan execution (D-20 — the runner lives here, not in
 # bitácora, because this app already owns the claim and the audit row).

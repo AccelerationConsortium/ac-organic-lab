@@ -1,6 +1,7 @@
 "use client";
 
 import type { EquipmentSnapshot } from "@/types/api";
+import { AuthGatedLink } from "./AuthGatedLink";
 import { FetchErrorBand } from "./FetchErrorBand";
 import { StatusPill } from "./StatusPill";
 import { TileShell } from "./TileShell";
@@ -18,7 +19,7 @@ function Reading({ label, value }: { label: string; value: string | null }) {
   );
 }
 
-/** Compact observation-only UR arm status, without physical controls. */
+/** Observation-only UR arms. Only the Ligand prototype has a separate workspace. */
 export function UrMonitorTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const { status, fetch_error: fetchError } = snapshot;
   const details = fetchError ? {} : status.details ?? {};
@@ -32,6 +33,12 @@ export function UrMonitorTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       headerRight={<StatusPill state={fetchError ? "unknown" : status.equipment_status} />}
       bannerExtra={<>
         <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">Read-only monitoring</span>
+        {snapshot.id === "ligand_ur5e" && (
+          <AuthGatedLink href="/utils/robot_motion" equipmentId={snapshot.id} external
+            className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md border border-orange-300 bg-orange-50 px-2.5 text-xs font-semibold text-orange-800 transition-colors hover:bg-orange-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 dark:border-orange-700 dark:bg-orange-950/40 dark:text-orange-200 dark:hover:bg-orange-900/60">
+            Open control panel ↗
+          </AuthGatedLink>
+        )}
       </>}
       footerLeft={fetchError ? "Monitor unreachable; current arm state is unknown." : undefined}
     >

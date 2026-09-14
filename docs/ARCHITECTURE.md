@@ -607,3 +607,12 @@ upstream documents become relative links that resolve through the dashboard.
 Other links are unchanged and never expand the proxy allowlist. Device authors
 should prefer relative documentation links, which also work on direct services
 and behind path prefixes.
+
+## Robot Motion workspace
+
+The Ligand UR5e's compact tile links to `/utils/robot_motion`, using the existing
+SDL2 login layout. A cookie-only, equipment-authorized API proxy serves its
+prototype UI, status, and offline graph calculations; no physical-control paths
+are exposed. The other UR monitors and xArm integration are unchanged. See
+[ROBOT_MOTION_PANEL.md](ROBOT_MOTION_PANEL.md) for the allowlist, authentication
+boundary, raw Tailnet-port limitation, and independent deployment scopes.
