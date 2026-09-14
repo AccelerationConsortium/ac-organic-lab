@@ -93,6 +93,50 @@ curl -s http://sdl2-server-gaia.tail6a1dd7.ts.net:8000/
 
 ## Day-to-day operations
 
+### Dashboard-only staged release
+
+For this repository's installed-checkout layout, prefer
+`tools/deploy-dashboard.py` over building inside the running `web/.next`.
+Run the staging step as the service owner, with the dashboard's actual HTTP
+address (shown by its installed unit):
+
+```bash
+uv run --no-sync python tools/deploy-dashboard.py --stage \
+  --web-url http://<dashboard-address>:8000
+```
+
+The tool builds an isolated snapshot under the ignored `.run/` directory and
+prints its release path. It limits build concurrency, fingerprints runtime
+source and the bundle, and packages standalone static/public assets. Check that
+release without changing live files or services:
+
+```bash
+uv run --no-sync python tools/deploy-dashboard.py --release <printed-release-path>
+```
+
+After tests and staged-browser checks pass, a human must confirm that no
+dashboard workflow is active, then perform the brief cutover:
+
+```bash
+sudo .venv/bin/python tools/deploy-dashboard.py \
+  --release <printed-release-path> --apply --confirm-no-active-workflow
+```
+
+Only dashboard API/web are stopped and started. Instrument services, camera
+relay, Caddy, network settings, and installed environment files are untouched.
+Camera viewing leases and grants reset with the API; viewers may need one
+refresh. Changed source or a different live build causes preflight to refuse;
+restage rather than bypassing that check. The prior web bundle is retained under
+`.run/dashboard-rollback-*`. A failed cutover restores that bundle, but **does
+not revert Python source**; inspect both service logs before claiming recovery.
+Keep the backup until the deployed API and UI are verified. The helper does not
+commit, push, install dependencies, or establish whether a workflow is idle.
+
+### Service logs and legacy/manual commands
+
+The manual build commands below apply to an inactive deployment directory. Do
+not run an in-place production build over the bundle a live web process serves.
+
 ```bash
 # Live logs
 journalctl -fu ac-organic-lab-api
