@@ -15,13 +15,15 @@ tester, and fails closed on an expired session or unavailable auth service.
 Caddy uses this same endpoint as `forward_auth` for every beta page, asset, and
 API request, then proxies to the loopback beta frontend on port 13001. Merely
 hiding a link would not protect the route. Other admins are excluded too.
-The admin page's other features and existing `/bitacora` route are unchanged.
+Both notebook links on Admin require this same verified tester grant.
+The existing `/bitacora` route retains its sign-in gate.
 
 Since 2026-09-11 the production notebook (`/bitacora/`) is also **hidden from
 the dashboard's tab row** while it is under test: the Nav's Notebooks tab and
 the platform placeholder's "Open the notebook" button are gone, and the one
-dashboard entry point is an admin-only link on the same admin page, above the
-beta link. The stale `/notebooks` bookmark redirect follows suit (admins reach
+dashboard entry point is a private-tester-only link on the same admin page,
+above the beta link. The notebook service tile is also omitted from
+`platforms.yaml`; the service remains registered for monitoring. The stale `/notebooks` bookmark redirect follows suit (admins reach
 `/bitacora/`, everyone else the Overview). This is **visibility only** — unlike
 the beta prefix, `/bitacora/` stays gated at the edge by sign-in, not by role,
 so any signed-in account that knows the URL can still open it. Restoring the

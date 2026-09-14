@@ -206,7 +206,8 @@ afterEach(() => {
 });
 
 describe("AdminPage", () => {
-  it("links the admin to the notebook hidden from the tab row", async () => {
+  it("links the authorized tester to the notebook hidden from the dashboard", async () => {
+    bodies["/api/admin/bitacora-beta"] = { href: "/bitacora-beta", label: "Bitácora Beta", user: "yang@lab.ca" };
     renderPage();
     const link = await screen.findByRole("link", { name: "Open the notebook (Bitácora)" });
     expect(link.getAttribute("href")).toBe("/bitacora/");
@@ -222,12 +223,14 @@ describe("AdminPage", () => {
     renderPage();
     await screen.findByText("Accounts & Activities");
     expect(screen.queryByRole("link", { name: "Open Bitácora Beta" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Open the notebook (Bitácora)" })).toBeNull();
   });
   it("does not reuse another account's cached beta grant", async () => {
     bodies["/api/admin/bitacora-beta"] = { href: "/bitacora-beta", label: "Bitácora Beta", user: "someone-else@lab.ca" };
     renderPage();
     await screen.findByText("Accounts & Activities");
     expect(screen.queryByRole("link", { name: "Open Bitácora Beta" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Open the notebook (Bitácora)" })).toBeNull();
   });
   it("gates on an admin session client-side", async () => {
     auth.identity = { role: "operator", email: "op@lab.ca" };

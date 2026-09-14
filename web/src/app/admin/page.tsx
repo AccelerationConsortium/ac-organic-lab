@@ -371,18 +371,17 @@ export default function AdminPage() {
     // height like the Overview's masonry cards, with pairs preserved.
     <>
     <p className="pt-3 text-sm"><a href="/admin/camera-streams" className="text-sky-700 underline dark:text-sky-300">Camera viewers and monitoring approvals</a></p>
-    {/* The notebook is hidden from the tab row while it is under test (see
-        components/Nav.tsx); this admin-only link is its one dashboard entry
-        point. Visibility only — /bitacora/ itself is gated at the edge by
-        sign-in, not by role; the beta prefix below is the account-gated one. */}
-    <p className="pt-3 text-sm">
-      <a href="/bitacora/" target="_blank" rel="noopener noreferrer" className="font-medium text-sky-700 underline dark:text-sky-300">Open the notebook (Bitácora)</a>
-      <span className="ml-2 text-ink-subtle">Hidden from the tab row while under test · opens in a new browser tab</span>
-    </p>
-    {beta.data?.href === "/bitacora-beta" && beta.data.user === identity?.email?.trim().toLowerCase() && <p className="pt-3 text-sm">
-      <a href="/bitacora-beta" target="_blank" rel="noopener noreferrer" className="font-medium text-sky-700 underline dark:text-sky-300">Open Bitácora Beta</a>
-      <span className="ml-2 text-ink-subtle">Private test instance · separate data</span>
-    </p>}
+    {/* Both links are visible only to the server-authorized private tester.
+        The production notebook still has its existing sign-in gate. */}
+    {beta.data?.href === "/bitacora-beta" && beta.data.user === identity?.email?.trim().toLowerCase() && <div className="space-y-2 pt-3 text-sm">
+      <p>
+        <a href="/bitacora/" target="_blank" rel="noopener noreferrer" className="font-medium text-sky-700 underline dark:text-sky-300">Open the notebook (Bitácora)</a>
+      </p>
+      <p>
+        <a href="/bitacora-beta" target="_blank" rel="noopener noreferrer" className="font-medium text-sky-700 underline dark:text-sky-300">Open Bitácora Beta</a>
+        <span className="ml-2 text-ink-subtle">Standalone private beta · separate data</span>
+      </p>
+    </div>}
     <div className="grid items-start gap-4 pt-3 lg:grid-cols-2">
       {/* ================================================================== */}
       {/* Row 1 — Accounts & Activities | Roster health                        */}
