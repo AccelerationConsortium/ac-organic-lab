@@ -370,6 +370,7 @@ export default function AdminPage() {
     // two-column grid uses items-start so each tile sits at its own content
     // height like the Overview's masonry cards, with pairs preserved.
     <>
+    <p className="pt-3 text-sm"><a href="/admin/camera-streams" className="text-sky-700 underline dark:text-sky-300">Camera viewers and monitoring approvals</a></p>
     {/* The notebook is hidden from the tab row while it is under test (see
         components/Nav.tsx); this admin-only link is its one dashboard entry
         point. Visibility only — /bitacora/ itself is gated at the edge by

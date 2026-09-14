@@ -140,10 +140,12 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   kiosk viewer, fleet-wide "unreachable" flapping). Therefore **no player
   auto-plays** — Overview card and detail tile both start off with a "Show
   stream" control, per visit, never persisted — and any new surface that
-  shows video must follow the same rule. Do not proxy more of go2rtc than
-  the two paths the browser player needs — `/streams/api/ws` (MSE, and WebRTC
-  signalling) and `/streams/api/webrtc`: `/api/streams` and `/api/config`
-  return the RTSP source URLs with the camera credentials embedded.
+  shows video must follow the same rule. Browser playback must use the
+  authenticated `/api/camera-streams/*` broker, including on direct dashboard
+  URLs. Deny all legacy `/streams/*` paths; do not restore raw signaling
+  exceptions, which bypass admission and leases. Relay `/api/streams` and
+  `/api/config` return camera credentials embedded in RTSP source URLs and
+  must remain loopback-only. See `docs/CAMERA_VIEWING.md` for limits and grants.
 - **Device services close idle keep-alive sockets after 5 s (uvicorn's
   default), and several block their event loop in `/status`** (shaker serial
   readback ~1.3 s, plateloc ActiveX ~0.7 s). A client that reuses a pooled

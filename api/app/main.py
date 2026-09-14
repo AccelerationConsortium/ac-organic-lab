@@ -41,6 +41,7 @@ from .assistant_sessions import (
 from .voice import build_voice_router
 from .alert_notifier import AlertNotifier
 from .control import build_control_router
+from .camera_streams import ViewingBroker, build_camera_streams_router
 from .custody import build_custody_router
 from .locations import build_locations_router
 from .workflow import build_workflow_router
@@ -520,6 +521,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         timeout=httpx.Timeout(15.0),
     )
     app.state.overrides = load_dashboard_overrides()
+    app.state.camera_viewing = ViewingBroker()
+    camera_task = asyncio.create_task(app.state.camera_viewing.watch())
     app.state.platforms_config = load_platforms()
     # Third root YAML: the registry of places a container can be. Static; the
     # record layer (BitacoraDB) holds where things *are*. PLATE_TRACKING.md.
@@ -577,6 +580,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        camera_task.cancel()
+        try:
+            await camera_task
+        except asyncio.CancelledError:
+            pass
         if poll_task is not None:
             poll_task.cancel()
             try:
@@ -612,6 +620,7 @@ app.add_middleware(
 # device gateway named by ``equipment.yaml::base_url``. See
 # ``api/app/control.py`` for the routing rules.
 app.include_router(build_control_router())
+app.include_router(build_camera_streams_router())
 # Same-origin, read-only equipment documentation. Paths are explicitly
 # allowlisted in equipment.yaml; this is not a general device proxy.
 app.include_router(build_equipment_docs_router())

@@ -9,11 +9,13 @@
 lab-dashboard.tail-XXXX.ts.net {
     encode gzip
 
-    # go2rtc - WebSocket-upgrade-aware reverse proxy for the camera live
-    # video stream. The browser hits `wss://<host>/streams/api/ws?src=...`;
-    # Caddy forwards to go2rtc on :1984 with the WS upgrade preserved.
-    handle_path /streams/* {
-        reverse_proxy 127.0.0.1:1984
+    # Camera playback uses the authenticated API broker below. Legacy relay
+    # routes stay closed, including signaling and credential-bearing APIs.
+    handle /streams/* {
+        respond "Legacy camera stream closed. Refresh the dashboard and sign in." 410
+    }
+    handle /api/camera-streams/* {
+        reverse_proxy 127.0.0.1:8001
     }
 
     # The camera/plug gateway (127.0.0.1:8002) is intentionally not routed

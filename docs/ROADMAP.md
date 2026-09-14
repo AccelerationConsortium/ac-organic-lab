@@ -1540,12 +1540,13 @@ became a per-device scheduler (registry `poll_interval_seconds`, device
 keep-alive is finally reused — handshakes 12/s → 1.1/s, fetch latency
 halved; **the flap rate did not fall**, because the remaining timeouts are
 2.0/5.0 s caps below the link floor), and every player became opt-in (see
-ARCHITECTURE *Stream visibility*). **Open**, in order: the `/streams/*` proxy
-exposes go2rtc `/api/config` + `/api/streams` — RTSP URLs with the camera
-credentials — unauthenticated on the edge (allowlist `/streams/api/ws` +
-`/streams/api/webrtc`, then
-rotate the Tapo account); a cable from gaia to the lab switch, which is the
-actual fix. Done the same evening: `poll_timeout_seconds` raised to 8.0 (the
+ARCHITECTURE *Stream visibility*). **Camera exposure closed in the subsequent
+viewing rollout:** all legacy `/streams/*` routes now deny access, and playback
+uses authenticated, capacity-limited sessions; see [CAMERA_VIEWING.md](CAMERA_VIEWING.md).
+Do not restore raw signaling exceptions. Credential rotation was not bundled
+into that rollout and remains a separate review, as does a cable from the central
+server to the lab switch to remove the shared Wi-Fi bottleneck.
+Done the same evening: `poll_timeout_seconds` raised to 8.0 (the
 aggregator ceiling) on all 19 Wi-Fi-reached entries — the 2.0 s Pis and the
 5.0 s Gibbie / LLE / hostops entries had been failing 100 % / ~45 % of reads
 against a 3.7–5.2 s cold-fetch floor — and the idle xArm simulator

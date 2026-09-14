@@ -28,12 +28,32 @@ export function CameraPlayer(props: {
   src: string | null;
   className?: string;
   disabled?: boolean;
+  /** Explicit, server-approved background monitoring; never browser-only authority. */
+  grantId?: string;
 }) {
   const [useWebrtc, setUseWebrtc] = useState(false);
+  const [hidden, setHidden] = useState(false);
 
   useEffect(() => {
     setUseWebrtc(!mseSupported());
   }, []);
 
-  return useWebrtc ? <WebRtcPlayer {...props} /> : <MsePlayer {...props} />;
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const changed = () => {
+      clearTimeout(timer);
+      if (!document.hidden) setHidden(false);
+      else timer = setTimeout(() => setHidden(true), 3000);
+    };
+    // A tab opened in the background must not briefly start a camera.
+    setHidden(document.hidden);
+    document.addEventListener("visibilitychange", changed);
+    return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", changed); };
+  }, []);
+
+  const paused = !props.grantId && hidden;
+  const playerProps = { ...props, disabled: props.disabled || paused };
+  if (paused) return <div className={props.className ?? "aspect-video"}>Video paused while this tab is hidden.</div>;
+
+  return useWebrtc ? <WebRtcPlayer {...playerProps} /> : <MsePlayer {...playerProps} />;
 }

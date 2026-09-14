@@ -44,8 +44,13 @@ http://100.64.254.6 {
 	# /cameras/… and /plugs/… with no /api prefix, so both the edge and the
 	# gateway itself answered 404 — while still shadowing those paths from the
 	# fallback proxy. Removed 2026-08-02.
-	handle_path /streams/* {
-		reverse_proxy 127.0.0.1:1984
+	# Raw relay API is private. Viewing sessions authenticate in FastAPI;
+	# WebSocket tickets are redeemed there, not through forward_auth.
+	handle /streams/* {
+		respond "Legacy camera stream closed. Refresh the dashboard and sign in." 410
+	}
+	handle /api/camera-streams/* {
+		reverse_proxy 127.0.0.1:8001
 	}
 
 	# ---- shared auth surface + banner, on this origin ----------------------

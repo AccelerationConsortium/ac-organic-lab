@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { absoluteWs, supportedMseCodecs } from "@/lib/go2rtc";
+import { supportedMseCodecs } from "@/lib/go2rtc";
+import { openCameraSession } from "@/lib/camera-session";
 
 /**
  * Tiny MSE player wrapping go2rtc's reference WebSocket protocol.
@@ -19,18 +20,20 @@ import { absoluteWs, supportedMseCodecs } from "@/lib/go2rtc";
  *   4. go2rtc starts pushing fMP4 segments as binary frames; we feed
  *      them to a `MediaSource` via `addSourceBuffer.appendBuffer`.
  *
- * Re-connects on close with a 1s backoff, capped at one reconnect per
- * `disabled` toggle. The component is self-contained: pass a stream
+ * Obtains a server viewing lease, with at most three transport retries and
+ * no automatic retry of denied/expired access. Pass a registry stream
  * URL, get a `<video>` that plays it.
  */
 export function MsePlayer({
   src,
   className,
   disabled = false,
+  grantId,
 }: {
   src: string | null;
   className?: string;
   disabled?: boolean;
+  grantId?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,20 +43,36 @@ export function MsePlayer({
     const video = videoRef.current;
     if (!video || disabled || !src) return;
 
-    const wsUrl = absoluteWs(src);
     let cancelled = false;
+    let denied = false;
+    let attempts = 0;
+    let lease: AbortController | null = null;
     let socket: WebSocket | null = null;
     let mediaSource: MediaSource | null = null;
     let sourceBuffer: SourceBuffer | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     const queue: ArrayBuffer[] = [];
+    let lastProgress = Date.now();
+    let lastTime = -1;
+    const fatal = (message: string) => {
+      denied = true;
+      setError(message);
+      lease?.abort();
+      queue.length = 0;
+    };
 
     const flushQueue = () => {
       if (!sourceBuffer || sourceBuffer.updating || queue.length === 0) return;
       try {
+        // Keep long-running approved monitors bounded as well as stalled ones.
+        if (video.currentTime > 30 && sourceBuffer.buffered.length &&
+            sourceBuffer.buffered.start(0) < video.currentTime - 20) {
+          sourceBuffer.remove(sourceBuffer.buffered.start(0), video.currentTime - 20);
+          return; // updateend resumes the queue after removing old media.
+        }
         sourceBuffer.appendBuffer(queue.shift()!);
       } catch (err) {
-        setError(`MSE error: ${(err as Error).message}`);
+        fatal(`Playback stalled: ${(err as Error).message}`);
       }
     };
 
@@ -64,13 +83,27 @@ export function MsePlayer({
         return;
       }
 
+      lease?.abort();
+      queue.length = 0;
+      sourceBuffer = null;
+      if (video.src) URL.revokeObjectURL(video.src);
+      lease = new AbortController();
+      const currentLease = lease;
+      lastProgress = Date.now();
+      lastTime = -1;
       mediaSource = new MediaSource();
       video.src = URL.createObjectURL(mediaSource);
 
-      mediaSource.addEventListener("sourceopen", () => {
+      mediaSource.addEventListener("sourceopen", async () => {
         if (cancelled || !mediaSource) return;
 
-        socket = new WebSocket(wsUrl);
+        try {
+          socket = await openCameraSession(src, currentLease.signal, fatal, grantId);
+        } catch (err) {
+          if (!cancelled && !currentLease.signal.aborted) fatal((err as Error).message);
+          return;
+        }
+        if (cancelled || currentLease.signal.aborted) { socket.close(); return; }
         socket.binaryType = "arraybuffer";
 
         socket.onopen = () => {
@@ -107,17 +140,26 @@ export function MsePlayer({
               // Ignore non-JSON status frames.
             }
           } else if (event.data instanceof ArrayBuffer) {
+            if (queue.reduce((n, item) => n + item.byteLength, 0) + event.data.byteLength > 4 * 1024 * 1024) {
+              fatal("Playback fell behind; reopen the stream to retry");
+              return;
+            }
             queue.push(event.data);
             flushQueue();
           }
         };
 
         socket.onerror = () => setError("WebSocket error");
-        socket.onclose = () => {
-          if (cancelled) return;
+        socket.onclose = (event) => {
+          if (cancelled || denied || currentLease.signal.aborted) return;
+          if (event.code >= 4000 || attempts >= 3) {
+            fatal(event.reason || "Stream ended; reopen it to retry");
+            return;
+          }
+          const delay = Math.min(1000 * 2 ** attempts++, 8000);
           reconnectTimer = setTimeout(() => {
             if (!cancelled) open();
-          }, 1000);
+          }, delay);
         };
       });
     };
@@ -153,9 +195,18 @@ export function MsePlayer({
       }
     };
     video.addEventListener("timeupdate", keepLiveEdge);
+    const progress = setInterval(() => {
+      if (video.currentTime !== lastTime && !video.paused && video.readyState >= 2) {
+        lastTime = video.currentTime;
+        lastProgress = Date.now();
+      }
+      if (!denied && Date.now() - lastProgress > 30000) fatal("No playback progress for 30 seconds; stream stopped");
+    }, 5000);
 
     return () => {
       cancelled = true;
+      clearInterval(progress);
+      lease?.abort();
       if (reconnectTimer) clearTimeout(reconnectTimer);
       video.removeEventListener("timeupdate", keepLiveEdge);
       video.playbackRate = 1;
@@ -177,7 +228,7 @@ export function MsePlayer({
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, disabled]);
+  }, [src, disabled, grantId]);
 
   // The default sizing (`aspect-video w-full`) gives a 16:9 box anchored
   // at the parent's full width - that's the right behaviour for inline

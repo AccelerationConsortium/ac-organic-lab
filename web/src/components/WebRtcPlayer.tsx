@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { absoluteWs } from "@/lib/go2rtc";
+import { openCameraSession } from "@/lib/camera-session";
 
 /**
  * WebRTC player wrapping go2rtc's reference WebSocket signaling protocol.
@@ -29,16 +29,19 @@ import { absoluteWs } from "@/lib/go2rtc";
  * `bootstrap_go2rtc.py`). Over the Tailnet the iPhone reaches that
  * directly, so no STUN/TURN is required and `iceServers` is empty.
  *
- * Reconnects on close / failure with a 2s backoff.
+ * Uses an authenticated viewing lease. Transport retries are bounded; denied
+ * access and expired leases stop playback rather than looping indefinitely.
  */
 export function WebRtcPlayer({
   src,
   className,
   disabled = false,
+  grantId,
 }: {
   src: string | null;
   className?: string;
   disabled?: boolean;
+  grantId?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,13 +55,19 @@ export function WebRtcPlayer({
       return;
     }
 
-    const wsUrl = absoluteWs(src);
     let cancelled = false;
+    let denied = false;
+    let attempts = 0;
+    let lease: AbortController | null = null;
+    let lastProgress = Date.now();
+    let lastTime = -1;
     let socket: WebSocket | null = null;
     let pc: RTCPeerConnection | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
     const teardown = () => {
+      lease?.abort();
+      if (socket) socket.onclose = null;
       try {
         socket?.close();
       } catch {
@@ -72,19 +81,29 @@ export function WebRtcPlayer({
       }
       pc = null;
     };
+    const fatal = (message: string) => {
+      denied = true;
+      setError(message);
+      teardown();
+    };
 
     const scheduleReconnect = () => {
-      if (cancelled || reconnectTimer) return;
+      if (cancelled || denied || reconnectTimer) return;
+      if (attempts >= 3) { fatal("Stream disconnected; reopen it to retry"); return; }
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         if (!cancelled) {
           teardown();
-          open();
+          void open();
         }
-      }, 2000);
+      }, Math.min(2000 * 2 ** attempts++, 8000));
     };
 
-    const open = () => {
+    const open = async () => {
+      lease = new AbortController();
+      const currentLease = lease;
+      lastProgress = Date.now();
+      lastTime = -1;
       // recvonly: the browser only consumes the camera's media.
       pc = new RTCPeerConnection({ iceServers: [] });
 
@@ -131,7 +150,13 @@ export function WebRtcPlayer({
         }
       };
 
-      socket = new WebSocket(wsUrl);
+      try {
+        socket = await openCameraSession(src, currentLease.signal, fatal, grantId);
+      } catch (err) {
+        if (!cancelled && !currentLease.signal.aborted) fatal((err as Error).message);
+        return;
+      }
+      if (cancelled || currentLease.signal.aborted) { socket.close(); return; }
 
       socket.onopen = async () => {
         if (cancelled || !pc) return;
@@ -173,15 +198,24 @@ export function WebRtcPlayer({
       };
 
       socket.onerror = () => setError("WebSocket error");
-      socket.onclose = () => {
+      socket.onclose = (event) => {
+        if (event.code >= 4000 && !cancelled) { fatal(event.reason || "Viewing session ended"); return; }
         if (!cancelled) scheduleReconnect();
       };
     };
 
-    open();
+    void open();
+    const progress = setInterval(() => {
+      if (video.currentTime !== lastTime && !video.paused && video.readyState >= 2) {
+        lastTime = video.currentTime;
+        lastProgress = Date.now();
+      }
+      if (!denied && Date.now() - lastProgress > 30000) fatal("No playback progress for 30 seconds; stream stopped");
+    }, 5000);
 
     return () => {
       cancelled = true;
+      clearInterval(progress);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       teardown();
       try {
@@ -192,7 +226,7 @@ export function WebRtcPlayer({
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, disabled]);
+  }, [src, disabled, grantId]);
 
   // Sizing mirrors MsePlayer so the two are drop-in interchangeable.
   const wrapperSizing = className ?? "aspect-video w-full";

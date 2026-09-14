@@ -11,6 +11,7 @@ dependencies = [
     "lab-skills",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "websockets>=15",
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "jsonschema>=4.23",

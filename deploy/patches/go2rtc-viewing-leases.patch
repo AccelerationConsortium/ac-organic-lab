@@ -1,0 +1,147 @@
+diff --git a/internal/webrtc/webrtc.go b/internal/webrtc/webrtc.go
+index 2a5b4ad..0d4d7e3 100644
+--- a/internal/webrtc/webrtc.go
++++ b/internal/webrtc/webrtc.go
+@@ -217,6 +217,11 @@ func asyncHandler(tr *ws.Transport, msg *ws.Message) (err error) {
+ 	}
+ 
+ 	// 3. Exchange SDP without waiting all candidates
++	// A viewing lease owns both signalling and media. Register after the
++	// consumer is attached: OnClose also runs immediately if the transport
++	// closed during setup, so even that race removes the new consumer.
++	tr.OnClose(func() { _ = conn.Close() })
++
+ 	answer, err := conn.GetAnswer()
+ 	log.Trace().Msgf("[webrtc] answer\n%s", answer)
+ 
+diff --git a/main.go b/main.go
+index ca70e84..a363c93 100644
+--- a/main.go
++++ b/main.go
+@@ -52,7 +52,7 @@ import (
+ 
+ func main() {
+ 	// version will be set later from -buildvcs info, this used only as fallback
+-	app.Version = "1.9.14"
++	app.Version = "1.9.14-lab-lease1"
+ 
+ 	type module struct {
+ 		name string
+diff --git a/pkg/alsa/device/asound_arch.c b/pkg/alsa/device/asound_arch.c
+index 0f895fb..fecafd6 100644
+--- a/pkg/alsa/device/asound_arch.c
++++ b/pkg/alsa/device/asound_arch.c
+@@ -1,3 +1,5 @@
++//go:build ignore
++
+ #include <stdio.h>
+ #include <stddef.h>
+ #include <sys/ioctl.h>
+@@ -160,4 +162,4 @@ int main() {
+ 	print_line("}\n");
+ 
+ 	return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/pkg/v4l2/device/videodev2_arch.c b/pkg/v4l2/device/videodev2_arch.c
+index 1053a08..bf3dde0 100644
+--- a/pkg/v4l2/device/videodev2_arch.c
++++ b/pkg/v4l2/device/videodev2_arch.c
+@@ -1,3 +1,5 @@
++//go:build ignore
++
+ #include <stdio.h>
+ #include <stddef.h>
+ #include <linux/videodev2.h>
+@@ -160,4 +162,4 @@ int main() {
+ 	printf("}\n\n");
+ 
+ 	return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/internal/webrtc/lease_test.go b/internal/webrtc/lease_test.go
+new file mode 100644
+index 0000000..0f73c67
+--- /dev/null
++++ b/internal/webrtc/lease_test.go
+@@ -0,0 +1,78 @@
++package webrtc
++
++import (
++    "encoding/json"
++    "net/http/httptest"
++    "testing"
++    "time"
++    "github.com/AlexxIT/go2rtc/internal/api/ws"
++    "github.com/AlexxIT/go2rtc/internal/streams"
++    "github.com/AlexxIT/go2rtc/pkg/core"
++    pion "github.com/pion/webrtc/v4"
++    "github.com/stretchr/testify/require"
++)
++
++type leaseProducer struct { core.Connection }
++func (*leaseProducer) Start() error { return nil }
++
++func TestCameraConsumerRemovedOnLeaseClose(t *testing.T) {
++    for _, alreadyClosed := range []bool{false,true} {
++        old:=PeerConnection
++        var server *pion.PeerConnection
++        PeerConnection=func(bool)(*pion.PeerConnection,error){var e error;server,e=pion.NewPeerConnection(pion.Configuration{});return server,e}
++        stream,err:=streams.New("lease_camera")
++        require.NoError(t,err)
++        stream.AddProducer(&leaseProducer{Connection:core.Connection{Medias:[]*core.Media{{Kind:core.KindVideo,Direction:core.DirectionRecvonly,Codecs:[]*core.Codec{{Name:core.CodecVP8,ClockRate:90000,PayloadType:96}}}}}})
++        peer,err:=pion.NewPeerConnection(pion.Configuration{})
++        require.NoError(t,err)
++        _,err=peer.AddTransceiverFromKind(pion.RTPCodecTypeVideo,pion.RTPTransceiverInit{Direction:pion.RTPTransceiverDirectionRecvonly})
++        require.NoError(t,err)
++        offer,err:=peer.CreateOffer(nil)
++        require.NoError(t,err)
++        tr:=&ws.Transport{Request:httptest.NewRequest("GET","http://localhost/api/ws?src=lease_camera",nil)}
++        tr.OnWrite(func(any)error{return nil})
++        if alreadyClosed {tr.Close()}
++        err=asyncHandler(tr,&ws.Message{Type:"webrtc/offer",Value:offer.SDP})
++        if !alreadyClosed {require.NoError(t,err);tr.Close()}
++        require.Equal(t,pion.PeerConnectionStateClosed,server.ConnectionState())
++        require.Eventually(t,func()bool{
++            raw,_:=stream.MarshalJSON()
++            var s struct{Consumers []any `json:"consumers"`}
++            _=json.Unmarshal(raw,&s)
++            return len(s.Consumers)==0
++        },time.Second,10*time.Millisecond)
++        peer.Close()
++        PeerConnection=old
++    }
++}
++
++func TestSignallingCloseEndsMedia(t *testing.T) {
++    for _, alreadyClosed := range []bool{false, true} {
++        t.Run(map[bool]string{false:"normal",true:"setup-race"}[alreadyClosed], func(t *testing.T) {
++            old := PeerConnection
++            defer func(){PeerConnection=old}()
++            var server *pion.PeerConnection
++            PeerConnection=func(bool)(*pion.PeerConnection,error){
++                var err error
++                server,err=pion.NewPeerConnection(pion.Configuration{})
++                return server,err
++            }
++            _,err:=streams.New("lease_test")
++            require.NoError(t,err)
++            peer,err:=pion.NewPeerConnection(pion.Configuration{})
++            require.NoError(t,err)
++            defer peer.Close()
++            _,err=peer.AddTransceiverFromKind(pion.RTPCodecTypeVideo)
++            require.NoError(t,err)
++            offer,err:=peer.CreateOffer(nil)
++            require.NoError(t,err)
++            tr:=&ws.Transport{Request:httptest.NewRequest("GET","http://localhost/api/ws?dst=lease_test",nil)}
++            tr.OnWrite(func(any)error{return nil})
++            if alreadyClosed {tr.Close()}
++            err=asyncHandler(tr,&ws.Message{Type:"webrtc/offer",Value:offer.SDP})
++            if !alreadyClosed { require.NoError(t,err); tr.Close() }
++            require.NotNil(t,server)
++            require.Equal(t,pion.PeerConnectionStateClosed,server.ConnectionState())
++        })
++    }
++}
