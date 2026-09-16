@@ -10,11 +10,13 @@ from __future__ import annotations
 from ..registry import EquipmentEntry
 from .base import EquipmentAdapter
 from .http_status import HttpStatusAdapter
+from .tcp_network import TcpNetworkAdapter
 from .legacy import (
     LegacyDoseEveryWellAdapter,
     LegacyFilterEveryWellAdapter,
 )
 from .mock import MockAdapter
+from .ssh_network import SshNetworkAdapter
 
 
 _LEGACY_BY_ID: dict[str, type[EquipmentAdapter]] = {
@@ -32,6 +34,10 @@ _LEGACY_BY_ID: dict[str, type[EquipmentAdapter]] = {
 
 
 def build_adapter(entry: EquipmentEntry) -> EquipmentAdapter:
+    if entry.adapter == "tcp_network":
+        return TcpNetworkAdapter(entry)
+    if entry.adapter == "ssh_network":
+        return SshNetworkAdapter(entry)
     if entry.adapter == "mock":
         return MockAdapter(entry)
     if entry.adapter == "http":

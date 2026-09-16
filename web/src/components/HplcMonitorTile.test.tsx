@@ -48,32 +48,99 @@ function nativeSnapshot(): EquipmentSnapshot {
 afterEach(cleanup);
 
 describe("HplcMonitorTile", () => {
+  it("shows full configured results paths and hides them after a failed poll", () => {
+    const value = snapshot();
+    const paths = ["C:\\Lab Data\\Results", "\\\\fileserver\\results"];
+    value.status.details!.results_folders = [...paths, null, 12, ""];
+    const { rerender } = render(<HplcMonitorTile snapshot={value} />);
+    for (const path of paths) expect(screen.getByText(path)).toBeTruthy();
+    expect(screen.getByText("Readable")).toBeTruthy();
+    value.fetch_error = { kind: "timeout", message: "timed out" } as EquipmentSnapshot["fetch_error"];
+    rerender(<HplcMonitorTile snapshot={value} />);
+    for (const path of paths) expect(screen.queryByText(path)).toBeNull();
+    expect(screen.getByText("Path not available")).toBeTruthy();
+  });
+
+  it("renders the service state without a native-state label override", () => {
+    const value = nativeSnapshot();
+    value.status.equipment_status = "requires_init";
+    const { rerender } = render(<HplcMonitorTile snapshot={value} />);
+    expect(screen.getByText("Needs init")).toBeTruthy();
+    expect(screen.queryByText("Not ready")).toBeNull();
+    value.status.details!.native_readback = { available: true, acquisition_state: "INITIALIZING" };
+    rerender(<HplcMonitorTile snapshot={value} />);
+    expect(screen.getByText("Needs init")).toBeTruthy();
+    value.fetch_error = { kind: "timeout", message: "timed out" } as EquipmentSnapshot["fetch_error"];
+    rerender(<HplcMonitorTile snapshot={value} />);
+    expect(screen.queryByText("Needs init")).toBeNull();
+    expect(screen.queryByText("Not ready")).toBeNull();
+  });
+
+  it("hides module values when their native snapshot is stale or unavailable", () => {
+    const value = nativeSnapshot();
+    value.status.components!.module_hip_sampler = { connected: true, state: "idle" };
+    value.status.components!.native_status_snapshot = { connected: false, state: "stale" };
+    render(<HplcMonitorTile snapshot={value} />);
+    const modules = within(screen.getByRole("region", { name: "Instrument modules" }));
+    expect(modules.queryByText("Idle")).toBeNull();
+    expect(modules.getAllByText("Not observed")).toHaveLength(4);
+  });
+
   it("uses the shared HTE shell and compact sections without offering controls", () => {
     const { container } = render(<HplcMonitorTile snapshot={snapshot()} />);
     expect(container.querySelector("article")?.className).toContain("rounded-xl");
-    for (const title of ["Instrument", "ChemStation software", "Run queue", "Latest result"]) {
+    for (const title of ["Instrument modules", "Instrument status", "Run queue", "Latest result", "Software diagnostics"]) {
       expect(screen.getByRole("region", { name: title })).toBeTruthy();
     }
     expect(screen.getByText("Read-only monitoring")).toBeTruthy();
     expect(screen.getByText("example-result.D")).toBeTruthy();
     expect(screen.getByText(/File updated: 2m ago/)).toBeTruthy();
     expect(screen.queryAllByRole("button")).toHaveLength(0);
-    expect(screen.queryAllByRole("link")).toHaveLength(0);
+    const preview = screen.getByRole("link", { name: "Control preview" });
+    expect(preview.getAttribute("href")).toBe("/equipment/lle_hplc/control");
+    expect(preview.getAttribute("aria-disabled")).toBe("true");
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+  });
+
+  it("does not link another monitor to the Process Chemistry preview", () => {
+    const value = snapshot();
+    value.id = "another_hplc";
+    render(<HplcMonitorTile snapshot={value} />);
+    expect(screen.queryByRole("link", { name: "Control preview" })).toBeNull();
   });
 
   it("does not confuse running software or a stopped supporting service with instrument readiness", () => {
     render(<HplcMonitorTile snapshot={snapshot()} />);
-    const instrument = within(screen.getByRole("region", { name: "Instrument" }));
+    const instrument = within(screen.getByRole("region", { name: "Instrument status" }));
     expect(instrument.getByText("Unknown")).toBeTruthy();
     expect(instrument.getByText("Not observed")).toBeTruthy();
     expect(screen.queryByText("Ready")).toBeNull();
-    const software = within(screen.getByRole("region", { name: "ChemStation software" }));
-    expect(software.getAllByText("Running")).toHaveLength(2);
+    const software = within(screen.getByRole("region", { name: "Software diagnostics" }));
+    expect(software.getAllByText("Open")).toHaveLength(2);
+    expect(software.getByText("Readable")).toBeTruthy();
     const stopped = software.getByText("Stopped").parentElement!;
     expect(stopped.className).toContain("bg-slate-100");
     expect(stopped.className).not.toContain("amber");
     expect(stopped.className).not.toContain("rose");
+  });
+
+  it("prioritizes the four instrument modules and preserves their observed states", () => {
+    const value = nativeSnapshot();
+    value.status.components = {
+      ...value.status.components,
+      module_hip_sampler: { connected: true, state: "idle" },
+      module_binary_pump: { connected: true, state: "standby" },
+      module_column_compartment: { connected: true, state: "not_ready" },
+      module_dad: { connected: true, state: "not_ready" },
+    };
+    render(<HplcMonitorTile snapshot={value} />);
+    const modules = within(screen.getByRole("region", { name: "Instrument modules" }));
+    for (const caption of ["HiP sampler", "Binary pump", "Column comp.", "DAD"]) {
+      expect(modules.getByText(caption)).toBeTruthy();
+    }
+    expect(modules.getByText("Idle")).toBeTruthy();
+    expect(modules.getByText("Standby")).toBeTruthy();
+    expect(modules.getAllByText("Not ready")).toHaveLength(2);
   });
 
   it("shows zero pending only when the queue was actually observed", () => {
@@ -153,7 +220,7 @@ describe("HplcMonitorTile", () => {
 
   it("only enables layout stacking on small screens without fixed-height clipping", () => {
     render(<HplcMonitorTile snapshot={snapshot()} />);
-    const grid = screen.getByRole("region", { name: "ChemStation software" }).querySelector("div")!;
+    const grid = screen.getByRole("region", { name: "Software diagnostics" }).querySelector("div")!;
     expect(grid.className).toContain("grid-cols-1");
     expect(grid.className).toContain("sm:grid-cols-2");
   });

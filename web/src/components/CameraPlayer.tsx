@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { MsePlayer } from "./MsePlayer";
 import { WebRtcPlayer } from "./WebRtcPlayer";
+import { MjpegPlayer } from "./MjpegPlayer";
 import { mseSupported } from "@/lib/go2rtc";
 
 /**
@@ -30,6 +31,8 @@ export function CameraPlayer(props: {
   disabled?: boolean;
   /** Explicit, server-approved background monitoring; never browser-only authority. */
   grantId?: string;
+  /** Registry-selected upstream. Defaults to the existing go2rtc path. */
+  transport?: "go2rtc" | "mjpeg";
 }) {
   const [useWebrtc, setUseWebrtc] = useState(false);
   const [hidden, setHidden] = useState(false);
@@ -54,6 +57,7 @@ export function CameraPlayer(props: {
   const paused = !props.grantId && hidden;
   const playerProps = { ...props, disabled: props.disabled || paused };
   if (paused) return <div className={props.className ?? "aspect-video"}>Video paused while this tab is hidden.</div>;
+  if (props.transport === "mjpeg") return <MjpegPlayer {...playerProps} />;
 
   return useWebrtc ? <WebRtcPlayer {...playerProps} /> : <MsePlayer {...playerProps} />;
 }

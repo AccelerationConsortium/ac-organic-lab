@@ -5,6 +5,12 @@ The Ligand Development UR5e keeps a compact status tile, with the same orange
 new tab, inside the dashboard's existing SDL2 login layout. The Process Chemistry
 UR5-CB3 and Gibbie UR3e remain observation-only tiles without this link.
 
+The UR5e route is a standalone presentation: the shared SDL2 auth banner stays
+at the top, with the Control Interface filling the remaining viewport. Dashboard
+heading/navigation, utility tabs, footer and assistant overlays are omitted on
+this route only. The embedded interface retains its own read-only safety notice.
+This is layout selection, not an authentication exception.
+
 ## Authentication and scope
 
 The page loads `/api/robot-motion/ligand_ur5e/web/index.html` only after sign-in

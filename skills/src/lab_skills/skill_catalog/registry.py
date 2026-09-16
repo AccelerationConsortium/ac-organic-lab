@@ -39,7 +39,7 @@ def register(kind: EquipmentKind, defs: list[SkillDef]) -> None:
 def skills_for(kind: EquipmentKind, equipment_id: str | None = None) -> list[SkillDef]:
     """Return the registered :class:`SkillDef`s for an equipment kind.
 
-    Pass equipment_id for equipment-specific capabilities such as Lumastir;
+    Pass equipment_id for equipment-specific capabilities such as Lumastir/UR;
     omitting it never adds those capabilities to a generic kind.
 
     Returns an empty list (not ``None``) when the kind has no registered
@@ -47,6 +47,12 @@ def skills_for(kind: EquipmentKind, equipment_id: str | None = None) -> list[Ski
     by accident.
     """
 
+    if kind == "robot_arm" and equipment_id == "ligand_ur5e":
+        from .ur_arm import UR_ARM_SKILLS
+
+        # UR must not inherit xArm's graph endpoints, and adding UR support
+        # must not register joint control for every robot_arm device.
+        return list(UR_ARM_SKILLS)
     if kind == "other" and equipment_id == "lumastir":
         from .lumastir import LUMASTIR_SKILLS
 

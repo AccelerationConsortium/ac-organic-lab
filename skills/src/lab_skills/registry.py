@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, ValidationError
 from .models import EquipmentKind
 
 
-AdapterKind = Literal["http", "legacy_http", "mock"]
+AdapterKind = Literal["http", "legacy_http", "mock", "ssh_network", "tcp_network"]
 DocumentationKind = Literal["swagger", "openapi", "json", "markdown", "text"]
 
 
@@ -117,11 +117,15 @@ class Maintenance(BaseModel):
 
 
 class CameraLens(BaseModel):
-    """One physical lens on a multi-lens camera (``kind: camera``)."""
+    """One physical lens on a camera or embedded equipment camera."""
 
     id: str
     label: str
     rtsp_path: str = "stream1"
+    # For a generic HTTP/MJPEG camera component. Must be an absolute path on
+    # the equipment entry's base_url; arbitrary upstream URLs are never
+    # accepted from the browser.
+    stream_path: str | None = Field(default=None, pattern=r"^/[^/].*")
     ptz_capable: bool = True
     """False for fixed lenses with no PTZ motor (e.g. wide on Tapo C245D).
     The dashboard uses this to grey out the PTZ pad when the user selects
@@ -129,16 +133,17 @@ class CameraLens(BaseModel):
 
 
 class CameraConfig(BaseModel):
-    """Optional ``camera:`` block on entries with ``kind: camera``.
+    """Optional ``camera:`` block on cameras or camera-bearing equipment.
 
-    Mirrors the gateway's ``devices.yaml``. The dashboard reads it for the
-    lens-tab labels in the camera tile and the go2rtc stream-name
-    convention (``<equipment_id>_<lens_id>``).
+    The dashboard reads lens labels and uses either the go2rtc stream-name
+    convention (``<equipment_id>_<lens_id>``) or a registered MJPEG path on
+    the equipment's own base URL.
     """
 
     host: str
     onvif_port: int = 2020
     rtsp_port: int = 554
+    transport: Literal["go2rtc", "mjpeg"] = "go2rtc"
     lenses: list[CameraLens] = Field(default_factory=list)
 
 

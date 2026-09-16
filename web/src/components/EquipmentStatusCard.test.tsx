@@ -23,6 +23,10 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   postGenericStartup: (equipmentId: string) => postGenericStartup(equipmentId),
 }));
 
+vi.mock("./CameraPlayer", () => ({
+  CameraPlayer: ({ src }: { src: string }) => <div data-testid="camera-player">{src}</div>,
+}));
+
 function snapshot(over: {
   equipment_status: string;
   allowed_actions?: string[];
@@ -109,4 +113,42 @@ describe("EquipmentStatusCard generic INIT", () => {
     );
     expect(screen.queryByRole("button", { name: /init/i })).toBeNull();
   });
+});
+
+describe("EquipmentStatusCard embedded camera", () => {
+  it("starts off and opens only after the viewer asks", () => {
+    const withCamera = snapshot({ equipment_status: "requires_init" });
+    withCamera.id = "gibbie_flex";
+    withCamera.camera = {
+      host: "sdl2-pc-04.tail6a1dd7.ts.net",
+      onvif_port: 2020,
+      rtsp_port: 554,
+      transport: "mjpeg",
+      lenses: [{
+        id: "main", label: "Deck", rtsp_path: "stream1",
+        stream_path: "/devices/gibbie_flex/camera/stream", ptz_capable: false,
+      }],
+    };
+    withCamera.status.components = {
+      camera: { connected: false, state: "off", message: null, last_event_at: null },
+    };
+
+    render(<EquipmentStatusCard snapshot={withCamera} />);
+    expect(screen.getByText("Camera view off")).toBeTruthy();
+    expect(screen.queryByTestId("camera-player")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show stream" }));
+    expect(screen.getByTestId("camera-player").textContent).toContain("src=gibbie_flex_main");
+    expect(screen.getByRole("button", { name: "Hide stream" })).toBeTruthy();
+  });
+});
+
+it("links the Gibbie Flex monitor to its framed panel without adding monitor controls", () => {
+  const flex = snapshot({ equipment_status: "requires_init", allowed_actions: ["startup"] });
+  flex.id = "gibbie_flex";
+  flex.status.details = { monitoring_only: true };
+  render(<EquipmentStatusCard snapshot={flex} />);
+  expect(screen.getByRole("link", { name: "Control interface" }).getAttribute("href")).toBe("/utils/flex_control");
+  expect(screen.queryByRole("button", { name: /init/i })).toBeNull();
+  expect(postGenericStartup).not.toHaveBeenCalled();
 });

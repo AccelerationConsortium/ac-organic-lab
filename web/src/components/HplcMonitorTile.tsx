@@ -3,6 +3,7 @@ import type { EquipmentSnapshot } from "@/types/api";
 import { FetchErrorBand } from "./FetchErrorBand";
 import { StatusPill } from "./StatusPill";
 import { TileShell } from "./TileShell";
+import { AuthGatedLink } from "./AuthGatedLink";
 
 type Tone = "neutral" | "ok" | "warn" | "muted";
 
@@ -58,6 +59,10 @@ function age(value: unknown): string {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+function displayState(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1).replace(/_/g, " ");
+}
+
 /** ChemStation observations only: no lock, lifecycle handlers, or API writes. */
 export function HplcMonitorTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const { status, fetch_error: fetchError } = snapshot;
@@ -82,11 +87,24 @@ export function HplcMonitorTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const currentTitle = label(currentRun.title) ?? label(currentRun.sample);
   const lastResult = record(details.last_result);
   const resultName = label(lastResult.name)?.split(/[\\/]/).pop() || "Not observed";
+  const resultsFolders = Array.isArray(details.results_folders)
+    ? details.results_folders.map(label).filter((path): path is string => path !== null)
+    : [];
 
-  function software(key: string, caption: string, supporting = false) {
+  function module(key: string, caption: string) {
+    const component = nativeAvailable ? components[key] : undefined;
+    const state = label(component?.state);
+    const normalized = state?.toLowerCase();
+    const tone: Tone = !state || normalized === "unknown" ? "muted"
+      : normalized === "error" || normalized === "not_ready" || component?.connected === false ? "warn"
+      : normalized === "ready" || normalized === "idle" ? "ok" : "neutral";
+    return <Pill caption={caption} value={state ? displayState(state) : "Not observed"} tone={tone} />;
+  }
+
+  function diagnostic(key: string, caption: string, values: Record<string, string> = {}, supporting = false) {
     const component = components[key];
     const state = label(component?.state);
-    const value = state ? state.charAt(0).toUpperCase() + state.slice(1).replace(/_/g, " ") : "Unknown";
+    const value = state ? values[state.toLowerCase()] ?? displayState(state) : "Unknown";
     // An optional supporting service being stopped is not an instrument fault.
     const tone: Tone = component?.connected === true ? "ok"
       : !supporting && state === "error" ? "warn" : "muted";
@@ -98,15 +116,32 @@ export function HplcMonitorTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
     <TileShell snapshot={snapshot}
       headerRight={<StatusPill state={fetchError ? "unknown" : status.equipment_status} />}
       bannerExtra={
+        <>
         <span className="inline-flex h-6 items-center rounded-md border border-slate-200 bg-slate-100 px-2 text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:border-slate-700 dark:bg-slate-800/20 dark:text-slate-400">
           Read-only monitoring
         </span>
+        {snapshot.id === "lle_hplc" && (
+          <AuthGatedLink href="/equipment/lle_hplc/control"
+            className="inline-flex min-h-8 items-center rounded-md border border-slate-200 px-2 text-xs font-medium text-sky-700 hover:bg-sky-50 dark:border-slate-700 dark:text-sky-300 dark:hover:bg-slate-800"
+            title="Open the simulated acquisition interface under SDL2 sign-in">
+            Control preview
+          </AuthGatedLink>
+        )}
+        </>
       }
       footerLeft={fetchError ? "Status unavailable until the monitor reconnects." : undefined}
     >
       {fetchError && <FetchErrorBand error={fetchError} />}
       <div className="flex min-w-0 flex-col gap-2">
-        <Section title="Instrument">
+        <Section title="Instrument modules">
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            {module("module_hip_sampler", "HiP sampler")}
+            {module("module_binary_pump", "Binary pump")}
+            {module("module_column_compartment", "Column comp.")}
+            {module("module_dad", "DAD")}
+          </div>
+        </Section>
+        <Section title="Instrument status">
           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
             <Pill caption="Native state" value={nativeState ?? "Not observed"}
               tone={nativeState ? "neutral" : "muted"} />
@@ -114,15 +149,6 @@ export function HplcMonitorTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
               tone={inferred ? "warn" : activity === "running" ? "ok" : activity === "idle" ? "neutral" : "muted"}
               title={inferred ? "Inferred from recent result-file writes, not native acquisition status" : undefined} />
           </div>
-        </Section>
-        <Section title="ChemStation software">
-          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-            {software("chemstation_acquisition", "Acquisition")}
-            {software("chemstation_analysis", "Analysis")}
-            {software("data_path", "Data path")}
-            {software("data_service", "Data service", true)}
-          </div>
-          <p className="text-[11px] text-ink-subtle dark:text-slate-400">Software running does not establish instrument readiness.</p>
         </Section>
         <Section title="Run queue">
           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -138,6 +164,23 @@ export function HplcMonitorTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           <p className="text-[11px] text-ink-subtle dark:text-slate-400">
             File updated: {age(lastResult.age_s ?? metrics.last_result_age?.value)} · not proof of run completion
           </p>
+        </Section>
+        <Section title="Software diagnostics">
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            {diagnostic("chemstation_acquisition", "Acquisition app", { running: "Open" })}
+            {diagnostic("chemstation_analysis", "Analysis app", { running: "Open" })}
+            {diagnostic("data_service", "Data service", {}, true)}
+            <div className={`min-w-0 rounded-md border px-2 py-1.5 sm:col-span-2 ${TONE_CLASSES.neutral}`}>
+              <div className="flex items-center justify-between gap-2 text-[11px] text-ink-subtle dark:text-slate-400">
+                <span className="uppercase tracking-wider">Results folder</span>
+                <span>{components.data_path?.state === "available" ? "Readable" : "Access unknown or unavailable"}</span>
+              </div>
+              {resultsFolders.length ? resultsFolders.map((path, index) =>
+                <p key={`${index}-${path}`} className="break-all font-mono text-xs text-ink dark:text-slate-100" title="Configured results folder watched by the monitor; not necessarily the active method's output folder">{path}</p>
+              ) : <p className="text-xs text-ink-subtle">Path not available</p>}
+            </div>
+          </div>
+          <p className="text-[11px] text-ink-subtle dark:text-slate-400">Open means the process is present; readable means the configured folder can be read. Neither establishes module readiness.</p>
         </Section>
       </div>
     </TileShell>

@@ -66,7 +66,6 @@ sections:
       - gibbie_balance
       - gibbie_flex
       - gibbie_ur_arm
-      - gibbie_hotplate
 
   - id: process_chemistry
     title: Process Chemistry Platform
@@ -85,12 +84,13 @@ sections:
 
   - id: ligand_development
     title: Ligand Development Platform
-    description: Ligand-development bench; MG400 first, more equipment later
+    description: Ligand-development bench with MG400 and a UR5e prototype
     href: /platforms/ligand_development
     kind: platform
     equipment:
       # First camera supplies the Overview card's live feed.
       - cam_ligand_tapo_d246
       - dobot_mg400
+      - ligand_ur5e
       - lumastir
       - lle_ph_unit

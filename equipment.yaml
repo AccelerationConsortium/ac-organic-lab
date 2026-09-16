@@ -181,6 +181,33 @@ equipment:
       # mid-motion, when STOP most needs to reach the arm.
       control_dialect: control
 
+  # Isolated robot-motion prerelease on the UPLC PC's wired lab network.
+  # UR Dashboard observation only; physical control is not implemented.
+  - id: ligand_ur5e
+    name: UR5e Arm
+    kind: robot_arm
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: false
+    base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8075
+    tailscale_ip: 100.64.254.19
+    status_path: /status
+    poll_timeout_seconds: 5.0
+    poll_interval_seconds: 15.0
+    do_not_call_connect: true
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
+    tiles:
+      ligand_development: { w: 2, h: 1 }
+    pills:
+      # SDL2-authenticated workspace; never send viewers to the raw PC address.
+      link_label: "Open"
+      link_href: /utils/robot_motion
+
   - id: fume_hood_actuator
     name: Fume Hood Actuator
     kind: fume_hood
@@ -581,6 +608,35 @@ equipment:
     status_path: /printers/bambu_h2d_01/status
     poll_timeout_seconds: 3.0
     poll_interval_seconds: 30.0
+    do_not_call_connect: true
+    tiles: {}
+    pills: {}
+
+  # Read-only network probe through the printer's Windows Ethernet host.
+  # Host alias, adapter and MAC belong in network-monitors.local.json.
+  # Ready describes this connection only, never print readiness or cloud access.
+  - id: eufymake_connection
+    name: EufyMake
+    kind: other
+    adapter: ssh_network
+    protocol: "1.2"
+    gateway_fronted: true
+    poll_timeout_seconds: 8.0
+    poll_interval_seconds: 60.0
+    do_not_call_connect: true
+    tiles: {}
+    pills: {}
+
+  # Network reachability only; print state is not inferred from a TCP connection.
+  # Local address is stored in network-monitors.local.json.
+  - id: elegoo_saturn_ultra_connection
+    name: Elegoo Saturn Ultra
+    kind: other
+    adapter: tcp_network
+    protocol: "1.2"
+    gateway_fronted: true
+    poll_timeout_seconds: 4.0
+    poll_interval_seconds: 60.0
     do_not_call_connect: true
     tiles: {}
     pills: {}
@@ -1069,8 +1125,19 @@ equipment:
     status_path: /devices/gibbie_flex/status
     poll_timeout_seconds: 8.0
     tiles:
-      sample_prep: { w: 2, h: 1 }
+      sample_prep: { w: 2, h: 2 }
     pills: {}
+    # Flex's fixed deck camera is served by sdl2-gibbie-server, not the
+    # Kasa/Tapo gateway. The authenticated dashboard proxy opens it only after
+    # a signed-in viewer clicks Show stream.
+    camera:
+      host: sdl2-pc-04.tail6a1dd7.ts.net
+      transport: mjpeg
+      lenses:
+        - id: main
+          label: Deck
+          stream_path: /devices/gibbie_flex/camera/stream
+          ptz_capable: false
 
   - id: gibbie_ur_arm
     name: UR3e Arm (Gibbie)
@@ -1232,18 +1299,21 @@ equipment:
     kind: hplc
     adapter: http
     protocol: "1.2"
-    gateway_fronted: true
-    # ChemStation-driven from the bench PC, not OpenLab-CDS-driven like
-    # agilent_uplc_ms, so the sidecar there does not apply and the instrument
-    # answers on none of its ports. The observable is the Agilent ChemStation
-    # data service's state on that PC. A stopped service reads `requires_init`,
-    # never `error`: the instrument may be running fine from its own front end.
-    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    gateway_fronted: false
+    # Dedicated passive ChemStation monitor. Unknown means instrument
+    # readiness is unobserved, not that the reachable monitor is offline.
+    # monitoring_only selects the observation card, without HPLC-MS controls.
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8083
     tailscale_ip: 100.64.254.13
-    status_path: /devices/lle_hplc/status
+    status_path: /status
     poll_timeout_seconds: 8.0
+    poll_interval_seconds: 10.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
     tiles:
-      process_chemistry: { w: 2, h: 1 }
+      process_chemistry: { w: 2, h: 2 }
     pills: {}
 
   - id: lle_ph_unit

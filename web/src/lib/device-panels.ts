@@ -9,6 +9,8 @@
  * origin, not device URLs, so the session cookie and the injected
  * `X-Auth-User` identity carry through without a second login.
  *
+ * Gibbie Flex opens a dashboard page that frames its authenticated edge path.
+ *
  * Kept here rather than in `equipment.yaml` because the mapping describes the
  * *edge's* routing table, not the device — the registry's `base_url` is the
  * device port the aggregator polls directly, deliberately un-proxied. Move
@@ -16,6 +18,7 @@
  */
 
 export const DEVICE_PANEL_PATHS: Readonly<Record<string, string>> = Object.freeze({
+  gibbie_flex: "/utils/flex_control",
   ot2_hte: "/ot2/hte/ui/",
   ot2_complexation: "/ot2/complexation/ui/",
   xarm_translocation: "/xarm5/web/",

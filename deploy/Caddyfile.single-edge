@@ -227,6 +227,22 @@ http://100.64.254.6 {
 		}
 	}
 
+	# Gibbie Flex: dedicated HTTP gateway; the dashboard frames this same-origin.
+	@flex_gibbie path /flex/gibbie /flex/gibbie/*
+	forward_auth @flex_gibbie 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
+	redir /flex/gibbie /flex/gibbie/ui/ 308
+	redir /flex/gibbie/ /flex/gibbie/ui/ 308
+	redir /flex/gibbie/ui /flex/gibbie/ui/ 308
+	handle_path /flex/gibbie/* {
+		reverse_proxy sdl2-pc-04.tail6a1dd7.ts.net:8071 {
+			# Expand on reload, so adding this secret needs no Caddy restart.
+			header_up X-Edge-Key {$GIBBIE_FLEX_EDGE_SECRET}
+		}
+	}
+
 	# ---- Bambu printer gateway submission page, path-routed ONTO this origin -
 	# bambu-server (THIS host, :8012) serves a submission page at /ui and its
 	# API at the service root (/printers, /submissions, /whoami). Path-routed

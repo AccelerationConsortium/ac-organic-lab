@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 import yaml
@@ -48,6 +49,38 @@ def test_lookup_by_id() -> None:
     assert entry.adapter == "http"
     assert entry.kind == "solid_doser"
     assert registry.by_id("does-not-exist") is None
+
+
+def test_flex_camera_is_an_embedded_gibbie_mjpeg_source() -> None:
+    entry = load_registry(REPO_ROOT / "equipment.yaml").by_id("gibbie_flex")
+    assert entry is not None and entry.kind == "liquid_handler"
+    assert entry.camera is not None and entry.camera.transport == "mjpeg"
+    assert entry.camera.lenses[0].stream_path == "/devices/gibbie_flex/camera/stream"
+
+
+def test_ur5e_prototype_is_registered_without_auto_connect() -> None:
+    registry = load_registry(REPO_ROOT / "equipment.yaml")
+    entry = registry.by_id("ligand_ur5e")
+    assert entry is not None
+    assert entry.name == "UR5e Arm"
+    assert entry.kind == "robot_arm"
+    assert entry.protocol == "1.2"
+    assert entry.do_not_call_connect is True
+    assert entry.gateway_fronted is False  # unknown readiness != offline service
+    assert "ligand_development" in entry.tiles
+    assert entry.pills.link_href == "/utils/robot_motion"
+    assert entry.pills.link_label == "Open"
+    assert not entry.pills.internal  # keep SDL2 equipment-role gating
+    hostops = registry.by_id("hostops_uplc_pc")
+    assert hostops is not None
+    assert urlsplit(entry.base_url).hostname == urlsplit(hostops.base_url).hostname
+    assert urlsplit(entry.base_url).port == 8075
+    assert entry.tailscale_ip == hostops.tailscale_ip
+    assert {doc.path for doc in entry.documentation} >= {"/docs", "/openapi.json", "/agent-docs"}
+    config = yaml.safe_load((REPO_ROOT / "platforms.yaml").read_text(encoding="utf-8"))
+    section = next(s for s in config["sections"] if s["id"] == "ligand_development")
+    assert "ligand_ur5e" in section["equipment"]
+    assert registry.by_id("hostops_dobot_pc").name == "Prototyping PC"
 
 
 def test_bambu_gateway_and_printers_are_registered() -> None:

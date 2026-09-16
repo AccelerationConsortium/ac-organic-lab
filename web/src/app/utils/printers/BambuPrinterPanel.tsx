@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useUserAuth } from "@/lib/user-auth";
 import type { EquipmentSnapshot } from "@/types/api";
 import { BambuPrinterTile } from "./BambuPrinterTile";
+import { PrinterConnectionTile } from "./PrinterConnectionTile";
+import { PrinterTileFrame } from "./PrinterTileFrame";
 
 /**
  * The gateway's submission page, framed same-origin at /bambu/ui/ via a Caddy
@@ -19,43 +21,20 @@ import { BambuPrinterTile } from "./BambuPrinterTile";
  */
 const SUBMISSION_EMBED_PATH = "/bambu/ui/";
 
-export function BambuPrinterPanel({ printers }: { printers: EquipmentSnapshot[] }) {
-  const [selected, setSelected] = useState<{ id: string } | null>(null);
-  const select = (id: string) => {
-    setSelected({ id });
-    document.getElementById("printer-submission")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
-  };
+export function BambuPrinterPanel({ printers, connections = [] }: {
+  printers: EquipmentSnapshot[];
+  connections?: EquipmentSnapshot[];
+}) {
   return (
-    <section className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold text-ink dark:text-slate-100">
-            Bambu Printers
-          </h1>
-          <p className="text-sm text-ink-subtle dark:text-slate-300">
-            Live print progress, temperatures, and filament inventory.
-          </p>
-          <p className="text-sm text-ink-subtle dark:text-slate-300">
-            Monitoring only · prepare and queue a model below. Queued jobs are not
-            sent to a printer; dispatch is not implemented.
-          </p>
-        </div>
-        <a
-          href={SUBMISSION_EMBED_PATH}
-          target="_blank"
-          rel="noreferrer"
-          className="shrink-0 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-ink hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-        >
-          Open submissions <span aria-hidden="true">↗</span>
-        </a>
-      </header>
-
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        {printers.map(printer => <BambuPrinterTile key={printer.id} snapshot={printer} onSelect={() => select(printer.id)} />)}
-        {printers.length === 0 && <p className="text-sm text-ink-subtle dark:text-slate-400">No printers registered.</p>}
+    <section className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+      <PrinterTileFrame name="Sample submission" subtitle="Upload artifact · Queue">
+        <SubmissionPanel />
+      </PrinterTileFrame>
+      <div className="grid min-w-0 grid-cols-1 items-start gap-3 md:grid-cols-2">
+        {printers.map(printer => <BambuPrinterTile key={printer.id} snapshot={printer} />)}
+        {connections.map(printer => <PrinterConnectionTile key={printer.id} snapshot={printer} />)}
+        {printers.length === 0 && connections.length === 0 && <p className="text-sm text-ink-subtle dark:text-slate-400">No printers registered.</p>}
       </div>
-
-      <SubmissionPanel selected={selected} />
     </section>
   );
 }
@@ -70,22 +49,18 @@ export function BambuPrinterPanel({ printers }: { printers: EquipmentSnapshot[] 
  * (with its layout scripts re-running in the frame). We only frame it when we
  * know the request will be allowed through.
  */
-function SubmissionPanel({ selected }: { selected: { id: string } | null }) {
+function SubmissionPanel() {
   const { loading, authenticated, requestLogin } = useUserAuth();
   const frame = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(1100);
   const syncTheme = useCallback(() => frame.current?.contentWindow?.postMessage({
     type: "bambu:theme", theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
   }, window.location.origin), []);
-  const syncSelection = useCallback(() => {
-    if (selected) frame.current?.contentWindow?.postMessage({type: "bambu:select-printer", printer: selected.id}, window.location.origin);
-  }, [selected]);
   useEffect(() => {
     const observer = new MutationObserver(syncTheme);
     observer.observe(document.documentElement, {attributes: true, attributeFilter: ["class"]});
     return () => observer.disconnect();
   }, [syncTheme]);
-  useEffect(syncSelection, [syncSelection]);
   useEffect(() => {
     const resize = (event: MessageEvent) => {
       if (event.origin !== window.location.origin || event.source !== frame.current?.contentWindow) return;
@@ -98,10 +73,7 @@ function SubmissionPanel({ selected }: { selected: { id: string } | null }) {
   }, []);
 
   return (
-    <section id="printer-submission" className="flex scroll-mt-6 flex-col gap-3">
-      <h2 className="text-base font-semibold text-ink dark:text-slate-100">
-        Submit a print
-      </h2>
+    <section id="printer-submission" className="flex min-w-0 flex-col gap-3">
 
       {loading ? (
         <p className="text-sm text-ink-subtle dark:text-slate-300">
@@ -109,26 +81,22 @@ function SubmissionPanel({ selected }: { selected: { id: string } | null }) {
         </p>
       ) : authenticated ? (
         <>
-          <p className="text-sm text-ink-subtle dark:text-slate-300">
-            Validate your model for a printer, review the results, and manage its queue.
-            Submissions are recorded against your signed-in account.
-          </p>
           {/* No border or radius: the page draws its own panels, so a frame
               around it reads as a second, redundant card edge. Same reasoning
               as /utils/xarm_control. */}
           <iframe
             ref={frame}
             src={`${SUBMISSION_EMBED_PATH}?embed=1`}
-            onLoad={() => { syncTheme(); syncSelection(); }}
+            onLoad={syncTheme}
             title="Bambu Gateway — submit a print"
-            className="min-h-[640px] w-full rounded-xl border-0 bg-transparent"
+            className="min-h-[640px] w-full min-w-0 border-0 bg-transparent"
             style={{height}}
           />
         </>
       ) : (
         <div className="flex flex-col items-start gap-3 rounded-md border border-slate-200 bg-surface-subtle px-4 py-5 dark:border-slate-700 dark:bg-slate-800/40">
           <p className="text-sm text-ink-muted dark:text-slate-300">
-            Sign in to submit a print. Submissions made here are recorded against
+            Sign in to upload an artifact and view the queue. Submissions are recorded against
             your account. The submission page uses the same dashboard sign-in.
           </p>
           <button
@@ -140,6 +108,9 @@ function SubmissionPanel({ selected }: { selected: { id: string } | null }) {
           </button>
         </div>
       )}
+      <a href={SUBMISSION_EMBED_PATH} target="_blank" rel="noreferrer" className="text-xs font-medium text-sky-700 hover:underline dark:text-sky-400">
+        Open submissions <span aria-hidden="true">↗</span>
+      </a>
     </section>
   );
 }

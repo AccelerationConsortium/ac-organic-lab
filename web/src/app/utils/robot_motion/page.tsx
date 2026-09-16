@@ -25,11 +25,10 @@ export default function RobotMotionPage() {
     return <p role="status" className="text-sm text-ink-muted dark:text-slate-300">Your SDL2 account does not have access to the UR5e panel.</p>;
   }
   return (
-    <div className="relative left-1/2 w-screen max-w-[100vw] -translate-x-1/2 px-4 sm:px-6 lg:px-8">
-      <p className="mb-3 text-sm text-ink-subtle dark:text-slate-300">UR5e workspace: live status and offline graph editing. Physical control is not enabled.</p>
+    <div className="flex min-h-0 w-full flex-1 flex-col">
       {/* Explicit file avoids Next's trailing-slash redirect breaking relative assets. */}
       <iframe src="/api/robot-motion/ligand_ur5e/web/index.html" title="Robot Motion — UR5e Control Workspace"
-        className="h-[calc(100vh-210px)] min-h-[720px] w-full border-0 bg-transparent" />
+        className="min-h-0 w-full flex-1 border-0 bg-transparent" />
     </div>
   );
 }

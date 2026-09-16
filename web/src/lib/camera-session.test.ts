@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { openCameraSession } from "./camera-session";
+import { openCameraSession, openMjpegSession } from "./camera-session";
 
 class Socket extends EventTarget {
   static made: Socket[] = [];
@@ -52,5 +52,23 @@ describe("camera viewing leases", () => {
     await vi.advanceTimersByTimeAsync(120000);
     expect(Socket.made).toHaveLength(1);
     expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+  it("opens MJPEG through the authenticated session path and releases it", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: "m", heartbeat_seconds: 20, transport: "mjpeg" }),
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const abort = new AbortController();
+    await expect(
+      openMjpegSession("/streams/api/ws?src=gibbie_flex_main", abort.signal, vi.fn()),
+    ).resolves.toBe("/api/camera-streams/sessions/m/mjpeg");
+    expect(Socket.made).toHaveLength(0);
+    abort.abort();
+    expect(fetcher).toHaveBeenLastCalledWith(
+      "/api/camera-streams/sessions/m",
+      expect.objectContaining({ method: "DELETE" }),
+    );
   });
 });

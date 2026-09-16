@@ -7,6 +7,7 @@ import { AssistantBubble } from "@/components/AssistantBubble";
 import { Nav } from "@/components/Nav";
 import { StateReferencePanel } from "@/components/StateReferencePanel";
 import { Logo } from "@/components/Logo";
+import { DashboardChrome, DashboardContent } from "@/components/DashboardShell";
 
 // Sets the `dark` class before first paint (localStorage, else OS
 // preference) so there's no flash of the wrong theme on load. The same pass
@@ -65,7 +66,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               `html.chrome-collapsed` — toggled by the chevron at the end of
               the nav row (ChromeToggle) — so the page gets the room back while
               the tabs stay put. */}
-          <div className="shrink-0">
+          <DashboardChrome>
+           <div className="shrink-0">
             <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 pt-3 sm:px-6 lg:px-8">
               <div className="chrome-heading flex items-center justify-between gap-4">
                 <div className="min-w-0">
@@ -77,7 +79,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
               <Nav />
             </div>
-          </div>
+           </div>
+          </DashboardChrome>
           {/* The only scrolling region. `min-h-0` is load-bearing: without it
               a flex item refuses to shrink below its content's height and the
               page scrolls as a whole again.
@@ -90,15 +93,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               of the list, iOS would otherwise drag the whole scroll box (and
               the sticky pills riding on it) away from the chrome and let it
               spring back. It also stops the gesture from chaining outward. */}
-          <main className="min-h-0 flex-1 overflow-y-auto overscroll-none print:overflow-visible">
+          <DashboardContent>
             {/* No top padding: a page's pinned pill row must sit flush under
                 the nav tabs, at rest and while scrolled. Rows carry their own
                 `py-*` (lib/pill.ts); pages without one start flush too. */}
-            <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 pb-6 sm:px-6 lg:px-8">
-              {children}
-            </div>
-          </main>
+            {children}
+          </DashboardContent>
           {/* Pinned. */}
+          <DashboardChrome>
           <footer className="shrink-0 border-t border-slate-200 dark:border-slate-800 print:hidden">
             <div className="mx-auto w-full max-w-7xl px-4 py-2 text-xs text-ink-subtle dark:text-slate-400 sm:px-6 lg:px-8">
               Live dashboard · sign in to control · v2
@@ -106,6 +108,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </footer>
           <AssistantBubble />
           <StateReferencePanel />
+          </DashboardChrome>
          </UserAuthProvider>
         </QueryProvider>
       </body>

@@ -6,6 +6,12 @@ ac_auth (never trusts browser X-Auth headers), checks the registered camera's
 account scope, and issues a one-use 30-second ticket. The ticket is the first
 WebSocket frame, never a query parameter. Only registered camera/lens names and
 receive-only MSE or WebRTC messages reach go2rtc. Camera control remains separate.
+Registered `transport: mjpeg` equipment cameras use the same admission,
+authorization, heartbeat and lease model. The broker proxies only the fixed
+`stream_path` joined to that equipment's registered `base_url`; the browser
+never supplies or receives an upstream URL. The Opentrons Flex is the first
+such embedded camera and its capture lifecycle remains owned by
+`sdl2-gibbie-server`, not the Kasa/Tapo gateway.
 
 ## Viewer behavior
 

@@ -29,6 +29,11 @@ This document complements:
 
 ### Prerequisites
 
+For connection-only monitoring of a printer attached to a Windows PC, see
+[Printer Ethernet connection monitoring](NETWORK_CONNECTION_MONITORING.md).
+That read-only SDK adapter observes link reachability and Internet Connection
+Sharing; it does not claim printer readiness or expose a device control API.
+
 - The equipment gateway is reachable from the dashboard host over Tailscale.
 - Preferred endpoint is a Tailscale MagicDNS hostname, not a raw `100.x` IP.
 - The gateway exposes at least:

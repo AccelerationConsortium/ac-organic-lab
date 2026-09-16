@@ -14,11 +14,11 @@ afterEach(() => {
   auth.requestLogin.mockClear();
 });
 
-it("frames the authenticated same-origin workspace and states its boundary", () => {
+it("frames the authenticated workspace without a redundant dashboard introduction", () => {
   render(<RobotMotionPage />);
   expect(screen.getByTitle(PANEL).getAttribute("src")).toBe("/api/robot-motion/ligand_ur5e/web/index.html");
   expect(auth.canControl).toHaveBeenCalledWith("ligand_ur5e");
-  expect(screen.getByText(/Physical control is not enabled/)).toBeTruthy();
+  expect(screen.queryByText(/UR5e workspace: live status/)).toBeNull();
 });
 
 it("does not request the workspace while checking sign-in", () => {

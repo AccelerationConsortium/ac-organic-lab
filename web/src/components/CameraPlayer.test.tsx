@@ -5,6 +5,7 @@ import { CameraPlayer } from './CameraPlayer';
 vi.mock('@/lib/go2rtc',()=>({mseSupported:()=>true}));
 vi.mock('./MsePlayer',()=>({MsePlayer:()=> <div data-testid="live">Live</div>}));
 vi.mock('./WebRtcPlayer',()=>({WebRtcPlayer:()=> <div data-testid="rtc">RTC</div>}));
+vi.mock('./MjpegPlayer',()=>({MjpegPlayer:()=> <div data-testid="mjpeg">MJPEG</div>}));
 afterEach(()=>{cleanup();vi.useRealTimers();Object.defineProperty(document,'hidden',{configurable:true,value:false});});
 
 it('stops a hidden ordinary tab and resumes only on visibility',()=>{
@@ -22,4 +23,9 @@ it('allows the approved-monitor client path in a hidden tab (server still verifi
   Object.defineProperty(document,'hidden',{configurable:true,value:true});
   render(<CameraPlayer src="/streams/api/ws?src=cam_main" grantId="approval" />);
   expect(screen.queryByTestId('live')).not.toBeNull();
+});
+it('uses the authenticated MJPEG player for a registered MJPEG camera',()=>{
+  render(<CameraPlayer src="/streams/api/ws?src=gibbie_flex_main" transport="mjpeg" />);
+  expect(screen.queryByTestId('mjpeg')).not.toBeNull();
+  expect(screen.queryByTestId('live')).toBeNull();
 });

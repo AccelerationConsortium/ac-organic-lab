@@ -4,9 +4,11 @@ import { useEquipmentList } from "@/lib/use-equipment";
 import { BambuPrinterPanel } from "./BambuPrinterPanel";
 
 const BAMBU_PRINTER_IDS = new Set(["bambu_p1s_01", "bambu_h2d_01"]);
+const CONNECTION_PRINTER_IDS = new Set(["eufymake_connection", "elegoo_saturn_ultra_connection"]);
 
 /**
- * 3D Printers — the Bambu monitoring panel. Split out of the former combined
+ * 3D Printers — Bambu telemetry and EufyMake/Elegoo connection monitoring.
+ * Split out of the former combined
  * /utils/devices page, whose host half now lives at /utils/computers.
  */
 export default function PrintersPage() {
@@ -26,5 +28,8 @@ export default function PrintersPage() {
   const printers = (data?.equipment ?? []).filter((snapshot) =>
     BAMBU_PRINTER_IDS.has(snapshot.id),
   );
-  return <BambuPrinterPanel printers={printers} />;
+  const connections = (data?.equipment ?? []).filter((snapshot) =>
+    CONNECTION_PRINTER_IDS.has(snapshot.id),
+  );
+  return <BambuPrinterPanel printers={printers} connections={connections} />;
 }

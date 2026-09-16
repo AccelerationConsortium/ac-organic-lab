@@ -4,13 +4,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import UtilsLayout from "./layout";
 
-vi.mock("next/navigation", () => ({
-  usePathname: () => "/utils/computers",
-}));
+const route = vi.hoisted(() => ({ pathname: "/utils/computers" }));
+vi.mock("next/navigation", () => ({ usePathname: () => route.pathname }));
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); route.pathname = "/utils/computers"; });
 
 describe("UtilsLayout", () => {
+  it.each(["/utils/robot_motion", "/utils/robot_motion/"])("omits utility tabs on %s", pathname => {
+    route.pathname = pathname;
+    render(<UtilsLayout><div>Control Interface</div></UtilsLayout>);
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.getByText("Control Interface")).toBeTruthy();
+  });
   it("offers Computers and Servers and 3D Printers as separate pills", () => {
     render(<UtilsLayout><div>Computers content</div></UtilsLayout>);
 

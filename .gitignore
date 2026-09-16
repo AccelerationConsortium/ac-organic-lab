@@ -39,6 +39,7 @@ next-env.d.ts
 api/.env
 web/.env.local
 equipment.local.yaml
+network-monitors.local.json
 
 # Local SQLite runtime state
 data/*.db

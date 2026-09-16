@@ -61,6 +61,8 @@ export interface CameraLens {
   id: string;
   label: string;
   rtsp_path: string;
+  /** Registered path on the equipment base URL for an HTTP/MJPEG component. */
+  stream_path?: string | null;
   /** False for fixed lenses that have no PTZ motor (e.g. wide on C245D). Defaults to true. */
   ptz_capable?: boolean;
 }
@@ -69,6 +71,7 @@ export interface CameraConfig {
   host: string;
   onvif_port?: number;
   rtsp_port?: number;
+  transport?: "go2rtc" | "mjpeg";
   lenses: CameraLens[];
 }
 

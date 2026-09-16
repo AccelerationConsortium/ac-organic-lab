@@ -131,6 +131,12 @@ def test_agent_requires_explicit_camera_and_run_approval(monkeypatch):
 @pytest.fixture
 def client():
     def auth(req):
+        if req.url.host == "gibbie":
+            return httpx.Response(
+                200,
+                headers={"content-type": "multipart/x-mixed-replace; boundary=frame"},
+                content=b"--frame\r\nContent-Type: image/jpeg\r\n\r\nJPEG\r\n",
+            )
         if req.url.path == "/auth/verify":
             cookie = req.headers.get("cookie", "")
             who = (
@@ -172,7 +178,11 @@ def client():
                 id="cam",
                 kind="camera",
                 enabled=True,
-                camera=SimpleNamespace(lenses=[SimpleNamespace(id="main")]),
+                base_url="http://gibbie:8070",
+                camera=SimpleNamespace(
+                    transport="go2rtc",
+                    lenses=[SimpleNamespace(id="main", stream_path=None)],
+                ),
             )
         ]
     )
@@ -232,6 +242,57 @@ def test_identity_camera_scope_and_no_raw_url(client):
         == 204
     )
     assert client.post(f"{url}/{s['id']}/heartbeat", headers={"cookie": "alice"}).status_code == 410
+
+
+def test_camera_component_on_non_camera_equipment_is_admitted(client):
+    """A registered instrument camera is viewable without changing its kind."""
+    client.app.state.registry.equipment[0].kind = "liquid_handler"
+    response = client.post(
+        "/api/camera-streams/sessions",
+        json={"stream": "cam_main"},
+        headers={"cookie": "alice"},
+    )
+    assert response.status_code == 201
+
+
+def test_registered_mjpeg_camera_is_proxied_without_exposing_upstream(client):
+    entry = client.app.state.registry.equipment[0]
+    entry.kind = "liquid_handler"
+    entry.camera.transport = "mjpeg"
+    entry.camera.lenses[0].stream_path = "/devices/gibbie_flex/camera/stream"
+    created = client.post(
+        "/api/camera-streams/sessions",
+        json={"stream": "cam_main"},
+        headers={"cookie": "alice"},
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["transport"] == "mjpeg"
+    assert "gibbie" not in str(body)
+    streamed = client.get(
+        f"/api/camera-streams/sessions/{body['id']}/mjpeg",
+        headers={"cookie": "alice"},
+    )
+    assert streamed.status_code == 200
+    assert streamed.headers["content-type"].startswith("multipart/x-mixed-replace")
+    assert b"JPEG" in streamed.content
+    assert body["id"] not in client.app.state.camera_viewing.sessions
+
+
+def test_mjpeg_session_cannot_be_opened_by_another_account(client):
+    entry = client.app.state.registry.equipment[0]
+    entry.camera.transport = "mjpeg"
+    entry.camera.lenses[0].stream_path = "/camera"
+    body = client.post(
+        "/api/camera-streams/sessions",
+        json={"stream": "cam_main"},
+        headers={"cookie": "alice"},
+    ).json()
+    response = client.get(
+        f"/api/camera-streams/sessions/{body['id']}/mjpeg",
+        headers={"cookie": "admin"},
+    )
+    assert response.status_code == 403
 
 
 def test_grants_are_human_admin_only_and_revocable(client):

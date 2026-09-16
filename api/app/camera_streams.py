@@ -19,6 +19,7 @@ from urllib.parse import urlencode, urlsplit
 import anyio
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
@@ -64,6 +65,8 @@ class ViewingSession:
     expires: float
     ticket: str
     ticket_expires: float
+    transport: str = "go2rtc"
+    source_url: str | None = None
     grant_id: str | None = None
     connected: bool = False
     bytes_sent: int = 0
@@ -123,7 +126,16 @@ class ViewingBroker:
             elif s.grant_id and s.grant_id not in self.grants:
                 self.end(sid, "Monitoring authorization ended")
 
-    def mint(self, user: str, camera: str, body: SessionIn, machine: bool) -> ViewingSession:
+    def mint(
+        self,
+        user: str,
+        camera: str,
+        body: SessionIn,
+        machine: bool,
+        *,
+        transport: str = "go2rtc",
+        source_url: str | None = None,
+    ) -> ViewingSession:
         self.reap()
         g = self.grants.get(body.grant_id or "")
         if body.grant_id and (not g or g.principal != user or body.stream not in g.streams):
@@ -149,16 +161,18 @@ class ViewingBroker:
             )
         now = time.monotonic()
         s = ViewingSession(
-            secrets.token_urlsafe(18),
-            user,
-            body.stream,
-            camera,
-            "monitoring" if g else "interactive",
-            now,
-            now + LEASE_SECONDS,
-            secrets.token_urlsafe(32),
-            now + TICKET_SECONDS,
-            body.grant_id,
+            id=secrets.token_urlsafe(18),
+            user=user,
+            stream=body.stream,
+            camera=camera,
+            mode="monitoring" if g else "interactive",
+            created=now,
+            expires=now + LEASE_SECONDS,
+            ticket=secrets.token_urlsafe(32),
+            ticket_expires=now + TICKET_SECONDS,
+            transport=transport,
+            source_url=source_url,
+            grant_id=body.grant_id,
         )
         self.sessions[s.id] = s
         log.info(
@@ -189,12 +203,34 @@ def broker(request: Request | WebSocket) -> ViewingBroker:
     return request.app.state.camera_viewing
 
 
-def camera_for(request: Request | WebSocket, stream: str) -> str:
+def camera_definition(
+    request: Request | WebSocket, stream: str
+) -> tuple[str, str, str | None]:
     for entry in request.app.state.registry.equipment:
-        if entry.enabled and entry.kind == "camera" and entry.camera:
-            if any(stream == f"{entry.id}_{lens.id}" for lens in entry.camera.lenses):
-                return entry.id
+        # A camera may be a viewing component of another instrument (the
+        # Gibbie Flex is the first), not only a standalone kind=camera entry.
+        # The registry camera block is the allow-list; arbitrary relay names
+        # remain impossible to request through this broker.
+        if entry.enabled and entry.camera:
+            for lens in entry.camera.lenses:
+                if stream != f"{entry.id}_{lens.id}":
+                    continue
+                transport = getattr(entry.camera, "transport", "go2rtc")
+                if transport == "mjpeg":
+                    path = getattr(lens, "stream_path", None)
+                    base = getattr(entry, "base_url", None)
+                    if not base or not path or not path.startswith("/") or path.startswith("//"):
+                        raise HTTPException(503, "Registered MJPEG camera source is incomplete")
+                    parsed = urlsplit(base)
+                    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                        raise HTTPException(503, "Registered MJPEG camera base URL is invalid")
+                    return entry.id, transport, base.rstrip("/") + path
+                return entry.id, "go2rtc", None
     raise HTTPException(404, "Unknown or disabled camera feed")
+
+
+def camera_for(request: Request | WebSocket, stream: str) -> str:
+    return camera_definition(request, stream)[0]
 
 
 def same_origin(request: Request | WebSocket) -> None:
@@ -243,9 +279,11 @@ def build_camera_streams_router() -> APIRouter:
 
     @router.post("/sessions", status_code=201)
     async def create(body: SessionIn, request: Request, response: Response):
-        camera = camera_for(request, body.stream)
+        camera, transport, source_url = camera_definition(request, body.stream)
         user, machine = await identity(request, camera)
-        s = broker(request).mint(user, camera, body, machine)
+        s = broker(request).mint(
+            user, camera, body, machine, transport=transport, source_url=source_url
+        )
         response.headers["Cache-Control"] = "no-store"
         return {
             "id": s.id,
@@ -254,6 +292,7 @@ def build_camera_streams_router() -> APIRouter:
             "heartbeat_seconds": HEARTBEAT_SECONDS,
             "lease_seconds": LEASE_SECONDS,
             "mode": s.mode,
+            "transport": s.transport,
         }
 
     async def owned(sid: str, request: Request):
@@ -282,6 +321,70 @@ def build_camera_streams_router() -> APIRouter:
     async def close(sid: str, request: Request):
         await owned(sid, request)
         broker(request).end(sid, "Viewer closed")
+
+    @router.get("/sessions/{sid}/mjpeg")
+    async def mjpeg(sid: str, request: Request):
+        fetch_site = request.headers.get("sec-fetch-site")
+        if fetch_site and fetch_site not in ("same-origin", "none"):
+            raise HTTPException(403, "Cross-origin camera access is not permitted")
+        referer = request.headers.get("referer")
+        if referer and urlsplit(referer).netloc != request.headers.get("host"):
+            raise HTTPException(403, "Cross-origin camera access is not permitted")
+        s = await owned(sid, request)
+        if s.transport != "mjpeg" or not s.source_url:
+            raise HTTPException(404, "This viewing session is not an MJPEG feed")
+        if s.connected:
+            raise HTTPException(409, "This viewing session is already connected")
+        s.connected = True
+        s.ticket = ""
+        client = request.app.state.control_client
+        try:
+            upstream = await client.send(
+                client.build_request("GET", s.source_url),
+                stream=True,
+            )
+        except httpx.HTTPError:
+            broker(request).end(s.id, "MJPEG source unavailable")
+            raise HTTPException(502, "Camera source unavailable") from None
+        content_type = upstream.headers.get("content-type", "")
+        if upstream.status_code != 200 or not content_type.lower().startswith(
+            "multipart/x-mixed-replace"
+        ):
+            await upstream.aclose()
+            broker(request).end(s.id, "MJPEG source returned an invalid response")
+            raise HTTPException(502, "Camera source returned an invalid stream")
+
+        async def chunks():
+            try:
+                iterator = upstream.aiter_bytes()
+                while True:
+                    read = asyncio.create_task(anext(iterator))
+                    stopped = asyncio.create_task(s.stopped.wait())
+                    done, pending = await asyncio.wait(
+                        (read, stopped), return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                    if stopped in done:
+                        read.cancel()
+                        await asyncio.gather(read, return_exceptions=True)
+                        break
+                    try:
+                        chunk = read.result()
+                    except StopAsyncIteration:
+                        break
+                    s.bytes_sent += len(chunk)
+                    yield chunk
+            finally:
+                await upstream.aclose()
+                broker(request).end(s.id, "MJPEG viewer disconnected")
+
+        return StreamingResponse(
+            chunks(),
+            media_type=content_type,
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
 
     @router.get("/sessions")
     async def sessions(request: Request, response: Response):
@@ -391,6 +494,8 @@ def build_camera_streams_router() -> APIRouter:
             ):
                 raise HTTPException(403, "A viewing ticket is required")
             s = broker(ws).redeem(hello["value"])
+            if s.transport != "go2rtc":
+                raise HTTPException(403, "Use the registered MJPEG viewing path")
             camera_for(ws, s.stream)
             base = os.getenv("GO2RTC_BASE", "http://127.0.0.1:1984").rstrip("/")
             url = base.replace("http://", "ws://", 1).replace("https://", "wss://", 1)

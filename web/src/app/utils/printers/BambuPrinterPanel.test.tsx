@@ -5,6 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EquipmentSnapshot } from "@/types/api";
 
 import { BambuPrinterPanel } from "./BambuPrinterPanel";
+import PrintersPage from "./page";
+
+let equipmentForPage: EquipmentSnapshot[] = [];
+vi.mock("@/lib/use-equipment", () => ({
+  useEquipmentList: () => ({ data: { equipment: equipmentForPage }, error: null, isPending: false }),
+}));
 
 // The panel reads the session to decide whether it is safe to frame the
 // gateway page at all; see the auth cases below.
@@ -55,7 +61,23 @@ afterEach(() => {
 });
 
 describe("BambuPrinterPanel", () => {
-  it("shows both monitored printers and the read-only boundary", () => {
+  it("includes EufyMake and Elegoo alongside Bambu on the existing printers page", () => {
+    equipmentForPage = [
+      printerSnapshot("bambu_p1s_01", "Bambu P1S 01", "P1S"),
+      printerSnapshot("bambu_h2d_01", "Bambu H2D 01", "H2D"),
+      printerSnapshot("eufymake_connection", "EufyMake", "EufyMake"),
+      printerSnapshot("elegoo_saturn_ultra_connection", "Elegoo Saturn Ultra", "Saturn Ultra"),
+      printerSnapshot("unrelated", "Unrelated equipment", "Other"),
+    ];
+    render(<PrintersPage />);
+    for (const name of ["Bambu P1S 01", "Bambu H2D 01", "EufyMake", "Elegoo Saturn Ultra"]) {
+      expect(screen.getByRole("heading", { name })).toBeTruthy();
+    }
+    expect(screen.queryByText("Unrelated equipment")).toBeNull();
+    expect(screen.getAllByText("Connected")).toHaveLength(2);
+  });
+
+  it("pins sample submission first and removes the page introduction and per-printer buttons", () => {
     render(
       <BambuPrinterPanel
         printers={[
@@ -65,10 +87,12 @@ describe("BambuPrinterPanel", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Bambu Printers" })).toBeTruthy();
-    expect(screen.getByText("Bambu P1S 01")).toBeTruthy();
-    expect(screen.getByText("Bambu H2D 01")).toBeTruthy();
-    expect(screen.getByText(/Monitoring only/)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "3D Printers" })).toBeNull();
+    expect(screen.getAllByRole("article")[0].textContent).toContain("Sample submission");
+    expect(screen.getByRole("heading", { name: "Bambu P1S 01" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Bambu H2D 01" })).toBeTruthy();
+    expect(screen.queryByText(/Monitoring only/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Prepare a job/ })).toBeNull();
   });
 
   it("does not frame the page when nobody is signed in", () => {
@@ -106,6 +130,9 @@ describe("BambuPrinterPanel", () => {
     // Same-origin path, not the gateway's own address: that is what puts it
     // behind the dashboard's login and lets the edge inject the identity.
     expect(frame.getAttribute("src")).toBe("/bambu/ui/?embed=1");
+    expect(frame.closest("article")).toBe(screen.getAllByRole("article")[0]);
+    expect(screen.getAllByTitle("Bambu Gateway — submit a print")).toHaveLength(1);
+    expect(screen.queryByRole("button", {name: "Open submission form"})).toBeNull();
   });
 
   it("routes the standalone link through the authenticated edge", () => {
@@ -118,14 +145,11 @@ describe("BambuPrinterPanel", () => {
     expect(screen.queryByText(/Open directly/)).toBeNull();
   });
 
-  it("explains attribution without suggesting an auth bypass", () => {
+  it("removes the separate submission heading and introductory copy", () => {
     render(<BambuPrinterPanel printers={[]} />);
-    expect(screen.getByText(/signed-in account/)).toBeTruthy();
-  });
-
-  it("says that queueing a job does not reach a printer", () => {
-    render(<BambuPrinterPanel printers={[]} />);
-    expect(screen.getByText(/dispatch is not implemented/i)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Submit a print" })).toBeNull();
+    expect(screen.queryByText(/Validate your model/)).toBeNull();
+    expect(screen.queryByText(/Submissions are recorded against your signed-in account/)).toBeNull();
   });
 
   it("shows live progress and operator-declared transparent filament", () => {
@@ -140,6 +164,9 @@ describe("BambuPrinterPanel", () => {
     expect(screen.getByText("Transparent")).toBeTruthy();
     expect(screen.getByText("12%")).toBeTruthy();
     expect(screen.getByText("HT A · PC")).toBeTruthy();
+    const inventory = screen.getByRole("region", { name: "Printer One filament inventory" });
+    const progress = screen.getByRole("region", { name: "Printer One print progress" });
+    expect(inventory.compareDocumentPosition(progress) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("lays out four slots per AMS unit and one per AMS HT, empties included", () => {
@@ -205,12 +232,17 @@ describe("BambuPrinterPanel", () => {
     expect(screen.getByText("Telemetry unavailable")).toBeTruthy();
   });
 
-  it("selects a printer using a same-origin message without reloading the form", () => {
+  it("resizes the inline artifact and queue form only for messages from its own frame", () => {
     render(<BambuPrinterPanel printers={[printerSnapshot("bambu_one", "Printer One", "P1S")]} />);
     const frame = screen.getByTitle("Bambu Gateway — submit a print") as HTMLIFrameElement;
-    const send = vi.spyOn(frame.contentWindow!, "postMessage");
-    fireEvent.click(screen.getByRole("button", {name: "Prepare a job · view queue"}));
-    expect(send).toHaveBeenCalledWith({type: "bambu:select-printer", printer: "bambu_one"}, window.location.origin);
+    const resize = (origin: string, source: Window | null, height: number) => fireEvent(window, new MessageEvent("message", {
+      origin, source, data: {type: "bambu:height", height},
+    }));
+    resize("https://other.invalid", frame.contentWindow, 1700);
+    resize(window.location.origin, window, 1700);
+    expect(frame.style.height).toBe("1100px");
+    resize(window.location.origin, frame.contentWindow, 1700);
+    expect(frame.style.height).toBe("1700px");
     expect(frame.getAttribute("src")).toBe("/bambu/ui/?embed=1");
   });
 });
