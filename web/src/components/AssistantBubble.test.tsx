@@ -522,6 +522,16 @@ describe("AssistantBubble control mode", () => {
     expect(text.compareDocumentPosition(pill) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("accepts a reply and terminal event delivered together immediately before EOF", async () => {
+    installFetch(['data: {"type":"status","phase":"thinking","label":"waiting"}\n\ndata: {"type":"text","delta":"Hermes completed this reply."}\n\ndata: {"type":"done"}\n\n']);
+    await openPanel();
+    fireEvent.change(screen.getByPlaceholderText(/ask about the lab/i), { target: { value: "hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Hermes completed this reply.");
+    await screen.findByRole("button", { name: "Send" });
+    expect(screen.queryByText(/Connection lost/)).toBeNull();
+  });
+
   it("Stop aborts the in-flight turn and marks it stopped", async () => {
     // A stream that never closes: the turn stays in flight until we stop it.
     installFetch(['data: {"type":"status","phase":"thinking","label":"reasoning…"}\n\n'], {

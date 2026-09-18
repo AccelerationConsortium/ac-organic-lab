@@ -984,7 +984,14 @@ def build_assistant_sessions_router() -> APIRouter:
         # Plan runs on the Ask backend and toolset: lab-control is never
         # registered, so the model cannot produce a proposal card here.
         backend = _assistant.DEFAULT_BACKEND
-        if backend == "openai":
+        if backend == "hermes":
+            from . import assistant_hermes
+
+            if not assistant_hermes.configured():
+                store.finish_turn(session_id, turn["turn_id"], text="", events=[], state="failed", error="Hermes assistant is not configured")
+                raise HTTPException(status_code=503, detail="Hermes assistant is not configured")
+            runner = assistant_hermes.run_hermes_turn
+        elif backend == "openai":
             from . import assistant_openai
 
             if assistant_openai.api_key() is None:

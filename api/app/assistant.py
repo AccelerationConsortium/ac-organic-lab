@@ -22,6 +22,10 @@ Configuration
   answers each mode: ``claude-cli`` (default; this module's subprocess) or
   ``openai`` (``assistant_openai.py``: any OpenAI-compatible endpoint, e.g.
   OpenRouter — see that module for its ``ASSISTANT_OPENAI_*`` config).
+  ``hermes`` uses an isolated Hermes CLI turn with the lab MCP toolsets.
+  Configure ``ASSISTANT_HERMES_BIN``, ``ASSISTANT_HERMES_MODEL`` and
+  ``ASSISTANT_HERMES_API_KEY``. Hermes supports Ask, saved-session chat, and
+  propose-only Control with the same human approval gate as other backends.
 * ``ASSISTANT_CLAUDE_CWD`` -- working directory for the subprocess. Defaults
   to a minimal runtime dir *outside* the repo tree (``_runtime_dir()``) so
   Claude Code does not auto-load the repo's large ``CLAUDE.md`` and its
@@ -454,6 +458,9 @@ When the user asks you to make a device do something:
 1. Call list_available_actions(equipment_id) to see what the device currently
    allows and which actions are proposable (each with its argument schema).
    Use list_equipment_now first if you need the canonical equipment_id.
+   Copy equipment IDs exactly from tool results; never invent or change their
+   punctuation. Use the canonical equipment_id returned by discovery in every
+   subsequent call, including proposals.
    For a liquid handler, call get_equipment_docs(equipment_id) first. Treat
    its running-gateway /docs/agent, /plans/actions, /openapi.json and live
    /status as the evidence; a newer source checkout is not deployment evidence.
@@ -1311,20 +1318,23 @@ def build_assistant_router() -> APIRouter:
     async def health(request: Request) -> dict[str, Any]:
         from . import assistant_openai
 
+        from . import assistant_hermes
+
         binary = _claude_binary()
         ask_openai = DEFAULT_BACKEND == "openai"
         ctl_openai = CONTROL_BACKEND == "openai"
         # "configured" gates whether the bubble renders at all, so it reports
         # the Ask-mode backend's readiness (Ask is the default surface).
-        configured = assistant_openai.api_key() is not None if ask_openai else binary is not None
+        configured = (assistant_hermes.configured() if DEFAULT_BACKEND == "hermes" else
+                      assistant_openai.api_key() is not None if ask_openai else binary is not None)
         return {
             "configured": configured,
             "backend": DEFAULT_BACKEND,
             "control_backend": CONTROL_BACKEND,
-            "binary": binary,
-            "model": assistant_openai.OPENAI_MODEL if ask_openai else DEFAULT_MODEL,
+            "binary": assistant_hermes.BINARY if DEFAULT_BACKEND == "hermes" else binary,
+            "model": assistant_hermes.MODEL if DEFAULT_BACKEND == "hermes" else assistant_openai.OPENAI_MODEL if ask_openai else DEFAULT_MODEL,
             "control_model": (
-                assistant_openai.OPENAI_CONTROL_MODEL if ctl_openai else CONTROL_MODEL
+                assistant_hermes.MODEL if CONTROL_BACKEND == "hermes" else assistant_openai.OPENAI_CONTROL_MODEL if ctl_openai else CONTROL_MODEL
             ),
             "allowed_tools": f"{ALLOWED_TOOL_GLOB} {INVENTORY_TOOL_GLOB}",
             "cwd": _claude_cwd(),
@@ -1377,7 +1387,13 @@ def build_assistant_router() -> APIRouter:
         control = body.mode == "control" and bool(actor) and not control_open
 
         backend = CONTROL_BACKEND if control else DEFAULT_BACKEND
-        if backend == "openai":
+        if backend == "hermes":
+            from . import assistant_hermes
+
+            if not assistant_hermes.configured():
+                raise HTTPException(status_code=503, detail="Hermes assistant is not configured")
+            runner = assistant_hermes.run_hermes_turn
+        elif backend == "openai":
             from . import assistant_openai
 
             if assistant_openai.api_key() is None:

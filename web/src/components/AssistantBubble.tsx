@@ -1340,6 +1340,12 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
 
   const applyEvent = useCallback(
     (event: { type: string; [k: string]: unknown }) => {
+      // EOF can arrive before React runs the queued state updater. Record
+      // protocol completion synchronously, independently of rendering.
+      if (event.type === "done" || event.type === "interrupted" ||
+          (event.type === "error" && typeof event.message === "string")) {
+        terminatedRef.current = true;
+      }
       // Mirror the streaming answer outside the state updater below, so the
       // `done` frame can hand a complete answer to speech synthesis without
       // side-effecting inside setTurns. Cheap, and idempotent per frame.
@@ -1493,7 +1499,6 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
         } else if (event.type === "done") {
           // Natural end of a completed turn. Marks the run as terminated so
           // the stream-end check below knows it finished, not got cut.
-          terminatedRef.current = true;
           if (updated.completion !== "failed") updated.completion = "completed";
           updated.phase = null;
           updated.phaseLabel = undefined;
@@ -1501,12 +1506,10 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
           // Plan: the server says the engine stopped without finishing (live,
           // or a replayed turn that was cut off). Truthful end, not a lost
           // connection — so no retry banner.
-          terminatedRef.current = true;
           updated.completion = "interrupted";
           updated.phase = null;
           updated.phaseLabel = undefined;
         } else if (event.type === "error" && typeof event.message === "string") {
-          terminatedRef.current = true;
           setError(event.message);
           updated.completion = "failed";
           updated.error = event.message;
