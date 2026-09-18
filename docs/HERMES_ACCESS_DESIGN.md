@@ -205,6 +205,11 @@ the boundary for the right reasons:
   venv explicitly — `pip install -e .` alone yields a gateway that connects
   and converses with no lab tools attached. The operational detail is in
   `deploy/hermes-lab-runner/README.md` §8.
+  **Same day, later:** gaia's boxed principal was retired — connector unit
+  removed, profile shredded, `userdel -r hermes`, both traversal ACLs
+  stripped (`setfacl -b`; note `-x u:hermes` fails once the user is gone, so
+  strip ACLs *before* `userdel`, or address them as `u:1006`). The box now
+  exists only on `sdl2-server-agents`; gaia's edge redirects `/hermes*` there.
 
 ### Phase 1 — a machine principal (configuration only)
 
