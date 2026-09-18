@@ -187,6 +187,63 @@ def test_plate_passthrough_proxies_json_get() -> None:
     assert route.called
 
 
+@respx.mock
+def test_plate_status_no_plate_is_200_null() -> None:
+    """A doser with no plate loaded is an empty state, not a fault: the device
+    reports it as an error status, and plate/status maps that to 200 null so a
+    working Platforms page logs no browser console error."""
+    entry = _entry(
+        id="dose_every_well", base_url="http://127.0.0.1:8000", status_path="/status"
+    )
+    app = _make_app(entry)
+    route = respx.get("http://127.0.0.1:8000/plate/status").mock(
+        return_value=httpx.Response(404, json={"detail": "No plate currently set"})
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/api/equipment/dose_every_well/plate/status")
+
+    assert r.status_code == 200
+    assert r.json() is None
+    assert route.called
+
+
+@respx.mock
+def test_plate_status_real_device_error_still_propagates() -> None:
+    """Only the no-plate state is absorbed. Any other device failure keeps its
+    own status, so a genuine fault stays visible."""
+    entry = _entry(
+        id="dose_every_well", base_url="http://127.0.0.1:8000", status_path="/status"
+    )
+    app = _make_app(entry)
+    respx.get("http://127.0.0.1:8000/plate/status").mock(
+        return_value=httpx.Response(503, json={"detail": "Weigher offline"})
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/api/equipment/dose_every_well/plate/status")
+
+    assert r.status_code == 503
+    assert r.json()["detail"] == "Weigher offline"
+
+
+@respx.mock
+def test_plate_definitions_error_not_absorbed() -> None:
+    """The mapping is scoped to plate/status; a sibling subpath is untouched."""
+    entry = _entry(
+        id="dose_every_well", base_url="http://127.0.0.1:8000", status_path="/status"
+    )
+    app = _make_app(entry)
+    respx.get("http://127.0.0.1:8000/plate/definitions").mock(
+        return_value=httpx.Response(404, json={"detail": "No plate currently set"})
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/api/equipment/dose_every_well/plate/definitions")
+
+    assert r.status_code == 404
+
+
 def test_unknown_equipment_returns_404() -> None:
     aggregator = MagicMock()
     aggregator.entry.return_value = None
@@ -407,7 +464,7 @@ def test_v12_control_still_runs_the_claim_dance() -> None:
     assert action_route.calls.last.request.headers["x-claim-token"] == "tok-v12"
 
 
-@pytest.mark.parametrize("equipment_id, kind, action", [("cytation_5", "plate_reader", "read/absorbance"), ("lle_xpr_balance", "other", "weigh"), ("gibbie_balance", "other", "weigh")])
+@pytest.mark.parametrize("equipment_id, kind, action", [("cytation_5", "plate_reader", "read/absorbance"), ("lle_xpr_balance", "other", "weigh"), ("gibbie_balance", "other", "weigh"), ("ot2_complexation", "liquid_handler", "home")])
 @respx.mock
 def test_control_heartbeats_during_synchronous_read(equipment_id, kind, action) -> None:
     """A Cytation read may exceed the dashboard's normal 15 s budget. Keep its
@@ -456,7 +513,11 @@ def test_control_heartbeats_during_synchronous_read(equipment_id, kind, action) 
         heartbeat_route.calls.last.request.headers["x-claim-token"]
         == "tok-reader"
     )
-    assert action_route.calls.last.request.extensions["timeout"]["read"] == 90.0
+    timeout = action_route.calls.last.request.extensions["timeout"]
+    assert timeout["read"] == (150.0 if kind == "liquid_handler" else 90.0)
+    if kind == "liquid_handler":
+        assert timeout["connect"] == 15.0
+
 
 
 @respx.mock
@@ -1127,3 +1188,17 @@ def test_candidates_use_the_entry_secret(monkeypatch) -> None:
         request, _entry_with_secret("XARM_EDGE_SHARED_SECRET")
     )
     assert candidates[0]["X-Edge-Auth"] == "xarm-secret"
+
+
+@respx.mock
+def test_ot2_home_timeout_reports_uncertain_outcome_without_retry() -> None:
+    app = _make_app(_entry(id="ot2_complexation", kind="liquid_handler", status_path="/status"))
+    route = respx.post("http://127.0.0.1:8002/control/home").mock(
+        side_effect=httpx.ReadTimeout("response timed out")
+    )
+    with TestClient(app) as client:
+        response = client.post("/api/equipment/ot2_complexation/control/home", json={})
+    assert response.status_code == 504
+    assert "may have completed" in response.json()["detail"]
+    assert "before retrying" in response.json()["detail"]
+    assert route.call_count == 1

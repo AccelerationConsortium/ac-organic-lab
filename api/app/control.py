@@ -211,9 +211,17 @@ def build_control_router() -> APIRouter:
         this reuses the same generic JSON-GET plumbing as the camera media
         listing below. Return type is ``Any`` (not ``dict``) because
         ``plate/definitions`` returns a JSON array, not an object.
+
+        ``plate/status`` alone maps "no plate loaded" to 200 ``null``: see
+        ``_NO_PLATE_DETAIL``.
         """
 
-        return await _media_proxy_json(request, equipment_id, f"plate/{sub}")
+        try:
+            return await _media_proxy_json(request, equipment_id, f"plate/{sub}")
+        except HTTPException as exc:
+            if sub == "status" and _NO_PLATE_DETAIL in str(exc.detail).casefold():
+                return None
+            raise
 
     @router.get("/{equipment_id}/media")
     async def media_list(equipment_id: str, request: Request) -> dict:
@@ -240,6 +248,16 @@ def build_control_router() -> APIRouter:
 
     return router
 
+
+# A doser with no plate loaded is a normal, expected state, but the device
+# reports it as an error status ("No plate currently set" — 404 from
+# dose_every_well today, 500 on older firmware). Relaying that verbatim meant
+# every poll of a correctly-working Platforms page logged a browser console
+# error, so `plate/status` reports the empty state as 200 `null` instead.
+# Callers already model "no plate" as null. Matched on the device's own detail
+# text, not on the status code: an unknown equipment id, an unreachable
+# gateway or a real device fault must keep its own status.
+_NO_PLATE_DETAIL = "no plate currently set"
 
 # STATUS_SPEC v1.1 reserves three action names for the claim protocol
 # itself. We must NOT wrap calls to these in another claim dance (it
