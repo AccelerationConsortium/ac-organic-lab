@@ -157,7 +157,11 @@ v0.19.0 · `e57918ac`). `requires-python` is `>=3.11,<3.14`; Ubuntu 26.04 ships
 only 3.14 and packages no older interpreter, so give the hermes user its own
 uv-managed 3.13 (`uv python install 3.13`, `uv venv --python …`) — never a
 symlink into sdl2's uv cache. Pre-warm a uv cache as sdl2 and install
-`--offline` if the hermes user has no egress.
+`--offline` if the hermes user has no egress. **Install the MCP client
+too:** `pip install -e .` alone leaves it out — in v0.19.0 `mcp==1.26.0`
+lives only in the `dev` extra, in ≥0.21 in the `[mcp]` extra — and without
+it the agent starts, connects to Slack and answers from SOUL.md while none of
+the three lab servers ever attach (see j).
 
 **b. `~/.hermes/active_profile` selects the profile — not the unit.** The
 unit sets no `HERMES_HOME`; `hermes_cli/main.py` reads
@@ -212,6 +216,17 @@ then run §6 from Slack.
 **i. `failed` after a clean stop is not a health signal.** The gateway exits 1
 on SIGTERM, so `systemctl stop` always leaves the unit `failed`. Read
 `is-enabled` and the log, not the colour.
+
+**j. No MCP client, no lab tools — and nothing tells you.** With the `mcp`
+library missing from the hermes venv the gateway boots, `Active profile:
+lab-runner` is logged, Slack connects, and every answer is honest-sounding
+prose: *"the lab-runs toolset isn't loaded in this session."* The runner on
+`.6` ran that way for four hours on 2026-09-18. Before calling §6 done, run
+`sudo -iu hermes /usr/local/bin/hermes mcp test lab-skills` (expect
+`Connected … Tools discovered: 5`; `lab-runs` 4, `lab-history` 10), then
+the §6 questions themselves through the same path:
+`sudo -iu hermes /usr/local/bin/hermes chat -q "list current equipment"`.
+A reply that describes a limitation instead of calling a tool is this gap.
 
 ## Division of labour (settled 2026-08-12)
 

@@ -199,8 +199,12 @@ the boundary for the right reasons:
   not carried by a profile copy), and `lab-history` must not read the live
   WAL-mode `lab.db` — a read-only reader would have to write its `-shm`,
   contradicting the invariant above; it reads a `journal_mode=DELETE`
-  snapshot instead (`deploy/hermes-lab-runner/lab-history-snapshot.*`). The
-  operational detail is in `deploy/hermes-lab-runner/README.md` §8.
+  snapshot instead (`deploy/hermes-lab-runner/lab-history-snapshot.*`). Also
+  unrecorded: the `mcp` client library is an optional extra of the agent
+  (`dev` in v0.19.0, `[mcp]` in ≥0.21) and must be installed into the boxed
+  venv explicitly — `pip install -e .` alone yields a gateway that connects
+  and converses with no lab tools attached. The operational detail is in
+  `deploy/hermes-lab-runner/README.md` §8.
 
 ### Phase 1 — a machine principal (configuration only)
 
