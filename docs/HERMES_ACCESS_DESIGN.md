@@ -188,6 +188,19 @@ the boundary for the right reasons:
   designed). `/home/hermes` is `700`. Sessions, memories, profiles, and
   `auth.json` were **not** copied — the boxed principal starts fresh, and its
   model key should be its own.
+- **Addendum (2026-09-18, found rebuilding the box on `sdl2-server-agents`).**
+  The live host carries a *second* traversal ACL this record omitted:
+  `user:hermes:--x` on `/home/sdl2/.local/share`. The repo venv's `python` is
+  a symlink into sdl2's uv-managed interpreter under that directory, so with
+  only the `/home/sdl2` grant the console scripts are reachable but cannot
+  execute. Both grants are part of the box. Two further facts a rebuild
+  depends on and this file did not state: the sticky profile is selected by
+  `/home/hermes/.hermes/active_profile` (outside the profile directory, so
+  not carried by a profile copy), and `lab-history` must not read the live
+  WAL-mode `lab.db` — a read-only reader would have to write its `-shm`,
+  contradicting the invariant above; it reads a `journal_mode=DELETE`
+  snapshot instead (`deploy/hermes-lab-runner/lab-history-snapshot.*`). The
+  operational detail is in `deploy/hermes-lab-runner/README.md` §8.
 
 ### Phase 1 — a machine principal (configuration only)
 

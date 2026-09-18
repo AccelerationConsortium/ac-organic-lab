@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic lab history DB snapshot for the boxed hermes agent
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
