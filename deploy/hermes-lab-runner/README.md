@@ -72,6 +72,17 @@ is inside the agent's confidentiality domain (Phase 4.2). The
 model) stays disabled for channel users; model choice is a host-side admin
 decision (Phase 4.4).
 
+> **`allow_from` is inert for Slack (found 2026-09-18).** The Slack adapter
+> never reads `platforms.slack.allow_from` — only the WhatsApp and WeCom
+> adapters do. It reads the env vars `SLACK_ALLOWED_USERS` (platform) and
+> `GATEWAY_ALLOWED_USERS` (global), comma-separated member IDs, from the
+> profile `.env`. With neither set the gateway logs *"No env user allowlists
+> configured … will deny unknown senders"* and **fails closed**: the pairing
+> gate (§5b) is then the only admission path, and interactive components
+> (slash-confirm buttons) are refused for everyone. Same trap class as
+> `custom_toolsets` and `home_channel` above. To have a real allowlist, put
+> `SLACK_ALLOWED_USERS=U…,U…` in `.env`, not in `config.yaml`.
+
 ### 5. Install + start the connector (root)
 
 ```
@@ -107,10 +118,14 @@ template intentionally leaves those project-specific maps empty.
 
 - DM the bot: "which model are you?" → it answers from its config (SOUL.md
   mandates truthful model disclosure — the "show the model" requirement).
-- "list current equipment" → ~33 entries via lab-history.
-- "preflight a plate-reader absorbance step for A1 at 600 nm" → uses the
-  template's `plate_reader=cytation_5` binding and reports a dry-run verdict;
-  it must not claim or POST to the reader.
+- "list current equipment" → the live roster via lab-history (57 entries on
+  the current registry; the count tracks `equipment.yaml`, not this doc).
+  An empty answer means `lab-history` cannot find its database — see §8d.
+- "preflight a plate-reader absorbance step for A1 at 600 nm" → reports a
+  dry-run verdict; it must not claim or POST to the reader. The template's
+  `lab-skills` args pin `--binding plate_reader=cytation_5`; the **live**
+  profile's do not, so expect it to ask for an explicit binding rather than
+  fail (§8f).
 - "get_run run_nope" → relays `unknown_run` (proves lab-runs through Slack).
 - Given an authorization id supplied by a human for a main-merged Cytation
   protocol, `start_run(..., dry_run=true)` must pass before the real
@@ -124,6 +139,94 @@ template intentionally leaves those project-specific maps empty.
 
 Add the Slack app name + workspace to `docs/AGENTIC_LAB_DESIGN.md`'s agent
 surfaces map row for lab-runner, and note the go-live date.
+
+### 8. Bringing the runner up on a fresh host — what steps 1–7 omit
+
+Everything below was found moving the live instance from gaia to
+`sdl2-server-agents` (100.64.254.6) on 2026-09-18. Each item made a gateway
+that *started and reported healthy* while doing the wrong thing, so they are
+recorded here rather than in memory. Order matters for (c).
+
+**a. Install the agent for the `hermes` user first.** The unit's
+`ExecStart=/usr/local/bin/hermes` and HERMES_ACCESS_DESIGN Phase 0 assume a
+hermes-owned install at `/home/hermes/.hermes/hermes-agent` with its own venv
+and the wrapper in `/usr/local/bin`. The venv cannot be copied (editable
+install, absolute shebangs). Pin the same commit the old host runs
+(`sudo -iu hermes /usr/local/bin/hermes --version` there — the live build was
+v0.19.0 · `e57918ac`). `requires-python` is `>=3.11,<3.14`; Ubuntu 26.04 ships
+only 3.14 and packages no older interpreter, so give the hermes user its own
+uv-managed 3.13 (`uv python install 3.13`, `uv venv --python …`) — never a
+symlink into sdl2's uv cache. Pre-warm a uv cache as sdl2 and install
+`--offline` if the hermes user has no egress. **Install the MCP client
+too:** `pip install -e .` alone leaves it out — in v0.19.0 `mcp==1.26.0`
+lives only in the `dev` extra, in ≥0.21 in the `[mcp]` extra — and without
+it the agent starts, connects to Slack and answers from SOUL.md while none of
+the three lab servers ever attach (see j).
+
+**b. `~/.hermes/active_profile` selects the profile — not the unit.** The
+unit sets no `HERMES_HOME`; `hermes_cli/main.py` reads
+`/home/hermes/.hermes/active_profile` at launch and points `HERMES_HOME` at
+`profiles/<name>`. That file sits *outside* `profiles/lab-runner/`, so a
+profile copy does not bring it. Without it the gateway boots the **default**
+profile — no tokens, no MCP servers, wrong SOUL.md — and looks fine. Check
+the log for `Active profile: lab-runner`.
+
+**c. Lock first, then TWO traversal ACLs.** Phase 0's order: `chmod 700
+~/.claude ~/.codex ~/.config/gh` (agent transcripts quote secrets), *then*
+`setfacl -m u:hermes:x /home/sdl2`. A second ACL that gaia carries but Phase 0
+never recorded: `setfacl -m u:hermes:x /home/sdl2/.local/share` — the repo
+venv's interpreter is a uv-managed Python under it. Without it `lab-skills`
+is reachable but "cannot execute". Verify as hermes: `.venv/bin/lab-skills
+--help` runs; `ls /home/sdl2`, `~/.claude`, `~/.ssh`, the repo `.env` are all
+denied.
+
+**d. `lab-history` needs `LAB_DB_PATH`, and not the live database.** The
+profile sets none, so it falls back to `<repo>/data/lab.db`, which exists on
+gaia and nowhere else. The live history DB is WAL-mode and `600`; a read-only
+SQLite reader on a WAL database must write the `-shm` file, which breaks the
+Phase 0 invariant that hermes cannot write lab data. Use the snapshot timer
+in this directory instead (`lab-history-snapshot.{sh,service,timer}`:
+`Connection.backup()` → `journal_mode=DELETE`, atomic rename, hermes gets
+`r` via ACL, every 15 min ≈ 484 MB written) and set
+`mcp_servers.lab-history.env.LAB_DB_PATH: /data/dashboard/snapshots/lab.db`.
+
+**e. Verify with stdin at EOF.** `lab-history-mcp`, `lab-runs-mcp`,
+`lab-control-mcp`, `lab-inventory-mcp` have no argument parsing: `--help`
+starts the stdio server and hangs on a TTY. `cmd </dev/null` exits 0 if it
+boots. Only `lab-skills` has a real `--help`.
+
+**f. Template drift.** The live profile runs `model.default: z-ai/glm-5.3`
+(template: `glm-5.2`) and its `lab-skills` args omit `--binding
+plate_reader=cytation_5`. Trust the live profile over `config.yaml` here;
+reconcile deliberately, not mid-migration.
+
+**g. Move the state after stopping the old instance.** Copy config/`.env`
+any time; re-copy `state.db`, `sessions/sessions.json`,
+`channel_directory.json`, `gateway_state.json` (Slack pairings live there)
+*after* `systemctl stop` on the old host, or the WAL copy can be torn. Delete
+any stale `state.db-shm`/`-wal` on the new host before dropping the clean
+copy in. Transfer file-to-file (tar as root → `scp -3` → `shred -u`); never
+cat a profile into a terminal.
+
+**h. Never run two instances on one Slack app token.** Socket Mode delivers
+each event to exactly one connected gateway, so "verify the new one while the
+old still runs" is a coin flip. Verify locally, stop the old, start the new,
+then run §6 from Slack.
+
+**i. `failed` after a clean stop is not a health signal.** The gateway exits 1
+on SIGTERM, so `systemctl stop` always leaves the unit `failed`. Read
+`is-enabled` and the log, not the colour.
+
+**j. No MCP client, no lab tools — and nothing tells you.** With the `mcp`
+library missing from the hermes venv the gateway boots, `Active profile:
+lab-runner` is logged, Slack connects, and every answer is honest-sounding
+prose: *"the lab-runs toolset isn't loaded in this session."* The runner on
+`.6` ran that way for four hours on 2026-09-18. Before calling §6 done, run
+`sudo -iu hermes /usr/local/bin/hermes mcp test lab-skills` (expect
+`Connected … Tools discovered: 5`; `lab-runs` 4, `lab-history` 10), then
+the §6 questions themselves through the same path:
+`sudo -iu hermes /usr/local/bin/hermes chat -q "list current equipment"`.
+A reply that describes a limitation instead of calling a tool is this gap.
 
 ## Division of labour (settled 2026-08-12)
 
