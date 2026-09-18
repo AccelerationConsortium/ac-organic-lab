@@ -143,7 +143,10 @@ def test_committed_registry_groups_cleanly():
     assert [s["id"] for s in uplc_ops] == ["hostops_uplc_pc"]
 
     dashboard_ids = {s["id"] for s in _by_id(payload, "orchestration")["services"]}
-    assert {"kasa_tapo_gateway", "pypoe_web", "analytica_db"} <= dashboard_ids
+    assert {"kasa_tapo_gateway", "pypoe_web", "ac_organic_lab_auth"} <= dashboard_ids
+    # gaia retains AnaliticaDB, the Agente app and the Hermes dashboard at .5.
+    gaia_ids = {s["id"] for s in _by_id(payload, "gaia")["services"]}
+    assert {"analytica_db", "hermes_web", "laagente_analitica"} <= gaia_ids
     # Whitelisted machines never leak into the unlisted group.
     unlisted_hosts = {g["hostname"] for g in payload["other_hosts"]}
     assert not unlisted_hosts & {"127.0.0.1", "localhost", "100.64.254.6", "100.64.254.5"}

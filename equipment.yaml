@@ -725,7 +725,7 @@ equipment:
     name: Hermes Agent
     kind: other
     adapter: mock
-    base_url: http://100.64.254.6/hermes/
+    base_url: http://100.64.254.5/hermes/
     poll_timeout_seconds: 3.0
     poll_interval_seconds: 30.0
     tiles:
@@ -745,7 +745,7 @@ equipment:
     name: Analitica Chat
     kind: other
     adapter: mock
-    base_url: http://100.64.254.6/agente/
+    base_url: http://100.64.254.5/agente/
     poll_timeout_seconds: 3.0
     poll_interval_seconds: 30.0
     tiles:
@@ -805,7 +805,7 @@ equipment:
     kind: other
     adapter: http
     protocol: "1.0"
-    base_url: http://100.64.254.6:8010
+    base_url: http://100.64.254.5:8010
     status_path: /status
     poll_timeout_seconds: 3.0
     poll_interval_seconds: 30.0
@@ -857,7 +857,7 @@ equipment:
     protocol: "1.0"
     # Tailnet-bound (the unit binds tailscale0 100.64.254.6, not loopback, so
     # the device plane can reach the roster endpoint); loopback would be refused.
-    base_url: http://100.64.254.6:8009
+    base_url: http://127.0.0.1:8009
     status_path: /status
     poll_timeout_seconds: 3.0
     poll_interval_seconds: 30.0

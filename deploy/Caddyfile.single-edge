@@ -369,19 +369,23 @@ http://100.64.254.6 {
 		reverse_proxy 127.0.0.1:3000
 	}
 
-	# ---- PyPoe web UI, path-routed ONTO this origin (banner only, NOT gated) --
+	# ---- PyPoe web UI, path-routed ONTO this origin — gated since 2026-09-18 --
 	# PyPoe (:8006 on this host) is pulled onto the single edge so it carries the
 	# shared /auth/banner.js banner and the host-only ac_auth_session cookie rides
-	# along (one sign-in for the whole lab). Deliberately NO forward_auth yet —
-	# "carry the banner first, enforce next" (AUTH_DESIGN.md → "Policy: every web
-	# service carries the central auth"). handle_path strips /pypoe so
-	# PyPoe sees its own root paths; header_up X-Forwarded-Prefix tells PyPoe to
-	# prefix the URLs it emits (assets / links / API / WS) so they resolve back
-	# under /pypoe (_ForwardedPrefixMiddleware → base_path() /
+	# along (one sign-in for the whole lab). forward_auth gates every /pypoe/*
+	# request — including the /ws/chat/* upgrade, which carries the same cookie —
+	# and copies X-Auth-User in for PyPoe's per-user owner scoping. handle_path
+	# strips /pypoe so PyPoe sees its own root paths; header_up X-Forwarded-Prefix
+	# tells PyPoe to prefix the URLs it emits (assets / links / API / WS) so they
+	# resolve back under /pypoe (_ForwardedPrefixMiddleware → base_path() /
 	# window.PYPOE_BASE). /auth/* is NOT under this prefix — it resolves at the
 	# edge root above, so the banner + its /auth/me,/login,… calls are same-origin.
-	# WebSocket (/ws/chat/*) proxies through unblocked (no forward_auth to exclude
-	# Upgrade from). Canonical URL: http://100.64.254.6/pypoe/
+	# Canonical URL: http://100.64.254.6/pypoe/
+	@pypoe path /pypoe /pypoe/*
+	forward_auth @pypoe 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
 	redir /pypoe /pypoe/ 308
 	handle_path /pypoe/* {
 		reverse_proxy 100.64.254.6:8006 {
@@ -389,16 +393,22 @@ http://100.64.254.6 {
 		}
 	}
 
-	# ---- PyPoe React preview (parallel-deploy migration) — banner-only -------
-	# The new React UI runs as pypoe-web-next on :8007 alongside the Jinja UI on
-	# :8006, sharing the DB. Its base path is BAKED INTO the Vite build
-	# (VITE_BASE=/pypoe-next/), so no X-Forwarded-Prefix is needed — handle_path
-	# just strips /pypoe-next and the backend serves /assets, /api, /status at
-	# root. No forward_auth (banner-only, same as /pypoe). Retire this block at
-	# cutover, when /pypoe/ is flipped to :8007. See pypoe docs/REACT_UI_MIGRATION.md.
+	# ---- PyPoe React UI (parallel-deploy migration) — gated like /pypoe ------
+	# The new React UI runs as pypoe-web-next on loopback :8007 (moved from gaia
+	# 2026-09-18) alongside the Jinja UI on :8006, sharing the DB. Its base path
+	# is BAKED INTO the Vite build (VITE_BASE=/pypoe-next/), so no
+	# X-Forwarded-Prefix is needed — handle_path just strips /pypoe-next and the
+	# backend serves /assets, /api, /status at root. Same forward_auth gate as
+	# /pypoe. Retire this block at cutover, when /pypoe/ is flipped to :8007.
+	# See pypoe docs/REACT_UI_MIGRATION.md.
+	@pypoe_next path /pypoe-next /pypoe-next/*
+	forward_auth @pypoe_next 100.64.254.6:8009 {
+		uri /auth/verify
+		copy_headers X-Auth-User X-Auth-Role
+	}
 	redir /pypoe-next /pypoe-next/ 308
 	handle_path /pypoe-next/* {
-		reverse_proxy 100.64.254.6:8007
+		reverse_proxy 127.0.0.1:8007
 	}
 
 	# Private standalone beta: the dashboard verifies the cookie and exact
