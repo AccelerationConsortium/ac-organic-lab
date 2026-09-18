@@ -44,6 +44,10 @@ logger = logging.getLogger("ac_dashboard.api.control")
 # (filter_every_well) blocks for its `hold_time` parameter, which the
 # device caps at 10 s — budget is set above that with slack.
 _CONTROL_TIMEOUT_SECONDS = 15.0
+# OT-2 Home is synchronous and takes about 19 s. The gateway waits up to
+# 120 s for the robot (125 s transport budget); allow its response to arrive
+# before the dashboard gives up. Keep connection/write/pool waits bounded.
+_LIQUID_HANDLER_HOME_READ_TIMEOUT_SECONDS = 150.0
 # Cytation reads and autofocus imaging are synchronous device calls. The live
 # skill catalog budgets up to 30 s, so the dashboard needs a wider request
 # window while it keeps the per-action claim alive below.
@@ -805,6 +809,11 @@ async def _proxy(
         "robot_arm": _ROBOT_ARM_CONTROL_TIMEOUT_SECONDS,
         "solid_doser": _SOLID_DOSER_CONTROL_TIMEOUT_SECONDS,
     }.get(getattr(entry, "kind", None) or "", _CONTROL_TIMEOUT_SECONDS)
+    if getattr(entry, "kind", None) == "liquid_handler" and action == "home":
+        action_timeout = httpx.Timeout(
+            _CONTROL_TIMEOUT_SECONDS,
+            read=_LIQUID_HANDLER_HOME_READ_TIMEOUT_SECONDS,
+        )
     if equipment_id in {"lle_xpr_balance", "gibbie_balance", "gibbie_xpr_balance"}:
         action_timeout = 90.0  # Stable captures can wait up to the SOAP timeout.
     # Wall-clock of the whole device interaction (claim → action → release),
@@ -916,7 +925,13 @@ async def _proxy(
             outcome="timeout", detail=str(exc),
             duration_s=time.monotonic() - started,
         )
-        raise HTTPException(status_code=504, detail=f"Gateway timeout calling {target}") from exc
+        detail = f"Gateway timeout calling {target}"
+        if getattr(entry, "kind", None) == "liquid_handler" and action == "home":
+            detail += (
+                ". Home may still be running or may have completed. "
+                "Check the robot command record and reconcile its state before retrying."
+            )
+        raise HTTPException(status_code=504, detail=detail) from exc
     except httpx.HTTPError as exc:
         logger.warning("control transport error %s %s -> %s: %s", method, equipment_id, target, exc)
         await _record_control_event(

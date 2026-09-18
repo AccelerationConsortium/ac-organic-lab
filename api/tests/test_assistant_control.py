@@ -2362,3 +2362,49 @@ async def test_ot2_plan_merges_one_deck_check_across_steps(_locs) -> None:
     out = json.loads(await ac._propose_plan(_ot2_registry(), "ot2_hte", steps, ""))
     [check] = out["plan"]["deck_checks"]
     assert check["touched_slots"] == ["2", "11"]
+
+
+def test_equipment_id_separator_resolution_is_unique_and_exact_first() -> None:
+    first = _registry(id="ot2_complexation").equipment[0]
+    registry = Registry(equipment=[first])
+    assert ac._resolve_equipment_id(registry, "ot2-complexation") is first
+    assert ac._resolve_equipment_id(registry, "ot2-complex") is None
+    assert ac._resolve_equipment_id(registry, "OT2_COMPLEXATION") is None
+    second = first.model_copy(update={"id": "ot2-complexation"})
+    registry = Registry(equipment=[first, second])
+    assert ac._resolve_equipment_id(registry, "ot2-complexation") is second
+    # A non-exact spelling that collides with two IDs must fail closed.
+    registry = Registry(equipment=[
+        first.model_copy(update={"id": "ot2_complexation_left"}),
+        first.model_copy(update={"id": "ot2-complexation_left"}),
+    ])
+    assert ac._resolve_equipment_id(registry, "ot2-complexation-left") is None
+
+
+@respx.mock
+async def test_ot2_separator_variant_uses_canonical_id_everywhere() -> None:
+    _mock_ot2_status(["home"])
+    authz = respx.get(AUTHZ, params={"user": ACTOR, "equipment": "ot2_hte"}).mock(
+        return_value=httpx.Response(200, json={"allowed": True})
+    )
+    registry = _ot2_registry()
+    docs = json.loads(await ac._get_equipment_docs(registry, "ot2-hte"))
+    actions = json.loads(await ac._list_available_actions(registry, "ot2-hte"))
+    proposal = json.loads(await ac._propose_action(registry, "ot2-hte", "home", {}, "operator request"))
+    plan = json.loads(await ac._propose_plan(
+        registry, "ot2-hte", [{"action": "home", "args": {}}], "operator request"
+    ))
+    assert docs["equipment_id"] == "ot2_hte"
+    assert actions["equipment_id"] == "ot2_hte"
+    assert proposal["proposal"]["equipment_id"] == "ot2_hte"
+    assert plan["plan"]["equipment_id"] == "ot2_hte"
+    assert authz.call_count == 2
+    assert all(call.request.method == "GET" for call in respx.calls)
+
+
+@respx.mock
+async def test_ot2_separator_variant_preserves_authorization_refusal() -> None:
+    _mock_ot2_status(["home"])
+    _mock_authz(False)
+    out = json.loads(await ac._propose_action(_ot2_registry(), "ot2-hte", "home", {}, "request"))
+    assert out["code"] == "not_authorized"

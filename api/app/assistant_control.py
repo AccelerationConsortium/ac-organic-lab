@@ -983,12 +983,30 @@ def _assistant_schema(schema: dict[str, Any], kind: str | None) -> tuple[dict[st
     return visible, stripped
 
 
+def _resolve_equipment_id(registry: Registry, equipment_id: str) -> EquipmentEntry | None:
+    """Accept only exact IDs or unique hyphen/underscore spelling variants.
+
+    Never fuzzy-match names or choose among collisions. Callers must use the
+    returned registry ID for live identity checks, authorization and proposals.
+    """
+    entry = registry.by_id(equipment_id)
+    if entry is not None:
+        return entry
+    normalized = equipment_id.replace("-", "_")
+    matches = [
+        entry for entry in registry.equipment
+        if entry.id.replace("-", "_") == normalized
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 async def _get_equipment_docs(registry: Registry, equipment_id: str) -> str:
     """Return running-gateway guidance plus the live safety/state envelope."""
 
-    entry = registry.by_id(equipment_id)
+    entry = _resolve_equipment_id(registry, equipment_id)
     if entry is None:
         return _err("unknown_equipment", f"no equipment with id {equipment_id!r}")
+    equipment_id = entry.id
     if entry.kind != "liquid_handler":
         return _err(
             "capability_unknown",
@@ -1104,9 +1122,10 @@ async def _list_available_actions(registry: Registry, equipment_id: str) -> str:
     hops (it has no edge data to guess with, which is why guessed
     ``move.<node_id>`` routes died on 409 ``edge_not_allowed``)."""
 
-    entry = registry.by_id(equipment_id)
+    entry = _resolve_equipment_id(registry, equipment_id)
     if entry is None:
         return _err("unknown_equipment", f"no equipment with id {equipment_id!r}")
+    equipment_id = entry.id
     discovery = None
     try:
         if entry.kind == "liquid_handler":
@@ -1257,9 +1276,10 @@ async def _propose_action(
             "control proposals require a signed-in operator",
         )
 
-    entry = registry.by_id(equipment_id)
+    entry = _resolve_equipment_id(registry, equipment_id)
     if entry is None:
         return _err("unknown_equipment", f"no equipment with id {equipment_id!r}")
+    equipment_id = entry.id
     if not entry.enabled or entry.maintenance is not None:
         return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
 
@@ -1444,9 +1464,10 @@ async def _propose_plan(
             "split the work, or recommend a validated workflow plan",
         )
 
-    entry = registry.by_id(equipment_id)
+    entry = _resolve_equipment_id(registry, equipment_id)
     if entry is None:
         return _err("unknown_equipment", f"no equipment with id {equipment_id!r}")
+    equipment_id = entry.id
     if not entry.enabled or entry.maintenance is not None:
         return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
 
