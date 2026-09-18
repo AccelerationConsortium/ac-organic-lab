@@ -233,17 +233,38 @@ class SshHost:
 
 SSH_HOSTS: tuple[SshHost, ...] = (
     SshHost(
+        id="orchestration",
+        label="Orchestration Server (sdl2-orchestration)",
+        kind="Linux server",
+        hostname="sdl2-orchestration",
+        user="sdl2",
+        target="localhost",
+        shell="bash",
+        note=(
+            "The dashboard's own host since the 2026-09 migration (tailnet "
+            "sdl2-server-agents, 100.64.254.6) — the session loops back over "
+            "ssh rather than inheriting the API service's systemd sandbox, so "
+            "you get a normal login shell."
+        ),
+        profiles=(
+            SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
+            _PROFILE_TMUX,
+        ),
+    ),
+    SshHost(
         id="gaia",
         label="Central Server (gaia)",
         kind="Linux server",
         hostname="sdl2-server-gaia",
         user="sdl2",
-        target="localhost",
+        target="gaia",
         shell="bash",
         note=(
-            "The dashboard's own host — the session loops back over ssh rather "
-            "than inheriting the API service's systemd sandbox, so you get a "
-            "normal login shell."
+            "The previous dashboard host (100.64.254.5 after the IP swap). It "
+            "retains AnaliticaDB, the agente app, the Hermes dashboard and "
+            "PyPoe-next behind its own Caddy edge. Needs a `gaia` stanza in the "
+            "service user's ssh_config; without it the terminal reports the "
+            "connection failure."
         ),
         profiles=(
             SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),

@@ -3,7 +3,7 @@
 The Computers-and-Servers page renders what `group_hosts` derives from
 `equipment.yaml` + the SSH host whitelist — nothing is hand-synced anymore, so
 these tests pin the derivation rules: hostname/alias matching (FQDN vs short
-label, loopback and tailnet IPs onto gaia), role classification (ops /
+label, loopback and tailnet IPs onto the dashboard host), role classification (ops /
 service / equipment), port-vs-path parsing, and the `other_hosts` fallback for
 machines outside the whitelist (the device Pis).
 """
@@ -45,9 +45,12 @@ def test_groups_services_onto_whitelisted_hosts_by_alias_and_label():
                 "http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000",
                 name="UFactory xArm5",
             ),
-            # Loopback and the tailnet IP are both gaia (the aggregator host).
+            # Loopback and the .6 tailnet IP are both the dashboard host
+            # (sdl2-orchestration, where the aggregator runs).
             _entry("kasa_tapo_gateway", "other", "http://127.0.0.1:8002"),
             _entry("analytica_db", "other", "http://100.64.254.6:8010"),
+            # gaia kept .5 after the IP swap and still serves retained apps.
+            _entry("agente_web", "other", "http://100.64.254.5/agente/", adapter="mock"),
             # The hostops agent entry classifies as role "ops".
             _entry(
                 "hostops_cytation_pc",
@@ -67,9 +70,10 @@ def test_groups_services_onto_whitelisted_hosts_by_alias_and_label():
     assert xarm["port"] == 8000
     assert xarm["base_url"] == "http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000"
 
-    gaia = _by_id(payload, "gaia")
-    assert [s["id"] for s in gaia["services"]] == ["kasa_tapo_gateway", "analytica_db"]
-    assert all(s["role"] == "service" for s in gaia["services"])
+    orchestration = _by_id(payload, "orchestration")
+    assert [s["id"] for s in orchestration["services"]] == ["kasa_tapo_gateway", "analytica_db"]
+    assert all(s["role"] == "service" for s in orchestration["services"])
+    assert [s["id"] for s in _by_id(payload, "gaia")["services"]] == ["agente_web"]
 
     # Every whitelisted host appears even with nothing matched onto it.
     assert _by_id(payload, "uplc-pc")["services"] == []
@@ -99,7 +103,7 @@ def test_pathonly_urls_and_unlisted_hosts():
     )
     payload = group_hosts(registry)
 
-    hermes = _by_id(payload, "gaia")["services"][0]
+    hermes = _by_id(payload, "orchestration")["services"][0]
     assert hermes["port"] is None
     assert hermes["path"] == "/hermes/"
     assert hermes["adapter"] == "mock"
@@ -120,8 +124,8 @@ def test_pathonly_urls_and_unlisted_hosts():
 
 def test_committed_registry_groups_cleanly():
     """The real equipment.yaml: every http entry with a base_url lands on a
-    host group, the hostops agents classify as ops on their PCs, and gaia
-    absorbs the loopback + tailnet-IP services."""
+    host group, the hostops agents classify as ops on their PCs, and the
+    dashboard host absorbs the loopback + tailnet-IP services."""
     registry = load_registry(REPO_ROOT / "equipment.yaml")
     payload = group_hosts(registry)
 
@@ -138,11 +142,11 @@ def test_committed_registry_groups_cleanly():
     uplc_ops = [s for s in _by_id(payload, "uplc-pc")["services"] if s["role"] == "ops"]
     assert [s["id"] for s in uplc_ops] == ["hostops_uplc_pc"]
 
-    gaia_ids = {s["id"] for s in _by_id(payload, "gaia")["services"]}
-    assert {"kasa_tapo_gateway", "pypoe_web", "analytica_db"} <= gaia_ids
+    dashboard_ids = {s["id"] for s in _by_id(payload, "orchestration")["services"]}
+    assert {"kasa_tapo_gateway", "pypoe_web", "analytica_db"} <= dashboard_ids
     # Whitelisted machines never leak into the unlisted group.
     unlisted_hosts = {g["hostname"] for g in payload["other_hosts"]}
-    assert not unlisted_hosts & {"127.0.0.1", "localhost", "100.64.254.6"}
+    assert not unlisted_hosts & {"127.0.0.1", "localhost", "100.64.254.6", "100.64.254.5"}
     assert not any(h.startswith("sdl2-pc-") for h in unlisted_hosts)
 
 

@@ -160,9 +160,11 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   order.** A site block that strips `X-Auth-User` / `X-Auth-Role` for hygiene
   and also uses `forward_auth … copy_headers` will delete the role the
   verifier just stamped, so `@nonadmin not header X-Auth-Role admin` 403s
-  every admin (Kuma edge on `:8005`, 2026-09-18). Put both inside an explicit
-  `route { … }` block so the strip runs first, and confirm with
-  `caddy adapt` that the `headers` handlers precede the `:8009` reverse_proxy.
+  every admin (Kuma edge on `:8005`, 2026-09-18). Either put both inside an
+  explicit `route { … }` block so the strip runs first, or set the global
+  option `order request_header before forward_auth` (gaia's edge does this),
+  and confirm with `caddy adapt` that the `headers` handlers precede the
+  `:8009` reverse_proxy.
 - **Mostly no app-level auth between aggregator and equipment** — Tailscale
   ACLs are the main gate; don't design as if every device authenticated its
   callers. The exceptions are per-device: hard claim enforcement

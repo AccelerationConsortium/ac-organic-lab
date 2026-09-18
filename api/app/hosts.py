@@ -38,15 +38,22 @@ from .ssh_console import SSH_HOSTS
 
 # Additional network identities each whitelisted machine answers to, beyond
 # the hostname in SSH_HOSTS. equipment.yaml reaches the same machine under
-# several names — loopback (the aggregator runs on gaia, so gateway services
-# bind 127.0.0.1 there), tailnet IPs, MagicDNS FQDNs. Matching also tries the
-# first DNS label, so "sdl2-pc-03-cytation.tail6a1dd7.ts.net" finds the host
-# whose hostname is "sdl2-pc-03-cytation" (and vice versa) without an alias.
+# several names — loopback (the aggregator runs on the dashboard host, so
+# gateway services bind 127.0.0.1 there), tailnet IPs, MagicDNS FQDNs.
+# Matching also tries the first DNS label, so
+# "sdl2-pc-03-cytation.tail6a1dd7.ts.net" finds the host whose hostname is
+# "sdl2-pc-03-cytation" (and vice versa) without an alias.
 HOST_ALIASES: dict[str, frozenset[str]] = {
-    # gaia is the dashboard host itself: loopback-bound services (kasa-tapo,
-    # bambu, bitácora, the API's own entry) and the 100.64.254.6 tailnet IP
-    # (pypoe, kuma, auth, BitacoraDB, the edge paths) are all this machine.
-    "gaia": frozenset({"localhost", "127.0.0.1", "100.64.254.6"}),
+    # sdl2-orchestration is the dashboard host itself: loopback-bound services
+    # (kasa-tapo, bambu, bitácora, the API's own entry) and the 100.64.254.6
+    # tailnet IP (pypoe, kuma, auth, BitacoraDB, the edge paths) are all this
+    # machine. The tailnet name differs from the hostname.
+    "orchestration": frozenset(
+        {"localhost", "127.0.0.1", "100.64.254.6", "sdl2-server-agents"}
+    ),
+    # gaia kept 100.64.254.5 after the 2026-09 IP swap; the live registry
+    # reaches its retained services (AnaliticaDB, agente, Hermes) there.
+    "gaia": frozenset({"100.64.254.5"}),
     "cytation-pc": frozenset({"100.64.254.16"}),
     # Prototyping PC (hostname and stable host id are unchanged).
     "dobot-pc": frozenset({"100.64.254.18"}),

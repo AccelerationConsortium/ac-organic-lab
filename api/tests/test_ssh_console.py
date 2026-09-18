@@ -181,7 +181,7 @@ def test_every_host_is_addressable_by_its_id() -> None:
     assert set(HOSTS_BY_ID) == {h.id for h in SSH_HOSTS}
     # These ids are the /utils/computers/ssh/<id> route the host tiles link to
     # (web/src/app/utils/computers/HostsPanel.tsx); keep both sides in step.
-    assert {"gaia", "cytation-pc", "dobot-pc", "uplc-pc"} <= set(HOSTS_BY_ID)
+    assert {"orchestration", "gaia", "cytation-pc", "dobot-pc", "uplc-pc"} <= set(HOSTS_BY_ID)
     assert HOSTS_BY_ID["dobot-pc"].label == "Prototyping PC"
 
 
@@ -204,12 +204,15 @@ def test_argv_never_prompts_and_never_learns_a_host_key() -> None:
 
 
 def test_profile_args_ride_after_the_target() -> None:
-    gaia = HOSTS_BY_ID["gaia"]
-    tmux = gaia.profile("tmux")
+    orchestration = HOSTS_BY_ID["orchestration"]
+    tmux = orchestration.profile("tmux")
     assert tmux is not None
-    argv = _ssh_argv("/usr/bin/ssh", gaia, tmux)
-    # Attach-or-create the shared console session, appended after the target.
+    argv = _ssh_argv("/usr/bin/ssh", orchestration, tmux)
+    # Attach-or-create the shared console session, appended after the target
+    # (the dashboard host loops back over ssh to itself).
     assert argv[-6:] == ["localhost", "tmux", "new-session", "-A", "-s", "console"]
+    # gaia is a separate machine again; its target is an ssh_config alias.
+    assert _ssh_argv("/usr/bin/ssh", HOSTS_BY_ID["gaia"], HOSTS_BY_ID["gaia"].profile("tmux"))[-6] == "gaia"
 
     uplc = HOSTS_BY_ID["uplc-pc"]
     wsl = uplc.profile("wsl")
@@ -225,6 +228,7 @@ def test_every_host_defaults_to_a_plain_shell_and_windows_offers_wsl() -> None:
         # Omitted / empty profile id resolves to that default.
         assert host.profile(None) is host.profiles[0]
         assert host.profile("") is host.profiles[0]
+    assert HOSTS_BY_ID["orchestration"].profile("tmux") is not None
     assert HOSTS_BY_ID["gaia"].profile("tmux") is not None
     for win in ("cytation-pc", "dobot-pc", "uplc-pc"):
         assert HOSTS_BY_ID[win].profile("wsl") is not None
