@@ -811,7 +811,8 @@ equipment:
     poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
-    pills: {}
+    # No landing page of its own: the edge sends /analytica to the Swagger UI.
+    pills: { link_label: Open, link_href: /analytica/docs, authorized_only: true }
 
   # BitacoraDB — the SDL2 lab's own ELN+LIMS record layer
   # (AccelerationConsortium/BitacoraDB, in service since 2026-09-03). This is where
