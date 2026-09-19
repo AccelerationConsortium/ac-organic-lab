@@ -51,8 +51,11 @@ HOST_ALIASES: dict[str, frozenset[str]] = {
     "orchestration": frozenset(
         {"localhost", "127.0.0.1", "100.64.254.6", "sdl2-server-agents"}
     ),
-    # gaia kept 100.64.254.5 after the 2026-09 IP swap; the live registry
-    # reaches its retained services (AnaliticaDB, agente, Hermes) there.
+    # gaia kept 100.64.254.5 after the 2026-09 IP swap. What it still serves
+    # (2026-09-19): AnaliticaDB, LaAgenteAnalitica (`agente`) and the GPU STT.
+    # Hermes moved to sdl2-server-agents on 2026-09-18, and the device UIs
+    # (xarm5, mg400, ot2/*) are terminated at sdl2-server-agents' edge since
+    # Phase C; gaia's edge only redirects those paths there now.
     "gaia": frozenset({"100.64.254.5"}),
     "cytation-pc": frozenset({"100.64.254.16"}),
     # Prototyping PC (hostname and stable host id are unchanged).

@@ -1169,6 +1169,26 @@ This is the concrete build-out of* Why sessions can't be shared per-host
 *above and of **Phase 4** in the phasing table. It does **not** change the
 auth model — `ac_auth` + `roster.yaml` stay the authority.)*
 
+> **2026-09-18/19 — the edge moved.** After the September IP swap the `.6`
+> edge (`dashboard-edge.service`, `/etc/dashboard-staging/Caddyfile`) is the
+> canonical entry and now **terminates** the device UI routes itself —
+> `/xarm5`, `/mg400`, `/ot2/{hte,complexation}` proxy straight to the device
+> PCs with the per-device edge secrets in a root-only `EnvironmentFile`
+> drop-in; gaia's edge redirects those paths (and `/hermes`) to `.6` and
+> serves only `/analytica` and `/agente` locally. Caddy on `.6` is **2.11.4**
+> (was a custom 2.6.2 build, now gone — the rollback copy was lost to a
+> double run of the upgrade script; a stock 2.6.2 is not an exact
+> substitute). `.6`'s sites are explicit `route {}` blocks, so directive order
+> is **written order**: `redir` before `forward_auth`, header strips first —
+> a bare `/xarm5` returned 401 instead of 308 until reordered. HTTPS origin
+> `https://sdl2-server-agents.tail6a1dd7.ts.net` via `tailscale cert`
+> (daily renewal timer, not Caddy-managed, `auto_https off`); it is a
+> **different origin** from the IP and carries its own `ac_auth_session`
+> cookie. The live `.6` Caddyfile is versioned at
+> `deploy/Caddyfile.single-edge`, re-captured verbatim from the running
+> `/etc/dashboard-staging/Caddyfile` on 2026-09-20; the file on the host
+> stays authoritative, so patch both when the edge changes.
+
 **Status:** **Phase 1 edge deployed 2026-07-07** — Caddy on `http://100.64.254.6`
 serves the dashboard at `/`, one host-only `ac_auth_session` cookie, and
 `forward_auth`-gated device paths. Verified: `/` 200, login round-trips through
