@@ -33,6 +33,11 @@ which owns identity and roles; this note owns only the agent-access question.
 > name `/bitacoradb/...`. AnaliticaDB / `analytica_db` is LaAgenteAnalitica's
 > separate store and is not on the lab agent's read path.
 
+> **2026-09-19 — AnaliticaDB edge prefix.** AnaliticaDB now sits at
+> `/analyticadb/*` on the edge (`/analytica/*` became the LaAgenteAnalitica
+> chat UI). The live roster's `hermes@lab.local` path policy names
+> `/analyticadb/...`; the `/analytica/...` patterns below remain test examples.
+
 ## 1. The principle
 
 **Hermes gets the instrument and platform layer. It does not get the scientific

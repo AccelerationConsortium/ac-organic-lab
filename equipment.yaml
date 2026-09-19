@@ -736,8 +736,9 @@ equipment:
       authorized_only: true
       admin_only: true
 
-  # LaAgenteAnalitica — the agent chat UI (React/Vite) on a separate PC,
-  # fronted by the edge at /agente/ (the built Vite base) so it shows the shared
+  # LaAgenteAnalitica — the agent chat UI (React/Vite) on gaia (:3000),
+  # fronted by the edge at /analytica/ (since 2026-09-19; /agente/ stays as an
+  # alias for the previously built Vite base) so it shows the shared
   # auth banner and one sign-in. Displayed as "AnaliticaChat" on the dashboard.
   # It serves no STATUS_SPEC /status, so it's a link-out tile (adapter: mock,
   # not health-polled — shown "ready" because base_url is set).
@@ -757,7 +758,7 @@ equipment:
     # Renders identically ("Open ↗").
     pills:
       link_label: "Open"
-      link_href: /agente/
+      link_href: /analytica/
 
   # Bitácora — the agentic ELN (Next.js standalone :3001 + FastAPI :8050),
   # fronted by the edge at /bitacora/ so it shares the auth banner and one
@@ -811,8 +812,8 @@ equipment:
     poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
-    # No landing page of its own: the edge sends /analytica to the Swagger UI.
-    pills: { link_label: Open, link_href: /analytica/docs, authorized_only: true }
+    # No landing page of its own: the edge sends /analyticadb to the Swagger UI.
+    pills: { link_label: Open, link_href: /analyticadb/docs, authorized_only: true }
 
   # BitacoraDB — the SDL2 lab's own ELN+LIMS record layer
   # (AccelerationConsortium/BitacoraDB, in service since 2026-09-03). This is where
