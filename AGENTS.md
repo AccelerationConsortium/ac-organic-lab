@@ -165,6 +165,22 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   option `order request_header before forward_auth` (gaia's edge does this),
   and confirm with `caddy adapt` that the `headers` handlers precede the
   `:8009` reverse_proxy.
+- **On `.6` every edge site is an explicit `route {}` block, so directive
+  order is *written* order — not Caddy's default order.** A `redir` written
+  after `forward_auth` never fires for a logged-out caller: bare `/xarm5`
+  returned 401 instead of `308 → /xarm5/web/` when the device routes were
+  ported from gaia (2026-09-19), whose plain site blocks get `redir` first
+  from the default order. Inside `.6`'s edge: header strips, then `redir`,
+  then `forward_auth`, then `handle_path`. A `handle {}` inside the route
+  re-sorts its own contents, which is why `/hermes` was unaffected.
+- **A systemd unit stuck in `activating (auto-restart)` with `Result=resources`,
+  `Mem peak: 0B`, `CPU: 0` never executed** — almost always a non-optional
+  `EnvironmentFile=` that does not exist. `deploy/rename-staging-units.py
+  --apply` (2026-09-18) rewrote the unit-name-bearing `EnvironmentFile=`
+  paths to the new names without renaming the files; the dashboard API
+  looped 1,366 times over ~75 min, the web unit died on `Requires=`, and
+  nothing alerted. Check `systemctl cat <unit> | grep EnvironmentFile` and
+  `ls` each path before reading logs; prefix truly optional files with `-`.
 - **Mostly no app-level auth between aggregator and equipment** — Tailscale
   ACLs are the main gate; don't design as if every device authenticated its
   callers. The exceptions are per-device: hard claim enforcement
