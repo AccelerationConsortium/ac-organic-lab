@@ -1,3 +1,8 @@
+# HISTORICAL (2026-09-19): this is the Phase-1 edge as it ran on gaia. The live
+# edge is now dashboard-edge on sdl2-server-agents and is versioned at
+# deploy/edge/Caddyfile — install THAT, not this file. Kept for the design
+# commentary below, which still explains why the routing has the shape it has.
+#
 # Single-edge SSO login for SDL2 — INTERIM (Phase 1 of docs/SINGLE_EDGE_SSO_PLAN.md).
 #
 # GOAL: ONE origin — http://100.64.254.6 — is the single place a user signs in.

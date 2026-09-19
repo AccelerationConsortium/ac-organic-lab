@@ -1296,6 +1296,21 @@ a valid cert, keeping everything tailnet-only:
   `accelerationconsortium.ai/<lab>/…` (one origin) unless you actually want one
   AC-wide login backed by one central auth service bridging every lab's tailnet.
 
+> **Status 2026-09-19 — not started.** `sdl2.accelerationconsortium.ai` has
+> **no DNS record** (no answer from public resolvers or from the edge host;
+> the zone itself is at GoDaddy, `ns65/ns66.domaincontrol.com`). Meanwhile
+> the tailnet-only equivalent is live: `https://sdl2-server-agents.tail6a1dd7.ts.net`
+> with a Let's Encrypt cert from `tailscale cert`, renewed daily
+> (`deploy/edge/caddy-tailscale-cert*`). Doing Phase 3 as written needs, in
+> order: (1) someone with GoDaddy zone access creates the A record →
+> `100.64.254.6`; (2) a DNS-01 cert — HTTP-01 cannot reach a `100.64.x`
+> address — which means zone API credentials plus either an `xcaddy` build
+> with the GoDaddy DNS module (the deployed binary is **stock** 2.11.4 and has
+> no DNS providers) or an external ACME client writing cert files the way the
+> tailscale script does; (3) an `https://` site block. It is also a **new
+> origin** (its own `ac_auth_session`), so it only reduces sign-ins if it
+> becomes *the* canonical name and the IP / ts.net origins redirect to it.
+
 ### Spec — xArm `/web/` behind the edge (Phase 1 tasks 3–4; since shipped)
 
 **Repo:** `xarm-translocation` (not in this monorepo). Kept as the spec the

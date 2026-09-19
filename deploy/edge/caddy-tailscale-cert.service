@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew the tailnet HTTPS certificate for dashboard-staging-edge
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/caddy-tailscale-cert

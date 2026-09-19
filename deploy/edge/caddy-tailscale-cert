@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Issue/renew the tailnet HTTPS certificate for this host's edge and reload
+# Caddy only when the certificate actually changed. Ported from gaia's
+# /usr/local/libexec/caddy-tailscale-cert; differences: the edge here runs as
+# sdl2 (dashboard-edge.service), so the key is root:sdl2 0640, and the
+# reload goes through the unit's ExecReload (SIGUSR1) because `admin off`.
+set -euo pipefail
+DOMAIN=sdl2-server-agents.tail6a1dd7.ts.net
+DIR=/etc/dashboard-staging/certs
+CRT=$DIR/$DOMAIN.crt
+KEY=$DIR/$DOMAIN.key
+mkdir -p "$DIR"
+before=$(sha256sum "$CRT" 2>/dev/null | cut -d' ' -f1 || true)
+tailscale cert --cert-file "$CRT" --key-file "$KEY" "$DOMAIN"
+chown root:sdl2 "$CRT" "$KEY"; chmod 0644 "$CRT"; chmod 0640 "$KEY"
+after=$(sha256sum "$CRT" | cut -d' ' -f1)
+if [[ "$before" != "$after" ]]; then
+  echo "cert renewed; reloading dashboard-edge"
+  systemctl reload dashboard-edge || systemctl restart dashboard-edge
+else
+  echo "cert unchanged; no reload"
+fi
