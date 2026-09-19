@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily tailnet HTTPS certificate renewal for the edge
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

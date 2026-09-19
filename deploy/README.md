@@ -203,6 +203,17 @@ sudo -u ac .venv/bin/pip install -e .
 sudo systemctl restart ac-organic-lab-api
 ```
 
+## The live edge (Caddy on sdl2-server-agents)
+
+The edge that actually fronts the lab is `dashboard-edge.service` (Caddy
+2.11.4) reading `/etc/dashboard-staging/Caddyfile`. Both halves are now
+versioned: its **config** is captured verbatim at
+[`Caddyfile.single-edge`](Caddyfile.single-edge), and its **unit, drop-ins and
+`tailscale cert` renewal timer** in [`deploy/edge/`](edge/README.md) as of
+2026-09-19. Change either by PR, then `install` + `caddy validate` +
+`systemctl reload dashboard-edge`; the README in `edge/` has the exact
+commands and a drift check.
+
 ## Exposing the dashboard on the Tailnet
 
 Two options:
