@@ -93,6 +93,40 @@ curl -s http://sdl2-server-gaia.tail6a1dd7.ts.net:8000/
 
 ## Day-to-day operations
 
+### Unit names on the orchestration host
+
+The 2026-09 migration onto `sdl2-orchestration` installed every service under
+a `*-staging*` name with a stack of drop-ins, and left the dashboard API and
+auth reading *copies* of `equipment.yaml` / `platforms.yaml` /
+`locations.yaml` under `/data`. `deploy/rename-staging-units.py` retires both:
+it flattens each unit and its drop-ins into one file under the permanent name
+(the name each product's own `deploy/` folder uses), pins the registry paths
+to this checkout, archives the old unit files and the dead registry copies
+under `~/caoyang/archive/unit-rename-<ts>/`, and records a state file for
+`--rollback`. Run it as root from a terminal: preflight first (read-only),
+then `--apply`; expect 10-30 s of downtime across the renamed services.
+
+| Was | Is | Serves |
+| --- | --- | --- |
+| `ac-dashboard-staging-api` | `ac-organic-lab-api` | FastAPI aggregator, 127.0.0.1:8001 |
+| `ac-dashboard-staging-web` | `ac-organic-lab-web` | Next.js standalone, 127.0.0.1:8000 |
+| `ac-auth-staging` | `ac-organic-lab-auth` | email-code login, 127.0.0.1:8009 |
+| `dashboard-staging-edge` | `dashboard-edge` | Caddy SSO edge on 100.64.254.6 (:80, :8005, :8009) |
+| `bitacora-staging-api` / `-web` | `bitacora` / `bitacora-frontend` | :8050 / :3001 |
+| `bitacora-beta-staging-api` / `-web` | `bitacora-beta` / `bitacora-beta-frontend` | :18050 / :13001 |
+| `bitacoradb-staging-api` / `-preview` | `bitacoradb` / `bitacoradb-preview` | :8013 / :8014 |
+| `bitacoradb-beta-staging-api` / `-preview` | `bitacoradb-beta` / `bitacoradb-beta-preview` | :18013 / :18014 |
+| `go2rtc-staging` | `ac-go2rtc` | camera bridge, :1984 |
+| `kasa-tapo-staging` | `kasa-tapo-services` | plug + camera gateway, :8002 |
+| `bambu-staging` | `bambu-server` | printer gateway, :8012 |
+
+The API loads the registry once at start-up (no file watch), so after editing
+`equipment.yaml` in the checkout run `sudo systemctl restart ac-organic-lab-api`.
+The API and auth read whatever the checkout has on disk, branch and
+uncommitted edits included. Environment-file paths that embed the old names
+(`/etc/dashboard-integrations/ac-dashboard-staging-api.service.*.env`, the
+`*.final.env` files) are opaque and were deliberately left alone.
+
 ### Dashboard-only staged release
 
 For this repository's installed-checkout layout, prefer
