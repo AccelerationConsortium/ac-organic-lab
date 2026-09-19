@@ -705,6 +705,71 @@ def finish(retire_login_test):
     verify_and_archive(state, arch, probes_before, retire_login_test, save)
 
 
+def retire_login_test_only():
+    """Standalone: disable and archive ac-auth-login-test.service after a complete
+    apply. /etc/auth-staging-login-test/ stays: the auth unit reads mail.env from it."""
+    if os.geteuid() != 0:
+        raise Refusal('run with sudo')
+    state = json.loads(STATE.read_text())
+    if state.get('cutover') != 'complete':
+        raise Refusal(f'cutover state is {state.get("cutover")!r}; retire the login test after a complete apply')
+    unit = UNIT_DIR / 'ac-auth-login-test.service'
+    if not unit.exists():
+        raise Refusal(f'{unit} already gone')
+    arch = Path(state['archive'])
+    run('systemctl', 'disable', '--now', unit.name)
+    (arch / 'units').mkdir(exist_ok=True)
+    dest = arch / 'units' / unit.name
+    shutil.move(str(unit), str(dest))
+    state['moved'].append([str(unit), str(dest)])
+    state['login_test_retired'] = True
+    STATE.write_text(json.dumps(state, indent=2))
+    run('systemctl', 'daemon-reload')
+    print(f'retired {unit.name}: {show(unit.name, "LoadState")}/{show(unit.name, "ActiveState")}; '
+          f'archived at {dest}; :8081 -> {probe("http://127.0.0.1:8081/")}')
+
+
+AUTH_UNIT = UNIT_DIR / 'ac-organic-lab-auth.service'
+OLD_MAIL_ENV = '/etc/auth-staging-login-test/mail.env'
+NEW_MAIL_ENV = Path('/etc/dashboard-integrations/ac-organic-lab-auth.service.mail.env')
+
+
+def repair_auth_mail_env():
+    """The auth unit's mail settings lived in /etc/auth-staging-login-test/mail.env,
+    a directory that was removed together with the login-test unit. The running
+    auth process still carries those variables, so rebuild the file from its
+    environment (root reads /proc, nothing is printed) and point the unit at a
+    path that belongs to auth. Without this the next restart or reboot fails
+    with "Failed to load environment files"."""
+    if os.geteuid() != 0:
+        raise Refusal('run with sudo')
+    text = AUTH_UNIT.read_text()
+    if OLD_MAIL_ENV not in text:
+        raise Refusal(f'{AUTH_UNIT} does not reference {OLD_MAIL_ENV}; nothing to repair')
+    if Path(OLD_MAIL_ENV).exists():
+        raise Refusal(f'{OLD_MAIL_ENV} exists; the unit is loadable as is')
+    env = proc_env('ac-organic-lab-auth')
+    keys = sorted(k for k in env if k.startswith('AUTH_SMTP_'))
+    if not keys:
+        raise Refusal('running auth process has no AUTH_SMTP_* variables to recover')
+    if NEW_MAIL_ENV.exists():
+        raise Refusal(f'{NEW_MAIL_ENV} already exists; refusing to overwrite')
+    state = json.loads(STATE.read_text())
+    arch = Path(state['archive'])
+    archive_copy(AUTH_UNIT, arch)
+    NEW_MAIL_ENV.write_text(''.join(f'{k}={env[k]}\n' for k in keys))
+    NEW_MAIL_ENV.chmod(0o600)
+    AUTH_UNIT.write_text(text.replace(f'EnvironmentFile={OLD_MAIL_ENV}', f'EnvironmentFile={NEW_MAIL_ENV}'))
+    run('systemctl', 'daemon-reload')
+    v = run('systemd-analyze', 'verify', str(AUTH_UNIT), check=False)
+    if v.returncode != 0:
+        raise Refusal(f'systemd-analyze verify failed:\n{v.stderr}{v.stdout}')
+    state.setdefault('repairs', []).append({'auth_mail_env': str(NEW_MAIL_ENV), 'keys': keys})
+    STATE.write_text(json.dumps(state, indent=2))
+    print(f'wrote {NEW_MAIL_ENV} (0600, {len(keys)} keys: {", ".join(keys)}) and repointed {AUTH_UNIT.name}.')
+    print('Optional proof: sudo systemctl restart ac-organic-lab-auth.service  (a few seconds of 401s; sessions persist).')
+
+
 def rollback():
     if os.geteuid() != 0:
         raise Refusal('run with sudo')
@@ -744,17 +809,24 @@ def main():
                       help='resume an apply that stopped after enabling the new units: repair, start, verify, archive')
     mode.add_argument('--tidy', action='store_true',
                       help='after a complete apply: archive unreferenced registry copies and duplicate old-named env files')
+    mode.add_argument('--repair-auth-mail-env', action='store_true',
+                      help='rebuild the auth mail env file from the running process if /etc/auth-staging-login-test was removed')
     mode.add_argument('--show', metavar='OLD_STEM', help='print the rendered new unit file for one old unit and exit')
     ap.add_argument('--retire-login-test', action='store_true',
-                    help='also disable and archive ac-auth-login-test.service (the :8081 loopback login test page)')
+                    help='disable and archive ac-auth-login-test.service (the :8081 loopback login test page); '
+                         'combined with --apply/--finish it happens during the cutover, alone it runs after one')
     args = ap.parse_args()
     try:
         if args.rollback:
             return rollback()
+        if args.retire_login_test and not (args.apply or args.finish or args.show):
+            return retire_login_test_only()
         if args.finish:
             return finish(args.retire_login_test)
         if args.tidy:
             return tidy()
+        if args.repair_auth_mail_env:
+            return repair_auth_mail_env()
         report = preflight(args.retire_login_test)
         if args.show:
             print(report['rendered'][args.show])
