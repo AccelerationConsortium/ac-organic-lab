@@ -195,10 +195,11 @@ in this directory instead (`lab-history-snapshot.{sh,service,timer}`:
 starts the stdio server and hangs on a TTY. `cmd </dev/null` exits 0 if it
 boots. Only `lab-skills` has a real `--help`.
 
-**f. Template drift.** The live profile runs `model.default: z-ai/glm-5.3`
-(template: `glm-5.2`) and its `lab-skills` args omit `--binding
-plate_reader=cytation_5`. Trust the live profile over `config.yaml` here;
-reconcile deliberately, not mid-migration.
+**f. Template drift.** The live profile's `lab-skills` args omit `--binding
+plate_reader=cytation_5`, which the template pins; the model (`glm-5.3`) was
+also ahead of the template until 2026-09-18, when `config.yaml` caught up.
+Trust the live profile over `config.yaml` here; reconcile deliberately, not
+mid-migration.
 
 **g. Move the state after stopping the old instance.** Copy config/`.env`
 any time; re-copy `state.db`, `sessions/sessions.json`,
