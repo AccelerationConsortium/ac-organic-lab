@@ -1,0 +1,44 @@
+# dashboard-edge.service — permanent name of the former dashboard-staging-edge.service.
+# Generated 2026-09-18T18:56:40+00:00 by ac-organic-lab/deploy/rename-staging-units.py from the
+# unit file and every drop-in below, copied verbatim in systemd load order.
+# Pinned explicitly at the end (removed from the fragments and their
+# environment files): nothing.
+
+# ---- from /etc/systemd/system/dashboard-staging-edge.service
+[Unit]
+After=network-online.target ac-organic-lab-web.service bitacora-frontend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sdl2
+Group=sdl2
+Environment=XDG_CONFIG_HOME=/home/sdl2/.cache/dashboard-staging-caddy
+Environment=XDG_DATA_HOME=/home/sdl2/.cache/dashboard-staging-caddy
+ExecStart=/usr/local/lib/dashboard-staging/caddy run --config /etc/dashboard-staging/Caddyfile --adapter caddyfile
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+IPAddressDeny=any
+IPAddressAllow=localhost
+IPAddressAllow=100.64.254.6
+
+[Install]
+WantedBy=multi-user.target
+
+# ---- from /etc/systemd/system/dashboard-staging-edge.service.d/gateway-handover.conf
+[Service]
+EnvironmentFile=/etc/device-gateway-staging/edge.env
+
+# ---- from /etc/systemd/system/dashboard-staging-edge.service.d/record-store.conf
+[Service]
+EnvironmentFile=/etc/bitacoradb-staging/edge.env
+
+# ---- from /etc/systemd/system/dashboard-staging-edge.service.d/zzzz-final-ip.conf
+[Service]
+IPAddressAllow=100.64.0.0/10
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Unit]
+Description=Lab SSO edge (Caddy: dashboard, Bitacora, BitacoraDB, Kuma, auth)
