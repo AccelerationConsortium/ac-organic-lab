@@ -745,7 +745,7 @@ equipment:
     name: Analitica Chat
     kind: other
     adapter: mock
-    base_url: http://100.64.254.5/agente/
+    base_url: http://100.64.254.5:3000/
     poll_timeout_seconds: 3.0
     poll_interval_seconds: 30.0
     tiles:
