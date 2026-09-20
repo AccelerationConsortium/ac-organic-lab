@@ -557,6 +557,7 @@ The SDK should run end-to-end in dry-run mode without any device powered on. Per
 - `docs/AGENTIC_LAB_DESIGN.md` — Part I: the binding lab operating rules agents must not weaken; Part II: the deployed agent operations layer
 - `docs/STATUS_SPEC.md` — combined device contract (v1.0 baseline + v1.1 claims + v1.2 activity + SiLA comparison appendix)
 - `docs/SKILLS_CATALOG.md` — skill catalog design (`SkillDef` / `Skill`, runtime availability, evolution from hard-coded → device-declared)
+- `docs/BALANCE_SKILLS_DESIGN.md` — recommendation (not yet implemented) for making the two XPR balances drivable: per-device `skills_for()` overrides vs a new `balance` `EquipmentKind`
 - `docs/INTERLOCKS.md` — four-layer safety model and the project interlock API (`add_interlock`, `validate_plan`, `PlanReport`)
 - `docs/LAB_MONITORING.md` — logging, events, the central history DB, and alerting (Kuma + the aggregator notifier + PyPoe; overview + runbook)
 - `docs/PLATE_TRACKING.md` — plate / container location and custody tracking: the `locations.yaml` registry, the BitacoraDB ledger, who writes it, and why it is not a state machine
