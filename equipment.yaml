@@ -45,6 +45,15 @@ equipment:
     # as cold-start headroom for the very first request after a gateway
     # restart (cache empty, route falls back to a live build).
     poll_timeout_seconds: 5.0
+    # The gateway at :8002 *is* this camera's API, so both links point at
+    # its documents. Declaring them is also what puts the camera in
+    # /api/catalog at all: api/app/main.py drops monitoring kinds (camera,
+    # environmental_sensor) that publish no documentation, which was hiding
+    # the five ptz / preset / privacy / streaming skills the catalog has
+    # registered for kind=camera all along.
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     tiles:
       hte: { w: 2, h: 3 }
     pills: {}
@@ -445,6 +454,9 @@ equipment:
     # serves /status from a background-poller cache, so 5 s only matters
     # for the first request after a gateway restart.
     poll_timeout_seconds: 5.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     tiles:
       process_chemistry: { w: 2, h: 3 }
     pills: {}
@@ -472,6 +484,9 @@ equipment:
     # serves /status from a background-poller cache, so 5 s only matters
     # for the first request after a gateway restart.
     poll_timeout_seconds: 5.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     tiles:
       complexation: { w: 2, h: 3 }
     pills: {}
@@ -1081,6 +1096,9 @@ equipment:
     base_url: http://127.0.0.1:8002
     status_path: /cameras/cam_gibbie_tapo_c100/status
     poll_timeout_seconds: 5.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     tiles:
       sample_prep: { w: 2, h: 3 }
     pills: {}
@@ -1105,6 +1123,9 @@ equipment:
     base_url: http://127.0.0.1:8002
     status_path: /cameras/cam_ligand_tapo_d246/status
     poll_timeout_seconds: 5.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     tiles:
       ligand_development: { w: 2, h: 3 }
     pills: {}
