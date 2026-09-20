@@ -780,8 +780,15 @@ def test_realsense_capture_name_matches_device_allowed_actions() -> None:
     assert "busy" not in capture.requires_states
 
     # The dotted name maps to the device route byte-for-byte, the same
-    # convention the solid doser follows.
+    # convention the solid doser follows. This is the device's fixed ALIAS:
+    # the canonical route is /control/realsense/{camera_id}/capture, but the
+    # executor sends this string verbatim (no path templating), so the camera
+    # rides in the body instead.
     assert capture.endpoint == "/control/" + device_advertised.replace(".", "/")
+
+    fields = capture.args_schema.model_fields
+    assert "camera" in fields and not fields["camera"].is_required()
+    assert "rs435i" in (fields["camera"].description or "")
 
 
 def test_realsense_capture_is_scoped_to_the_xarm() -> None:

@@ -431,18 +431,30 @@ Two surfaces, and the difference matters to a caller:
 
 - **Transient reads** — `/realsense/snapshot.jpg`, `depth.png`, `stream.mjpg`,
   `depth?x=&y=`, `intrinsics`. Nothing survives the response.
-- **Durable captures** — `POST /control/realsense/capture` (claim-gated,
-  catalog name `realsense.capture`) writes one aligned frameset as
-  `color.jpg` + `depth.png` + `meta.json`. `meta.json` carries the **arm pose
-  at capture** (node, joints, TCP, rail, gripper), which is what makes a
+- **Durable captures** — `POST /control/realsense/{camera_id}/capture`
+  (claim-gated, catalog name `realsense.capture`) writes one aligned frameset
+  as `color.jpg` + `depth.png` + `meta.json`. `meta.json` carries the **arm
+  pose at capture** (node, joints, TCP, rail, gripper), which is what makes a
   capture a measurement rather than a picture.
 
+**Cameras are addressed by a device-local id** (2026-09-20): every route sits
+under `/realsense/{camera_id}/…`, `GET /realsense/cameras` lists them, and the
+first camera is `rs435i` (a second, a D405, is expected). The id is
+device-local on purpose — the camera stays a subsystem of the arm, per the
+device repo's `REALSENSE_API_PLAN.md` rule 1, and the device context is
+already in the path (`/xarm5/realsense/rs435i/…` through the edge). One fixed
+alias remains: `POST /control/realsense/capture` takes `camera` in the body and
+resolves the sole camera when it is omitted. It exists because the skill
+executor and the dashboard passthrough send a catalog endpoint verbatim with
+no path templating, so it is the only form `realsense.capture` can call; the
+nested route is canonical for everything else.
+
 Captures live **outside the repo** at
-`C:\SDL_Data\xarm\realsense\<YYYY-MM-DD>\<capture_id>\`, about **250 KB
+`C:\SDL_Data\xarm\realsense\<camera_id>\<YYYY-MM-DD>\<capture_id>\`, about **250 KB
 each** at this resolution. Retention runs after every write, oldest first, age
-before size: **`keep_days: 30`, `keep_max_gb: 20`**; captures flagged
+before size, as **one budget shared across all cameras**: **`keep_days: 30`, `keep_max_gb: 20`**; captures flagged
 `protected` are exempt from both. New captures are **replicated nightly** to
-`/home/sdl2/storage/external/realsens_xarm/` on the data server (03:40, a pull
+`/home/sdl2/storage/external/realsens_xarm/<camera_id>/` on the data server (03:40, a pull
 from the device PC, each file re-hashed against the SHA-256 in its own
 `meta.json` before the copy is kept). The archive deliberately does not
 inherit the device's retention — expiring upstream at 30 days must not delete

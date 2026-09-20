@@ -184,6 +184,15 @@ register(
 
 
 class RealSenseCaptureArgs(BaseModel):
+    camera: str | None = Field(
+        default=None,
+        description=(
+            "Which depth camera to capture from: an id from GET /realsense/cameras "
+            "on the device (the xArm's first is 'rs435i'). Optional while the arm "
+            "carries exactly one camera -- the device resolves the sole camera. "
+            "Required (400 camera_required) once a second camera is configured."
+        ),
+    )
     label: str | None = Field(
         default=None,
         description="Free-form name for this capture, e.g. 'plate-arrival-check'.",
@@ -229,8 +238,17 @@ REALSENSE_SKILLS = [
             "snapshot.jpg and GET /realsense/depth?x=&y= instead, which write "
             "nothing. Starts the camera on demand; withheld while the arm is "
             "moving, since a frameset grabbed mid-move is blurred and its pose "
-            "has already changed."
+            "has already changed. Cameras are addressed by id under "
+            "/realsense/{camera_id}/ (discover them with GET /realsense/cameras); "
+            "this skill posts to the fixed alias /control/realsense/capture with "
+            "the id in the body, because the plan executor sends catalog "
+            "endpoints verbatim and cannot fill a path parameter."
         ),
+        # The device's canonical route is /control/realsense/{camera_id}/capture.
+        # The catalog cannot use it: execute_plan and the dashboard passthrough
+        # send this string verbatim (no templating), so the device keeps a fixed
+        # alias that takes the camera id in the body and resolves the sole camera
+        # when it is omitted.
         endpoint="/control/realsense/capture",
         args_schema=RealSenseCaptureArgs,
         # The camera is independent of the arm's health: the device advertises
