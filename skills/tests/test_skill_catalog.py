@@ -23,6 +23,7 @@ def test_registry_populated_for_active_kinds() -> None:
     assert "hplc" in SKILL_REGISTRY
     assert "camera" in SKILL_REGISTRY
     assert "plate_reader" in SKILL_REGISTRY
+    assert "power_strip" in SKILL_REGISTRY
 
 
 def test_plate_reader_catalog_registered() -> None:
@@ -356,6 +357,54 @@ def test_solid_doser_names_match_device_allowed_actions() -> None:
     for name in ("lid.open", "lid.close", "plate.raise", "plate.lower"):
         assert "degraded" in defs[name].requires_states, name
         assert not defs[name].args_schema.model_fields, name
+
+
+def test_power_strip_names_match_device_allowed_actions() -> None:
+    """Availability is ``def.name in allowed_actions``, so every power-strip
+    skill name must be one the gateway actually advertises. The
+    ``kasa-tapo-services`` plug route hard-codes the triple for any reachable
+    Kasa device (``routes/plugs.py``), and both HTE bench strips returned
+    exactly it live on 2026-09-20 (``GET /plugs/plug_hte_strip_{left,right}/status``
+    on the gateway at 127.0.0.1:8002). An unreachable strip reports
+    ``unknown`` with no ``allowed_actions`` at all — never a partial set.
+    """
+
+    device_advertised = {"on", "off", "toggle"}
+    defs = {d.name: d for d in SKILL_REGISTRY["power_strip"]}
+    assert set(defs) == device_advertised
+    for name, d in defs.items():
+        assert d.kind == "power_strip"
+        assert d.method == "POST"
+        # Device-relative path; the /plugs/<id> gateway prefix is composed by
+        # api/app/control.py from the entry's status_path, as for cameras.
+        assert d.endpoint == f"/control/{name}", name
+        # The gateway emits `ready` or `unknown`, never `degraded`, for a plug.
+        assert d.requires_states == ["ready"], name
+
+
+def test_power_strip_switch_requires_one_outlet() -> None:
+    """The device makes ``outlet`` optional and treats its absence as "the
+    whole strip"; the catalog does not offer that spelling. Omitting it on
+    ``plug_hte_strip_right`` would cut the xArm, the Echotherm shaker and the
+    press motor in one call.
+    """
+
+    from pydantic import ValidationError
+
+    from lab_skills.skill_catalog.power_strip import PlugSwitchArgs
+
+    assert PlugSwitchArgs(outlet=0).outlet == 0
+    assert PlugSwitchArgs(outlet=5).outlet == 5
+    with pytest.raises(ValidationError):
+        PlugSwitchArgs()  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        PlugSwitchArgs(outlet=None)  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        PlugSwitchArgs(outlet=-1)
+    with pytest.raises(ValidationError):
+        PlugSwitchArgs(outlet=32)
+    with pytest.raises(ValidationError):
+        PlugSwitchArgs(outlet=1, all_outlets=True)  # type: ignore[call-arg]
 
 
 def test_hplc_catalog_registered() -> None:
