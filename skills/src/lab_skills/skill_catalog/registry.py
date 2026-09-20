@@ -53,6 +53,14 @@ def skills_for(kind: EquipmentKind, equipment_id: str | None = None) -> list[Ski
         # UR must not inherit xArm's graph endpoints, and adding UR support
         # must not register joint control for every robot_arm device.
         return list(UR_ARM_SKILLS)
+    if kind == "robot_arm" and equipment_id == "xarm_translocation":
+        from .robot_arm import REALSENSE_SKILLS
+
+        # The xArm carries an eye-in-hand depth camera the other arms do not,
+        # so its capture verb extends the shared graph list rather than
+        # joining it -- registering it for the kind would advertise a camera
+        # on the MG400, which has none.
+        return list(SKILL_REGISTRY.get(kind, [])) + list(REALSENSE_SKILLS)
     if kind == "other" and equipment_id == "lumastir":
         from .lumastir import LUMASTIR_SKILLS
 

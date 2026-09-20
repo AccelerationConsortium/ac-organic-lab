@@ -183,11 +183,71 @@ register(
 )
 
 
+class RealSenseCaptureArgs(BaseModel):
+    label: str | None = Field(
+        default=None,
+        description="Free-form name for this capture, e.g. 'plate-arrival-check'.",
+    )
+    node_id: str | None = Field(
+        default=None,
+        description=(
+            "Motion-graph node this capture belongs to. Defaults to the arm's "
+            "current node, which is what you want unless you are labelling a "
+            "capture for a node the arm is not parked at."
+        ),
+    )
+    tags: list[str] | None = Field(
+        default=None, description="Free-form tags for later filtering."
+    )
+    protected: bool = Field(
+        default=False,
+        description=(
+            "Exempt this capture from the store's retention bounds (30 days / "
+            "20 GB). Use only for records that must outlive them, such as a "
+            "reference frame for a node."
+        ),
+    )
+
+
+# Not registered under the generic ``robot_arm`` kind: the depth camera is
+# hardware on one arm, not a property of being an arm. The MG400 has no
+# RealSense, so advertising a capture verb for it would put an action in the
+# catalog that the device would refuse -- the same reasoning that keeps UR
+# joint control out of the shared list. ``skills_for`` attaches these to
+# ``xarm_translocation`` only.
+REALSENSE_SKILLS = [
+    SkillDef(
+        name="realsense.capture",
+        kind="robot_arm",
+        description=(
+            "Record what the arm's eye-in-hand depth camera sees right now: "
+            "one aligned colour + 16-bit depth frameset written to disk with "
+            "the arm's pose (node, joints, TCP, rail, gripper) alongside it, "
+            "returning a capture id. Use this when the frame is evidence -- an "
+            "arrival check, a reference for a node, a record of what was on the "
+            "deck. For a transient look use the open reads GET /realsense/"
+            "snapshot.jpg and GET /realsense/depth?x=&y= instead, which write "
+            "nothing. Starts the camera on demand; withheld while the arm is "
+            "moving, since a frameset grabbed mid-move is blurred and its pose "
+            "has already changed."
+        ),
+        endpoint="/control/realsense/capture",
+        args_schema=RealSenseCaptureArgs,
+        requires_states=["ready"],
+        # ~2 s of that is the pipeline starting from cold; a capture against an
+        # already-streaming camera returns in well under a second.
+        estimated_duration_s=3.0,
+    ),
+]
+
+
 __all__ = [
+    "REALSENSE_SKILLS",
     "GraphGripperArgs",
     "GraphModeArgs",
     "GraphMoveToArgs",
     "GraphRecordArgs",
     "GraphRecoverToArgs",
     "GraphTravelToArgs",
+    "RealSenseCaptureArgs",
 ]

@@ -748,3 +748,41 @@ def test_hplc_openlab_serialization_matches_device_contract():
     assert RunSubmitArgs(**wire).dispatch == "openlab"
     with pytest.raises(ValidationError, match="Omit script_name"):
         RunSubmitArgs(**body, script_name="examples/agent_agilent.py")
+
+
+def test_realsense_capture_is_scoped_to_the_xarm() -> None:
+    """The depth camera is hardware on one arm, not a property of arms.
+
+    ``realsense.capture`` therefore rides on ``skills_for`` for
+    ``xarm_translocation`` rather than being registered for the
+    ``robot_arm`` kind: the MG400 has no RealSense, and a catalog that
+    advertised a capture verb there would offer an action the device would
+    refuse. Same reasoning that keeps UR joint control out of the shared
+    list. The name matches what the device puts in ``allowed_actions``, so
+    ``lab.skills()`` availability needs no mapping.
+    """
+
+    from lab_skills.skill_catalog import skills_for
+
+    xarm = {d.name: d for d in skills_for("robot_arm", "xarm_translocation")}
+    mg400 = {d.name for d in skills_for("robot_arm", "dobot_mg400")}
+    ur = {d.name for d in skills_for("robot_arm", "ligand_ur5e")}
+    generic = {d.name for d in skills_for("robot_arm")}
+
+    assert "realsense.capture" in xarm
+    assert "realsense.capture" not in mg400
+    assert "realsense.capture" not in ur
+    assert "realsense.capture" not in generic
+
+    # The xArm keeps every graph verb; the camera extends that list.
+    assert {"graph.move_to", "graph.gripper"} <= set(xarm)
+    assert set(mg400) == generic
+
+    capture = xarm["realsense.capture"]
+    assert capture.endpoint == "/control/realsense/capture"
+    assert capture.method == "POST"
+    assert capture.kind == "robot_arm"
+    fields = capture.args_schema.model_fields
+    assert {"label", "node_id", "tags", "protected"} <= set(fields)
+    # Every argument is optional: a bare capture is the common case.
+    assert all(not fields[name].is_required() for name in fields)
