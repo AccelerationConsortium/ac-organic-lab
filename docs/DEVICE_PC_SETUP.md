@@ -125,13 +125,89 @@ dropped before they reach the tailnet. Adding a device to `equipment.yaml` or to
 unlisted, and all three timed out at exactly 10 s.
 
 Some Pis run **Tailscale SSH** rather than OpenSSH (`sdl2-pi0-waters-filtration`
-and `sdl2-pi0-flex-doser` do; the banner reads `SSH-2.0-Tailscale`). For those,
-key trust is irrelevant — access is granted by an `ssh` rule in the tailnet
-policy file, in the Tailscale admin console.
+and `sdl2-pi0-flex-doser` did; the banner reads `SSH-2.0-Tailscale`). Where
+Tailscale SSH is on, `tailscaled` seizes port 22 before sshd sees it and
+applies the tailnet policy — and this tailnet has **no `ssh` rule at all**, so
+every such node refuses with `tailnet policy does not permit you to SSH to
+this node` no matter whose key is installed.
+
+**The fleet's answer is to turn Tailscale SSH off, not to add a policy rule**
+(settled 2026-09-20, after it had blocked the Waters Filtration and Flex Doser
+consoles). `--ssh` is a node-side flag, so this is run *on* the Pi and needs no
+admin-console change:
+
+```bash
+# as the login user (sdl2), with a shell already open on the Pi
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+echo '<central-server pubkey>' >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+sudo systemctl enable --now ssh      # confirm sshd BEFORE the next line
+sudo tailscale set --ssh=false
+```
+
+Order matters: Tailscale SSH is refusing everyone anyway, so it is not
+protecting the box, but if sshd is not up when you disable it the only way
+back is physical. Disabling it also **drops your current session** if you
+connected via Tailscale SSH — expected, and anything you typed after that line
+still runs on the Pi.
+
+The older alternative, a second sshd on port 2222 (which `tailscale` does not
+intercept), is recorded in `sense-every-zone/docs/REMOTE_ACCESS.md` and is what
+`sdl2-pi0-environ-01` still runs. It works, but it leaves a second port and a
+per-host `Port 2222` line in the service user's `~/.ssh/config`; prefer turning
+Tailscale SSH off unless you need it on.
 
 Routine host operations should go through the `sdl-lab-hostops` MCP surface
 (whitelisted, audited — see [`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md)); SSH is the
 maintenance/deploy path, not the everyday one.
+
+### 2.4a Hostname convention for Pis (and any tailnet node)
+
+**A node's OS hostname MUST equal its Tailscale node name.** Adopted
+2026-09-20 after three Pis were found answering to `raspberrypi`, `caoyang`
+and `sdl2` while the tailnet knew them as `sdl2-pi5-cnc-doser-sam`,
+`sdl2-pi5-minicnc` and `sdl2-pi0-waters-filtration`.
+
+Two reasons, neither cosmetic:
+
+- **A shell prompt reading `sdl2@sdl2` is indistinguishable from the
+  orchestration server.** Anyone running a destructive command on what they
+  think is a server is one `sudo` away from doing it to an instrument Pi.
+- **The device's own `/status` reports it.** STATUS_SPEC's `host` field comes
+  from the OS hostname, so the dashboard was showing `host: caoyang` for the
+  solid doser. Anything that correlates a fault to a machine reads that field.
+
+Applying it, in this order:
+
+```bash
+OLD=$(hostname)                                   # capture BEFORE renaming
+sudo tailscale set --hostname=<tailscale-node-name>   # pin the tailnet name first
+sudo hostnamectl set-hostname <tailscale-node-name>
+sudo sed -i "s/\b$OLD\b/<tailscale-node-name>/g" /etc/hosts
+```
+
+Three things that bite:
+
+1. **Pin the tailnet name first.** Tailscale derives its node name from the OS
+   hostname, and a rename can append a suffix if the name looks taken —
+   `…-waters-filtration-1`. The registry reaches `dose_every_well` by MagicDNS
+   (`sdl2-pi5-minicnc.tail6a1dd7.ts.net`), so a silent rename breaks instrument
+   polling. Pinning makes the tailnet name independent of the OS one.
+2. **Capture `$OLD` before `hostnamectl`.** Inlining `$(hostname)` in the `sed`
+   *after* the rename substitutes the new name for itself and leaves the stale
+   `127.0.1.1` entry behind, which makes `sudo` warn about an unresolvable host.
+3. **Restart the device service afterwards** if you want `/status` to report the
+   new name; it is read once at startup.
+
+No reboot is needed. Verify with `hostname`, `grep ^127.0.1.1 /etc/hosts`, and
+that `tailscale status` still shows the same node name.
+
+Current state (2026-09-20): `environ-01`, `waters-filtration`, `minicnc`,
+`cnc-doser-sam`, `lumastir-1` and `flex-doser` comply.
+`sdl2-pi0-fumehood3-actuator` still answers to `sdl2-fumehood-actuator` and has
+no passwordless sudo. `sdl2-pi0-lle-pizerocam` has been offline since
+2026-09-20. `environ-02`, `fumehood1-sense`, `pi5-entrance` and the two
+`ph-flex` nodes have no SSH alias on the central server and were not audited.
 
 ### 2.5 Deploying a **private** repo to a device PC
 
