@@ -256,6 +256,9 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
