@@ -34,7 +34,7 @@ import { STATE_META, effectiveState } from "@/lib/state-meta";
  * service whitelist (restartable subset marked ↻), and the loopback ports it
  * probes.
  *
- * The second block, **"Other device hosts"**, is the Pis that carry one
+ * The second block, **"Edge Devices"**, is the Pis that carry one
  * instrument each, plus any registry hostname no whitelisted machine claims.
  * The split is presentation, not capability: a device host on the whitelist
  * carries its console id and gets the same SSH terminal link. Those tiles share a name, kind, hostname, address chips, and footer layout.
@@ -401,7 +401,7 @@ export function HostsPanel({
         <>
           <header className="mt-2 flex flex-col gap-0.5">
             <h2 className="text-sm font-semibold text-ink dark:text-slate-100">
-              Other device hosts
+              Edge Devices
             </h2>
             <p className="text-xs text-ink-subtle dark:text-slate-400">
               The Pis that carry one instrument each, plus any host the registry
@@ -409,7 +409,9 @@ export function HostsPanel({
               terminal too.
             </p>
           </header>
-          <div className="grid auto-rows-fr grid-cols-1 gap-4 lg:grid-cols-2">
+          {/* Same 4-column geometry as the computers above. Computer tiles
+              span 2; each Pi tile spans 1, so it is half that width. */}
+          <div className="grid auto-rows-fr grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {hosts.other_hosts.map((group) => (
               <div key={group.hostname} className="h-full min-w-0">
                 <OtherHostTile group={group} snapshotById={byId} />

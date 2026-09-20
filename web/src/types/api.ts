@@ -237,8 +237,8 @@ export interface LabHostMachine {
   services: LabHostService[];
 }
 
-/** A hostname seen in equipment.yaml that is not a whitelisted machine
- *  (the device Pis) — still worth showing its services' ports/domains. */
+/** A hostname seen in equipment.yaml that is not a bench/server machine
+ *  (Edge Devices) — still worth showing its services' ports/domains. */
 export interface LabHostGroup {
   hostname: string;
   services: LabHostService[];

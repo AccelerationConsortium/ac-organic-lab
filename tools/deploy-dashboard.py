@@ -34,6 +34,20 @@ def run(*args: str, cwd: Path = REPO, **kwargs) -> str:
     return subprocess.check_output(args, cwd=cwd, text=True, **kwargs).strip()
 
 
+def _node_bin() -> str:
+    """Use the same node the live web unit runs, not a hardcoded /usr/bin path."""
+    show = run("systemctl", "show", WEB, "-p", "ExecStart", "--value")
+    marker = "path="
+    if marker in show:
+        path = show.split(marker, 1)[1].split(" ", 1)[0].rstrip(" ;")
+        if Path(path).is_file():
+            return path
+    for candidate in ("/usr/bin/node", shutil.which("node") or ""):
+        if candidate and Path(candidate).is_file():
+            return candidate
+    raise RuntimeError("node binary not found for dashboard build")
+
+
 def source_hashes(repo: Path = REPO) -> dict[str, str]:
     paths = run("git", "ls-files", "--cached", "--others", "--exclude-standard",
                 "-z", "--", *SOURCE_PATHS, cwd=repo).split("\0")
@@ -102,7 +116,7 @@ def stage(web_url: str) -> None:
         "NODE_OPTIONS": "--max-old-space-size=2048",
         "DASHBOARD_API_BASE": "http://127.0.0.1:8001",
     })
-    subprocess.run(["/usr/bin/node", "node_modules/next/dist/bin/next", "build"],
+    subprocess.run([_node_bin(), "node_modules/next/dist/bin/next", "build"],
                    cwd=release / "web", env=env, check=True)
     bundle = release / "web/.next"
     shutil.copytree(bundle / "static", bundle / "standalone/.next/static")

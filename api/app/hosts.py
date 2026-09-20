@@ -14,8 +14,8 @@ hand-maintaining a copy:
 
 The response has two blocks, and the split is **presentation, not
 capability**: ``hosts`` are the servers and bench PCs, ``other_hosts`` the
-device hosts — the Pis that carry one instrument each, plus any registry
-hostname no whitelisted machine claims. A device host is on the console
+Edge Devices — the Pis that carry one instrument each, plus any registry
+hostname no whitelisted machine claims. An edge device is on the console
 whitelist like any other (it carries its ``id``, and the page offers a
 terminal for it); it is simply not a machine anyone works on directly.
 
@@ -68,6 +68,8 @@ HOST_ALIASES: dict[str, frozenset[str]] = {
     "fumehood-pi": frozenset({"100.64.254.100"}),
     "press-pi": frozenset({"100.64.254.104"}),
     "lumastir-pi": frozenset({"100.64.254.103"}),
+    "flex-doser-pi": frozenset({"100.64.254.110"}),
+    "vial-doser-pi": frozenset({"100.64.254.81"}),
 }
 
 #: Registry-id convention marking a ``sdl-lab-hostops`` agent entry. Its live
@@ -152,7 +154,7 @@ def group_hosts(registry: Registry) -> dict[str, Any]:
             )
             group["services"].append(service)
 
-    # Device hosts first (whitelisted, so they carry a label and a terminal),
+    # Edge Devices first (whitelisted, so they carry a label and a terminal),
     # then anything the registry reaches that no machine here claims.
     return {
         "hosts": hosts,

@@ -8,7 +8,9 @@ import { fetchSshHosts, type SshHost } from "@/lib/ssh-api";
 import { SshTerminal } from "./SshTerminal";
 
 /**
- * SSH console for one lab host: the connection banner, then a live terminal.
+ * SSH console for one lab host: a short caption (label, kind, hostname, note),
+ * then a live terminal. The login user and shell are not repeated here — the
+ * amber notice names the user, and the terminal shows the rest.
  *
  * Reached from the "SSH terminal" link on a tile in Utils → Computers and
  * Servers, in a new tab. Admin-only three times over: the link is hidden from
@@ -17,17 +19,6 @@ import { SshTerminal } from "./SshTerminal";
  * (API keys) are refused outright — see that module's docstring for why a
  * shell is a human-only affordance in this lab.
  */
-
-function BannerRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-wrap gap-x-2 text-xs">
-      <span className="w-24 shrink-0 font-medium uppercase text-ink-muted dark:text-slate-400">
-        {label}
-      </span>
-      <span className="font-mono text-ink-subtle dark:text-slate-300">{value}</span>
-    </div>
-  );
-}
 
 function Banner({ host }: { host: SshHost }) {
   return (
@@ -40,12 +31,6 @@ function Banner({ host }: { host: SshHost }) {
           <span className="uppercase">{host.kind}</span> ·{" "}
           <span className="font-mono">{host.hostname}</span>
         </p>
-      </div>
-      <div className="flex flex-col gap-1">
-        <BannerRow label="User" value={host.user} />
-        <BannerRow label="Shell" value={host.shell} />
-        <BannerRow label="From here" value={host.ssh_command} />
-        <BannerRow label="From a shell" value={host.ssh_command_explicit} />
       </div>
       <p className="text-xs text-ink-subtle dark:text-slate-300">{host.note}</p>
       <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">

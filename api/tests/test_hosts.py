@@ -143,10 +143,16 @@ def test_committed_registry_groups_cleanly():
     assert [s["id"] for s in uplc_ops] == ["hostops_uplc_pc"]
 
     dashboard_ids = {s["id"] for s in _by_id(payload, "orchestration")["services"]}
-    assert {"kasa_tapo_gateway", "pypoe_web", "ac_organic_lab_auth"} <= dashboard_ids
-    # gaia retains AnaliticaDB, the Agente app and the Hermes dashboard at .5.
+    # Hermes moved onto this host with its 2026-09 install (registry serves /hermes/ at .6).
+    assert {"kasa_tapo_gateway", "pypoe_web", "ac_organic_lab_auth", "hermes_web"} <= dashboard_ids
+    named = {g["id"]: g for g in payload["other_hosts"] if g.get("id")}
+    assert named["flex-doser-pi"]["label"] == "Flex Solid Doser"
+    assert named["flex-doser-pi"]["kind"] == "Raspberry Pi Zero 2W"
+    assert named["vial-doser-pi"]["label"] == "Vial Solid Doser"
+    assert named["vial-doser-pi"]["kind"] == "Raspberry Pi 5"
+    # gaia retains AnaliticaDB and the Agente app at .5.
     gaia_ids = {s["id"] for s in _by_id(payload, "gaia")["services"]}
-    assert {"analytica_db", "hermes_web", "laagente_analitica"} <= gaia_ids
+    assert {"analytica_db", "laagente_analitica"} <= gaia_ids
     # Whitelisted machines never leak into the unlisted group.
     unlisted_hosts = {g["hostname"] for g in payload["other_hosts"]}
     assert not unlisted_hosts & {"127.0.0.1", "localhost", "100.64.254.6", "100.64.254.5"}
@@ -236,3 +242,21 @@ def test_lumastir_api_groups_onto_its_ssh_host():
     assert host["id"] == "lumastir-pi"
     assert host["hostname"] == "lumastir-pi"
     assert [(s["id"], s["port"]) for s in host["services"]] == [("lumastir", 8000)]
+
+
+def test_flex_and_vial_doser_pis_group_by_tailnet_ip():
+    registry = Registry(
+        equipment=[
+            _entry("flex_later", "other", "http://100.64.254.110:8000"),
+            _entry("vial_later", "other", "http://100.64.254.81:8000"),
+        ]
+    )
+    payload = group_hosts(registry)
+    named = {g["id"]: g for g in payload["other_hosts"] if g.get("id")}
+    assert named["flex-doser-pi"]["label"] == "Flex Solid Doser"
+    assert named["flex-doser-pi"]["kind"] == "Raspberry Pi Zero 2W"
+    assert [s["id"] for s in named["flex-doser-pi"]["services"]] == ["flex_later"]
+    assert named["vial-doser-pi"]["label"] == "Vial Solid Doser"
+    assert named["vial-doser-pi"]["kind"] == "Raspberry Pi 5"
+    assert [s["id"] for s in named["vial-doser-pi"]["services"]] == ["vial_later"]
+    assert [g for g in payload["other_hosts"] if not g.get("id")] == []

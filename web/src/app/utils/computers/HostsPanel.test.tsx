@@ -239,7 +239,9 @@ describe("HostsPanel", () => {
   it("uses the same name and address layout for a host without SSH", () => {
     render(<HostsPanel hosts={HOSTS} snapshots={[]} />);
 
-    expect(screen.getByText("Other device hosts")).toBeTruthy();
+    expect(screen.getByText("Edge Devices")).toBeTruthy();
+    const edgeGrid = screen.getByText("Edge Devices").closest("header")?.nextElementSibling;
+    expect(edgeGrid?.className).toContain("lg:grid-cols-4");
     const pi = screen.getByText("100.64.254.100").closest("article")!;
     const hood = within(pi).getByText("100.64.254.100:5000");
     expect(hood.getAttribute("data-kind")).toBe("equipment");

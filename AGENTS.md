@@ -165,6 +165,15 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   option `order request_header before forward_auth` (gaia's edge does this),
   and confirm with `caddy adapt` that the `headers` handlers precede the
   `:8009` reverse_proxy.
+- **The dashboard API unit runs under `IPAddressDeny=any`.** Egress is an
+  explicit `IPAddressAllow=` list of tailnet IPs in
+  `/etc/systemd/system/ac-organic-lab-api.service`, so a device the API has
+  never talked to is unreachable *from the service* even though the same
+  command works from a shell on that host. The give-away is a hang that ends
+  at exactly the client timeout (10 s for the SSH console) rather than a
+  refusal. Registering a device in `equipment.yaml` or `SSH_HOSTS` does not
+  touch that list — add the IP, `daemon-reload`, restart (pH Pi and both doser
+  Pis, 2026-09-20). See DEVICE_PC_SETUP §2.4.
 - **Mostly no app-level auth between aggregator and equipment** — Tailscale
   ACLs are the main gate; don't design as if every device authenticated its
   callers. The exceptions are per-device: hard claim enforcement

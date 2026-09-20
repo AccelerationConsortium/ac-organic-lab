@@ -107,6 +107,28 @@ service runs on the UPLC PC, which has a wired route to the arm; there is no
 Robot Motion service on this PC. The PC display label is **Prototyping PC**; its existing
 Windows/Tailnet hostname and stable `dobot-pc` dashboard ID remain unchanged.
 
+A console target needs **three** things, and two of them are on the central
+server, not the device. Missing any one produces a different symptom:
+
+| Missing | Where | Symptom in the browser |
+|---|---|---|
+| `~/.ssh/config` stanza + pinned host key | central server, `sdl2` home | instant failure, `Could not resolve hostname <alias>` |
+| `IPAddressAllow=<tailnet IP>` on `ac-organic-lab-api.service` | `/etc/systemd/system/` | **hangs, then times out at 10 s** |
+| key trust (or a Tailscale ACL `ssh` rule) | the device | instant `Permission denied` or `tailnet policy does not permit you to SSH to this node` |
+
+The middle one is the surprising one, because `ssh <alias>` from a shell on the
+same server succeeds while the console times out: the unit runs under
+`IPAddressDeny=any` with an explicit tailnet allowlist, so the API's packets are
+dropped before they reach the tailnet. Adding a device to `equipment.yaml` or to
+`SSH_HOSTS` does **not** add it to that list. On 2026-09-20 the pH Pi
+(`100.64.254.98`) and both doser Pis (`.110`, `.81`) were console-registered but
+unlisted, and all three timed out at exactly 10 s.
+
+Some Pis run **Tailscale SSH** rather than OpenSSH (`sdl2-pi0-waters-filtration`
+and `sdl2-pi0-flex-doser` do; the banner reads `SSH-2.0-Tailscale`). For those,
+key trust is irrelevant — access is granted by an `ssh` rule in the tailnet
+policy file, in the Tailscale admin console.
+
 Routine host operations should go through the `sdl-lab-hostops` MCP surface
 (whitelisted, audited — see [`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md)); SSH is the
 maintenance/deploy path, not the everyday one.

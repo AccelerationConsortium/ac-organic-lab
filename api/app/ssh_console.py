@@ -196,9 +196,9 @@ class SshHost:
     shell: str
     note: str
     #: Which block of *Utils → Computers and Servers* this machine belongs in:
-    #: ``"machine"`` for the servers and bench PCs, ``"device"`` for the Pis
-    #: that carry one instrument each. It decides presentation only — every
-    #: host here is equally on the console whitelist.
+    #: ``"machine"`` for the servers and bench PCs, ``"device"`` for Edge
+    #: Devices (the Pis that carry one instrument each). It decides
+    #: presentation only — every host here is equally on the console whitelist.
     group: str = "machine"
     #: First entry is the default (plain login shell).
     profiles: tuple[SshProfile, ...] = ()
@@ -385,7 +385,10 @@ SSH_HOSTS: tuple[SshHost, ...] = (
             "pH reads (image_server). Campus Wi-Fi 172.31.60.3, tailnet "
             "100.64.254.98. Login is `caoyang` (the account the lab Pi key was "
             "granted under, like the doser Pi). Host-ops runs here in the "
-            "daemonless stdio-over-SSH lite mode. No tmux installed yet."
+            "daemonless stdio-over-SSH lite mode. No tmux installed yet. "
+            "**If the console times out at 10 s while `ssh lle-pi` works from "
+            "a shell**, this IP is missing from the API unit's "
+            "`IPAddressAllow=` egress list (DEVICE_PC_SETUP §2.4)."
         ),
         profiles=(
             SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
@@ -421,9 +424,12 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         group="device",
         note=(
             "Pi Zero driving the filtration press (100.64.254.104:8000). "
-            "**The lab Pi key is not authorized here yet** — sshd closes the "
-            "connection, so the console cannot open until the key is granted "
-            "(DEVICE_PC_SETUP §2.4). Everything else on this tile is live."
+            "Port 22 here is **Tailscale SSH**, not OpenSSH, and the tailnet "
+            "policy has no `ssh` rule from the dashboard host "
+            "(sdl2-orchestration, tag:sdl2-devices) to this node — every "
+            "attempt is refused with `tailnet policy does not permit you to "
+            "SSH to this node`. Fixed in the Tailscale admin ACL, not on the "
+            "Pi (DEVICE_PC_SETUP §2.4). Everything else on this tile is live."
         ),
         profiles=(
             SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
@@ -443,6 +449,49 @@ SSH_HOSTS: tuple[SshHost, ...] = (
             "Login is `caoyang`. Its install is **editable**, so the checked-out "
             "branch IS the deploy: `develop-modular`, never `main` (see "
             "ROADMAP). No tmux."
+        ),
+        profiles=(
+            SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
+        ),
+    ),
+    SshHost(
+        id="flex-doser-pi",
+        label="Flex Solid Doser",
+        kind="Raspberry Pi Zero 2W",
+        hostname="sdl2-pi0-flex-doser.tail6a1dd7.ts.net",
+        user="caoyang",
+        target="flex-doser-pi",
+        shell="bash",
+        group="device",
+        note=(
+            "Pi Zero 2W for the Flex solid doser (100.64.254.110). Two things "
+            "block the console, both off the Pi: this IP needs an "
+            "`IPAddressAllow=` entry on the API unit (without it the session "
+            "times out at 10 s), and port 22 here is **Tailscale SSH** whose "
+            "tailnet policy has no `ssh` rule from the dashboard host (same "
+            "refusal as Waters Filtration). See DEVICE_PC_SETUP §2.4. No tmux."
+        ),
+        profiles=(
+            SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
+        ),
+    ),
+    SshHost(
+        id="vial-doser-pi",
+        label="Vial Solid Doser",
+        kind="Raspberry Pi 5",
+        hostname="sdl2-pi5-cnc-doser-sam.tail6a1dd7.ts.net",
+        user="sdl2",
+        target="vial-doser-pi",
+        shell="bash",
+        group="device",
+        note=(
+            "Pi 5 for the Vial solid doser (100.64.254.81, "
+            "sdl2-pi5-cnc-doser-sam). Login is `sdl2` — the lab Pi key is "
+            "granted under that account here, not `caoyang` as on the other "
+            "doser Pi. Alias `vial-doser-pi` added to the dashboard host's SSH "
+            "config 2026-09-20, and the login is verified from a shell; the "
+            "console additionally needs this IP in the API unit's "
+            "`IPAddressAllow=` egress list (DEVICE_PC_SETUP §2.4). No tmux."
         ),
         profiles=(
             SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),

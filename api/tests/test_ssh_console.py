@@ -183,6 +183,12 @@ def test_every_host_is_addressable_by_its_id() -> None:
     # (web/src/app/utils/computers/HostsPanel.tsx); keep both sides in step.
     assert {"orchestration", "gaia", "cytation-pc", "dobot-pc", "uplc-pc"} <= set(HOSTS_BY_ID)
     assert HOSTS_BY_ID["dobot-pc"].label == "Prototyping PC"
+    assert HOSTS_BY_ID["flex-doser-pi"].label == "Flex Solid Doser"
+    assert HOSTS_BY_ID["flex-doser-pi"].kind == "Raspberry Pi Zero 2W"
+    assert HOSTS_BY_ID["flex-doser-pi"].group == "device"
+    assert HOSTS_BY_ID["vial-doser-pi"].label == "Vial Solid Doser"
+    assert HOSTS_BY_ID["vial-doser-pi"].kind == "Raspberry Pi 5"
+    assert HOSTS_BY_ID["vial-doser-pi"].group == "device"
 
 
 def test_robot_motion_host_note_points_to_uplc_not_retired_dobot_copy() -> None:
