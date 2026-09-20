@@ -87,13 +87,35 @@ def _name_keys(hostname: str | None) -> set[str]:
     return {hostname, hostname.split(".", 1)[0]}
 
 
-def _role(entry_id: str, kind: str) -> str:
+#: The one ``platforms.yaml`` section that holds genuine services rather than
+#: instruments. Every other section is a lab platform.
+_SERVICES_SECTION_ID = "web_services"
+
+
+def _role(entry_id: str, kind: str, section_id: str | None = None) -> str:
+    """Classify a registry entry for the PCs & Servers page.
+
+    Section membership is the authority when we have it: ``platforms.yaml``
+    already separates genuine services (``web_services``) from instruments on
+    a platform, and that separation is maintained deliberately.
+
+    The ``kind == "other"`` fallback below is a *heuristic* and it is wrong for
+    real hardware whose kind has not been modelled yet — ``lumastir`` sits on
+    the Ligand Development platform with a tile and two catalog skills, yet was
+    labelled a service purely because no `stirrer` kind exists. The balances and
+    the Bambu gateway have the same problem. Fixing it properly means adding
+    those kinds to the shared contract (see EQUIP_STATUS.md); until then,
+    membership gets it right for every entry that belongs to a section, and the
+    heuristic only decides for entries that belong to none.
+    """
     if entry_id.startswith(_OPS_ID_PREFIX):
         return "ops"
+    if section_id is not None:
+        return "service" if section_id == _SERVICES_SECTION_ID else "equipment"
     return "service" if kind == "other" else "equipment"
 
 
-def _service_info(entry: Any) -> dict[str, Any] | None:
+def _service_info(entry: Any, section_id: str | None = None) -> dict[str, Any] | None:
     """One registry entry as a service row, or ``None`` if it has no
     ``base_url`` (mock placeholders awaiting hardware)."""
     if not entry.base_url:
@@ -103,7 +125,7 @@ def _service_info(entry: Any) -> dict[str, Any] | None:
         "id": entry.id,
         "name": entry.name,
         "kind": entry.kind,
-        "role": _role(entry.id, entry.kind),
+        "role": _role(entry.id, entry.kind, section_id),
         "base_url": entry.base_url,
         "host": (parts.hostname or "").lower(),
         # None when the URL names no explicit port (edge paths like
@@ -116,9 +138,17 @@ def _service_info(entry: Any) -> dict[str, Any] | None:
     }
 
 
-def group_hosts(registry: Registry) -> dict[str, Any]:
+def group_hosts(registry: Registry, platforms: Any = None) -> dict[str, Any]:
     """Group every reachable registry entry by the machine its ``base_url``
-    points at. Pure — no I/O — so it is directly testable."""
+    points at. Pure — no I/O — so it is directly testable.
+
+    ``platforms`` is the optional ``PlatformsConfig``; pass it and each entry's
+    role comes from its section membership rather than the kind heuristic in
+    :func:`_role`. Omitted (as older callers and some tests do) the behaviour is
+    unchanged."""
+    membership: dict[str, str] = (
+        platforms.equipment_to_section_id() if platforms is not None else {}
+    )
     hosts: list[dict[str, Any]] = []
     devices: list[dict[str, Any]] = []
     keys_to_host: dict[str, dict[str, Any]] = {}
@@ -138,7 +168,7 @@ def group_hosts(registry: Registry) -> dict[str, Any]:
 
     unlisted: dict[str, dict[str, Any]] = {}
     for entry in registry.equipment:
-        service = _service_info(entry)
+        service = _service_info(entry, membership.get(entry.id))
         if service is None:
             continue
         matched = None
@@ -168,6 +198,9 @@ def build_hosts_router() -> APIRouter:
     @router.get("/hosts")
     async def list_lab_hosts(request: Request) -> dict[str, Any]:
         """The lab's host machines with the services each runs, from config."""
-        return group_hosts(request.app.state.registry)
+        return group_hosts(
+            request.app.state.registry,
+            getattr(request.app.state, "platforms_config", None),
+        )
 
     return router

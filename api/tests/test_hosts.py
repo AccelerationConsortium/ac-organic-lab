@@ -260,3 +260,41 @@ def test_flex_and_vial_doser_pis_group_by_tailnet_ip():
     assert named["vial-doser-pi"]["kind"] == "Raspberry Pi 5"
     assert [s["id"] for s in named["vial-doser-pi"]["services"]] == ["vial_later"]
     assert [g for g in payload["other_hosts"] if not g.get("id")] == []
+
+
+async def test_role_comes_from_platform_membership_not_the_kind_heuristic() -> None:
+    """`kind == "other"` is a fallback, and it mislabels real hardware.
+
+    `lumastir` sits on the Ligand Development platform with a tile and two
+    catalog skills, but its kind is `other` because no `stirrer` kind exists
+    yet, so the page called it a service. Section membership already encodes
+    the distinction correctly, so prefer it. The balances and the Bambu
+    gateway had the same symptom.
+    """
+    from pathlib import Path
+
+    from app.hosts import group_hosts
+    from lab_skills.platforms import load_platforms
+
+    root = Path(__file__).resolve().parents[2]
+    registry = load_registry(root / "equipment.yaml")
+    platforms = load_platforms(root / "platforms.yaml")
+
+    def role_of(payload, equipment_id):
+        for bucket in ("hosts", "other_hosts"):
+            for host in payload.get(bucket) or []:
+                for svc in host.get("services") or []:
+                    if svc["id"] == equipment_id:
+                        return svc["role"]
+        return None
+
+    with_membership = group_hosts(registry, platforms)
+    assert role_of(with_membership, "lumastir") == "equipment"
+    # A genuine service stays a service.
+    assert role_of(with_membership, "uptime_kuma") == "service"
+    # hostops instances keep their own role regardless of section.
+    assert role_of(with_membership, "hostops_cytation_pc") == "ops"
+
+    # Omitting platforms preserves the old behaviour for existing callers.
+    without = group_hosts(registry)
+    assert role_of(without, "lumastir") == "service"

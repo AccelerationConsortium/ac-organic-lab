@@ -16,4 +16,11 @@ def test_lumastir_skills_do_not_leak_to_other_equipment():
 def test_lumastir_registry_enables_control_and_preserves_docs():
     r = load_registry(Path(__file__).resolve().parents[2] / "equipment.yaml")
     e = r.by_id("lumastir")
-    assert e.enabled and e.maintenance is None and len(e.documentation) == 3
+    # 6 since 2026-09-20: the device gained the house agent-documentation set
+    # (/agent-docs, /agent-docs/api-reference, /llms.txt) in release 0.3.0. The
+    # bespoke /agent-guide is retained at its original path and relabelled,
+    # because other consumers already point at it.
+    assert e.enabled and e.maintenance is None and len(e.documentation) == 6
+    paths = {d.path for d in e.documentation}
+    assert {"/agent-docs", "/agent-docs/api-reference", "/llms.txt"} <= paths
+    assert "/agent-guide" in paths

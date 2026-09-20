@@ -567,7 +567,10 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
-      - { label: Agent guide, path: /agent-guide, kind: markdown }
+      - { label: Agent guide (legacy path), path: /agent-guide, kind: markdown }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     enabled: true
     tiles:
       ligand_development: { w: 2, h: 1.5 }
@@ -1236,6 +1239,11 @@ equipment:
     poll_timeout_seconds: 8.0
     tiles:
       sample_prep: { w: 2, h: 2 }
+    # No pill: this Flex has no operator panel to open. sdl2-gibbie-server
+    # (:8070) observes it read-only and serves no UI, and nothing has ever
+    # listened on the :8071 the edge's /flex/gibbie block points at (checked
+    # on the PC 2026-09-20). A "Open" pill here would only ever 404. Add one
+    # when a Flex panel ships; see web/src/lib/device-panels.ts.
     pills: {}
     # Flex's fixed deck camera is served by sdl2-gibbie-server, not the
     # Kasa/Tapo gateway. The authenticated dashboard proxy opens it only after
