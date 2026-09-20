@@ -383,6 +383,9 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -400,6 +403,9 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     # The agilent-cytation-server repo conforms to STATUS_SPEC v1.2.
     # /control/* is wired (claim/heartbeat/release, drawer, plate
     # management, three reads, imaging, incubator, shaker). Catalog:
@@ -453,6 +459,9 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     do_not_call_connect: true
     tiles:
       hte: { w: 2, h: 1 }
