@@ -74,6 +74,9 @@ export interface paths {
          *     this reuses the same generic JSON-GET plumbing as the camera media
          *     listing below. Return type is ``Any`` (not ``dict``) because
          *     ``plate/definitions`` returns a JSON array, not an object.
+         *
+         *     ``plate/status`` alone maps "no plate loaded" to 200 ``null``: see
+         *     ``_NO_PLATE_DETAIL``.
          */
         get: operations["plate_get_api_equipment__equipment_id__plate__sub__get"];
         put?: never;
@@ -132,6 +135,262 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/camera-streams/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Sessions */
+        get: operations["sessions_api_camera_streams_sessions_get"];
+        put?: never;
+        /** Create */
+        post: operations["create_api_camera_streams_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera-streams/sessions/{sid}/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Heartbeat */
+        post: operations["heartbeat_api_camera_streams_sessions__sid__heartbeat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera-streams/sessions/{sid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Close */
+        delete: operations["close_api_camera_streams_sessions__sid__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera-streams/sessions/{sid}/mjpeg": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Mjpeg */
+        get: operations["mjpeg_api_camera_streams_sessions__sid__mjpeg_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera-streams/admin/sessions/{sid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke Session */
+        delete: operations["revoke_session_api_camera_streams_admin_sessions__sid__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera-streams/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Grants */
+        get: operations["grants_api_camera_streams_grants_get"];
+        put?: never;
+        /** Grant */
+        post: operations["grant_api_camera_streams_grants_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera-streams/grants/{gid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke Grant */
+        delete: operations["revoke_grant_api_camera_streams_grants__gid__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/equipment/{equipment_id}/documentation/{document_path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read configured equipment documentation
+         * @description Serve one registry-allowlisted, read-only equipment document.
+         *
+         *     Swagger is rendered by the dashboard against the equipment's proxied
+         *     OpenAPI JSON. Other configured documents are fetched from the running
+         *     service without credentials. Safe error responses, including an older
+         *     deployment's 404, are preserved. Text is displayed as inert plain text.
+         */
+        get: operations["equipment_documentation_api_equipment__equipment_id__documentation__document_path__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/robot-motion/ligand_ur5e/{panel_path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Panel */
+        get: operations["panel_api_robot_motion_ligand_ur5e__panel_path__get"];
+        put?: never;
+        /** Panel */
+        post: operations["panel_api_robot_motion_ligand_ur5e__panel_path__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Run
+         * @description Start an authorized run in the background; progress is on the SSE
+         *     stream. Returns as soon as the gates pass — a 141 s transfer already
+         *     outlived a synchronous POST, and an 18 h incubation makes one absurd.
+         *
+         *     The gates still run inline, so a refusal is still a 409 with the
+         *     reason, not a run_id that dies immediately: nothing may be accepted
+         *     for execution that was not verified first.
+         */
+        post: operations["start_run_api_workflow_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run */
+        get: operations["get_run_api_workflow_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Events
+         * @description SSE stream of run events, replaying from the start.
+         *
+         *     Replay-then-follow so a client that connects late (or reconnects) sees
+         *     the whole run, not a tail: events carry `seq`, and the stream is the
+         *     same list `get_run` counts. Ends after the `done` event.
+         */
+        get: operations["run_events_api_workflow_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow/runs/{run_id}/abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Abort Run
+         * @description Cooperative abort: takes effect at the next step boundary.
+         *
+         *     Cooperative because mid-step is the device's territory — yanking a
+         *     claim out from under a seal cycle is how a plate gets stuck in a hot
+         *     chamber. The current step finishes (or times out); everything after is
+         *     skipped with the reason on the report.
+         */
+        post: operations["abort_run_api_workflow_runs__run_id__abort_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/equipment/{equipment_id}/deck": {
         parameters: {
             query?: never;
@@ -143,6 +402,87 @@ export interface paths {
         get: operations["get_deck_api_equipment__equipment_id__deck_get"];
         /** Put Deck */
         put: operations["put_deck_api_equipment__equipment_id__deck_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/locations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Locations
+         * @description Return the static location registry (every place a container can be).
+         */
+        get: operations["list_locations_api_locations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/custody/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move
+         * @description Record a bench-top move: container ``hid`` is now at ``to``.
+         *
+         *     The same ledger row the executor writes for a robot move, with the
+         *     human as ``performed_by``. The registry name is checked locally first
+         *     (a typo must not reach the ledger), then resolved in the record layer.
+         */
+        post: operations["move_api_custody_move_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/custody/plates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Plates
+         * @description Where every plate is — a read-through to the record layer (no cache).
+         */
+        get: operations["plates_api_custody_plates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/custody/plates/{hid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Plate */
+        get: operations["plate_api_custody_plates__hid__get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -312,7 +652,9 @@ export interface paths {
          * Control Actions
          * @description Operator control-write audit feed across all devices — one row per
          *     dashboard-mediated `/control/*` call (actor, action, outcome). Backs
-         *     the admin page's audit panel.
+         *     the admin page's audit panel. ``total`` is the lifetime row count
+         *     (under the same device filter) so a headline figure is not capped by
+         *     ``limit``.
          */
         get: operations["control_actions_api_history_control_actions_get"];
         put?: never;
@@ -364,8 +706,12 @@ export interface paths {
          *     the default cap of 2 000 naturally downsamples that to ~1 point per
          *     ~5 minutes, which is enough resolution for a sparkline.
          *
-         *     Common metric names: ``temperature_c``, ``humidity_pct``, ``co2_ppm``,
-         *     ``pressure_hpa``, ``power_outlet_N``, ``energy_kwh_cumul_outlet_N``.
+         *     Common metric names: ``temperature``, ``humidity``, ``voc``, ``nox``,
+         *     ``pm25``, ``pm10``, ``battery``, ``power_outlet_N``,
+         *     ``energy_kwh_cumul_outlet_N``. Environmental names carry no unit suffix
+         *     (the unit is a column); rows written before 2026-07-31 used
+         *     ``temperature_c`` / ``humidity_pct`` / ``co2_ppm`` and are synthetic
+         *     mock data left in place but no longer queried.
          */
         get: operations["sensor_history_api_history_sensors__sensor_id___metric__get"];
         put?: never;
@@ -517,6 +863,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/assistant/snapshots/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Snapshot File
+         * @description A camera frame captured for the chat by ``capture_camera_snapshot``.
+         *
+         *     Behind the same sign-in gate as every other ``/api/assistant/*`` path
+         *     (web/src/middleware.ts). Names are the server's own
+         *     ``<camera>_<lens>_<utc>_<hex>.jpg``; anything else is refused before
+         *     the filesystem is consulted, so this cannot be turned into a path
+         *     walk. Frames are pruned after 24 h, so a 404 on an old chat is normal.
+         */
+        get: operations["snapshot_file_api_assistant_snapshots__name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/assistant/chat": {
         parameters: {
             query?: never;
@@ -528,6 +900,275 @@ export interface paths {
         put?: never;
         /** Chat */
         post: operations["chat_api_assistant_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assistant/plans/{plan_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Plan
+         * @description Record the operator's approval of one exact step list (Step 1i).
+         *
+         *     The approval is a *review record*, not a permission grant: each step
+         *     the browser then sends is an ordinary passthrough call under the
+         *     operator's own per-equipment authorization, exactly like a tile
+         *     click. What this route adds is the refusal when the hash sent back is
+         *     not the hash of the plan the tool produced (409) — the property that
+         *     makes "a human approved this" mean "this, as shown".
+         */
+        post: operations["approve_plan_api_assistant_plans__plan_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assistant/plans/{plan_id}/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finish Plan
+         * @description Audit how an approved plan ended and retire its record. A draft may
+         *     only be reported ``aborted`` (dismissed); ``executed``/``failed``
+         *     require the approval that let it run.
+         */
+        post: operations["finish_plan_api_assistant_plans__plan_id__finish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assistant/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sessions */
+        get: operations["list_sessions_api_assistant_sessions_get"];
+        put?: never;
+        /** Create Session */
+        post: operations["create_session_api_assistant_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assistant/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Session */
+        get: operations["read_session_api_assistant_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Session */
+        delete: operations["delete_session_api_assistant_sessions__session_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Session */
+        patch: operations["rename_session_api_assistant_sessions__session_id__patch"];
+        trace?: never;
+    };
+    "/api/assistant/sessions/{session_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Session */
+        get: operations["export_session_api_assistant_sessions__session_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assistant/sessions/{session_id}/turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Turn
+         * @description One chat turn inside a saved session, streamed like ``/chat``.
+         *
+         *     The server stores the user's message first, rebuilds the model's
+         *     context from the session, runs the turn on the **Ask** toolset with
+         *     the Plan prompt, and closes the answer with its truthful final state
+         *     — including ``interrupted`` when the browser goes away mid-answer.
+         */
+        post: operations["run_turn_api_assistant_sessions__session_id__turns_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assistant/voice/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Health
+         * @description Whether the mic button should render at all — the same pattern as
+         *     ``/api/assistant/health`` gating the whole bubble.
+         */
+        get: operations["health_api_assistant_voice_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assistant/voice/transcribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transcribe */
+        post: operations["transcribe_api_assistant_voice_transcribe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assistant/voice/speak": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Speak
+         * @description Synthesize a short utterance (the shaped read-aloud summary).
+         *     Same identity rule as /transcribe: it spends lab GPU time, so it is
+         *     not an anonymous surface.
+         */
+        post: operations["speak_api_assistant_voice_speak_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/bugs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask Hermes to diagnose an error
+         * @description Authenticated endpoint: a machine principal reports an error and
+         *     receives Hermes' diagnosis in the response.
+         */
+        post: operations["agent_bugs_api_agent_bugs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ssh/hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Hosts
+         * @description The whitelist an admin may open a shell on.
+         */
+        get: operations["list_hosts_api_ssh_hosts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ssh/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open Session
+         * @description Mint a single-use ticket the WebSocket will redeem.
+         */
+        post: operations["open_session_api_ssh_session_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Lab Hosts
+         * @description The lab's host machines with the services each runs, from config.
+         */
+        get: operations["list_lab_hosts_api_hosts_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -615,6 +1256,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/openapi.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Openapi Document
+         * @description This server's own OpenAPI document, served under ``/api``.
+         *
+         *     FastAPI already publishes it at ``/openapi.json``, but the Next.js app only
+         *     proxies ``/api/*`` to this server — so the dashboard's API Reference page
+         *     could not reach it. Serving the same document here lets that page render
+         *     the *dashboard's* HTTP surface from the app itself, which means it cannot
+         *     drift: a route added anywhere in this app shows up without touching the UI.
+         *     Complements ``/api/catalog``, which describes the **devices'** actions.
+         */
+        get: operations["openapi_document_api_openapi_json_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/catalog": {
         parameters: {
             query?: never;
@@ -679,13 +1347,54 @@ export interface components {
             /** Equipment Count */
             equipment_count: number;
         };
+        /** Body_transcribe_api_assistant_voice_transcribe_post */
+        Body_transcribe_api_assistant_voice_transcribe_post: {
+            /** Audio */
+            audio: string;
+        };
+        /**
+         * BugReport
+         * @description An error a remote agent hit, with enough context to diagnose.
+         */
+        BugReport: {
+            /**
+             * Endpoint
+             * @description URL/endpoint that failed, e.g. /api/openapi.json
+             */
+            endpoint: string;
+            /**
+             * Status
+             * @description HTTP status, if applicable
+             */
+            status?: number | null;
+            /**
+             * Reason
+             * @description HTTP reason phrase, if any
+             */
+            reason?: string | null;
+            /**
+             * Body
+             * @description Response body / error text
+             */
+            body?: string | null;
+            /**
+             * Context
+             * @description What the agent was doing when it failed
+             */
+            context?: string | null;
+            /**
+             * Traceback
+             * @description Optional stack trace
+             */
+            traceback?: string | null;
+        };
         /**
          * CameraConfig
-         * @description Optional ``camera:`` block on entries with ``kind: camera``.
+         * @description Optional ``camera:`` block on cameras or camera-bearing equipment.
          *
-         *     Mirrors the gateway's ``devices.yaml``. The dashboard reads it for the
-         *     lens-tab labels in the camera tile and the go2rtc stream-name
-         *     convention (``<equipment_id>_<lens_id>``).
+         *     The dashboard reads lens labels and uses either the go2rtc stream-name
+         *     convention (``<equipment_id>_<lens_id>``) or a registered MJPEG path on
+         *     the equipment's own base URL.
          */
         CameraConfig: {
             /** Host */
@@ -700,12 +1409,18 @@ export interface components {
              * @default 554
              */
             rtsp_port: number;
+            /**
+             * Transport
+             * @default go2rtc
+             * @enum {string}
+             */
+            transport: "go2rtc" | "mjpeg";
             /** Lenses */
             lenses?: components["schemas"]["CameraLens"][];
         };
         /**
          * CameraLens
-         * @description One physical lens on a multi-lens camera (``kind: camera``).
+         * @description One physical lens on a camera or embedded equipment camera.
          */
         CameraLens: {
             /** Id */
@@ -717,6 +1432,8 @@ export interface components {
              * @default stream1
              */
             rtsp_path: string;
+            /** Stream Path */
+            stream_path?: string | null;
             /**
              * Ptz Capable
              * @default true
@@ -753,6 +1470,13 @@ export interface components {
             message?: string | null;
             /** Last Event At */
             last_event_at?: string | null;
+        };
+        /** CreateSessionRequest */
+        CreateSessionRequest: {
+            /** Title */
+            title: string;
+            /** Seed */
+            seed?: components["schemas"]["SeedMessage"][];
         };
         /**
          * DeckLayout
@@ -962,6 +1686,22 @@ export interface components {
             /** Http Status */
             http_status?: number | null;
         };
+        /** GrantIn */
+        GrantIn: {
+            /** Principal */
+            principal: string;
+            /** Streams */
+            streams: string[];
+            /** Purpose */
+            purpose: string;
+            /**
+             * Duration Seconds
+             * @default 3600
+             */
+            duration_seconds: number;
+            /** Run Id */
+            run_id?: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1021,6 +1761,47 @@ export interface components {
             label?: string | null;
         };
         /**
+         * LocationEntry
+         * @description One place in ``locations.yaml``.
+         */
+        LocationEntry: {
+            /** Name */
+            name: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "storage" | "instrument" | "deck" | "fridge" | "waste";
+            /** Equipment */
+            equipment?: string | null;
+            /**
+             * Capacity
+             * @default 1
+             */
+            capacity: number | null;
+            /** Aliases */
+            aliases?: {
+                [key: string]: string | string[];
+            };
+            /** Label */
+            label?: string | null;
+            /**
+             * Active
+             * @default true
+             */
+            active: boolean;
+            /** Notes */
+            notes?: string | null;
+        };
+        /**
+         * LocationsConfig
+         * @description Parsed ``locations.yaml``.
+         */
+        LocationsConfig: {
+            /** Locations */
+            locations: components["schemas"]["LocationEntry"][];
+        };
+        /**
          * Maintenance
          * @description Soft-maintenance metadata for an equipment registry entry.
          *
@@ -1046,6 +1827,23 @@ export interface components {
             /** Timestamp */
             timestamp?: string | null;
         };
+        /** MoveRequest */
+        MoveRequest: {
+            /**
+             * Hid
+             * @description The plate's barcode / Container.hid
+             */
+            hid: string;
+            /**
+             * To
+             * @description Registry location name, e.g. bench/hte_staging
+             */
+            to: string;
+            /** Note */
+            note?: string | null;
+            /** Performed By */
+            performed_by?: string | null;
+        };
         /**
          * PillConfig
          * @description Pill configuration for the Overview platform-card row.
@@ -1064,6 +1862,13 @@ export interface components {
          *     admin-facing panels (e.g. Uptime Kuma) don't advertise a link the viewer
          *     can't use. Presentation-only — the click was already blocked client-side
          *     and the edge enforces server-side regardless.
+         *
+         *     ``admin_only: true`` is the stricter form for panels whose edge site
+         *     403s everyone but global admins (Uptime Kuma, the Hermes Agent
+         *     dashboard): the link renders only for ``role: admin``. Needed because a
+         *     flat operator holds an implicit global grant — ``authorized_only`` alone
+         *     still shows such links to every operator, who would then hit the edge's
+         *     403. Presentation-only, same as above; the edge remains the gate.
          *
          *     ``internal: true`` marks ``link_href`` as a dashboard route. Internal
          *     monitoring links use normal same-tab navigation and do not require an
@@ -1087,10 +1892,60 @@ export interface components {
              */
             authorized_only: boolean;
             /**
+             * Admin Only
+             * @default false
+             */
+            admin_only: boolean;
+            /**
              * Internal
              * @default false
              */
             internal: boolean;
+        };
+        /**
+         * PlanApproveRequest
+         * @description ``POST /api/assistant/plans/{id}/approve`` — the human gate (Step 1i).
+         *
+         *     ``step_hash`` is what the operator was *shown*. Requiring them to send it
+         *     back is what makes this a review rather than a rubber stamp: if the plan
+         *     changed (or the dashboard restarted and the id is meaningless), the
+         *     approval is refused instead of silently applying to different steps.
+         */
+        PlanApproveRequest: {
+            /** Step Hash */
+            step_hash: string;
+        };
+        /**
+         * PlanFinishRequest
+         * @description ``POST /api/assistant/plans/{id}/finish`` — how the run ended, reported
+         *     by the browser that ran it. Audit only: the per-step ``control_action``
+         *     rows already exist (stamped with the plan ref); this row says who agreed
+         *     to what and how far it got.
+         */
+        PlanFinishRequest: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "executed" | "failed" | "aborted";
+            /** Results */
+            results?: components["schemas"]["PlanStepResult"][];
+            /** Halt Reason */
+            halt_reason?: string | null;
+        };
+        /** PlanStepResult */
+        PlanStepResult: {
+            /** Index */
+            index: number;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "ok" | "failed" | "skipped";
+            /** Status Code */
+            status_code?: number | null;
+            /** Message */
+            message?: string | null;
         };
         /**
          * PlatformSection
@@ -1112,6 +1967,11 @@ export interface components {
             kind: "platform" | "environmental_map";
             /** Equipment */
             equipment: string[];
+            /**
+             * Default
+             * @default false
+             */
+            default: boolean;
         };
         /**
          * PlatformsConfig
@@ -1140,6 +2000,13 @@ export interface components {
             index: number;
             /** Label */
             label?: string | null;
+        };
+        /** RenameSessionRequest */
+        RenameSessionRequest: {
+            /** Title */
+            title: string;
+            /** Revision */
+            revision: number;
         };
         /** RunRecord */
         RunRecord: {
@@ -1175,6 +2042,44 @@ export interface components {
              */
             status: string;
         };
+        /** RunRequest */
+        RunRequest: {
+            /** Authorization Id */
+            authorization_id: string;
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+        };
+        /** SeedMessage */
+        SeedMessage: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Text */
+            text: string;
+            /**
+             * Mode
+             * @default ask
+             * @enum {string}
+             */
+            mode: "ask" | "control" | "plan";
+            /**
+             * Completion
+             * @default completed
+             * @enum {string}
+             */
+            completion: "completed" | "interrupted" | "failed";
+            /** Error */
+            error?: string | null;
+            /** Events */
+            events?: {
+                [key: string]: unknown;
+            }[];
+        };
         /** SensorHistoryResponse */
         SensorHistoryResponse: {
             /** Sensor Id */
@@ -1195,6 +2100,20 @@ export interface components {
             /** Unit */
             unit: string;
         };
+        /** SessionIn */
+        SessionIn: {
+            /** Stream */
+            stream: string;
+            /** Grant Id */
+            grant_id?: string | null;
+        };
+        /** SessionRequest */
+        SessionRequest: {
+            /** Host Id */
+            host_id: string;
+            /** Profile */
+            profile?: string | null;
+        };
         /**
          * Tile
          * @description Tile size for the dashboard equipment grid.
@@ -1214,6 +2133,13 @@ export interface components {
              * @default 1
              */
             h: number;
+        };
+        /** TurnRequest */
+        TurnRequest: {
+            /** Request Id */
+            request_id: string;
+            /** Text */
+            text: string;
         };
         /** UptimeResponse */
         UptimeResponse: {
@@ -1517,6 +2443,485 @@ export interface operations {
             };
         };
     };
+    sessions_api_camera_streams_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    create_api_camera_streams_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    heartbeat_api_camera_streams_sessions__sid__heartbeat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    close_api_camera_streams_sessions__sid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mjpeg_api_camera_streams_sessions__sid__mjpeg_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_session_api_camera_streams_admin_sessions__sid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    grants_api_camera_streams_grants_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    grant_api_camera_streams_grants_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GrantIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_grant_api_camera_streams_grants__gid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                gid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    equipment_documentation_api_equipment__equipment_id__documentation__document_path__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                equipment_id: string;
+                document_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    panel_api_robot_motion_ligand_ur5e__panel_path__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                panel_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    panel_api_robot_motion_ligand_ur5e__panel_path__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                panel_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_run_api_workflow_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_api_workflow_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_events_api_workflow_runs__run_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    abort_run_api_workflow_runs__run_id__abort_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_deck_api_equipment__equipment_id__deck_get: {
         parameters: {
             query?: never;
@@ -1570,6 +2975,127 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeckLayout"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_locations_api_locations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocationsConfig"];
+                };
+            };
+        };
+    };
+    move_api_custody_move_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    plates_api_custody_plates_get: {
+        parameters: {
+            query?: {
+                hid?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    plate_api_custody_plates__hid__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -2120,6 +3646,37 @@ export interface operations {
             };
         };
     };
+    snapshot_file_api_assistant_snapshots__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     chat_api_assistant_chat_post: {
         parameters: {
             query?: never;
@@ -2149,6 +3706,506 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_plan_api_assistant_plans__plan_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlanApproveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finish_plan_api_assistant_plans__plan_id__finish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlanFinishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sessions_api_assistant_sessions_get: {
+        parameters: {
+            query?: {
+                scope?: "mine" | "all";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_session_api_assistant_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_session_api_assistant_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_session_api_assistant_sessions__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_session_api_assistant_sessions__session_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_session_api_assistant_sessions__session_id__export_get: {
+        parameters: {
+            query?: {
+                format?: "json" | "md";
+            };
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_turn_api_assistant_sessions__session_id__turns_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TurnRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    health_api_assistant_voice_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    transcribe_api_assistant_voice_transcribe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_transcribe_api_assistant_voice_transcribe_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    speak_api_assistant_voice_speak_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    agent_bugs_api_agent_bugs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BugReport"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_hosts_api_ssh_hosts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    open_session_api_ssh_session_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_lab_hosts_api_hosts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
@@ -2231,6 +4288,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EquipmentList"];
+                };
+            };
+        };
+    };
+    openapi_document_api_openapi_json_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
