@@ -54,6 +54,9 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       hte: { w: 2, h: 3 }
     pills: {}
@@ -93,6 +96,9 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -109,6 +115,9 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -489,6 +498,9 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       process_chemistry: { w: 2, h: 3 }
     pills: {}
@@ -519,6 +531,9 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       complexation: { w: 2, h: 3 }
     pills: {}
@@ -744,6 +759,9 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
@@ -1131,6 +1149,9 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       sample_prep: { w: 2, h: 3 }
     pills: {}
@@ -1158,6 +1179,9 @@ equipment:
     documentation:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       ligand_development: { w: 2, h: 3 }
     pills: {}
