@@ -143,12 +143,14 @@ describe("EquipmentStatusCard embedded camera", () => {
   });
 });
 
-it("links the Gibbie Flex monitor to its framed panel without adding monitor controls", () => {
+it("offers the Gibbie Flex monitor no control interface and no monitor controls", () => {
+  // No Flex operator panel exists to link at (device-panels.ts explains
+  // where that was checked), so the tile must not advertise one.
   const flex = snapshot({ equipment_status: "requires_init", allowed_actions: ["startup"] });
   flex.id = "gibbie_flex";
   flex.status.details = { monitoring_only: true };
   render(<EquipmentStatusCard snapshot={flex} />);
-  expect(screen.getByRole("link", { name: "Control interface" }).getAttribute("href")).toBe("/utils/flex_control");
+  expect(screen.queryByRole("link", { name: /control interface/i })).toBeNull();
   expect(screen.queryByRole("button", { name: /init/i })).toBeNull();
   expect(postGenericStartup).not.toHaveBeenCalled();
 });

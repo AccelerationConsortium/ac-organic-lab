@@ -16,6 +16,12 @@ import { isRobotMotionWorkspace } from "@/components/DashboardShell";
  * `Devices` used to be one pill carrying both the host machines and the Bambu
  * printers; they are separate pills now, and /utils/devices redirects to the
  * hosts half.
+ *
+ * A device that ships its own operator panel does not get a pill here: the
+ * panel is the device's page at its own edge path, opened in a new tab from
+ * the tile's "Control interface" (see lib/device-panels.ts). `Flex Control`
+ * was such a pill until 2026-09-20; it framed a Gibbie Flex panel that turned
+ * out never to have been built, so it was removed rather than relinked.
  */
 const UTILS: { slug: string; label: string; description: string; href?: string }[] = [
   {
@@ -33,11 +39,6 @@ const UTILS: { slug: string; label: string; description: string; href?: string }
     slug: "api_reference",
     label: "API Reference",
     description: "REST API endpoints exposed by the dashboard server.",
-  },
-  {
-    slug: "flex_control",
-    label: "Flex Control",
-    description: "Opentrons Flex on Gibbie — operator panel and proposal-only assistant.",
   },
   {
     slug: "labware_builder",

@@ -94,13 +94,17 @@ export function EquipmentStatusCard({ snapshot }: { snapshot: EquipmentSnapshot 
       snapshot={snapshot}
       actionError={actionError}
       bannerExtra={panelPath ? (
+        // New tab, like the OT-2 tiles: every panel path is a device-served
+        // page at the edge, not a route in this app, so a client-side
+        // transition would resolve it against the route manifest and 404.
         <AuthGatedLink
           href={panelPath}
           equipmentId={snapshot.id}
+          external
           className="inline-flex h-7 items-center gap-1 rounded-md bg-orange-600 px-2.5 text-xs font-semibold text-white transition-colors hover:bg-orange-500"
           title="Open the device's operator panel"
         >
-          Control interface
+          Control interface ↗
         </AuthGatedLink>
       ) : undefined}
       lifecycle={

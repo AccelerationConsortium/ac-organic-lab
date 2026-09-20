@@ -9,7 +9,19 @@
  * origin, not device URLs, so the session cookie and the injected
  * `X-Auth-User` identity carry through without a second login.
  *
- * Gibbie Flex opens a dashboard page that frames its authenticated edge path.
+ * Every entry is a device-served page opened in a new tab, not a dashboard
+ * route: each carries the shared /auth/banner.js bar, so the popped-out panel
+ * still sits under the SDL2 identity.
+ *
+ * `gibbie_flex` is deliberately absent. It was mapped to a framed dashboard
+ * page (/utils/flex_control) that iframed /flex/gibbie/ui/, but no such panel
+ * has ever existed: the Gibbie PC runs only `gibbie-server` on :8070 — a
+ * read-only STATUS_SPEC gateway with no /control/* and no UI — plus the
+ * balance and host-ops services. Nothing listens on :8071, and the edge block
+ * that would proxy it was never installed. Verified on the PC 2026-09-20:
+ * `netstat` shows 8070 alone in the 80xx range, and `sc query` lists no Flex
+ * service. So the tile offers no "Control interface" rather than a link that
+ * 404s. Restore an entry here when a Flex operator panel actually ships.
  *
  * Kept here rather than in `equipment.yaml` because the mapping describes the
  * *edge's* routing table, not the device — the registry's `base_url` is the
@@ -18,7 +30,6 @@
  */
 
 export const DEVICE_PANEL_PATHS: Readonly<Record<string, string>> = Object.freeze({
-  gibbie_flex: "/utils/flex_control",
   ot2_hte: "/ot2/hte/ui/",
   ot2_complexation: "/ot2/complexation/ui/",
   xarm_translocation: "/xarm5/web/",
