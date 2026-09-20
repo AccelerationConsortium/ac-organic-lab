@@ -750,6 +750,40 @@ def test_hplc_openlab_serialization_matches_device_contract():
         RunSubmitArgs(**body, script_name="examples/agent_agilent.py")
 
 
+def test_realsense_capture_name_matches_device_allowed_actions() -> None:
+    """Availability is ``def.name in allowed_actions``, so the catalog name
+    must be byte-for-byte what the xArm advertises.
+
+    The device builds this string in ``status_builder._build_allowed_actions``
+    and serves the verb at ``POST /control/realsense/capture``; both were read
+    off the live build on branch ``sash-safety`` (verified 2026-09-20, device
+    ``sdl2-pc-03-cytation:8000``). A rename on either side breaks discovery
+    silently -- the action simply stops appearing available -- which is why
+    this is pinned rather than derived.
+
+    ``requires_states`` mirrors the device's own gate: the camera is
+    independent of arm health, so it is offered in ``degraded`` and
+    ``dry_run``; it is withheld while a motion is in flight, which is why
+    ``busy`` is absent.
+    """
+
+    from lab_skills.skill_catalog import skills_for
+
+    device_advertised = "realsense.capture"
+    defs = {d.name: d for d in skills_for("robot_arm", "xarm_translocation")}
+    assert device_advertised in defs
+
+    capture = defs[device_advertised]
+    assert capture.endpoint == "/control/realsense/capture"
+    assert capture.method == "POST"
+    assert set(capture.requires_states) == {"ready", "degraded", "dry_run"}
+    assert "busy" not in capture.requires_states
+
+    # The dotted name maps to the device route byte-for-byte, the same
+    # convention the solid doser follows.
+    assert capture.endpoint == "/control/" + device_advertised.replace(".", "/")
+
+
 def test_realsense_capture_is_scoped_to_the_xarm() -> None:
     """The depth camera is hardware on one arm, not a property of arms.
 

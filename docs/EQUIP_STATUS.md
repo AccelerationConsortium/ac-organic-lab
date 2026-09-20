@@ -418,6 +418,46 @@ however, is still read-only — three single-line component summaries plus
 the lock chip and an "Open control panel ↗" deep-link to the device's
 own `/web/` UI. Surfacing the graph controls in the tile is open work.
 
+### Eye-in-hand depth camera (2026-09-19/20)
+
+The arm carries an **Intel RealSense D435i mounted eye-in-hand on the
+BioGripper Gen2** (serial `050422071813`, USB 3.2). Both colour and depth run
+at **1280x720 @ 30** as of 2026-09-19; depth at that size is ASIC-upsampled
+from the module's native 848x480, requested so the aligned `depth.png` matches
+the colour frame pixel for pixel. The pipeline idles and starts on demand,
+with a 120 s idle timeout.
+
+Two surfaces, and the difference matters to a caller:
+
+- **Transient reads** — `/realsense/snapshot.jpg`, `depth.png`, `stream.mjpg`,
+  `depth?x=&y=`, `intrinsics`. Nothing survives the response.
+- **Durable captures** — `POST /control/realsense/capture` (claim-gated,
+  catalog name `realsense.capture`) writes one aligned frameset as
+  `color.jpg` + `depth.png` + `meta.json`. `meta.json` carries the **arm pose
+  at capture** (node, joints, TCP, rail, gripper), which is what makes a
+  capture a measurement rather than a picture.
+
+Captures live **outside the repo** at
+`C:\SDL_Data\xarm\realsense\<YYYY-MM-DD>\<capture_id>\`, about **250 KB
+each** at this resolution. Retention runs after every write, oldest first, age
+before size: **`keep_days: 30`, `keep_max_gb: 20`**; captures flagged
+`protected` are exempt from both. New captures are **replicated nightly** to
+`/home/sdl2/storage/external/realsens_xarm/` on the data server (03:40, a pull
+from the device PC, each file re-hashed against the SHA-256 in its own
+`meta.json` before the copy is kept). The archive deliberately does not
+inherit the device's retention — expiring upstream at 30 days must not delete
+the archived copy.
+
+The device also publishes the house agent documentation set (`/agent-docs`,
+`/agent-docs/api-reference`, `/llms.txt`), declared in `equipment.yaml` and
+rendered on the dashboard's **API reference page** from `/api/catalog`
+alongside Swagger and OpenAPI.
+
+Not yet on the deployed build, despite appearing in the device repo's
+`REALSENSE_API_PLAN.md`: video recording, `depth/roi` and the other Phase 2
+measurement primitives, hand-eye calibration, and arrival verification. The
+catalog carries `realsense.capture` only.
+
 ### Device control surface (2026-05-31)
 
 The xArm gateway now implements the v1.1 claim protocol and a motion-graph

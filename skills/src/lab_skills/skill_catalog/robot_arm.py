@@ -233,7 +233,12 @@ REALSENSE_SKILLS = [
         ),
         endpoint="/control/realsense/capture",
         args_schema=RealSenseCaptureArgs,
-        requires_states=["ready"],
+        # The camera is independent of the arm's health: the device advertises
+        # this in ``degraded`` and ``dry_run`` too, because neither stops a
+        # frameset being grabbed. ``busy`` is absent on purpose -- the device
+        # withholds the action while a motion is in flight, since a frame taken
+        # mid-move is blurred and its pose has already changed.
+        requires_states=["ready", "degraded", "dry_run"],
         # ~2 s of that is the pipeline starting from cold; a capture against an
         # already-streaming camera returns in well under a second.
         estimated_duration_s=3.0,
