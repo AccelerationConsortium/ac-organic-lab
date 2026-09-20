@@ -110,6 +110,10 @@ def test_opentrons_documentation_endpoints_are_registered() -> None:
         ("/openapi.json", "openapi"),
         ("/docs/agent", "json"),
         ("/plans/actions", "json"),
+        # Markdown agent docs, added 2026-09-20 alongside the JSON guide.
+        ("/agent-docs", "markdown"),
+        ("/agent-docs/api-reference", "markdown"),
+        ("/llms.txt", "text"),
     }
 
     for equipment_id in ("ot2_hte", "ot2_complexation"):

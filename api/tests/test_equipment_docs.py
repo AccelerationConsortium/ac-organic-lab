@@ -167,7 +167,12 @@ async def test_catalog_lists_opentrons_and_bambu_documentation() -> None:
     ]
     assert {
         doc["source_path"] for doc in instruments["ot2_hte"]["documentation"]
-    } == {"/docs", "/openapi.json", "/docs/agent", "/plans/actions"}
+    } == {
+        "/docs", "/openapi.json", "/docs/agent", "/plans/actions",
+        # The gateway gained the house Markdown set alongside its JSON
+        # guide; the JSON one stays because callers already fetch it.
+        "/agent-docs", "/agent-docs/api-reference", "/llms.txt",
+    }
     sensor = instruments["env_hte"]
     assert sensor["actions"] == []
     assert {doc["source_path"] for doc in sensor["documentation"]} == {
