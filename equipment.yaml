@@ -688,6 +688,15 @@ equipment:
     status_path: /status
     poll_timeout_seconds: 2.0
     poll_interval_seconds: 30.0
+    # This gateway drives every Tapo camera and Kasa plug in the lab (27
+    # routes: PTZ, presets, privacy, snapshots, recording, rolling buffers,
+    # plug power), and served both of these all along -- they were simply
+    # never declared, so the dashboard's API reference showed nothing at all
+    # for it. Swagger + OpenAPI only, like bambu_gateway: this service has no
+    # Markdown agent guide to point at yet.
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     tiles:
       web_services: { w: 2, h: 1 }
     pills: {}
