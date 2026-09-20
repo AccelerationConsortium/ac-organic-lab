@@ -121,6 +121,16 @@ equipment:
     # Claims are only issuable while the controller is connected; the SDK
     # must never auto-connect a robot arm, hence do_not_call_connect stays.
     do_not_call_connect: true
+    # Agent-facing documentation, same convention as the other device
+    # services on this bench. The dashboard's API reference page renders
+    # these live from /api/catalog, so an agent (or a human) can discover
+    # the RealSense capture surface without reading the device repo.
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       hte: { w: 2, h: 1 }
     # "Open" pill / tile deep-link -> the edge-gated canonical panel URL
