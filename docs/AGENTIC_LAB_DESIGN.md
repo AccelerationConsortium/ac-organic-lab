@@ -133,11 +133,14 @@ rules are Part I above. Nothing here weakens either.
 One agent, many small hard-guarded servers — not one agent per machine:
 
 ```
-Hermes profile "lab-ops"  (central server, sdl2, ~/.hermes/profiles/lab-ops/)
+Hermes profile "lab-ops"  (central server — sdl2-server-agents since 2026-09-18 —
+                           sdl2, ~/.hermes/profiles/lab-ops/)
  ├── lab-history       stdio   read-only telemetry (api/app/mcp_server.py)
  ├── lab-skills        stdio   read + plan preflight, NO --allow-control
  │                             (skills/src/lab_skills/mcp.py)
- ├── hostops-gaia      stdio   central server host-ops (read-only instance)
+ ├── hostops-agents    stdio   central server host-ops (read-only instance;
+ │                             was `hostops-gaia`, which never had a venv or
+ │                             config on gaia and so never worked)
  └── hostops-<pc>      http    per-device-PC host-ops (bearer token)
 
 Hermes profile "lab-runner"  (BOXED: OS user hermes, /home/hermes/.hermes/)
@@ -228,9 +231,10 @@ Per-instance facts:
 - **Audit:** mutating calls (today: `restart_service`) post `hostops_action`
   events to `POST /api/ingest/events` — see the LAB_MONITORING §4 registry.
   Reads are not audited.
-- The central-server instance (`hostops-gaia`) is **read-only**
-  (`restartable = []`): restarts on the live host stay with the human
-  operator.
+- The central-server instance (`hostops-agents`, on `sdl2-server-agents`;
+  config `sdl-lab-hostops/sdl2-server-agents.local.toml`, gitignored) is
+  **read-only** (`restartable = []`): restarts on the live host stay with the
+  human operator.
 
 #### Deployed instances
 
