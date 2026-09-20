@@ -88,6 +88,11 @@ equipment:
     # build).
     status_path: /plugs/plug_hte_strip_right/status
     poll_timeout_seconds: 10.0
+    # Fronted by the camera/plug gateway at :8002, so both links are the
+    # gateway's own documents -- same as the Tapo cameras.
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -101,6 +106,9 @@ equipment:
     tailscale_ip:
     status_path: /plugs/plug_hte_strip_left/status
     poll_timeout_seconds: 10.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -236,6 +244,9 @@ equipment:
     tailscale_ip: 100.64.254.100
     status_path: /status
     poll_timeout_seconds: 8.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -348,6 +359,9 @@ equipment:
     tailscale_ip: 100.64.254.104
     status_path: /status
     poll_timeout_seconds: 8.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -366,6 +380,9 @@ equipment:
     status_path: /status
     # 8 s: Wi-Fi path to this PC (see xarm_translocation note). Was 2 s.
     poll_timeout_seconds: 8.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     tiles:
       hte: { w: 2, h: 1 }
     pills: {}
@@ -380,6 +397,9 @@ equipment:
     status_path: /status
     # 8 s: Wi-Fi path to this PC (see xarm_translocation note). Was 3 s.
     poll_timeout_seconds: 8.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     # The agilent-cytation-server repo conforms to STATUS_SPEC v1.2.
     # /control/* is wired (claim/heartbeat/release, drawer, plate
     # management, three reads, imaging, incubator, shaker). Catalog:
@@ -430,6 +450,9 @@ equipment:
     status_path: /status
     # 8 s: Wi-Fi path to this PC (see xarm_translocation note). Was 2 s.
     poll_timeout_seconds: 8.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
     do_not_call_connect: true
     tiles:
       hte: { w: 2, h: 1 }
