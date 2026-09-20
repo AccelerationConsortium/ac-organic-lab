@@ -424,7 +424,19 @@ The arm carries an **Intel RealSense D435i mounted eye-in-hand on the
 BioGripper Gen2** (serial `050422071813`, USB 3.2). Both colour and depth run
 at **1280x720 @ 30** as of 2026-09-19; depth at that size is ASIC-upsampled
 from the module's native 848x480, requested so the aligned `depth.png` matches
-the colour frame pixel for pixel. The pipeline idles and starts on demand,
+the colour frame pixel for pixel.
+
+The two are **matched deliberately, not by limitation** (reviewed 2026-09-20,
+profiles enumerated off the hardware). Depth is already at its ceiling:
+1280x720 is the stereo module's maximum. Colour could reach 1920x1080, and was
+tried there and reverted — `align_depth_to_color` resamples depth to the colour
+resolution, so the higher colour profile roughly doubles the bytes per capture
+to carry interpolated depth pixels and no extra measurement, and it costs the
+pixel-for-pixel correspondence that `/realsense/<id>/depth?x=&y=` depends on.
+Verified on the running build 2026-09-20: colour and depth arrive 1280x720 from
+one frameset, ~62% valid depth pixels, both SHA-256s matching the bytes served.
+The reasoning lives beside the values in the device's `settings/realsense.yaml`
+and in its agent guide, so an agent reads it without opening the repo. The pipeline idles and starts on demand,
 with a 120 s idle timeout.
 
 Two surfaces, and the difference matters to a caller:
@@ -450,8 +462,8 @@ no path templating, so it is the only form `realsense.capture` can call; the
 nested route is canonical for everything else.
 
 Captures live **outside the repo** at
-`C:\SDL_Data\xarm\realsense\<camera_id>\<YYYY-MM-DD>\<capture_id>\`, about **250 KB
-each** at this resolution. Retention runs after every write, oldest first, age
+`C:\SDL_Data\xarm\realsense\<camera_id>\<YYYY-MM-DD>\<capture_id>\`, **175-255 KB
+each** at this resolution (strongly scene-dependent; measured across two scenes). Retention runs after every write, oldest first, age
 before size, as **one budget shared across all cameras**: **`keep_days: 30`, `keep_max_gb: 20`**; captures flagged
 `protected` are exempt from both. New captures are **replicated nightly** to
 `/home/sdl2/storage/external/realsens_xarm/<camera_id>/` on the data server (03:40, a pull
