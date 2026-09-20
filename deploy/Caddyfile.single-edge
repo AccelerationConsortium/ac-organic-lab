@@ -1,588 +1,408 @@
-# Single-edge SSO login for SDL2 — INTERIM (Phase 1 of docs/SINGLE_EDGE_SSO_PLAN.md).
+# Caddyfile.single-edge — the lab's single SSO edge, AS DEPLOYED.
 #
-# GOAL: ONE origin — http://100.64.254.6 — is the single place a user signs in.
-# Every UI is a *path* under this one origin, so the ac_auth session cookie
-# (`ac_auth_session`, host-only) rides on every request to every path. Sign in
-# once → reach the dashboard AND every device-native panel. We are NOT sharing a
-# cookie across hosts (ts.net's Public Suffix List entry forbids that — see
-# AUTH_DESIGN.md "Why sessions can't be shared per-host"); with a single host
-# there is nothing to share: one host-only cookie already covers all paths.
+# PROVENANCE: captured verbatim from the running configuration at
+# /etc/dashboard-staging/Caddyfile on sdl2-orchestration, 2026-09-20.
+# The file on that host is what Caddy actually serves (dashboard-edge.service
+# runs `caddy run --config /etc/dashboard-staging/Caddyfile`). THE LIVE FILE IS
+# AUTHORITATIVE. This copy exists so the repo records what is deployed; when
+# you change the edge, patch BOTH and re-capture here, or this drifts again.
 #
-# PLAIN HTTP on the raw Tailnet IP is deliberate: you cannot get a CA cert for
-# 100.64.254.6, so the cookie is non-Secure — the same posture the dashboard
-# already runs over the tailnet today. The upgrade path (Phase 3 of the plan) is
-# sdl2.accelerationconsortium.ai + a DNS-01 wildcard cert → HTTPS + Secure
-# cookie, with the routing below unchanged.
+# It drifted badly before this capture. The previous contents of this file
+# described the Phase-1 design from docs/SINGLE_EDGE_SSO_PLAN.md and had not
+# kept up with the deployment; `git log -p` on this path has that version. The
+# three differences that mattered, for anyone reading an older checkout:
 #
-# CANONICAL ENTRYPOINT — users MUST reach the lab as http://100.64.254.6/ .
-# Hitting the ts.net hostname, or a device host:port directly, is a DIFFERENT
-# origin → a different cookie → a second login. Publish only this one URL.
+#   1. SHAPE. Live serves every application route from ONE shared router at
+#      http://:8080 bound to loopback, fronted by thin sites that proxy into
+#      it: the tailnet IP (http://100.64.254.6), an HTTPS origin on the tailnet
+#      name with a `tailscale cert`, plus standalone sites for auth (:8009) and
+#      Uptime Kuma (:8005). The old file had no shared router and no HTTPS
+#      origin; routes hung directly off the IP site.
+#   2. /analytica MOVED AND CHANGED MEANING. Here it is the LaAgente chat app
+#      on gaia (100.64.254.5:3000), with /agente kept as an alias. The old file
+#      pointed the same path at AnaliticaDB's API on THIS host (:8010).
+#      AnaliticaDB now answers at /analyticadb (also gaia), with /openapi.json
+#      routed at the origin root because the service runs without --root-path.
+#   3. ROUTES. Live additionally carries /analyticadb, /openapi.json,
+#      /hermes/api/{events,pty} and a narrower /bitacora/api/inventory.
 #
-#   sudo cp Caddyfile.single-edge /etc/caddy/Caddyfile
-#   sudo systemctl reload caddy
-
-# Bound config reloads. Without a grace_period Caddy waits FOREVER for open
-# connections to finish before retiring the old config — and this origin
-# always has long-lived ones (camera MSE/WebRTC streams, dashboard SSE/WS),
-# so `systemctl reload caddy` hangs until systemd's timeout and reports
-# failure while the old config keeps serving. 10s force-closes stragglers;
-# stream players and WS clients reconnect on their own.
+# Secrets are {env.*} references only; the values live in the edge's
+# EnvironmentFile entries (see `systemctl cat dashboard-edge`), never here.
+#
 {
-	grace_period 10s
+	admin off
+	auto_https off
+}
+
+http://:8080 {
+	bind 127.0.0.1
+	route {
+		request_header -X-Auth-User
+		request_header -X-Auth-Role
+		request_header -X-Auth-Projects
+		request_header -X-Auth-Pi-Projects
+		request_header -X-Edge-Secret
+
+
+        # PyPoe web moved to this host (pypoe-web.service binds 100.64.254.6:8006);
+        # gaia's copy is disabled, so /pypoe is served from here, not retained.
+        # forward_auth gates every request (incl. the /ws/chat upgrade, which
+        # carries the same ac_auth cookie) and injects X-Auth-User for PyPoe's
+        # owner scoping. Inside this `route`, directives run in written order.
+        @pypoe path /pypoe /pypoe/*
+        handle @pypoe {
+            redir /pypoe /pypoe/ 308
+            forward_auth 127.0.0.1:8009 {
+                uri /auth/verify
+                copy_headers X-Auth-User X-Auth-Role
+            }
+            handle_path /pypoe/* {
+                reverse_proxy 100.64.254.6:8006 {
+                    header_up X-Forwarded-Prefix /pypoe
+                }
+            }
+        }
+        # PyPoe React UI (pypoe-web-next.service, loopback :8007; VITE_BASE is
+        # baked as /pypoe-next/ so no prefix header is needed). Moved here from
+        # gaia 2026-09-18; same auth gate as /pypoe.
+        @pypoe_next path /pypoe-next /pypoe-next/*
+        handle @pypoe_next {
+            redir /pypoe-next /pypoe-next/ 308
+            forward_auth 127.0.0.1:8009 {
+                uri /auth/verify
+                copy_headers X-Auth-User X-Auth-Role
+            }
+            handle_path /pypoe-next/* {
+                reverse_proxy 127.0.0.1:8007
+            }
+        }
+        # Hermes Agent dashboard — moved here from gaia 2026-09-18. Loopback-only
+        # (hermes-dashboard user unit, :9119); forward_auth is the sole gate.
+        # /hermes/api/{ws,pty,events} are EXEMPT from forward_auth: the WebSocket
+        # upgrade and SSE stream cannot carry the auth round-trip (same reason as
+        # /xarm5/ws on gaia); the dashboard authenticates those itself.
+        @hermes_ws path /hermes/api/ws /hermes/api/pty /hermes/api/events
+        handle @hermes_ws {
+            uri strip_prefix /hermes
+            reverse_proxy 127.0.0.1:9119 {
+                header_up Host 127.0.0.1
+                header_up -Origin
+                header_up X-Forwarded-Prefix /hermes
+            }
+        }
+        @hermes {
+            path /hermes /hermes/*
+            not path /hermes/api/ws /hermes/api/pty /hermes/api/events
+        }
+        handle @hermes {
+            forward_auth 127.0.0.1:8009 {
+                uri /auth/verify
+                copy_headers X-Auth-User X-Auth-Role
+            }
+            redir /hermes /hermes/ 308
+            handle_path /hermes/* {
+                @nonadmin not header X-Auth-Role admin
+                respond @nonadmin "The Hermes Agent dashboard is admins-only." 403
+                reverse_proxy 127.0.0.1:9119 {
+                    header_up Host 127.0.0.1
+                    header_up X-Forwarded-Prefix /hermes
+                }
+            }
+        }
+        # ---- Device UIs — served from this edge since Phase C (2026-09). Same shape
+        # as gaia's edge: forward_auth gates the UI; the /ws path is EXEMPT because
+        # the WebSocket upgrade cannot carry the auth round-trip; each device checks
+        # a per-device edge secret from EnvironmentFile device-edge-secrets.env.
+        @xarm_ui {
+            path /xarm5 /xarm5/*
+            not path /xarm5/ws
+        }
+        redir /xarm5 /xarm5/web/ 308
+        redir /xarm5/ /xarm5/web/ 308
+        redir /xarm5/web /xarm5/web/ 308
+        forward_auth @xarm_ui 127.0.0.1:8009 {
+            uri /auth/verify
+            copy_headers X-Auth-User X-Auth-Role
+        }
+        handle_path /xarm5/* {
+            reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000 {
+                header_up X-Edge-Auth {env.XARM_EDGE_SHARED_SECRET}
+            }
+        }
+        @mg400_ui {
+            path /mg400 /mg400/*
+            not path /mg400/ws
+        }
+        redir /mg400 /mg400/web/ 308
+        redir /mg400/ /mg400/web/ 308
+        redir /mg400/web /mg400/web/ 308
+        redir /mg400/ui /mg400/web/ 308
+        forward_auth @mg400_ui 127.0.0.1:8009 {
+            uri /auth/verify
+            copy_headers X-Auth-User X-Auth-Role
+        }
+        handle_path /mg400/* {
+            reverse_proxy sdl2-pc-05-dobot.tail6a1dd7.ts.net:8050 {
+                header_up X-Edge-Auth {env.MG400_EDGE_SHARED_SECRET}
+            }
+        }
+        @ot2_hte {
+            path /ot2/hte /ot2/hte/*
+        }
+        redir /ot2/hte /ot2/hte/ui/ 308
+        redir /ot2/hte/ /ot2/hte/ui/ 308
+        redir /ot2/hte/ui /ot2/hte/ui/ 308
+        forward_auth @ot2_hte 127.0.0.1:8009 {
+            uri /auth/verify
+            copy_headers X-Auth-User X-Auth-Role
+        }
+        handle_path /ot2/hte/* {
+            reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020 {
+                header_up X-Edge-Key {env.OT2_EDGE_SECRET}
+            }
+        }
+        @ot2_complexation {
+            path /ot2/complexation /ot2/complexation/*
+        }
+        redir /ot2/complexation /ot2/complexation/ui/ 308
+        redir /ot2/complexation/ /ot2/complexation/ui/ 308
+        redir /ot2/complexation/ui /ot2/complexation/ui/ 308
+        forward_auth @ot2_complexation 127.0.0.1:8009 {
+            uri /auth/verify
+            copy_headers X-Auth-User X-Auth-Role
+        }
+        handle_path /ot2/complexation/* {
+            reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8021 {
+                header_up X-Edge-Key {env.OT2_EDGE_SECRET}
+            }
+        }
+        # AnaliticaDB (API only, gaia 100.64.254.5:8010) at /analyticadb since
+        # 2026-09-19: this edge does the login check and stamps the proxy secret
+        # AnaliticaDB trusts (its TRUSTED_PROXY_SECRET). No landing page, so the
+        # bare prefix goes to its Swagger UI, which fetches /openapi.json at the
+        # origin root (service runs without --root-path), hence that route.
+        # Roster path policies (hermes@lab.local) are written against these paths.
+        @analyticadb path /analyticadb /analyticadb/* /openapi.json
+        handle @analyticadb {
+            forward_auth 127.0.0.1:8009 {
+                uri /auth/verify
+                copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
+            }
+            redir /analyticadb /analyticadb/docs 302
+            redir /analyticadb/ /analyticadb/docs 302
+            handle /openapi.json {
+                reverse_proxy 100.64.254.5:8010 {
+                    header_up X-Edge-Secret {env.ANALYTICA_EDGE_SECRET}
+                }
+            }
+            handle_path /analyticadb/* {
+                reverse_proxy 100.64.254.5:8010 {
+                    header_up X-Edge-Secret {env.ANALYTICA_EDGE_SECRET}
+                }
+            }
+        }
+        # LaAgenteAnalitica (GraphChat, gaia 100.64.254.5:3000) at /analytica
+        # since 2026-09-19. It authenticates users itself against the auth
+        # service and its own ws token, so no forward_auth here. /agente/* is
+        # kept as an alias: the SPA build bakes in its base (assets, API calls,
+        # the yjs WebSocket), so the old prefix must keep working until the
+        # frontend is rebuilt with VITE_BASE=/analytica/, and afterwards for
+        # old bookmarks (a WebSocket cannot follow a redirect).
+        @analytica path /analytica /analytica/*
+        handle @analytica {
+            redir /analytica /analytica/ 302
+            handle_path /analytica/* {
+                reverse_proxy 100.64.254.5:3000
+            }
+        }
+        @agente path /agente /agente/*
+        handle @agente {
+            redir /agente /analytica/ 302
+            handle_path /agente/* {
+                reverse_proxy 100.64.254.5:3000
+            }
+        }
+		@inventory {
+			method GET HEAD
+			path /bitacora/inventory/embed /bitacora/inventory/embed/* /bitacora/api/inventory /bitacora/api/inventory/* /bitacora/_next/static/*
+		}
+		handle @inventory {
+			reverse_proxy 127.0.0.1:3001 {
+				header_down Cache-Control "no-store"
+			}
+		}
+
+		@record_metadata path /bitacoradb /bitacoradb/*
+		handle @record_metadata {
+			route {
+				forward_auth 127.0.0.1:8009 {
+					uri /auth/verify
+					copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
+				}
+				uri strip_prefix /bitacoradb
+				reverse_proxy 127.0.0.1:8013 {
+					header_up X-Edge-Secret {env.BITACORADB_EDGE_SECRET}
+					header_down Cache-Control "no-store"
+				}
+			}
+		}
+		@record_files path /bitacoradb-files /bitacoradb-files/*
+		handle @record_files {
+			route {
+				forward_auth 127.0.0.1:8009 {
+					uri /auth/verify
+					copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
+				}
+				uri strip_prefix /bitacoradb-files
+				reverse_proxy 127.0.0.1:8014 {
+					header_up X-Edge-Secret {env.BITACORADB_EDGE_SECRET}
+					header_down Cache-Control "no-store"
+				}
+			}
+		}
+
+		@bitacora_beta path /bitacora-beta /bitacora-beta/*
+		handle @bitacora_beta {
+			route {
+				forward_auth 127.0.0.1:8000 {
+					uri /api/admin/bitacora-beta
+					copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
+				}
+				header Cache-Control "private, no-store"
+				reverse_proxy 127.0.0.1:13001 {
+					header_down Cache-Control "private, no-store"
+				}
+			}
+		}
+
+		
+        handle /streams/* {
+            respond "Legacy camera stream closed. Refresh the dashboard and sign in." 410
+        }
+        handle /api/camera-streams/* {
+            reverse_proxy 127.0.0.1:8001
+        }
+        @bambu_staging path /bambu /bambu/*
+        handle @bambu_staging {
+            route {
+                forward_auth 127.0.0.1:8009 {
+                    uri /auth/verify
+                    copy_headers X-Auth-User X-Auth-Role
+                }
+                redir /bambu /bambu/ui/ 308
+                redir /bambu/ /bambu/ui/ 308
+                uri strip_prefix /bambu
+                reverse_proxy 127.0.0.1:8012 {
+                    header_up X-Edge-Auth {env.BAMBU_EDGE_SHARED_SECRET}
+                    header_down Cache-Control "no-store"
+                }
+            }
+        }
+
+        @bitacora path /bitacora /bitacora/*
+		handle @bitacora {
+			forward_auth 127.0.0.1:8009 {
+				uri /auth/verify
+				copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
+			}
+			reverse_proxy 127.0.0.1:3001 {
+				header_down Cache-Control "no-store"
+			}
+		}
+
+		handle {
+			reverse_proxy 127.0.0.1:8000 {
+				header_down Cache-Control "no-store"
+			}
+		}
+	}
+}
+
+# Future public dashboard origin. Existing localhost:8080 rehearsal remains.
+# ---- HTTPS origin on the tailnet name (Phase C1). A DIFFERENT ORIGIN from the
+# IP, so it carries its own ac_auth_session cookie — signing in here is a
+# separate sign-in. Cert issued by `tailscale cert` (a real Let's Encrypt cert
+# via the tailnet's HTTPS-certificates feature), renewed daily by
+# caddy-tailscale-cert.timer, NOT Caddy-managed — hence the explicit files and
+# the global `auto_https off`. Routes are the shared :8080 router.
+https://sdl2-server-agents.tail6a1dd7.ts.net {
+    tls /etc/dashboard-staging/certs/sdl2-server-agents.tail6a1dd7.ts.net.crt /etc/dashboard-staging/certs/sdl2-server-agents.tail6a1dd7.ts.net.key
+    reverse_proxy 127.0.0.1:8080
 }
 
 http://100.64.254.6 {
-	encode gzip
-
-	# ---- camera video (unchanged; already on this origin) ------------------
-	# go2rtc only. The camera/plug gateway (:8002) is deliberately NOT routed
-	# at the edge: the browser reaches it exclusively through the dashboard's
-	# audited passthrough at /api/equipment/{id}/{control,media}/*
-	# (api/app/control.py), which falls through to Next.js at the bottom of
-	# this block. Two /api/{cameras,plugs}/* blocks used to sit here as a
-	# dev-only escape hatch; they never worked — the gateway mounts
-	# /cameras/… and /plugs/… with no /api prefix, so both the edge and the
-	# gateway itself answered 404 — while still shadowing those paths from the
-	# fallback proxy. Removed 2026-08-02.
-	# Raw relay API is private. Viewing sessions authenticate in FastAPI;
-	# WebSocket tickets are redeemed there, not through forward_auth.
-	handle /streams/* {
-		respond "Legacy camera stream closed. Refresh the dashboard and sign in." 410
-	}
-	handle /api/camera-streams/* {
-		reverse_proxy 127.0.0.1:8001
-	}
-
-	# ---- shared auth surface + banner, on this origin ----------------------
-	# ac_auth (:8009) serves the login/session API AND the self-contained top
-	# banner asset (GET /auth/banner.js). Every UI includes the banner with one
-	# line (<script src="/auth/banner.js">); it and its /auth/me, /auth/login,
-	# /auth/verify-code, /auth/users, /auth/logout calls all resolve here on the
-	# single origin, so the host-only ac_auth_session cookie rides along. This
-	# path is UNgated (it is the login surface). NOTE: /auth/verify is still
-	# called internally by the forward_auth blocks below (also to :8009); routing
-	# it here too is harmless — same upstream.
-	handle /auth/* {
-		reverse_proxy 100.64.254.6:8009
-	}
-
-	# ---- device-native panels, path-routed ONTO this origin ----------------
-	# These are the UIs that used to demand their own login (each on its own
-	# origin). forward_auth gates them at the edge against the SAME ac_auth the
-	# dashboard uses (100.64.254.6:8009 /auth/verify → 200 + X-Auth-User/Role,
-	# else 401). On allow we proxy to the device panel over the tailnet.
-	#
-	# xArm5 native panel lives at :8000/web/ on the device PC, and its API at the
-	# device root (/status, /ws, /control/*). We STRIP ONLY the /xarm5 prefix (no
-	# /web rewrite): that way BOTH the panel (canonical URL /xarm5/web/) AND the
-	# API (/xarm5/status, /xarm5/ws, /xarm5/control/*) resolve on the device. The
-	# panel's assets are relative and its JS derives the /xarm5 base-path from the
-	# URL and prefixes its own API/WS calls, so no server-side rewrite is needed
-	# (xarm repo: web/main.js, web/graph.js, web/auth.js). Do NOT re-add a
-	# `rewrite * /web{uri}` — it would send /xarm5/status to /web/status (404) and
-	# an app-level FastAPI root_path breaks the StaticFiles mount under Starlette
-	# 1.x. See docs/SINGLE_EDGE_SSO_PLAN.md "xArm /web/ behind the edge".
-	#
-	# forward_auth authenticates the human at the edge and injects X-Auth-User /
-	# X-Auth-Role. `header_up X-Edge-Auth` lets the device trust that identity and
-	# drop its own login banner — the device trusts the injected identity ONLY
-	# when this shared secret matches, because :8000 is still directly reachable
-	# on the Tailnet (a direct caller can't produce the secret). Set the SAME
-	# secret on both sides:
-	#   edge:   XARM_EDGE_SHARED_SECRET=…  in caddy's systemd EnvironmentFile
-	#   device: XARM_EDGE_SHARED_SECRET=…  in the xarm NSSM/service env
-	# When Phase 2 lands (loopback-bind / ACL :8000 to the edge only) the secret
-	# becomes belt-and-suspenders. Canonical URL to publish: http://100.64.254.6/xarm5/web/
-	# /xarm5/ws is EXEMPT from forward_auth: Caddy forwards the WebSocket
-	# Connection/Upgrade headers to the auth subrequest, and Starlette answers
-	# an upgrade on a route with no WS handler with a bare 403 before any
-	# cookie check — so every WS through the edge died at /auth/verify, even
-	# logged-in (verified live 2026-08-02: plain GET /xarm5/status → 401,
-	# same with WS headers → 403; :8009/auth/verify shows the same pair).
-	# Ungating it adds no exposure while :8000 is directly reachable on the
-	# tailnet (Phase 2 pending) — /ws is read-only telemetry either way.
-	@xarm_ui {
-		path /xarm5 /xarm5/*
-		not path /xarm5/ws
-	}
-	forward_auth @xarm_ui 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
-	}
-	# Normalize the entrypoints to the panel's canonical trailing-slash URL.
-	# Without this, /xarm5, /xarm5/ and /xarm5/web reach the device at /web,
-	# whose StaticFiles issues a slash-redirect to /web/ that DROPS the /xarm5
-	# prefix -> the browser lands on the dashboard and 404s. Redirecting at the
-	# edge keeps the prefix. (redir is ordered before handle_path in Caddy.)
-	redir /xarm5 /xarm5/web/ 308
-	redir /xarm5/ /xarm5/web/ 308
-	redir /xarm5/web /xarm5/web/ 308
-	handle_path /xarm5/* {
-		reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8000 {
-			header_up X-Edge-Auth {env.XARM_EDGE_SHARED_SECRET}
-		}
-	}
-
-	# Dobot MG400 native panel lives at :8050 on sdl2-pc-05-dobot, mounted at
-	# BOTH /ui and /web (the panel's JS derives its base-path from /(ui|web)/),
-	# with the API at the device root (/status, /ws, /control/*). Same shape as
-	# the xArm above: STRIP ONLY the /mg400 prefix (no /web rewrite) so the
-	# panel AND /mg400/status, /mg400/ws, /mg400/control/* all resolve.
-	#   edge:   MG400_EDGE_SHARED_SECRET=…  in caddy's systemd EnvironmentFile
-	#   device: MG400_EDGE_SHARED_SECRET=…  in the mg400 NSSM/service env
-	# /mg400/ws is EXEMPT from forward_auth for the same reason as /xarm5/ws:
-	# Caddy forwards the Connection/Upgrade headers into the /auth/verify
-	# subrequest and Starlette answers a WS upgrade on a non-WS route with a
-	# bare 403 before any cookie check, killing every handshake, signed in or
-	# not. /ws is read-only telemetry either way.
-	@mg400_ui {
-		path /mg400 /mg400/*
-		not path /mg400/ws
-	}
-	forward_auth @mg400_ui 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
-	}
-	# Normalize the entrypoints to the panel's canonical trailing-slash URL,
-	# same rationale as the xArm. /mg400/ui is here too because the panel also
-	# answers there (StaticFiles would otherwise slash-redirect and drop the
-	# prefix).
-	redir /mg400 /mg400/web/ 308
-	redir /mg400/ /mg400/web/ 308
-	redir /mg400/web /mg400/web/ 308
-	redir /mg400/ui /mg400/web/ 308
-	handle_path /mg400/* {
-		reverse_proxy sdl2-pc-05-dobot.tail6a1dd7.ts.net:8050 {
-			header_up X-Edge-Auth {env.MG400_EDGE_SHARED_SECRET}
-		}
-	}
-
-	# ---- Opentrons OT-2 gateway operator UIs, path-routed ONTO this origin --
-	# opentrons-server (device PC sdl2-pc-03-cytation) serves an operator SPA
-	# at /ui, edge-gated: /ui and /labware return 404 unless the request carries
-	# header X-Edge-Key matching the gateway's OT2_EDGE_SECRET. When the key is
-	# valid the gateway ALSO trusts header X-Auth-User and stamps it into the
-	# claim owner (details.claimed_by.owner), so a "Take control" in the browser
-	# records the logged-in person. /, /health, /status, /control/* are NOT
-	# gated — the aggregator keeps polling them DIRECTLY on the device port
-	# (equipment.yaml base_url → :8020 / :8021), so these routes do not change
-	# how the dashboard reaches the OT-2s.
-	#
-	# Two instances on the same device PC: ot2_hte on :8020, ot2_complexation
-	# on :8021. handle_path strips the /ot2/{hte,complexation} prefix so the
-	# upstream sees its OWN /ui, /labware paths (the SPA was built to live at
-	# /ui). Canonical URLs to publish: /ot2/hte/ui/ and /ot2/complexation/ui/.
-	#
-	# Prefix-safe as of opentrons-server (vite base "./" + a runtime apiBase):
-	# assets resolve RELATIVE to the page URL, and the SPA derives its API
-	# prefix by stripping the trailing /ui segment of its own path — so one
-	# build serves both instances through their own prefixes, with no
-	# per-instance rebuild. (Before that, the SPA's absolute /ui/assets/...
-	# paths resolved against the edge root and only the HTML loaded.) The
-	# dashboard's OT-2 tile links straight here (new tab); see
-	# web/src/lib/device-panels.ts, which mirrors these route blocks.
-	#
-	# forward_auth gates the human at the edge (same ac_auth) and injects
-	# X-Auth-User via copy_headers. header_up in the reverse_proxy SETS
-	# X-Edge-Key (overwriting any client-supplied value with the shared
-	# secret), so a direct caller can't forge it — same overwrite pattern
-	# as the /xarm5 and /analytica blocks (which also strip nothing).
-	# We deliberately do NOT use `request_header -X-Auth-User` to strip a
-	# client-supplied value: Caddy's fixed directive order runs
-	# `request_header` AFTER `forward_auth`, so a strip there would remove
-	# the X-Auth-User forward_auth just injected. `copy_headers` overwrites
-	# the client value, which is the protection we want. Set the SAME secret
-	# on both sides:
-	#   edge:   OT2_EDGE_SECRET=…  in caddy's systemd EnvironmentFile
-	#   device: OT2_EDGE_SECRET=…  in each gateway's NSSM AppEnvironmentExtra
-	#     (read it on the device PC with:
-	#      nssm get ot2-gateway-hte AppEnvironmentExtra, and
-	#      nssm get ot2-gateway-complexation AppEnvironmentExtra)
-	# The secret is NOT in git. Direct device-port /ui stays 404 (no X-Edge-Key).
-	@ot2_hte path /ot2/hte /ot2/hte/*
-	forward_auth @ot2_hte 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
-	}
-	redir /ot2/hte /ot2/hte/ui/ 308
-	redir /ot2/hte/ /ot2/hte/ui/ 308
-	redir /ot2/hte/ui /ot2/hte/ui/ 308
-	handle_path /ot2/hte/* {
-		reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020 {
-			header_up X-Edge-Key {env.OT2_EDGE_SECRET}
-		}
-	}
-
-	@ot2_complexation path /ot2/complexation /ot2/complexation/*
-	forward_auth @ot2_complexation 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
-	}
-	redir /ot2/complexation /ot2/complexation/ui/ 308
-	redir /ot2/complexation/ /ot2/complexation/ui/ 308
-	redir /ot2/complexation/ui /ot2/complexation/ui/ 308
-	handle_path /ot2/complexation/* {
-		reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8021 {
-			header_up X-Edge-Key {env.OT2_EDGE_SECRET}
-		}
-	}
-
-	# Gibbie Flex: dedicated HTTP gateway; the dashboard frames this same-origin.
-	@flex_gibbie path /flex/gibbie /flex/gibbie/*
-	forward_auth @flex_gibbie 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
-	}
-	redir /flex/gibbie /flex/gibbie/ui/ 308
-	redir /flex/gibbie/ /flex/gibbie/ui/ 308
-	redir /flex/gibbie/ui /flex/gibbie/ui/ 308
-	handle_path /flex/gibbie/* {
-		reverse_proxy sdl2-pc-04.tail6a1dd7.ts.net:8071 {
-			# Expand on reload, so adding this secret needs no Caddy restart.
-			header_up X-Edge-Key {$GIBBIE_FLEX_EDGE_SECRET}
-		}
-	}
-
-	# ---- Bambu printer gateway submission page, path-routed ONTO this origin -
-	# bambu-server (THIS host, :8012) serves a submission page at /ui and its
-	# API at the service root (/printers, /submissions, /whoami). Path-routed
-	# here so it sits behind this origin's login: a cookie cannot be shared
-	# with the gateway on its own address (raw 100.x cannot carry a `Domain`
-	# cookie and *.ts.net is on the Public Suffix List), so framing it here is
-	# the only way it participates in SSO. The dashboard frames /bambu/ui/ at
-	# Utils -> 3D Printers (web/src/app/utils/printers/BambuPrinterPanel.tsx).
-	#
-	# We STRIP ONLY the /bambu prefix (no /ui rewrite): the page (canonical URL
-	# /bambu/ui/) AND its API (/bambu/printers, /bambu/submissions, ...) both
-	# resolve on the gateway. Prefix-safe by construction — the page derives its
-	# API base by stripping the trailing /ui segment of its own path, the same
-	# arrangement as the OT-2 SPA above, so one file serves the direct
-	# deployment and this prefix with no server-side rewrite.
-	#
-	# The gateway answers /ui AND /ui/ directly rather than redirecting between
-	# them: a Starlette slash-redirect would emit a Location without the /bambu
-	# prefix and land the visitor on the dashboard (the trap the /xarm5 block
-	# documents).
-	#
-	# forward_auth gates the human at the edge and injects X-Auth-User /
-	# X-Auth-Role; `copy_headers` OVERWRITES any client-supplied value, which is
-	# the protection (a `request_header` strip would run after forward_auth and
-	# remove what it just injected). `header_up` SETS X-Edge-Auth, so a direct
-	# caller off the tailnet cannot forge it. The gateway trusts the injected
-	# identity ONLY when that secret matches, and records the submitter as
-	# verified; with no secret configured it trusts nothing and falls back to a
-	# typed-in label. Set the SAME secret on both sides:
-	#   edge:    BAMBU_EDGE_SHARED_SECRET=…  in caddy's systemd EnvironmentFile
-	#   gateway: BAMBU_EDGE_SHARED_SECRET=…  in bambu-server's unit environment
-	# Not in git. Reverse-proxying over loopback because the gateway runs on
-	# this host — which also lets its bind go back to 127.0.0.1 once this route
-	# is live, closing the unauthenticated /submissions path on the tailnet.
-	#
-	# The aggregator is unaffected: equipment.yaml polls 127.0.0.1:8012
-	# directly, so none of these routes change how the dashboard reads status.
-	@bambu_ui path /bambu /bambu/*
-	forward_auth @bambu_ui 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
-	}
-	# Normalize every entrypoint to the page's canonical trailing-slash URL.
-	redir /bambu /bambu/ui/ 308
-	redir /bambu/ /bambu/ui/ 308
-	handle_path /bambu/* {
-		reverse_proxy 127.0.0.1:8012 {
-			header_up X-Edge-Auth {env.BAMBU_EDGE_SHARED_SECRET}
-		}
-	}
-
-	# ---- AnaliticaDB results catalog (this host), path-routed ONTO this origin
-	# AnaliticaDB (FastAPI) serves the analytical-results catalog + /docs at :8010
-	# on this host. handle_path strips /analytica so the service sees its own root
-	# paths (/experiments, /docs, …). forward_auth gates every /analytica/* request
-	# against the same ac_auth and injects the identity AND the project scope
-	# (member/pi projects) the service's can_read consumes. header_up stamps the
-	# shared secret so the service trusts those headers — X-Auth-* are honoured
-	# ONLY when X-Edge-Secret matches, because :8010 is directly reachable on the
-	# Tailnet (a direct caller can't produce the secret; see AnaliticaDB
-	# api/deps.py get_caller). Set the SAME secret on both sides, and only once
-	# AnaliticaDB flips ENFORCE_AUTHZ on:
-	#   edge:    ANALYTICA_EDGE_SECRET=…   in caddy's systemd env
-	#   service: TRUSTED_PROXY_SECRET=…    in AnaliticaDB's .env (with ENFORCE_AUTHZ=1)
-	# /status + /health carry no caller identity, so the dashboard aggregator keeps
-	# polling :8010 directly, unaffected by this route or by enforcement. Full
-	# Swagger /docs rendering under the prefix additionally needs `--root-path
-	# /analytica` on the uvicorn ExecStart (deferred; raw API paths work without it).
-	@analytica path /analytica /analytica/*
-	forward_auth @analytica 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
-	}
-	handle_path /analytica/* {
-		reverse_proxy 100.64.254.6:8010 {
-			header_up X-Edge-Secret {env.ANALYTICA_EDGE_SECRET}
-		}
-	}
-
-	# ---- BitacoraDB — the lab's ELN+LIMS record layer (this host), path-routed
-	# ONTO this origin. Loopback-only on :8013 (API) and :8014 (preview/bytes), so
-	# the edge is the only way in from the Tailnet. Same forward_auth + shared
-	# secret pattern as /analytica; the service honours X-Auth-* only when
-	# X-Edge-Secret matches its TRUSTED_PROXY_SECRET:
-	#   edge:    BITACORADB_EDGE_SECRET=…  in caddy's systemd env
-	#            (same value as /data/bitacora/bitacoradb-edge.secret)
-	#   service: TRUSTED_PROXY_SECRET=…    in BitacoraDB's .env (ENFORCE_AUTHZ=true)
-	# bitácora and the dashboard API call 127.0.0.1:8013 directly with the secret
-	# file; this route is for humans (/docs) and Tailnet agents.
-	@bitacoradb path /bitacoradb /bitacoradb/*
-	forward_auth @bitacoradb 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
-	}
-	handle_path /bitacoradb/* {
-		reverse_proxy 127.0.0.1:8013 {
-			header_up X-Edge-Secret {env.BITACORADB_EDGE_SECRET}
-		}
-	}
-	@bitacoradbfiles path /bitacoradb-files /bitacoradb-files/*
-	forward_auth @bitacoradbfiles 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
-	}
-	handle_path /bitacoradb-files/* {
-		reverse_proxy 127.0.0.1:8014 {
-			header_up X-Edge-Secret {env.BITACORADB_EDGE_SECRET}
-		}
-	}
-
-	# ---- LaAgenteAnalitica UI (agent chat, on THIS host: gaia) --------------
-	# GraphChat now runs locally at 127.0.0.1:3000 in GRAPHCHAT_AUTH_MODE=ac_auth,
-	# so the app verifies the shared ac_auth_session cookie itself (it is NOT
-	# edge-gated here, unlike the old separate-PC forward_auth setup). The cookie
-	# rides along because /agente shares this 100.64.254.6 origin; the shared
-	# /auth/banner.js top bar rides on top. handle_path STRIPS /agente: the
-	# backend serves the SPA + API at its root and the frontend was built with a
-	# matching base (VITE_BASE=/agente/) so browser URLs carry the prefix the edge
-	# strips back off. WebSocket upgrades proxy through the same handle_path
-	# (Caddy auto-handles Upgrade); the app authenticates the socket via its own
-	# short-lived ws_token. Distinct path from /analytica (AnaliticaDB, :8010).
-	redir /agente /agente/ 308
-	handle_path /agente/* {
-		reverse_proxy 127.0.0.1:3000
-	}
-
-	# ---- PyPoe web UI, path-routed ONTO this origin — gated since 2026-09-18 --
-	# PyPoe (:8006 on this host) is pulled onto the single edge so it carries the
-	# shared /auth/banner.js banner and the host-only ac_auth_session cookie rides
-	# along (one sign-in for the whole lab). forward_auth gates every /pypoe/*
-	# request — including the /ws/chat/* upgrade, which carries the same cookie —
-	# and copies X-Auth-User in for PyPoe's per-user owner scoping. handle_path
-	# strips /pypoe so PyPoe sees its own root paths; header_up X-Forwarded-Prefix
-	# tells PyPoe to prefix the URLs it emits (assets / links / API / WS) so they
-	# resolve back under /pypoe (_ForwardedPrefixMiddleware → base_path() /
-	# window.PYPOE_BASE). /auth/* is NOT under this prefix — it resolves at the
-	# edge root above, so the banner + its /auth/me,/login,… calls are same-origin.
-	# Canonical URL: http://100.64.254.6/pypoe/
-	@pypoe path /pypoe /pypoe/*
-	forward_auth @pypoe 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
-	}
-	redir /pypoe /pypoe/ 308
-	handle_path /pypoe/* {
-		reverse_proxy 100.64.254.6:8006 {
-			header_up X-Forwarded-Prefix /pypoe
-		}
-	}
-
-	# ---- PyPoe React UI (parallel-deploy migration) — gated like /pypoe ------
-	# The new React UI runs as pypoe-web-next on loopback :8007 (moved from gaia
-	# 2026-09-18) alongside the Jinja UI on :8006, sharing the DB. Its base path
-	# is BAKED INTO the Vite build (VITE_BASE=/pypoe-next/), so no
-	# X-Forwarded-Prefix is needed — handle_path just strips /pypoe-next and the
-	# backend serves /assets, /api, /status at root. Same forward_auth gate as
-	# /pypoe. Retire this block at cutover, when /pypoe/ is flipped to :8007.
-	# See pypoe docs/REACT_UI_MIGRATION.md.
-	@pypoe_next path /pypoe-next /pypoe-next/*
-	forward_auth @pypoe_next 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
-	}
-	redir /pypoe-next /pypoe-next/ 308
-	handle_path /pypoe-next/* {
-		reverse_proxy 127.0.0.1:8007
-	}
-
-	# Private standalone beta: the dashboard verifies the cookie and exact
-	# server-configured tester account. All paths, assets and writes are gated.
-	# Fail closed when the tester is unset or either auth service is unavailable.
-	@bitacora_beta path /bitacora-beta /bitacora-beta/*
-	handle @bitacora_beta {
-		route {
-			forward_auth 100.64.254.6:8000 {
-				uri /api/admin/bitacora-beta
-				copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
-			}
-			header Cache-Control "private, no-store"
-			reverse_proxy 127.0.0.1:13001
-		}
-	}
-
-	# ---- bitacora (agentic ELN), path-routed ONTO this origin ---------------
-	# The ELN is a separate Next.js app on :3001, framed by the dashboard's
-	# /workflows tab. It is built with `basePath: /bitacora` and proxies
-	# /bitacora/api/* -> :8050 itself, so the prefix must reach it INTACT:
-	# `handle`, never `handle_path` (which strips the prefix the app expects).
-	# forward_auth gates it through the same ac_auth as every other surface.
-	#
-	# MUST stay above the root reverse_proxy below. Caddy matches in order, and
-	# the catch-all otherwise swallows /bitacora/* and answers with the
-	# dashboard's own 404 — which, being same-origin, renders the whole dashboard
-	# inside the Workflows iframe and 404s every ELN asset.
-	#
-	# THIS BLOCK LIVES HERE ON PURPOSE. Installing this file overwrites
-	# /etc/caddy/Caddyfile wholesale, so a route kept only as a hand-edit there is
-	# silently destroyed by the next edge deploy — which is exactly what happened
-	# on 2026-08-02 (three edge fixes that evening; the ELN 404'd until someone
-	# opened the tab). One file, one owner.
-	# Public chemical-inventory embed — the dashboard frames
-	# /bitacora/inventory/embed and it must load WITHOUT login (the shelf is
-	# read-only; Bitácora's own reads are unauthenticated — only upload is
-	# admin-gated). Exempt the embed page, its read-only API, and the shared
-	# _next/static assets (code only) from forward_auth — for GET/HEAD ONLY.
-	# Everything else under /bitacora stays gated, and so does every WRITE to
-	# the inventory API: POST /bitacora/api/inventory/import and the tombstone
-	# route fall through to the forward_auth below, which is what injects the
-	# X-Auth-User that Bitácora's require_admin needs. Until 2026-09-04 the
-	# exemption was path-only, so an admin's upload from the browser reached
-	# Bitácora with no identity header and was refused 401 ("authorship could
-	# not be established") — fail-closed, but it made import unusable for
-	# everyone. The method split keeps the shelf public-read and opens no
-	# unauthenticated write path.
-	@bitacora_inventory {
-		path /bitacora/inventory/embed /bitacora/inventory/embed/*\
-		/bitacora/api/inventory /bitacora/api/inventory/* /bitacora/_next/static/*
-		method GET HEAD
-	}
-	handle @bitacora_inventory {
-		# No-store on the embed page's HTML only (Next.js would otherwise pin
-		# its chunk hashes for a year); static assets and API pass through.
-		@inv_html not path /bitacora/_next/static/* /bitacora/api/*
-		reverse_proxy @inv_html 127.0.0.1:3001 {
-			header_down Cache-Control "private, no-cache, no-store, max-age=0, must-revalidate"
-		}
-		reverse_proxy 127.0.0.1:3001
-	}
-	@bitacora {
-		path /bitacora /bitacora/*
-		not {
-			path /bitacora/inventory/embed /bitacora/inventory/embed/*\
-			/bitacora/api/inventory /bitacora/api/inventory/* /bitacora/_next/static/*
-			method GET HEAD
-		}
-	}
-	forward_auth @bitacora 100.64.254.6:8009 {
-		uri /auth/verify
-		# X-Auth-Projects / X-Auth-Pi-Projects are load-bearing, not extra: the ELN
-		# forwards them to BitacoraDB, whose read rule is `admin OR PI OR active
-		# member`, and which learns membership from these headers alone. Without
-		# them every non-admin reaches the record layer with an empty scope, so a
-		# project's own PI sees none of their runs (measured 2026-08-14). The
-		# BitacoraDB route below already copies them; this one did not.
-		copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
-	}
-	handle @bitacora {
-		# Same no-store override as the dashboard route: Next.js defaults HTML
-		# to a 1-year cache, which pins the chunk hashes the HTML references.
-		# Static chunks under /_next/static/ keep their own immutable cache.
-		@bitacora_html not path /bitacora/_next/static/* /bitacora/api/*
-		reverse_proxy @bitacora_html 127.0.0.1:3001 {
-			header_down Cache-Control "private, no-cache, no-store, max-age=0, must-revalidate"
-		}
-		reverse_proxy 127.0.0.1:3001
-	}
-
-	# ---- Hermes Agent web dashboard (this host), path-routed ONTO this origin
-	# The Hermes dashboard (FastAPI + React SPA) runs at 127.0.0.1:9119 on gaia,
-	# loopback-only — Caddy's forward_auth is its sole gate. handle_path strips
-	# /hermes so the SPA sees its own root paths (/assets/*, /api/*, /login, …).
-	# forward_auth gates every /hermes/* request against ac_auth and injects the
-	# identity headers; on 401 the browser redirects to / (the lab dashboard's
-	# email+code login), same as every other edge-gated panel.
-	#
-	# /hermes/api/ws is EXEMPT from forward_auth: the Chat tab uses a WebSocket
-	# upgrade, and forward_auth sends the Upgrade headers to ac_auth's /auth/verify
-	# which answers 403 before the WS handshake completes (same issue as /xarm5/ws).
-	# The WS is authenticated by the dashboard's own session token, not the cookie.
-	# Canonical URL: http://100.64.254.6/hermes/
-	@hermes_ws path /hermes/api/ws
-	handle @hermes_ws {
-		reverse_proxy 127.0.0.1:9119 {
-			header_up Host 127.0.0.1
-			header_up X-Forwarded-Prefix /hermes
-		}
-	}
-	@hermes {
-		path /hermes /hermes/*
-		not path /hermes/api/ws
-	}
-	forward_auth @hermes 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
-	}
-	redir /hermes /hermes/ 308
-	handle_path /hermes/* {
-		# Admins only (same pattern as the Kuma edge site): forward_auth above
-		# authenticated the session and stamped X-Auth-Role from the verify
-		# response — a client-supplied copy is overwritten — so this matcher
-		# is trustworthy. Before 2026-08-23 any signed-in account passed.
-		@nonadmin not header X-Auth-Role admin
-		respond @nonadmin "The Hermes Agent dashboard is admins-only." 403
-		reverse_proxy 127.0.0.1:9119 {
-			header_up Host 127.0.0.1
-			header_up X-Forwarded-Prefix /hermes
-		}
-	}
-
-	# ---- dashboard (Next.js) at root ---------------------------------------
-	# Next.js serves / and /api/* (it rewrites /api/* to FastAPI on :8001) and
-	# enforces its own control/assistant gate via web/src/middleware.ts against
-	# the same sidecar — so no forward_auth wrapper is needed here.
-	#
-	# Override Next.js's default 1-year HTML cache (s-maxage=31536000) with
-	# no-store on HTML documents only. The cached HTML pins the iframe src and
-	# chunk hashes it references, so a dashboard redeploy looks stale until a
-	# hard reload — the /workflows iframe kept serving an old bitacora build
-	# this way. Static chunks under /_next/static/ keep their own immutable
-	# cache (the matcher excludes them).
-	@dashboard_html not path /_next/static/* /api/* /streams/*
-	reverse_proxy @dashboard_html 100.64.254.6:8000 {
-		header_down Cache-Control "private, no-cache, no-store, max-age=0, must-revalidate"
-	}
-	# Static assets and API: no header override (pass through upstream's own).
-	reverse_proxy 100.64.254.6:8000
+    bind 100.64.254.6
+    reverse_proxy 127.0.0.1:8080
 }
 
-# ---- Uptime Kuma (admin watchdog) — SSO edge on its own PORT ---------------
-# Kuma cannot be served under a sub-path (upstream limitation), so it gets its
-# own port on the canonical host instead: cookies are port-agnostic, so the
-# ac_auth_session cookie set on http://100.64.254.6/ rides along to :8005.
-# The container binds 127.0.0.1:8005 (UPTIME_KUMA_HOST); this edge site owns
-# 100.64.254.6:8005, so the dashboard's existing "Open" link keeps working.
-# Admins only: any lab account can authenticate, but only role=admin passes
-# (X-Auth-Role is set by forward_auth from the verify response — a client-
-# supplied copy is overwritten, so the matcher below is trustworthy). Kuma's
-# internal auth is disabled (Settings → Advanced) — this edge IS its auth.
-# PyPoe keeps reading the anonymous status-page API on loopback, under this
-# gate. Requires AUTH_LOGIN_URL to be ABSOLUTE in the sidecar env, or the
-# logged-out redirect would loop on this origin.
+# Existing lab auth clients continue using .6:8009 after the address swap.
+http://100.64.254.6:8009 {
+    bind 100.64.254.6
+    request_header -X-Auth-User
+    request_header -X-Auth-Role
+    request_header -X-Auth-Projects
+    request_header -X-Auth-Pi-Projects
+    request_header -X-Edge-Secret
+    reverse_proxy 127.0.0.1:8009
+}
+
+# Uptime Kuma (admin watchdog) — migrated from Gaia to this host 2026-09-18.
+# Container binds 127.0.0.1:8005 with its internal auth disabled: this edge IS
+# its auth. Same pattern as deploy/Caddyfile.single-edge in ac-organic-lab.
 http://100.64.254.6:8005 {
-	# Bind the Tailnet IP specifically — Caddy's default wildcard listener
-	# (*:8005) would block the Kuma container from binding 127.0.0.1:8005.
-	bind 100.64.254.6
-	forward_auth 100.64.254.6:8009 {
-		uri /auth/verify
-		copy_headers X-Auth-User X-Auth-Role
-	}
-	@nonadmin not header X-Auth-Role admin
-	respond @nonadmin "Uptime Kuma is admins-only." 403
-	reverse_proxy 127.0.0.1:8005
+    bind 100.64.254.6
+    # `route` fixes the order: Caddy's default directive order runs
+    # request_header AFTER forward_auth, which would strip the role that
+    # forward_auth just copied in and 403 every admin.
+    route {
+        request_header -X-Auth-User
+        request_header -X-Auth-Role
+        forward_auth 127.0.0.1:8009 {
+            uri /auth/verify
+            copy_headers X-Auth-User X-Auth-Role
+        }
+        @nonadmin not header X-Auth-Role admin
+        respond @nonadmin "Uptime Kuma is admins-only." 403
+        reverse_proxy 127.0.0.1:8005
+    }
 }
+
+# ---------------------------------------------------------------------------
+# RETAINED, NOT DEPLOYED — Gibbie Flex operator panel.
+#
+# Commented out on purpose: this block has no upstream. It was written for a
+# Flex control gateway on sdl2-pc-04:8071 that has never existed. Checked on
+# the PC 2026-09-20: `netstat` shows :8070 alone in the 80xx range and
+# `sc query` lists only gibbie-server, mt-xpr-balance and sdl-lab-hostops;
+# GIBBIE_FLEX_EDGE_SECRET is set in no edge env file. Installing it as written
+# buys a 502 instead of a 404.
+#
+# Kept because web/src/lib/device-panels.ts and the gibbie_flex entry in
+# equipment.yaml both point here to explain why the dashboard offers no Flex
+# control link. When a Flex panel ships: confirm the port, set the secret on
+# both sides, uncomment INSIDE the shared :8080 router above (not at top
+# level), and restore the gibbie_flex entry in device-panels.ts.
+# ---------------------------------------------------------------------------
+# 	# Gibbie Flex: NOT DEPLOYED — there is no upstream behind this block.
+# 	# It was written alongside a dashboard page that framed it, for a Flex
+# 	# control gateway on sdl2-pc-04:8071 that has never existed. Checked on
+# 	# the PC 2026-09-20: `netstat` shows :8070 alone in the 80xx range and
+# 	# `sc query` lists only gibbie-server, mt-xpr-balance and sdl-lab-hostops.
+# 	# GIBBIE_FLEX_EDGE_SECRET is set in no edge env file either. Installing
+# 	# this block as it stands buys a 502 instead of a 404, so it stays out of
+# 	# the live Caddyfile until that gateway ships — at which point confirm the
+# 	# port, set the secret on both sides, and re-point the dashboard by
+# 	# restoring the gibbie_flex entry in web/src/lib/device-panels.ts.
+# 	# The dashboard therefore offers NO Flex control link today.
+# 	@flex_gibbie path /flex/gibbie /flex/gibbie/*
+# 	forward_auth @flex_gibbie 100.64.254.6:8009 {
+# 		uri /auth/verify
+# 		copy_headers X-Auth-User X-Auth-Role
+# 	}
+# 	redir /flex/gibbie /flex/gibbie/ui/ 308
+# 	redir /flex/gibbie/ /flex/gibbie/ui/ 308
+# 	redir /flex/gibbie/ui /flex/gibbie/ui/ 308
+# 	handle_path /flex/gibbie/* {
+# 		reverse_proxy sdl2-pc-04.tail6a1dd7.ts.net:8071 {
+# 			# Expand on reload, so adding this secret needs no Caddy restart.
+# 			header_up X-Edge-Key {$GIBBIE_FLEX_EDGE_SECRET}
