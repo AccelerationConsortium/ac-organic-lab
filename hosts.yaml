@@ -1,0 +1,334 @@
+# Lab host inventory - the machines that run the lab, and the network
+# addresses each answers to.
+#
+# This is the fourth root YAML file, beside:
+#   equipment.yaml  -> what hardware exists and how to reach it
+#   platforms.yaml  -> how the UI presents it
+#   locations.yaml  -> where a thing can be
+#   hosts.yaml      -> WHICH MACHINES RUN IT (this file)
+#
+# A host is not equipment: it has no registry entry, no adapter and no
+# /status. What it has is an identity (id, label, kind), a way in over ssh,
+# and the set of addresses the equipment registry reaches it by.
+#
+# Phase 1: this file is a mechanical transcription of `SSH_HOSTS` in
+# `api/app/ssh_console.py` and `HOST_ALIASES` in `api/app/hosts.py`, which
+# remain the values the running code uses. `api/app/host_registry.py` loads
+# and validates this file and `api/tests/test_host_registry.py` asserts the
+# two agree exactly, so drift fails CI. Nothing reads it at runtime yet.
+#
+# NO SECRETS. Tailscale hostnames and tailnet IPs are not treated as secrets
+# in this project (same rule as equipment.yaml), but nothing that names or
+# hints at a credential belongs here: the key file and any per-host ssh
+# options stay in the service user's ~/.ssh/config, which `ssh.target`
+# merely names an alias in.
+#
+# `networks[].type`:
+#   tailscale    100.64.x        the tailnet (MagicDNS name in `magicdns`
+#                                when it differs from `hostname`)
+#   lab_switch   192.168.254.x   the wired lab switch
+#   campus_wifi  172.31.x        campus Wi-Fi - down with the campus network
+#   loopback                     services bound on the dashboard host itself
+
+# Every way in the console offers, by id. A host's `ssh.profiles` lists
+# these ids, first entry the default. `args` is the remote command appended
+# after the ssh target - a server-side whitelist, never something the
+# browser names.
+ssh_profiles:
+  - id: shell
+    label: Shell
+    args: []
+    description: Plain bash login shell.
+  - id: tmux
+    label: tmux
+    args: ["tmux", "new-session", "-A", "-s", "console"]
+    description: >-
+      Attach-or-create the shared 'console' tmux session. Survives a closed
+      tab or dropped connection — reconnect and reattach. A second admin
+      attaching sees the same screen.
+  - id: cmd
+    label: cmd
+    args: []
+    description: Windows cmd.exe (the OpenSSH default shell).
+  - id: wsl
+    label: WSL
+    args: ["wsl.exe"]
+    description: >-
+      Ubuntu (WSL2) shell instead of cmd.exe. Boots the distro on demand.
+  - id: wsl-tmux
+    label: WSL tmux
+    args: ["wsl.exe", "-e", "tmux", "new-session", "-A", "-s", "console"]
+    description: >-
+      Attach-or-create the shared 'console' tmux session inside WSL. Survives
+      disconnects (the detached session keeps the WSL VM alive).
+
+hosts:
+  - id: orchestration
+    label: Orchestration Server (sdl2-orchestration)
+    kind: Linux server
+    group: machine
+    hostname: sdl2-orchestration
+    ssh:
+      user: sdl2
+      target: localhost
+      shell: bash
+      profiles: [shell, tmux]
+    note: >-
+      The dashboard's own host since the 2026-09 migration (tailnet
+      sdl2-server-agents, 100.64.254.6) — the session loops back over ssh
+      rather than inheriting the API service's systemd sandbox, so you get a
+      normal login shell.
+    networks:
+      - type: loopback
+        address: localhost
+        note: >-
+          The loopback label registry entries use for the dashboard host.
+      - type: loopback
+        address: 127.0.0.1
+        note: >-
+          Loopback-bound services on the dashboard host (kasa-tapo, bambu,
+          Bitacora, the API's own entry).
+      - type: tailscale
+        address: 100.64.254.6
+        magicdns: sdl2-server-agents
+        note: >-
+          Tailnet address of the dashboard host (pypoe, kuma, auth,
+          BitacoraDB, the edge paths). The tailnet name differs from the
+          hostname.
+  - id: gaia
+    label: Central Server (gaia)
+    kind: Linux server
+    group: machine
+    hostname: sdl2-server-gaia
+    ssh:
+      user: sdl2
+      target: gaia
+      shell: bash
+      profiles: [shell, tmux]
+    note: >-
+      The previous dashboard host (100.64.254.5 after the IP swap). It retains
+      AnaliticaDB, the agente app, the Hermes dashboard and PyPoe-next behind
+      its own Caddy edge. Needs a `gaia` stanza in the service user's
+      ssh_config; without it the terminal reports the connection failure.
+    networks:
+      - type: tailscale
+        address: 100.64.254.5
+        note: >-
+          Kept after the 2026-09 IP swap; the registry reaches gaia's retained
+          services (AnaliticaDB, agente, Hermes) here.
+  - id: cytation-pc
+    label: Cytation PC
+    kind: Windows PC
+    group: machine
+    hostname: sdl2-pc-03-cytation.tail6a1dd7.ts.net
+    ssh:
+      user: sdl2
+      target: cytation-pc
+      shell: cmd.exe (Windows OpenSSH)
+      profiles: [cmd, wsl, wsl-tmux]
+    note: >-
+      Hosts xarm, plateloc, both OT-2 gateways, the shaker, the Cytation and
+      the BioStack. Service control is `C:\SDL_Tools\nssm.exe` — prefer the
+      whitelisted host-ops surface for routine restarts.
+    networks:
+      - type: tailscale
+        address: 100.64.254.16
+  - id: dobot-pc
+    label: Prototyping PC
+    kind: Windows PC
+    group: machine
+    hostname: sdl2-pc-05-dobot.tail6a1dd7.ts.net
+    ssh:
+      user: sdl2
+      target: dobot-pc
+      shell: cmd.exe (Windows OpenSSH)
+      profiles: [cmd, wsl, wsl-tmux]
+    note: >-
+      Prototyping PC. Hosts the Dobot MG400 gateway (dobot-mg400-server) on
+      :8050. Service control is `C:\SDL_Tools\nssm.exe` — prefer the
+      whitelisted host-ops surface for routine restarts.
+    networks:
+      - type: tailscale
+        address: 100.64.254.18
+  - id: uplc-pc
+    label: UPLC PC
+    kind: Windows PC
+    group: machine
+    hostname: sdl2-pc-06-uplc.tail6a1dd7.ts.net
+    ssh:
+      user: sdl2
+      target: uplc-pc
+      shell: cmd.exe (Windows OpenSSH)
+      profiles: [cmd, wsl, wsl-tmux]
+    note: >-
+      Hosts the UPLC-MS sidecar. The sidecar owns the run queue — do not
+      restart it mid-campaign. Also hosts the isolated read-only UR5e Robot
+      Motion prototype on :8075. The OT-2 complexation robot's USB-B cable
+      stays plugged into this PC as a physical network fallback (the portproxy
+      bridge itself was retired 2026-08-27; see ROADMAP).
+    networks:
+      - type: tailscale
+        address: 100.64.254.19
+  - id: gibbie-pc
+    label: Gibbie PC
+    kind: Windows PC
+    group: machine
+    hostname: sdl2-pc-04.tail6a1dd7.ts.net
+    ssh:
+      user: sdl2
+      target: gibbie-pc
+      shell: cmd.exe (Windows OpenSSH)
+      profiles: [cmd]
+    note: >-
+      Drives the Gibbie multi-phase reaction bench (UR-3e arm, XPR balance,
+      Opentrons Flex, IKA hotplate) and hosts the read-only sdl2-gibbie-server
+      monitor (:8070). On the lab switch at 192.168.254.79. The arm and
+      balance are addressed on 192.168.1.x, a segment this PC has no interface
+      on yet (see ROADMAP). Only cmd is offered until WSL is confirmed
+      present.
+    networks:
+      - type: tailscale
+        address: 100.64.254.17
+      - type: lab_switch
+        address: 192.168.254.79
+        note: Wired lab-switch address.
+  - id: lle-pc
+    label: LLE PC (Process Chemistry)
+    kind: Windows PC
+    group: machine
+    hostname: sdl2-pc-00-lle.tail6a1dd7.ts.net
+    ssh:
+      user: sdl2
+      target: lle-pc
+      shell: cmd.exe (Windows OpenSSH)
+      profiles: [cmd]
+    note: >-
+      Drives the Process Chemistry platform: the HPLC through the Agilent
+      software on this PC, plus the EasyMax, the MT balance and the UR5-CB3 on
+      the lab switch (192.168.254.5 here; campus 172.31.35.241). Lab-ops key
+      not yet authorized on it, so the console cannot open until it is
+      (DEVICE_PC_SETUP §2.4). Only cmd is offered until WSL is confirmed
+      present.
+    networks:
+      - type: tailscale
+        address: 100.64.254.13
+      - type: lab_switch
+        address: 192.168.254.5
+        note: Lab-switch address of the Process Chemistry PC.
+      - type: campus_wifi
+        address: 172.31.35.241
+        note: Campus address of the Process Chemistry PC.
+  - id: lle-pi
+    label: pH Unit (LLE)
+    kind: Raspberry Pi
+    group: device
+    hostname: sdl2-pi0-lle-pizerocam.tail6a1dd7.ts.net
+    ssh:
+      user: caoyang
+      target: lle-pi
+      shell: bash
+      profiles: [shell]
+    note: >-
+      Pi Zero 2W running PiZeroCam: camera + LED + motor for colorimetric pH
+      reads (image_server). Campus Wi-Fi 172.31.60.3, tailnet 100.64.254.98.
+      Login is `caoyang` (the account the lab Pi key was granted under, like
+      the doser Pi). Host-ops runs here in the daemonless stdio-over-SSH lite
+      mode. No tmux installed yet.
+    networks:
+      - type: tailscale
+        address: 100.64.254.98
+      - type: campus_wifi
+        address: 172.31.60.3
+        note: Campus Wi-Fi address of the Process Chemistry pH Pi.
+  - id: fumehood-pi
+    label: Fume Hood Actuator
+    kind: Raspberry Pi
+    group: device
+    hostname: sdl2-pi0-fumehood3-actuator.tail6a1dd7.ts.net
+    ssh:
+      user: sdl2
+      target: fumehood-pi
+      shell: bash
+      profiles: [shell]
+    note: >-
+      Pi Zero driving the fume hood sash actuator (100.64.254.100:5000,
+      STATUS_SPEC v1.1 with claims). The sensor service in the same repo is
+      still on its pre-spec Flask shape and migrates separately. Campus Wi-Fi,
+      so it goes down with the campus network. No tmux.
+    networks:
+      - type: tailscale
+        address: 100.64.254.100
+        note: >-
+          The registry reaches this Pi by tailnet IP rather than by name.
+  - id: press-pi
+    label: Waters Filtration
+    kind: Raspberry Pi
+    group: device
+    hostname: sdl2-pi0-waters-filtration.tail6a1dd7.ts.net
+    ssh:
+      user: sdl2
+      target: press-pi
+      shell: bash
+      profiles: [shell]
+    note: >-
+      Pi Zero driving the filtration press (100.64.254.104:8000). **The lab Pi
+      key is not authorized here yet** — sshd closes the connection, so the
+      console cannot open until the key is granted (DEVICE_PC_SETUP §2.4).
+      Everything else on this tile is live.
+    networks:
+      - type: tailscale
+        address: 100.64.254.104
+        note: >-
+          The registry reaches this Pi by tailnet IP rather than by name.
+  - id: doser-pi
+    label: Dose Every Well
+    kind: Raspberry Pi
+    group: device
+    hostname: sdl2-pi5-minicnc.tail6a1dd7.ts.net
+    ssh:
+      user: caoyang
+      target: doser-pi
+      shell: bash
+      profiles: [shell]
+    note: >-
+      Pi 5 driving the solid doser (CNC gantry + dosing head + balance). Login
+      is `caoyang`. Its install is **editable**, so the checked-out branch IS
+      the deploy: `develop-modular`, never `main` (see ROADMAP). No tmux.
+    networks: []
+  - id: lumastir-pi
+    label: Lumastir
+    kind: Raspberry Pi
+    group: device
+    hostname: lumastir-pi
+    ssh:
+      user: sdl2
+      target: lumastir-pi
+      shell: bash
+      profiles: [shell]
+    note: >-
+      Raspberry Pi running the Lumastir LED and motor controller on :8000.
+      Connection details use the dashboard host's lumastir-pi SSH alias.
+      OpenSSH login as sdl2 uses the authorized lab Pi key. Tailscale supplies
+      networking; its SSH server is disabled.
+    networks:
+      - type: tailscale
+        address: 100.64.254.103
+        note: >-
+          The registry reaches this Pi by tailnet IP rather than by name.
+  - id: environ-01
+    label: HTE Sensors
+    kind: Raspberry Pi
+    group: device
+    hostname: sdl2-pi0-environ-01.tail6a1dd7.ts.net
+    ssh:
+      user: sdl2
+      target: environ-01
+      shell: bash
+      profiles: [shell]
+    note: >-
+      Pi Zero running sense-every-zone for the HTE zone (SEN55 + PiSugar 3
+      UPS, :8030). **sshd listens on port 2222**, not 22 — the console uses
+      the ~/.ssh/config alias, which carries that. Reachable only about half
+      the time: the campus DHCP lease expires and is not re-acquired
+      (ROADMAP). No tmux.
+    networks: []

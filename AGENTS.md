@@ -74,6 +74,12 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   shows (hardware identity, adapter, URLs, tiles). Edit it when hardware
   changes; `uvicorn --reload` picks up YAML via `--reload-include "*.yaml"`.
 - **`platforms.yaml`** — Overview layout config (sections, order, membership).
+- **`hosts.yaml`** — the lab's host machines: identity, ssh access, and every
+  network address each answers to. **Phase 1 — nothing reads it at runtime
+  yet.** `SSH_HOSTS` (`api/app/ssh_console.py`) and `HOST_ALIASES`
+  (`api/app/hosts.py`) are still the live values; `api/app/host_registry.py`
+  loads the YAML and `api/tests/test_host_registry.py` fails if the two
+  drift. Edit both sides until a later phase moves the readers over.
 - **`mcp/servers.yaml`** — reviewed, client-neutral MCP registry: provenance,
   approved tool allowlists, and data/safety boundaries. Client installation
   remains machine-local; never commit MCP credentials or local paths.
