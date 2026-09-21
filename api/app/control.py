@@ -781,9 +781,19 @@ async def _proxy(
     # Any protocol ≥ 1.1 has claim semantics (v1.2 is additive over v1.1 —
     # a "1.2" device still hard-enforces X-Claim-Token). Only v1.0 devices
     # skip the dance.
+    # POST and DELETE both mutate, so both need the token. DELETE was omitted
+    # until 2026-09-21, which made every claim-gated DELETE unreachable through
+    # this proxy: the xArm's `DELETE /control/realsense/{id}/captures/{id}` is
+    # claim-gated on the device, so the dashboard's delete answered 423 every
+    # time since the route shipped. It failed quietly -- the audit row recorded
+    # `outcome: refused` and the UI surfaced a refusal -- so it read as "the
+    # device said no", not "the dashboard never asked". GET stays excluded: the
+    # read-only control endpoints (e.g. `read-balance`) are exposed without
+    # `Depends(require_claim)`, and taking a claim to read would serialise them
+    # against real operations.
     needs_claim = (
         getattr(entry, "protocol", None) not in (None, "1.0")
-        and method == "POST"
+        and method in ("POST", "DELETE")
         and action not in _CLAIM_PROTOCOL_ACTIONS
     )
 

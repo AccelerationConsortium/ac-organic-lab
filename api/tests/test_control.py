@@ -1202,3 +1202,47 @@ def test_ot2_home_timeout_reports_uncertain_outcome_without_retry() -> None:
     assert "may have completed" in response.json()["detail"]
     assert "before retrying" in response.json()["detail"]
     assert route.call_count == 1
+
+
+@respx.mock
+def test_claim_gated_delete_runs_the_claim_dance() -> None:
+    """A DELETE on a v1.1+ device must carry X-Claim-Token like a POST.
+
+    Regression (fixed 2026-09-21): `needs_claim` tested `method == "POST"`,
+    so the DELETE passthrough never acquired a claim and every claim-gated
+    DELETE came back 423. The xArm's
+    `DELETE /control/realsense/{id}/captures/{id}` is claim-gated on the
+    device, so dashboard capture deletion had never once succeeded -- and it
+    failed quietly, recording `outcome: refused` in the audit row, which reads
+    as the device declining rather than the dashboard never asking.
+    """
+    entry = _v11_entry(id="xarm_translocation", kind="robot_arm", protocol="1.2")
+    app = _make_app(entry)
+
+    claim_route = respx.post("http://127.0.0.1:9999/control/claim").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "claim_token": "tok-del",
+                "heartbeat_interval_s": 10.0,
+                "expires_at": "2026-09-21T01:00:00Z",
+            },
+        )
+    )
+    action_route = respx.delete(
+        "http://127.0.0.1:9999/control/realsense/rs435i/captures/cap-1"
+    ).mock(return_value=httpx.Response(200, json={"deleted": "cap-1"}))
+    release_route = respx.post("http://127.0.0.1:9999/control/release").mock(
+        return_value=httpx.Response(204)
+    )
+
+    with TestClient(app) as client:
+        r = client.delete(
+            "/api/equipment/xarm_translocation/control/"
+            "realsense/rs435i/captures/cap-1"
+        )
+
+    assert r.status_code == 200, r.text
+    assert claim_route.called, "DELETE must acquire a claim before acting"
+    assert action_route.calls.last.request.headers["x-claim-token"] == "tok-del"
+    assert release_route.called, "the claim must be released afterwards"
