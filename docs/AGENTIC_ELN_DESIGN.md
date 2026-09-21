@@ -128,8 +128,9 @@ one agent across design→execute→record — **gap (the assembly)**.
 1. **[BINDING] The agent proposes; a human approves; hardware obeys only
    validated, `main`-merged, authorized plans.** ([`AGENTIC_LAB_DESIGN.md`](AGENTIC_LAB_DESIGN.md) §1.3, §3.1)
 2. **[BINDING] All hardware access goes through the `lab-skills` SDK** —
-   never raw device `/control/*`, never bypassing interlocks, claims, or
-   readiness checks. The SDK refusing a call is the safety system working.
+   never by composing HTTP to a device endpoint directly whatever its path,
+   never bypassing interlocks, claims, or readiness checks. The SDK refusing
+   a call is the safety system working.
 3. **[BINDING] Git holds authored artifacts; BitacoraDB holds operational
    records; no run data in git.** A commit hash on each database row ties the
    two ([`DATABASE_DESIGN.md`](DATABASE_DESIGN.md), project-repo blueprint).

@@ -39,8 +39,15 @@ situation isn't covered, stop and ask a human.
 
 1. **Never drive hardware directly.** All equipment use goes through the
    `lab-skills` SDK (skill catalog, claims, preconditions — interlock
-   layer 3), never raw device `/control/*` endpoints. The SDK refusing a
-   call *is* the safety system working.
+   layer 3), never by composing HTTP to a device endpoint directly —
+   **whatever its path**. The SDK refusing a call *is* the safety system
+   working. (Revised 2026-09-21: this rule named `/control/*` until the
+   xArm showed why a namespace cannot carry it. That device's
+   graph-bypassing "freehand" motion — raw Cartesian, joint, rail — sat at
+   `/move/*`, `/track/*` and `/velocity/*`, ten months older than the
+   `/control/*` convention, so the family most in need of the rule was the
+   one family the wording did not name. The SDK boundary is the rule; a URL
+   prefix is only ever evidence of it.)
 2. **Never bypass, weaken, or work around an interlock** at any layer
    (hardware limits, device state machines, skill preconditions, project
    plan interlocks — see `INTERLOCKS.md`). If an interlock blocks an

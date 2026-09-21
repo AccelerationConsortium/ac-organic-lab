@@ -29,8 +29,9 @@ and flag the conflict.
 Load-bearing rules worth internalizing (the contract is authoritative, this is
 just the short list agents most often need):
 
-- Drive hardware only through the `lab-skills` SDK — never raw device
-  `/control/*`. The SDK refusing a call is the safety system working.
+- Drive hardware only through the `lab-skills` SDK — never by composing HTTP
+  to a device endpoint directly, whatever its path. The SDK refusing a call is
+  the safety system working.
 - Never bypass or weaken an interlock at any layer. If one blocks you, stop and
   report — do not retry with adjusted parameters to get past it.
 - Only human-approved, `main`-merged, validated plans execute against hardware.
