@@ -907,12 +907,26 @@ equipment:
     protocol: "1.0"
     base_url: http://100.64.254.5:8010
     status_path: /status
-    poll_timeout_seconds: 3.0
+    # 8 s like the other gaia-hosted entries: this is a tailnet hop over the
+    # campus radio, where a cold fetch has been measured at several seconds.
+    # Was 3 s, from when AnaliticaDB was a loopback service on the old host.
+    poll_timeout_seconds: 8.0
     poll_interval_seconds: 30.0
     tiles:
       web_services: { w: 2, h: 1 }
     # No landing page of its own: the edge sends /analyticadb to the Swagger UI.
     pills: { link_label: Open, link_href: /analyticadb/docs, authorized_only: true }
+
+  # AnaliticaDB's preview companion on gaia (`analytica-preview`, :8011) has
+  # deliberately NO entry here. Probed 2026-09-22: it serves `/health` ->
+  # {"status":"healthy"} and 404s `/status`, so it speaks no STATUS_SPEC
+  # envelope. `adapter: http` against /health would give the poller nothing to
+  # read, and `adapter: mock` would show a permanently green tile that checks
+  # nothing — the same cosmetic pill laagente_analitica carries. Either give
+  # the preview a real /status envelope and register it properly, or leave it
+  # to gaia's hostops instance, whose probe ports already include 8011
+  # (add `paths = { 8011 = "/health" }` to that config so the probe stops
+  # 404ing). See ops/records/GAIA-MONITORING-2026-09-22.md.
 
   # BitacoraDB — the SDL2 lab's own ELN+LIMS record layer
   # (AccelerationConsortium/BitacoraDB, in service since 2026-09-03). This is where
