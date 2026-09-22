@@ -1095,6 +1095,35 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills: {}
 
+  # sdl-lab-hostops on this host (sdl2-orchestration, 100.64.254.6) — the
+  # dashboard's own machine: one non-redundant 98 GB LVM volume carrying every
+  # service plus the dashboard's SQLite. systemd backend, read-only
+  # (`restartable = []`), config
+  # `~/caoyang/sdl-lab-hostops/hostops-orchestration.local.toml`. Separate from
+  # the stdio instance Hermes spawns per connection (`hostops_agents_server`):
+  # same code, different transport.
+  # Caveat worth remembering rather than rediscovering: a host cannot report
+  # its own death. If this machine goes down the tile goes grey and nothing
+  # here notices — and Uptime Kuma shares the blind spot since it moved here
+  # too. This tile is for the failure that is actually likely: the disk filling.
+  # Thresholds are tighter than the library defaults (85/92%, 10/5 GB free)
+  # because on a 98 GB volume the percentage moves slowly while the absolute
+  # headroom is what runs out.
+  - id: hostops_orchestration
+    name: Orchestration Server
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    base_url: http://100.64.254.6:8060
+    tailscale_ip: 100.64.254.6
+    status_path: /status
+    # 3 s: this is the dashboard polling its own host, not a tailnet hop.
+    poll_timeout_seconds: 3.0
+    poll_interval_seconds: 30.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
   # Environmental sensor stations. Add one entry per physical sensor unit.
   # The lab map is rotated 90° clockwise from the building plan, so on screen
   # north is up and south is down. Zones (in % of map width × height):
