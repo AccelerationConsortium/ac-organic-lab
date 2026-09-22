@@ -1054,6 +1054,33 @@ equipment:
       web_services: { w: 2, h: 1 }
     pills: {}
 
+  # sdl-lab-hostops instance on gaia (sdl2-server-gaia, 100.64.254.5) — the
+  # data server: ZFS pool `tank`, every backup, AnaliticaDB and its Postgres,
+  # LaAgenteAnalitica, and the speech-to-text service this dashboard depends
+  # on. systemd backend (Debian), run as sdl2, bound to the literal tailnet
+  # address because gaia's own services bind it too. GET /status is
+  # unauthenticated by design (read-only §9 clause, v1.2 with no control
+  # surface — MCP tools are bearer-token gated); no "Open" pill, it is not a
+  # browsable UI.
+  # The ID is load-bearing: gaia's backup folders are named after registry IDs
+  # (~/storage/external/<id>/), and `gaia_host` is renamed to `hostops_gaia`
+  # on the gaia side once this entry is live.
+  - id: hostops_gaia
+    name: Gaia Data Server
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    base_url: http://100.64.254.5:8060
+    tailscale_ip: 100.64.254.5
+    status_path: /status
+    # 8 s to match the other hosts: gaia is reached over the campus-Wi-Fi
+    # tailnet path, same as the device PCs.
+    poll_timeout_seconds: 8.0
+    poll_interval_seconds: 30.0
+    tiles:
+      web_services: { w: 2, h: 1 }
+    pills: {}
+
   # Environmental sensor stations. Add one entry per physical sensor unit.
   # The lab map is rotated 90° clockwise from the building plan, so on screen
   # north is up and south is down. Zones (in % of map width × height):
