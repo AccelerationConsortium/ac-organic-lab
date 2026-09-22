@@ -1246,3 +1246,131 @@ def test_claim_gated_delete_runs_the_claim_dance() -> None:
     assert claim_route.called, "DELETE must acquire a claim before acting"
     assert action_route.calls.last.request.headers["x-claim-token"] == "tok-del"
     assert release_route.called, "the claim must be released afterwards"
+
+
+# -- force/torque passthrough -------------------------------------------------
+#
+# The xArm's six-axis sensor lives at the device root (``/force-torque/*``),
+# a sibling of ``/status`` rather than a member of ``/control/*``. These pin
+# the two halves of that contract: reads take no claim, actions do, and the
+# two motion verbs on the same namespace stay unreachable.
+
+
+def _xarm_entry(**overrides: Any) -> Any:
+    base = {
+        "id": "xarm_translocation",
+        "kind": "robot_arm",
+        "adapter": "http",
+        "protocol": "1.2",
+        "base_url": "http://127.0.0.1:8000",
+        "status_path": "/status",
+    }
+    base.update(overrides)
+    obj = MagicMock(spec_set=list(base.keys()))
+    for key, value in base.items():
+        setattr(obj, key, value)
+    return obj
+
+
+@respx.mock
+def test_force_torque_read_hits_device_root_without_claiming() -> None:
+    """A sensor read must not serialise against a running operation."""
+    app = _make_app(_xarm_entry())
+    claim_route = respx.post("http://127.0.0.1:8000/control/claim")
+    data_route = respx.get("http://127.0.0.1:8000/force-torque/data").mock(
+        return_value=httpx.Response(
+            200, json={"data": [0.1, 0, 0, 0, 0, 0], "calibrated": True}
+        )
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/api/equipment/xarm_translocation/force-torque/data")
+
+    assert r.status_code == 200
+    assert r.json()["calibrated"] is True
+    assert data_route.called
+    # Crucially: no /control/ in the path, and no claim taken for a GET.
+    assert not claim_route.called
+
+
+@respx.mock
+def test_force_torque_enable_takes_a_claim_and_releases_it() -> None:
+    app = _make_app(_xarm_entry())
+    respx.post("http://127.0.0.1:8000/control/claim").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "claim_token": "tok-ft",
+                "heartbeat_interval_s": 10.0,
+                "expires_at": "2026-09-22T20:00:00Z",
+            },
+        )
+    )
+    enable_route = respx.post("http://127.0.0.1:8000/force-torque/enable").mock(
+        return_value=httpx.Response(200, json={"message": "enabled"})
+    )
+    release_route = respx.post("http://127.0.0.1:8000/control/release").mock(
+        return_value=httpx.Response(204)
+    )
+
+    with TestClient(app) as client:
+        r = client.post("/api/equipment/xarm_translocation/force-torque/enable")
+
+    assert r.status_code == 200
+    assert enable_route.called
+    assert enable_route.calls.last.request.headers["x-claim-token"] == "tok-ft"
+    assert release_route.called
+
+
+@respx.mock
+@pytest.mark.parametrize("verb", ["move-until-force", "move-joint-until-torque"])
+def test_force_torque_motion_verbs_are_not_exposed(verb: str) -> None:
+    """These drive the arm; motion belongs to the graph surface, not here."""
+    app = _make_app(_xarm_entry())
+    claim_route = respx.post("http://127.0.0.1:8000/control/claim")
+    device_route = respx.post(f"http://127.0.0.1:8000/force-torque/{verb}")
+
+    with TestClient(app) as client:
+        r = client.post(
+            f"/api/equipment/xarm_translocation/force-torque/{verb}",
+            json={"direction": 2, "threshold": 5},
+        )
+
+    assert r.status_code == 404
+    assert "motion" in str(r.json()["detail"]).lower()
+    # Refused before any device hop, so nothing was claimed and nothing moved.
+    assert not claim_route.called
+    assert not device_route.called
+
+
+@respx.mock
+def test_force_torque_rejects_unknown_action() -> None:
+    app = _make_app(_xarm_entry())
+
+    with TestClient(app) as client:
+        r = client.post("/api/equipment/xarm_translocation/force-torque/wipe")
+
+    assert r.status_code == 404
+    assert "wipe" in str(r.json()["detail"])
+
+
+@respx.mock
+def test_force_torque_read_verb_rejected_on_post() -> None:
+    app = _make_app(_xarm_entry())
+
+    with TestClient(app) as client:
+        r = client.post("/api/equipment/xarm_translocation/force-torque/status")
+
+    assert r.status_code == 405
+
+
+@respx.mock
+def test_force_torque_surface_is_robot_arm_only() -> None:
+    """A camera has no force/torque sensor; don't proxy blindly by path."""
+    app = _make_app(_entry(kind="camera"))
+
+    with TestClient(app) as client:
+        r = client.get("/api/equipment/cam_lab499_west/force-torque/data")
+
+    assert r.status_code == 404
+    assert "force/torque" in str(r.json()["detail"])

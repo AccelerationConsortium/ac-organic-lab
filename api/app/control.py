@@ -123,6 +123,83 @@ def _device_url(base_url: str, status_path: str, sub: str) -> str:
     return f"{base}{prefix}/{suffix}"
 
 
+# The six-axis force/torque surface. Like the safety floor below it is a
+# sibling of ``/status`` rather than a member of ``/control/*`` -- the xArm
+# grew it alongside ``/gripper/*`` and ``/track/*``, predating the
+# ``/control/*`` convention -- so it needs the root-level URL builder. Unlike
+# the safety floor it is NOT claim-exempt: the device gates every mutating
+# verb with ``Depends(require_claim)``. These therefore go through ``_proxy``
+# (auth + claim dance + audit), not ``_device_action_proxy``.
+#
+# Split by method because the device splits by claim: the two reads are
+# deliberately ungated there (a status poll must not serialise against a real
+# operation) while the four actions are claim-gated.
+_FORCE_TORQUE_READS = frozenset({"status", "data"})
+_FORCE_TORQUE_ACTIONS = frozenset({"enable", "disable", "calibrate", "check-safety"})
+
+# Deliberately NOT exposed. ``move-until-force`` and ``move-joint-until-torque``
+# drive the arm. Motion on this device belongs to the motion-graph surface that
+# carries the pose and interlock checks, so routing them through here would be
+# a way to move the arm that bypasses the graph entirely. They stay unreachable
+# from the dashboard; a caller that needs them holds its own claim and goes
+# through the SDK, where ``validate_plan`` still applies.
+_FORCE_TORQUE_MOTION = frozenset({"move-until-force", "move-joint-until-torque"})
+
+
+def _assert_force_torque_action(
+    request: Request, equipment_id: str, action: str, method: str
+) -> None:
+    """Refuse anything outside the force/torque allowlist for this method.
+
+    Fails closed and says why: an excluded motion verb, a verb used with the
+    wrong method, and an unknown verb are three different operator mistakes
+    and each gets its own answer.
+    """
+
+    aggregator = getattr(request.app.state, "aggregator", None)
+    if aggregator is None:
+        raise HTTPException(status_code=503, detail="Aggregator not initialised")
+    entry = aggregator.entry(equipment_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Unknown equipment id: {equipment_id}")
+    kind = getattr(entry, "kind", None)
+    if kind != "robot_arm":
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Equipment {equipment_id!r} (kind={kind!r}) has no "
+                "force/torque surface"
+            ),
+        )
+
+    normalized = action.strip("/")
+    allowed = _FORCE_TORQUE_READS if method == "GET" else _FORCE_TORQUE_ACTIONS
+    if normalized in allowed:
+        return
+    if normalized in _FORCE_TORQUE_MOTION:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"{normalized!r} commands arm motion and is not exposed through "
+                "the force/torque passthrough; use the motion-graph surface"
+            ),
+        )
+    counterpart = _FORCE_TORQUE_ACTIONS if method == "GET" else _FORCE_TORQUE_READS
+    if normalized in counterpart:
+        raise HTTPException(
+            status_code=405,
+            detail=f"force-torque/{normalized} is not a {method} endpoint",
+        )
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            f"Unknown force/torque action {normalized!r}; "
+            f"reads={sorted(_FORCE_TORQUE_READS)} "
+            f"actions={sorted(_FORCE_TORQUE_ACTIONS)}"
+        ),
+    )
+
+
 def _get_control_client(request: Request) -> httpx.AsyncClient:
     """Return the app-wide shared :class:`httpx.AsyncClient`.
 
@@ -204,6 +281,53 @@ def build_control_router() -> APIRouter:
         it can't become a general side-door. See ``_device_action_proxy``.
         """
         return await _device_action_proxy(request, equipment_id, action, body)
+
+    @router.get("/{equipment_id}/force-torque/{action:path}")
+    async def force_torque_get(
+        equipment_id: str,
+        action: str,
+        request: Request,
+    ) -> dict:
+        """Read the six-axis force/torque sensor.
+
+        ``status`` reports enabled/calibrated, the zero point and the last
+        reading; ``data`` returns the live 6-vector plus force and torque
+        magnitudes. Both are ungated on the device and ``_proxy`` never claims
+        for GET, so polling here cannot serialise against a real operation.
+        """
+        _assert_force_torque_action(request, equipment_id, action, "GET")
+        return await _proxy(
+            request,
+            equipment_id,
+            f"force-torque/{action.strip('/')}",
+            "GET",
+            None,
+            root_level=True,
+        )
+
+    @router.post("/{equipment_id}/force-torque/{action:path}")
+    async def force_torque_post(
+        equipment_id: str,
+        action: str,
+        request: Request,
+        body: dict | None = None,
+    ) -> dict:
+        """Enable, disable, calibrate, or safety-check the sensor.
+
+        Claim-gated on the device, so this takes the standard per-request
+        claim through ``_proxy``. ``enable`` re-zeros the sensor inline and
+        takes ~10 s (100 samples x 0.1 s); the robot-arm control timeout of
+        180 s covers it comfortably.
+        """
+        _assert_force_torque_action(request, equipment_id, action, "POST")
+        return await _proxy(
+            request,
+            equipment_id,
+            f"force-torque/{action.strip('/')}",
+            "POST",
+            body,
+            root_level=True,
+        )
 
     @router.get("/{equipment_id}/plate/{sub:path}")
     async def plate_get(equipment_id: str, sub: str, request: Request) -> Any:
@@ -751,6 +875,8 @@ async def _proxy(
     action: str,
     method: str,
     body: dict | None,
+    *,
+    root_level: bool = False,
 ) -> dict:
     aggregator = getattr(request.app.state, "aggregator", None)
     if aggregator is None:
@@ -771,7 +897,16 @@ async def _proxy(
         from .lumastir_control import proxy as lumastir_proxy
         return await lumastir_proxy(request, entry, action, method, body)
 
-    target = _control_url(entry.base_url, entry.status_path, action)
+    # ``root_level`` targets a namespace that is a sibling of ``/status``
+    # rather than a member of ``/control/*``. Everything else about the hop —
+    # auth, the claim dance, audit, error mapping — is identical, which is the
+    # whole reason these callers reuse ``_proxy`` instead of growing a parallel
+    # path that would drift out of sync with it.
+    target = (
+        _device_url(entry.base_url, entry.status_path, action)
+        if root_level
+        else _control_url(entry.base_url, entry.status_path, action)
+    )
 
     # v1.1 devices may enforce X-Claim-Token on /control/*. We acquire a
     # short-lived claim per request, attach the token, then release in a
