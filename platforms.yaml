@@ -72,12 +72,15 @@ sections:
     description: Reaction, workup and analysis bench driven by automated-lle
     href: /platforms/process_chemistry
     kind: platform
-    # Monitoring only (2026-09-06): the tiles come from a read-only gateway on
-    # the bench PC, and the bench is driven by automated-lle and ChemStation.
+    # Mostly monitoring: the bench is driven by automated-lle and ChemStation,
+    # and those tiles come from a read-only gateway on the bench PC. The
+    # chiller (2026-09-22) is the exception — it is claim-gated control, not
+    # observation.
     equipment:
       # First camera supplies the Overview card's live feed.
       - cam_echem_tapo_c245
       - lle_easymax
+      - lle_chiller
       - lle_ur5_arm
       - lle_hplc
       - lle_xpr_balance

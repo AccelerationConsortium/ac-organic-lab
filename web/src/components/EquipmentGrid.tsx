@@ -3,6 +3,7 @@ import { isMonitoringOnly, isReadOnlyUrArm } from "@/lib/tile-policy";
 import { CameraTile } from "./CameraTile";
 import { XprBalanceTile } from "./XprBalanceTile";
 import { EasyMaxTile } from "./EasyMaxTile";
+import { ChillerTile } from "./ChillerTile";
 import { LumastirTile } from "./LumastirTile";
 import { EquipmentStatusCard } from "./EquipmentStatusCard";
 import { FumeHoodTile } from "./FumeHoodTile";
@@ -90,6 +91,10 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
                     <LumastirTile snapshot={snapshot} />
                   ) : snapshot.id === "lle_easymax" ? (
                     <EasyMaxTile snapshot={snapshot} />
+                  ) : snapshot.id === "lle_chiller" ? (
+                    // kind is `other` (the contract has no chiller member),
+                    // so this has to be an id branch.
+                    <ChillerTile snapshot={snapshot} />
                   ) : snapshot.kind === "camera" ? (
                     <CameraTile snapshot={snapshot} />
                   ) : snapshot.kind === "power_strip" || snapshot.kind === "smart_plug" ? (
