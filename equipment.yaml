@@ -1534,7 +1534,7 @@ equipment:
       - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
       - { label: llms.txt, path: /llms.txt, kind: text }
     tiles:
-      process_chemistry: { w: 2, h: 2 }
+      process_chemistry: { w: 2, h: 1 }
     pills: {}
 
   - id: lle_ph_unit
