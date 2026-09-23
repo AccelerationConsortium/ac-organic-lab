@@ -2,8 +2,8 @@
 
 Reference device: :mod:`xarm_translocation` (UFactory xArm5), now on
 STATUS_SPEC v1.1 with a claim-gated **graph** control surface. Motion is
-expressed as moves between named nodes in a motion graph rather than raw
-cartesian/joint targets; the device enforces ``X-Claim-Token`` on every
+normally expressed as moves between named nodes in a motion graph. The
+xArm-specific freehand skills expose Cartesian/joint targets in OFF or ADVISORY; the device enforces ``X-Claim-Token`` on every
 ``/control/*`` call (423 without a valid claim).
 
 Live control surface (``/control/graph/*``):
@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .models import SkillDef
 from .registry import register
@@ -102,6 +102,77 @@ class GraphModeArgs(BaseModel):
     mode: Literal["off", "advisory", "strict"] = Field(
         description="Graph interlock mode: off, advisory, or strict.",
     )
+
+
+    reason: str | None = Field(
+        default=None,
+        description="Required when lowering to off/advisory; reason for the bounded override.",
+    )
+    ttl_seconds: float | None = Field(
+        default=None, ge=1,
+        description="Override duration in seconds; device applies its configured default and cap. Reverts to strict on expiry or claim release/expiry.",
+    )
+
+
+class FreehandPositionArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    x: float = Field(description="Absolute TCP X coordinate in mm.")
+    y: float = Field(description="Absolute TCP Y coordinate in mm.")
+    z: float = Field(description="Absolute TCP Z coordinate in mm.")
+    roll: float | None = Field(default=None, description="Roll in degrees; omitted keeps current orientation.")
+    pitch: float | None = Field(default=None, description="Pitch in degrees; omitted keeps current orientation.")
+    yaw: float | None = Field(default=None, description="Yaw in degrees; omitted keeps current orientation.")
+    speed: float | None = Field(default=None, description="TCP speed in mm/s; device safety limits apply.")
+    check_collision: bool = Field(default=True, description="Perform the device collision check.")
+    wait: bool = Field(default=True, description="Wait for completion inside the device background task; HTTP response still means accepted.")
+
+
+class FreehandRelativeArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    dx: float = Field(default=0, description="TCP X displacement in mm.")
+    dy: float = Field(default=0, description="TCP Y displacement in mm.")
+    dz: float = Field(default=0, description="TCP Z displacement in mm.")
+    droll: float = Field(default=0, description="Roll change in degrees.")
+    dpitch: float = Field(default=0, description="Pitch change in degrees.")
+    dyaw: float = Field(default=0, description="Yaw change in degrees.")
+    speed: float | None = Field(default=None, description="TCP speed in mm/s; device safety limits apply.")
+
+
+class FreehandJointsArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    angles: list[float] = Field(description="Joint angles in degrees, one per robot joint.")
+    speed: float | None = Field(default=None, description="Joint speed in degrees/s.")
+    acceleration: float | None = Field(default=None, description="Joint acceleration in degrees/s squared.")
+    check_collision: bool = Field(default=True, description="Perform the device collision check.")
+    wait: bool = Field(default=True, description="Wait inside the background task; poll status after command acceptance.")
+
+
+# Device-specific: other robot arms do not implement these endpoints.
+FREEHAND_SKILLS = [
+    SkillDef(
+        name=f"freehand.{name}",
+        kind="robot_arm",
+        description=(
+            f"{description} Requires graph mode OFF or ADVISORY and an active claim. "
+            "STRICT refuses with 409. Device workspace, collision, concurrency and "
+            "configured interlock checks still apply. Clears the named node pin. "
+            "The response means accepted, not completed; poll status for completion. "
+            "Availability follows the device's allowed_actions."
+        ),
+        endpoint=f"/control/freehand/{name}",
+        args_schema=args,
+        requires_states=["ready", "degraded", "dry_run"],
+        estimated_duration_s=10.0,
+    )
+    for name, description, args in (
+        ("position", "Move the xArm to an absolute Cartesian TCP pose.", FreehandPositionArgs),
+        ("relative", "Move the xArm by a relative Cartesian TCP offset.", FreehandRelativeArgs),
+        ("joints", "Move the xArm to joint angles.", FreehandJointsArgs),
+    )
+]
 
 
 register(
@@ -173,7 +244,7 @@ register(
         SkillDef(
             name="graph.mode",
             kind="robot_arm",
-            description="Set the graph interlock mode (off / advisory / strict).",
+            description="Set graph mode (off / advisory / strict). Lowering requires a reason and opens a bounded window; expiry or claim release restores strict.",
             endpoint="/control/graph/mode",
             args_schema=GraphModeArgs,
             requires_states=["ready"],
@@ -266,6 +337,10 @@ REALSENSE_SKILLS = [
 
 __all__ = [
     "REALSENSE_SKILLS",
+    "FREEHAND_SKILLS",
+    "FreehandPositionArgs",
+    "FreehandRelativeArgs",
+    "FreehandJointsArgs",
     "GraphGripperArgs",
     "GraphModeArgs",
     "GraphMoveToArgs",

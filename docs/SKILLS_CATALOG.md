@@ -224,3 +224,23 @@ Skill names are part of the SDK's API surface. Renaming a skill is a breaking ch
 - `docs/STATUS_SPEC.md` — the device contract that the catalog mirrors
 - `docs/INTERLOCKS.md` — how the catalog feeds plan validation
 - `docs/ARCHITECTURE.md` — overall system layering
+
+## xArm Cartesian motion
+
+`skills_for("robot_arm", "xarm_translocation")` includes `freehand.position`,
+`freehand.relative`, and `freehand.joints`. They map to the device's matching
+`/control/freehand/*` endpoints and are specific to the xArm; other robot arms
+retain their own catalogs. The dashboard API Reference obtains their argument
+schemas from `/api/catalog`, as do SDK discovery consumers.
+
+These actions require the device to advertise them in `allowed_actions` (OFF
+or ADVISORY while available). They use the existing SDK claim and precondition
+handling. They do not lower graph mode automatically. `graph.mode` accepts
+`mode`, `reason`, and `ttl_seconds`; lowering requires a reason, and the device
+controls the default/cap and restores STRICT on expiry or claim release.
+
+Cartesian coordinates/displacements use mm and orientations use degrees. A
+successful motion HTTP response acknowledges acceptance; observe status for
+completion/errors before the next move. Raw moves clear the named pose pin;
+recover to a verified node before resuming graph motion. The linked device
+agent guide and OpenAPI provide the full operating semantics and schemas.
