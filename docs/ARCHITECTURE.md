@@ -314,6 +314,17 @@ Three pieces:
     `reasoning_effort: high`; `claude-cli` (haiku / sonnet) is the fallback
     only. Note `openai` names the wire protocol, not the vendor — the
     endpoint is `ASSISTANT_OPENAI_BASE_URL` (default OpenRouter).
+  **Current deployment (2026-09-21):** both modes run the `hermes` backend
+  (`assistant_hermes.py`, `ASSISTANT_HERMES_MODEL`) on
+  `deepseek/deepseek-v4.1-flash`. It replaced
+  `deepseek/deepseek-v4-flash-vision-exp`, which the OpenRouter workspace
+  guardrail stopped allowing — a blocked slug returns 404 on every turn, so
+  the model pinned here is a live dependency, not a preference. The `openai`
+  and `claude-cli` backends stay installed as fallbacks. Note the two-line
+  journald claim below holds only for those two: `assistant turn done:` is
+  emitted by `assistant_openai.py:853` and `assistant.py:1225`, neither of
+  which the `hermes` backend goes through. On the current deployment, follow
+  `assistant chat:` (`assistant.py:1414`, in the dispatcher) instead.
   Every turn writes two journald lines (`assistant chat:` — who asked;
   `assistant turn done:` — elapsed, rounds, tokens, backend, model) so
   latency and account burn are observable per backend.

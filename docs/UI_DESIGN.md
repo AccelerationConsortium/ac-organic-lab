@@ -1456,7 +1456,9 @@ card asks in print even when the model forgets.
 #### Camera frames in the chat, and progress pills at the bottom (2026-09-04, operator request)
 
 Two things the operator asked for the same afternoon the assistant moved to a
-vision-capable model (`deepseek-v4-flash-vision-exp`).
+vision-capable model (`deepseek-v4-flash-vision-exp`; retired 2026-09-21 when
+the OpenRouter workspace guardrail stopped allowing it — now
+`deepseek/deepseek-v4.1-flash`, vision-capable in the same way).
 
 **"Use the camera and show me."** `lab-history` gained
 `capture_camera_snapshot(camera_id, lens)`, a read tool in both modes. It
