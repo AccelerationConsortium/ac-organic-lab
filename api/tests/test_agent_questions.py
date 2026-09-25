@@ -131,6 +131,86 @@ async def test_worker_runs_one_answer_only(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_worker_falls_back_only_when_codex_is_unavailable(monkeypatch):
+    calls = []
+
+    async def unavailable(question: str, context: str | None) -> str:
+        raise aq.CodexUnavailable(503, "Codex CLI is unavailable")
+
+    async def fallback(question: str, context: str | None) -> str:
+        calls.append((question, context))
+        return "OpenRouter answer."
+
+    monkeypatch.setattr(worker, "_ask_codex", unavailable)
+    monkeypatch.setattr(worker, "_ask_openrouter", fallback)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=worker.app), base_url="http://worker"
+    ) as caller:
+        response = await caller.post("/questions", json={"question": "Explain", "context": "Details"})
+    assert response.status_code == 200
+    assert response.json() == {"answer": "OpenRouter answer."}
+    assert calls == [("Explain", "Details")]
+
+    async def denied(question: str, context: str | None) -> str:
+        raise aq.HTTPException(400, "Remove credentials")
+
+    monkeypatch.setattr(worker, "_ask_codex", denied)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=worker.app), base_url="http://worker"
+    ) as caller:
+        response = await caller.post("/questions", json={"question": "Explain"})
+    assert response.status_code == 400
+    assert calls == [("Explain", "Details")]
+
+
+@pytest.mark.asyncio
+async def test_openrouter_fallback_uses_gpt6_high_fast_without_exposing_key(monkeypatch):
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Answer."}}]})
+
+    monkeypatch.setenv("AGENT_CONSULTANT_OPENROUTER_API_KEY", "test-key-not-for-model")
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(aq.httpx, "AsyncClient", lambda **kwargs: original_client(
+        transport=httpx.MockTransport(respond), **kwargs
+    ))
+    assert await aq._ask_openrouter("Question?", "Supplied context") == "Answer."
+    request = requests[0]
+    payload = json.loads(request.content)
+    assert str(request.url) == aq.OPENROUTER_URL
+    assert request.headers["authorization"] == "Bearer test-key-not-for-model"
+    assert payload["model"] == "openai/gpt-6-sol"
+    assert payload["reasoning"] == {"effort": "high"}
+    assert payload["service_tier"] == "priority"
+    assert "test-key-not-for-model" not in request.content.decode()
+
+
+@pytest.mark.asyncio
+async def test_openrouter_fallback_requires_key_and_withholds_credentials(monkeypatch):
+    monkeypatch.delenv("AGENT_CONSULTANT_OPENROUTER_API_KEY", raising=False)
+    with pytest.raises(aq.HTTPException) as missing:
+        await aq._ask_openrouter("Question?")
+    assert missing.value.status_code == 503
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "sk-proj-abcdefghijklmnop1234"}}],
+        })
+
+    monkeypatch.setenv("AGENT_CONSULTANT_OPENROUTER_API_KEY", "test-key")
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(aq.httpx, "AsyncClient", lambda **kwargs: original_client(
+        transport=httpx.MockTransport(respond), **kwargs
+    ))
+    with pytest.raises(aq.HTTPException) as withheld:
+        await aq._ask_openrouter("Question?")
+    assert withheld.value.status_code == 502
+    assert "withheld" in withheld.value.detail
+
+
+@pytest.mark.asyncio
 async def test_unavailable_worker_fails_closed(client, monkeypatch, tmp_path):
     monkeypatch.setenv("AGENT_CONSULTANT_SOCKET", str(tmp_path / "absent.sock"))
     response = await client.post("/api/agent/questions", json={"question": "Hello"},
@@ -176,6 +256,7 @@ async def test_codex_turn_enforces_read_only_and_returns_final_answer(monkeypatc
 
     monkeypatch.setenv("AGENT_QUESTIONS_CODEX_BIN", "/usr/bin/codex")
     monkeypatch.setenv("ASSISTANT_OPENAI_API_KEY", "must-not-pass-to-codex")
+    monkeypatch.setenv("AGENT_CONSULTANT_OPENROUTER_API_KEY", "must-not-pass-to-codex-either")
     auth_file = tmp_path / "auth.json"
     auth_file.write_text("test login")
     monkeypatch.setattr(aq, "_auth_file", lambda: auth_file)
@@ -199,6 +280,7 @@ async def test_codex_turn_enforces_read_only_and_returns_final_answer(monkeypatc
     assert "Question?" in captured["prompt"]
     assert "Caller-supplied context" in captured["prompt"]
     assert "ASSISTANT_OPENAI_API_KEY" not in captured["env"]
+    assert "AGENT_CONSULTANT_OPENROUTER_API_KEY" not in captured["env"]
     assert captured["env"]["CODEX_HOME"] != str(auth_file.parent)
     assert captured["env"]["HOME"] == captured["env"]["CODEX_HOME"]
 

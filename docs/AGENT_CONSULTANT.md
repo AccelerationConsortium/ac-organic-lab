@@ -25,6 +25,13 @@ Codex turn runs at a time, with a 180-second limit. The answer is general
 advice based on the supplied text. It cannot inspect the repository, devices,
 or lab records and must not be treated as a validated hardware plan.
 Each turn selects `gpt-6-sol`, high reasoning effort, and Fast mode explicitly.
+If Codex cannot start, is not logged in, times out, or returns no answer, the
+worker tries OpenRouter's `openai/gpt-6-sol` with high reasoning and priority
+service tier. Caller authentication failures, denied questions, and answers withheld
+for credential content do not trigger fallback. Both paths use the same
+credential checks and answer-only instruction. The Codex attempt is capped at
+90 seconds and the fallback at 75 seconds within the endpoint's 180-second
+limit.
 
 ```bash
 curl -sS https://DASHBOARD_HOST/api/agent/feedback \
@@ -68,6 +75,12 @@ account a Codex CLI login and outbound access to the model service and Slack.
 The socket defaults to `/run/agent-consultant/worker.sock`; set
 `AGENT_CONSULTANT_SOCKET` in the API's private environment if needed. The
 worker socket must stay off the public edge.
+
+Set `AGENT_CONSULTANT_OPENROUTER_API_KEY` in the worker's private
+`/etc/agent-consultant.env` to enable fallback. The worker sends it only as the
+OpenRouter authorization header; the key is never put in the model prompt or
+passed to the Codex subprocess. With no fallback key, Codex outages return
+HTTP 503.
 
 Put `AGENT_CONSULTANT_SLACK_WEBHOOK_URL` in `/etc/agent-consultant.env` with
 root-only permissions. The webhook determines the receiving channel; it is not

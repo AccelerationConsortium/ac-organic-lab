@@ -13,7 +13,10 @@ import os
 import httpx
 
 from fastapi import FastAPI, HTTPException
-from .agent_questions import AgentQuestion, AgentFeedback, _ask_codex, _contains_credential
+from .agent_questions import (
+    AgentQuestion, AgentFeedback, CodexUnavailable, _ask_codex,
+    _ask_openrouter, _contains_credential,
+)
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 _turn_lock = asyncio.Lock()
@@ -24,7 +27,11 @@ async def answer(body: AgentQuestion) -> dict[str, str]:
     if _turn_lock.locked():
         raise HTTPException(429, "another Codex question is in progress")
     async with _turn_lock:
-        return {"answer": await _ask_codex(body.question, body.context)}
+        try:
+            answer = await _ask_codex(body.question, body.context)
+        except CodexUnavailable:
+            answer = await _ask_openrouter(body.question, body.context)
+        return {"answer": answer}
 
 
 class FeedbackDelivery(AgentFeedback):

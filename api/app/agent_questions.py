@@ -19,6 +19,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 logger = logging.getLogger(__name__)
 
 TIMEOUT_S = 180
+CODEX_TIMEOUT_S = 90
+OPENROUTER_TIMEOUT_S = 75
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 WORKER_SOCKET = "/run/agent-consultant/worker.sock"
 DEFAULT_ALLOWLIST = Path(__file__).resolve().parents[1] / "agent-consultant.local.json"
 _CREDENTIAL_RE = re.compile(
@@ -30,6 +33,21 @@ _CREDENTIAL_RE = re.compile(
     r"[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9+/_=-]{12,}",
     re.IGNORECASE,
 )
+
+CONSULTANT_INSTRUCTIONS = (
+    "Answer the following lab agent's question from your general knowledge "
+    "and the context supplied by the caller. You have no repository, "
+    "device, or lab-record access. Do not claim to have inspected live state. "
+    "Do not edit files, run hardware actions, write records, or ask for "
+    "elevated permissions. Never request or provide secrets, passwords, "
+    "API keys, access tokens, private keys, or credential values. If asked "
+    "for one, refuse briefly and suggest a placeholder. If the answer "
+    "requires an action, explain what a human should review."
+)
+
+
+class CodexUnavailable(HTTPException):
+    """Codex could not complete a turn, so the worker may try OpenRouter."""
 
 
 class ConsultantAllowlist(BaseModel):
@@ -59,6 +77,10 @@ class FeedbackReceipt(BaseModel):
 
 def _contains_credential(text: str) -> bool:
     return bool(_CREDENTIAL_RE.search(text))
+
+
+def _question_text(question: str, context: str | None) -> str:
+    return f"Question:\n{question}\n\nCaller-supplied context:\n{context or '(none)'}"
 
 
 def _check_consultant_access(actor: str) -> None:
@@ -109,7 +131,7 @@ def _final_answer(output: bytes) -> str:
             if item.get("type") == "agent_message" and isinstance(item.get("text"), str):
                 answer = item["text"]
     if not answer.strip():
-        raise HTTPException(502, "Codex returned no answer")
+        raise CodexUnavailable(502, "Codex returned no answer")
     if _contains_credential(answer):
         raise HTTPException(502, "Codex answer was withheld because it may contain a credential")
     return answer.strip()
@@ -135,22 +157,11 @@ async def _ask_codex(question: str, context: str | None = None) -> str:
         raise HTTPException(400, "Remove credentials from the question and context")
     binary = os.environ.get("AGENT_QUESTIONS_CODEX_BIN") or shutil.which("codex")
     if not binary:
-        raise HTTPException(503, "Codex CLI is unavailable")
+        raise CodexUnavailable(503, "Codex CLI is unavailable")
     auth_file = _auth_file()
     if not auth_file.is_file():
-        raise HTTPException(503, "Codex CLI is not logged in for the API service")
-    prompt = (
-        "Answer the following lab agent's question from your general knowledge "
-        "and the context supplied by the caller. You have no repository, "
-        "device, or lab-record access. Do not claim to have inspected live state. "
-        "Do not edit files, run hardware actions, write records, or ask for "
-        "elevated permissions. Never request or provide secrets, passwords, "
-        "API keys, access tokens, private keys, or credential values. If asked "
-        "for one, refuse briefly and suggest a placeholder. If the answer "
-        "requires an action, explain what "
-        "a human should review.\n\n"
-        f"Question:\n{question}\n\nCaller-supplied context:\n{context or '(none)'}"
-    )
+        raise CodexUnavailable(503, "Codex CLI is not logged in for the worker")
+    prompt = f"{CONSULTANT_INSTRUCTIONS}\n\n{_question_text(question, context)}"
     # Keep the lab service's credentials out of model-generated commands. The
     # CLI gets only its own login, never an API key from the dashboard service.
     keep = ("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR")
@@ -183,21 +194,62 @@ async def _ask_codex(question: str, context: str | None = None) -> str:
                 start_new_session=True,
             )
         except OSError:
-            raise HTTPException(503, "Codex CLI could not start") from None
+            raise CodexUnavailable(503, "Codex CLI could not start") from None
         try:
             output, _errors = await asyncio.wait_for(
-                proc.communicate(prompt.encode()), timeout=TIMEOUT_S
+                proc.communicate(prompt.encode()), timeout=CODEX_TIMEOUT_S
             )
         except asyncio.TimeoutError:
             await _stop(proc)
-            raise HTTPException(504, "Codex answer timed out") from None
+            raise CodexUnavailable(504, "Codex answer timed out") from None
         except asyncio.CancelledError:
             await _stop(proc)
             raise
         if proc.returncode != 0:
             logger.warning("agent question Codex turn failed: rc=%s", proc.returncode)
-            raise HTTPException(502, "Codex could not answer this question")
+            raise CodexUnavailable(502, "Codex could not answer this question")
         return _final_answer(output)
+
+
+async def _ask_openrouter(question: str, context: str | None = None) -> str:
+    if _contains_credential(question) or (context and _contains_credential(context)):
+        raise HTTPException(400, "Remove credentials from the question and context")
+    key = os.environ.get("AGENT_CONSULTANT_OPENROUTER_API_KEY")
+    if not key:
+        raise HTTPException(503, "Agent Consultant OpenRouter fallback is not configured")
+    payload = {
+        "model": "openai/gpt-6-sol",
+        "reasoning": {"effort": "high"},
+        "service_tier": "priority",
+        "max_completion_tokens": 8192,
+        "messages": [
+            {"role": "system", "content": CONSULTANT_INSTRUCTIONS},
+            {"role": "user", "content": _question_text(question, context)},
+        ],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=OPENROUTER_TIMEOUT_S) as client:
+            result = await client.post(
+                OPENROUTER_URL,
+                headers={"Authorization": f"Bearer {key}"},
+                json=payload,
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(504, "OpenRouter fallback timed out") from None
+    except httpx.HTTPError:
+        raise HTTPException(502, "OpenRouter fallback is unavailable") from None
+    if result.status_code != 200:
+        logger.warning("Agent Consultant OpenRouter fallback failed: status=%s", result.status_code)
+        raise HTTPException(502, "OpenRouter fallback could not answer this question")
+    try:
+        answer = result.json()["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        raise HTTPException(502, "OpenRouter fallback returned no answer") from None
+    if not isinstance(answer, str) or not answer.strip():
+        raise HTTPException(502, "OpenRouter fallback returned no answer")
+    if _contains_credential(answer):
+        raise HTTPException(502, "OpenRouter answer was withheld because it may contain a credential")
+    return answer.strip()
 
 
 def build_agent_questions_router() -> APIRouter:
