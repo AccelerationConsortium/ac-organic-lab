@@ -159,3 +159,14 @@ describe("RobotArmTile INIT control", () => {
     expect(postArmConnect).toHaveBeenCalledWith("dobot_mg400");
   });
 });
+
+
+it("explains recovery and displays the device degradation reason", () => {
+  const snap = xarmSnapshot();
+  snap.status.equipment_status = "degraded";
+  snap.status.message = "ft_enable: Controller health check failed (code=0).";
+  render(<RobotArmTile snapshot={snap} />);
+  expect(screen.getByText(snap.status.message)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Clear errors & re-enable" }).title)
+    .toContain("re-enable the servos");
+});
