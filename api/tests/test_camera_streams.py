@@ -376,3 +376,38 @@ def test_socket_rejects_management_messages(client, monkeypatch):
         ws.send_json({"type": "session", "value": s["ticket"]})
         ws.send_json({"type": "exec", "value": "bad"})
         assert ws.receive_json()["type"] == "session/error"
+
+
+def test_mjpeg_gateway_auth_uses_verified_viewer(client, monkeypatch):
+    entry = client.app.state.registry.equipment[0]
+    entry.camera.transport = "mjpeg"
+    entry.camera.lenses[0].stream_path = "/cameras/overhead/stream.mjpg?fps=5"
+    entry.edge_secret_env = "TEST_CAMERA_EDGE_SECRET"
+    monkeypatch.setenv("TEST_CAMERA_EDGE_SECRET", "server-secret")
+    seen = []
+    async def record(request):
+        if request.url.host == "gibbie":
+            seen.append(dict(request.headers))
+    client.app.state.control_client.event_hooks["request"] = [record]
+    body = client.post("/api/camera-streams/sessions", json={"stream": "cam_main"},
+                       headers={"cookie": "alice"}).json()
+    response = client.get(f"/api/camera-streams/sessions/{body['id']}/mjpeg",
+                          headers={"cookie": "alice", "X-Auth-User": "forged", "X-Edge-Auth": "forged"})
+    assert response.status_code == 200
+    assert seen[0]["x-auth-user"] == "alice"
+    assert seen[0]["x-edge-auth"] == "server-secret"
+    assert seen[0]["x-auth-role"] == "user"
+    assert "server-secret" not in str(body)
+
+
+def test_mjpeg_missing_gateway_secret_releases_session(client, monkeypatch):
+    entry = client.app.state.registry.equipment[0]
+    entry.camera.transport = "mjpeg"
+    entry.camera.lenses[0].stream_path = "/cameras/overhead/stream.mjpg"
+    entry.edge_secret_env = "TEST_CAMERA_EDGE_SECRET"
+    monkeypatch.delenv("TEST_CAMERA_EDGE_SECRET", raising=False)
+    body = client.post("/api/camera-streams/sessions", json={"stream": "cam_main"},
+                       headers={"cookie": "alice"}).json()
+    response = client.get(f"/api/camera-streams/sessions/{body['id']}/mjpeg", headers={"cookie": "alice"})
+    assert response.status_code == 503
+    assert body["id"] not in client.app.state.camera_viewing.sessions

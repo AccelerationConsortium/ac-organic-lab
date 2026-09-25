@@ -335,12 +335,23 @@ def build_camera_streams_router() -> APIRouter:
             raise HTTPException(404, "This viewing session is not an MJPEG feed")
         if s.connected:
             raise HTTPException(409, "This viewing session is already connected")
+        # Forward only the broker-verified viewer identity to a registered
+        # gateway. Never copy browser-supplied identity or edge headers.
+        entry = next((e for e in request.app.state.registry.equipment if e.id == s.camera), None)
+        headers = {}
+        secret_env = getattr(entry, "edge_secret_env", None)
+        if secret_env:
+            secret = os.getenv(secret_env)
+            if not secret:
+                broker(request).end(s.id, "Camera gateway authentication unavailable")
+                raise HTTPException(503, "Camera gateway authentication unavailable")
+            headers = {"X-Edge-Auth": secret, "X-Auth-User": s.user, "X-Auth-Role": "user"}
         s.connected = True
         s.ticket = ""
         client = request.app.state.control_client
         try:
             upstream = await client.send(
-                client.build_request("GET", s.source_url),
+                client.build_request("GET", s.source_url, headers=headers),
                 stream=True,
             )
         except httpx.HTTPError:

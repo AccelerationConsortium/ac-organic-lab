@@ -275,6 +275,14 @@ equipment:
     edge_secret_env: OT2_EDGE_SECRET
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020
     tailscale_ip: 100.64.254.16
+    camera:
+      host: sdl2-pc-03-cytation.tail6a1dd7.ts.net
+      transport: mjpeg
+      lenses:
+        - id: overhead
+          label: Overhead USB
+          stream_path: /cameras/overhead/stream.mjpg?fps=5
+          ptz_capable: false
     status_path: /status
     # Robot transport (changed 2026-09-04): the OT-2 (HTE) robot
     # (`ot2cytation`, board rev A)is reachable over **instrument-LAN Ethernet** at
