@@ -1501,7 +1501,7 @@ equipment:
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
       - { label: Agent guide, path: /agent-docs, kind: markdown }
     tiles:
-      process_chemistry: { w: 2, h: 2 }
+      process_chemistry: { w: 2, h: 1 }
     pills: {}
 
   - id: lle_ph_unit
