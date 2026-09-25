@@ -20,7 +20,10 @@ export default function HplcControlPage() {
     </div>
   );
 
-  return <iframe src="/equipment/lle_hplc/control/frame"
+  // The sandboxed frame cannot read the dashboard's theme; hand it over in the
+  // fragment, which is never sent to the server.
+  const theme = document.documentElement.classList.contains("dark") ? "dark" : "light";
+  return <iframe src={`/equipment/lle_hplc/control/frame#theme=${theme}`}
     title="HPLC acquisition control preview — simulated"
     sandbox="allow-scripts" referrerPolicy="no-referrer"
     className="min-h-0 w-full flex-1 border-0 bg-transparent" />;

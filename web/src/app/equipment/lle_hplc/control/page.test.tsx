@@ -11,9 +11,17 @@ afterEach(() => { cleanup(); auth.loading = false; auth.authenticated = true; au
 it("embeds only the protected simulation with an isolated script context", () => {
   render(<HplcControlPage />);
   const frame = screen.getByTitle(TITLE);
-  expect(frame.getAttribute("src")).toBe("/equipment/lle_hplc/control/frame");
+  expect(frame.getAttribute("src")).toBe("/equipment/lle_hplc/control/frame#theme=light");
   expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
   expect(frame.getAttribute("referrerpolicy")).toBe("no-referrer");
+});
+
+it("hands the dashboard theme to the frame", () => {
+  document.documentElement.classList.add("dark");
+  try {
+    render(<HplcControlPage />);
+    expect(screen.getByTitle(TITLE).getAttribute("src")).toBe("/equipment/lle_hplc/control/frame#theme=dark");
+  } finally { document.documentElement.classList.remove("dark"); }
 });
 
 it("does not request the frame until sign-in is known", () => {
