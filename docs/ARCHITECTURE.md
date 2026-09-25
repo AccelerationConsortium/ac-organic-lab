@@ -134,6 +134,7 @@ ac-organic-lab/
 │       ├── control.py              # control passthrough (cameras, plugs)
 │       ├── workflow.py             # Phase F: authorized-run executor (SSE, abort)
 │       ├── assistant.py            # /api/assistant/chat — claude-cli backend + backend dispatch (SSE)
+│       ├── agent_questions.py      # /api/agent/questions and /api/agent/feedback — Agent Consultant
 │       ├── assistant_openai.py     # OpenAI-compatible backend (OpenRouter) over the same MCP servers
 │       ├── assistant_sessions.py   # Plan mode: assistant.db + /api/assistant/sessions/* (saved planning sessions)
 │       ├── mcp_server.py           # lab-history MCP server (read-only tools over lab.db)

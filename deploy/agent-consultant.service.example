@@ -1,0 +1,38 @@
+# Fill SERVICE_USER (a dedicated account), SERVICE_GROUP (shared with the API),
+# REPO_ROOT, and CODEX_BIN for the host. No device or dashboard secrets belong
+# in the worker's environment.
+[Unit]
+Description=AC Organic Lab Agent Consultant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=SERVICE_USER
+Group=SERVICE_GROUP
+WorkingDirectory=REPO_ROOT/api
+ExecStart=REPO_ROOT/.venv/bin/uvicorn app.agent_questions_worker:app --uds /run/agent-consultant/worker.sock --workers 1
+Environment=AGENT_QUESTIONS_CODEX_BIN=CODEX_BIN
+EnvironmentFile=-/etc/agent-consultant.env
+RuntimeDirectory=agent-consultant
+RuntimeDirectoryMode=0770
+UMask=0007
+Restart=on-failure
+RestartSec=3
+
+# Codex has outbound access to its model service. Exclude private lab networks;
+# the model-generated commands also run under Codex's read-only, offline sandbox.
+IPAddressDeny=10.0.0.0/8 100.64.0.0/10 172.16.0.0/12 192.168.0.0/16
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
