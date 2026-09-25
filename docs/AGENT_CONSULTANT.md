@@ -24,6 +24,7 @@ to 4,000 characters); optional `context` is limited to 16,000 characters. One
 Codex turn runs at a time, with a 180-second limit. The answer is general
 advice based on the supplied text. It cannot inspect the repository, devices,
 or lab records and must not be treated as a validated hardware plan.
+Each turn selects `gpt-6-sol`, high reasoning effort, and Fast mode explicitly.
 
 ```bash
 curl -sS https://DASHBOARD_HOST/api/agent/feedback \
@@ -38,6 +39,13 @@ characters. Feedback is relayed as plain text with the verified actor. It does
 not pass through an LLM or trigger a lab action. If Slack delivery is not
 configured or fails, the endpoint returns an error and the caller may retry;
 there is no durable queue.
+
+Do not include passwords, API keys, tokens, private keys, or other secrets in
+questions, context, or feedback. Agent Consultant rejects common credential
+formats before forwarding text and withholds answers that contain them. This
+pattern check cannot recognize every possible secret, so callers must redact
+their text before submitting it. The model is instructed not to request or
+provide credentials; it receives no lab credentials or caller API key.
 
 ## Deployment
 

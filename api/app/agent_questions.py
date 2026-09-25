@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import tempfile
@@ -20,6 +21,15 @@ logger = logging.getLogger(__name__)
 TIMEOUT_S = 180
 WORKER_SOCKET = "/run/agent-consultant/worker.sock"
 DEFAULT_ALLOWLIST = Path(__file__).resolve().parents[1] / "agent-consultant.local.json"
+_CREDENTIAL_RE = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----|"
+    r"\b(?:sk-(?:proj-)?|ak_|ghp_|github_pat_|xox[baprs]-|xapp-)[A-Za-z0-9_-]{12,}|"
+    r"\bBearer\s+[A-Za-z0-9._~+/-]{16,}|"
+    r"https://hooks\.slack\.com/services/\S+|"
+    r"\b(?:api[_ -]?key|access[_ -]?token|client[_ -]?secret|secret|password|passwd)"
+    r"[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9+/_=-]{12,}",
+    re.IGNORECASE,
+)
 
 
 class ConsultantAllowlist(BaseModel):
@@ -45,6 +55,10 @@ class AgentFeedback(BaseModel):
 class FeedbackReceipt(BaseModel):
     actor: str
     delivered: bool
+
+
+def _contains_credential(text: str) -> bool:
+    return bool(_CREDENTIAL_RE.search(text))
 
 
 def _check_consultant_access(actor: str) -> None:
@@ -96,6 +110,8 @@ def _final_answer(output: bytes) -> str:
                 answer = item["text"]
     if not answer.strip():
         raise HTTPException(502, "Codex returned no answer")
+    if _contains_credential(answer):
+        raise HTTPException(502, "Codex answer was withheld because it may contain a credential")
     return answer.strip()
 
 
@@ -115,6 +131,8 @@ async def _stop(proc: asyncio.subprocess.Process) -> None:
 
 
 async def _ask_codex(question: str, context: str | None = None) -> str:
+    if _contains_credential(question) or (context and _contains_credential(context)):
+        raise HTTPException(400, "Remove credentials from the question and context")
     binary = os.environ.get("AGENT_QUESTIONS_CODEX_BIN") or shutil.which("codex")
     if not binary:
         raise HTTPException(503, "Codex CLI is unavailable")
@@ -126,20 +144,25 @@ async def _ask_codex(question: str, context: str | None = None) -> str:
         "and the context supplied by the caller. You have no repository, "
         "device, or lab-record access. Do not claim to have inspected live state. "
         "Do not edit files, run hardware actions, write records, or ask for "
-        "elevated permissions. If the answer requires an action, explain what "
+        "elevated permissions. Never request or provide secrets, passwords, "
+        "API keys, access tokens, private keys, or credential values. If asked "
+        "for one, refuse briefly and suggest a placeholder. If the answer "
+        "requires an action, explain what "
         "a human should review.\n\n"
         f"Question:\n{question}\n\nCaller-supplied context:\n{context or '(none)'}"
     )
     # Keep the lab service's credentials out of model-generated commands. The
     # CLI gets only its own login, never an API key from the dashboard service.
-    keep = ("PATH", "HOME", "CODEX_HOME", "LANG", "LC_ALL", "TZ", "TMPDIR")
+    keep = ("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR")
     env = {key: os.environ[key] for key in keep if key in os.environ}
     cmd = (
-        binary, "exec", "--json", "--ephemeral", "--ignore-user-config",
+        binary, "exec", "--model", "gpt-6-sol", "--json", "--ephemeral", "--ignore-user-config",
         "--strict-config", "--disable", "remote_plugin",
         "--disable", "skill_mcp_dependency_install",
         "--disable", "shell_tool", "--disable", "unified_exec",
         "--sandbox", "read-only", "--config", "approval_policy=never",
+        "--config", 'model_reasoning_effort="high"',
+        "--config", 'service_tier="fast"', "--enable", "fast_mode",
         "--config", "agents.enabled=false", "--config", "mcp_servers={}",
         "--skip-git-repo-check",
     )
@@ -149,6 +172,7 @@ async def _ask_codex(question: str, context: str | None = None) -> str:
     with tempfile.TemporaryDirectory(prefix="lab-codex-question-") as home:
         (Path(home) / "auth.json").symlink_to(auth_file)
         env["CODEX_HOME"] = home
+        env["HOME"] = home
         workspace = Path(home) / "workspace"
         workspace.mkdir()
         try:
@@ -182,6 +206,8 @@ def build_agent_questions_router() -> APIRouter:
     @router.post("/questions", response_model=AgentAnswer)
     async def ask(request: Request, response: Response, body: AgentQuestion) -> AgentAnswer:
         actor = await _verify_machine(request)
+        if _contains_credential(body.question) or (body.context and _contains_credential(body.context)):
+            raise HTTPException(400, "Remove credentials from the question and context")
         logger.info("agent question: actor=%s chars=%d", actor, len(body.question))
         answer = await _ask_worker(body)
         response.headers["Cache-Control"] = "no-store"
@@ -190,6 +216,8 @@ def build_agent_questions_router() -> APIRouter:
     @router.post("/feedback", response_model=FeedbackReceipt)
     async def feedback(request: Request, response: Response, body: AgentFeedback) -> FeedbackReceipt:
         actor = await _verify_machine(request)
+        if _contains_credential(body.message) or (body.context and _contains_credential(body.context)):
+            raise HTTPException(400, "Remove credentials from the feedback")
         delivered = await _call_worker("/feedback", {"actor": actor, **body.model_dump()})
         if delivered.get("delivered") is not True:
             raise HTTPException(502, "Agent Consultant did not confirm feedback delivery")

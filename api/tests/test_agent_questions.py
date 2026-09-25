@@ -89,6 +89,24 @@ async def test_only_three_named_agents_can_use_both_routes(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_credentials_are_refused_before_forwarding(client, monkeypatch):
+    async def should_not_forward(*args, **kwargs):
+        pytest.fail("credential text reached the worker")
+
+    monkeypatch.setattr(aq, "_ask_worker", should_not_forward)
+    monkeypatch.setattr(aq, "_call_worker", should_not_forward)
+    headers = {"x-api-key": "valid-key"}
+    question = await client.post("/api/agent/questions", json={
+        "question": "Explain this error", "context": "api_key=abcdefghijklmnop1234"
+    }, headers=headers)
+    feedback = await client.post("/api/agent/feedback", json={
+        "message": "Please review", "context": "Bearer abcdefghijklmnop1234"
+    }, headers=headers)
+    assert question.status_code == 400
+    assert feedback.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_missing_allowlist_fails_closed(client, monkeypatch, tmp_path):
     monkeypatch.setenv("AGENT_CONSULTANT_ALLOWLIST_PATH", str(tmp_path / "missing.json"))
     response = await client.post("/api/agent/questions", json={"question": "Hello"},
@@ -165,6 +183,10 @@ async def test_codex_turn_enforces_read_only_and_returns_final_answer(monkeypatc
     assert await aq._ask_codex("Question?") == "Answer."
     cmd = captured["cmd"]
     assert cmd[:2] == ("/usr/bin/codex", "exec")
+    assert cmd[cmd.index("--model") + 1] == "gpt-6-sol"
+    assert 'model_reasoning_effort="high"' in cmd
+    assert 'service_tier="fast"' in cmd
+    assert cmd[cmd.index("--enable") + 1] == "fast_mode"
     assert cmd[cmd.index("--sandbox") + 1] == "read-only"
     assert cmd[cmd.index("--config") + 1] == "approval_policy=never"
     assert "--ephemeral" in cmd and "--ignore-user-config" in cmd
@@ -178,11 +200,28 @@ async def test_codex_turn_enforces_read_only_and_returns_final_answer(monkeypatc
     assert "Caller-supplied context" in captured["prompt"]
     assert "ASSISTANT_OPENAI_API_KEY" not in captured["env"]
     assert captured["env"]["CODEX_HOME"] != str(auth_file.parent)
+    assert captured["env"]["HOME"] == captured["env"]["CODEX_HOME"]
 
 
 def test_missing_final_answer_is_an_error():
     with pytest.raises(Exception, match="Codex returned no answer"):
         aq._final_answer(b'{"type":"turn.completed"}\n')
+
+
+def test_credential_like_answer_is_withheld():
+    output = b'{"type":"item.completed","item":{"type":"agent_message","text":"sk-proj-abcdefghijklmnop1234"}}\n'
+    with pytest.raises(Exception, match="withheld"):
+        aq._final_answer(output)
+
+
+@pytest.mark.asyncio
+async def test_private_worker_rejects_credentials_before_model_or_slack():
+    with pytest.raises(Exception, match="Remove credentials"):
+        await aq._ask_codex("My token is sk-proj-abcdefghijklmnop1234")
+    with pytest.raises(Exception, match="Remove credentials"):
+        await worker.deliver_feedback(worker.FeedbackDelivery(
+            actor="agent:jiaru@lab.example", message="api_key=abcdefghijklmnop1234"
+        ))
 
 
 @pytest.mark.asyncio

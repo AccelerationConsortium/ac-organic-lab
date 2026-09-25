@@ -13,7 +13,7 @@ import os
 import httpx
 
 from fastapi import FastAPI, HTTPException
-from .agent_questions import AgentQuestion, AgentFeedback, _ask_codex
+from .agent_questions import AgentQuestion, AgentFeedback, _ask_codex, _contains_credential
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 _turn_lock = asyncio.Lock()
@@ -33,6 +33,8 @@ class FeedbackDelivery(AgentFeedback):
 
 @app.post("/feedback")
 async def deliver_feedback(body: FeedbackDelivery) -> dict[str, bool]:
+    if _contains_credential(body.message) or (body.context and _contains_credential(body.context)):
+        raise HTTPException(400, "Remove credentials from the feedback")
     webhook = os.environ.get("AGENT_CONSULTANT_SLACK_WEBHOOK_URL")
     if not webhook:
         raise HTTPException(503, "Agent Consultant feedback delivery is not configured")
