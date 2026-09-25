@@ -13,12 +13,18 @@ from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 logger = logging.getLogger(__name__)
 
 TIMEOUT_S = 180
 WORKER_SOCKET = "/run/agent-consultant/worker.sock"
+DEFAULT_ALLOWLIST = Path(__file__).resolve().parents[1] / "agent-consultant.local.json"
+
+
+class ConsultantAllowlist(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    allowed_principals: list[str] = Field(min_length=1)
 
 
 class AgentQuestion(BaseModel):
@@ -39,6 +45,17 @@ class AgentFeedback(BaseModel):
 class FeedbackReceipt(BaseModel):
     actor: str
     delivered: bool
+
+
+def _check_consultant_access(actor: str) -> None:
+    path = Path(os.environ.get("AGENT_CONSULTANT_ALLOWLIST_PATH", DEFAULT_ALLOWLIST))
+    try:
+        config = ConsultantAllowlist.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError) as exc:
+        logger.error("Agent Consultant allowlist unavailable: %s", exc)
+        raise HTTPException(503, "Agent Consultant allowlist unavailable") from None
+    if actor.casefold() not in {name.casefold() for name in config.allowed_principals}:
+        raise HTTPException(403, "machine principal is not allowed to use Agent Consultant")
 
 
 async def _verify_machine(request: Request) -> str:
@@ -62,6 +79,7 @@ async def _verify_machine(request: Request) -> str:
     actor = verified.headers.get("x-auth-user")
     if not actor:
         raise HTTPException(401, "verified principal has no identity")
+    _check_consultant_access(actor)
     return actor
 
 

@@ -14,11 +14,23 @@ from app import agent_questions_worker as worker
 
 
 @pytest.fixture
-async def client():
+async def client(monkeypatch, tmp_path):
+    allowlist = tmp_path / "agent-consultant.local.json"
+    allowlist.write_text(json.dumps({"allowed_principals": [
+        "agent:jiaru@lab.example", "agent:allan@lab.example", "agent:geyuan@lab.example",
+    ]}))
+    monkeypatch.setenv("AGENT_CONSULTANT_ALLOWLIST_PATH", str(allowlist))
+
     def verify(request: httpx.Request) -> httpx.Response:
-        if request.headers.get("x-api-key") == "valid-key":
+        identities = {
+            "valid-key": "agent:jiaru@lab.example",
+            "allan-key": "agent:allan@lab.example",
+            "geyuan-key": "agent:geyuan@lab.example",
+            "camera-key": "xarm-camera@lab.example",
+        }
+        if request.headers.get("x-api-key") in identities:
             assert request.headers["x-forwarded-uri"] in ("/api/agent/questions", "/api/agent/feedback")
-            return httpx.Response(200, headers={"x-auth-user": "jiaru@lab.example"})
+            return httpx.Response(200, headers={"x-auth-user": identities[request.headers["x-api-key"]]})
         if request.headers.get("x-api-key") == "path-denied-key":
             return httpx.Response(403)
         return httpx.Response(401)
@@ -50,8 +62,38 @@ async def test_only_verified_machine_can_ask(client, monkeypatch):
                                  headers={"x-api-key": "valid-key",
                                           "x-auth-user": "forged@lab.example"})
     assert response.status_code == 200
-    assert response.json() == {"actor": "jiaru@lab.example", "answer": "It lists equipment."}
+    assert response.json() == {"actor": "agent:jiaru@lab.example", "answer": "It lists equipment."}
     assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_only_three_named_agents_can_use_both_routes(client, monkeypatch):
+    async def answer(body: aq.AgentQuestion) -> str:
+        return "Answer."
+
+    async def deliver(path: str, payload: dict) -> dict:
+        return {"delivered": True}
+
+    monkeypatch.setattr(aq, "_ask_worker", answer)
+    monkeypatch.setattr(aq, "_call_worker", deliver)
+    for key in ("valid-key", "allan-key", "geyuan-key"):
+        assert (await client.post("/api/agent/questions", json={"question": "Hello"},
+                                  headers={"x-api-key": key})).status_code == 200
+        assert (await client.post("/api/agent/feedback", json={"message": "Hello"},
+                                  headers={"x-api-key": key})).status_code == 200
+    for path, body in (("questions", {"question": "Hello"}),
+                       ("feedback", {"message": "Hello"})):
+        response = await client.post(f"/api/agent/{path}", json=body,
+                                     headers={"x-api-key": "camera-key"})
+        assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_missing_allowlist_fails_closed(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("AGENT_CONSULTANT_ALLOWLIST_PATH", str(tmp_path / "missing.json"))
+    response = await client.post("/api/agent/questions", json={"question": "Hello"},
+                                 headers={"x-api-key": "valid-key"})
+    assert response.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -91,7 +133,7 @@ async def test_public_route_forwards_to_private_worker(client, monkeypatch):
     response = await client.post("/api/agent/questions", json={"question": "Hello", "context": "Details"},
                                  headers={"x-api-key": "valid-key"})
     assert response.status_code == 200
-    assert response.json() == {"actor": "jiaru@lab.example", "answer": "Answer to: Hello; context: Details"}
+    assert response.json() == {"actor": "agent:jiaru@lab.example", "answer": "Answer to: Hello; context: Details"}
 
 
 @pytest.mark.asyncio
@@ -147,7 +189,7 @@ def test_missing_final_answer_is_an_error():
 async def test_feedback_requires_machine_key_and_reports_delivery(client, monkeypatch):
     async def deliver(path: str, payload: dict) -> dict:
         assert path == "/feedback"
-        assert payload == {"actor": "jiaru@lab.example", "message": "Please review this", "context": None}
+        assert payload == {"actor": "agent:jiaru@lab.example", "message": "Please review this", "context": None}
         return {"delivered": True}
 
     monkeypatch.setattr(aq, "_call_worker", deliver)
@@ -158,7 +200,7 @@ async def test_feedback_requires_machine_key_and_reports_delivery(client, monkey
     response = await client.post("/api/agent/feedback", json=body,
                                  headers={"x-api-key": "valid-key", "x-auth-user": "forged"})
     assert response.status_code == 200
-    assert response.json() == {"actor": "jiaru@lab.example", "delivered": True}
+    assert response.json() == {"actor": "agent:jiaru@lab.example", "delivered": True}
 
 
 @pytest.mark.asyncio

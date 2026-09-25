@@ -8,7 +8,9 @@ API, separate from the Hermes lab-runner Slack bot and its lab-control tools.
 
 Both endpoints require an ac_auth automation key in `X-Api-Key`. The API verifies
 it through the existing ac_auth sidecar and stamps the verified actor; a caller
-cannot choose the reported identity.
+cannot choose the reported identity. The actor must also appear in the local
+Agent Consultant allowlist. This host's allowlist is restricted to the three
+approved researcher agents; equipment and Hermes principals are excluded.
 
 ```bash
 curl -sS https://DASHBOARD_HOST/api/agent/questions \
@@ -38,6 +40,15 @@ configured or fails, the endpoint returns an error and the caller may retry;
 there is no durable queue.
 
 ## Deployment
+
+Create `api/agent-consultant.local.json` on the API host with an
+`allowed_principals` array of exact ac_auth principal names. This file is
+gitignored and should be readable only by the API service account. There is no
+default allowlist: a missing or invalid file returns HTTP 503, and a verified
+principal absent from it receives HTTP 403. Set
+`AGENT_CONSULTANT_ALLOWLIST_PATH` in the API service environment only if the
+file lives elsewhere. The API reads the file for each request, so an allowlist
+change takes effect without restarting the API.
 
 The API verifies the machine key, then forwards requests over a private Unix
 socket to a separate worker. The deployed API unit has `IPAddressDeny=any` and
