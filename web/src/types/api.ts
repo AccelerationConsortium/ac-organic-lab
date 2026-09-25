@@ -65,6 +65,10 @@ export interface CameraLens {
   stream_path?: string | null;
   /** False for fixed lenses that have no PTZ motor (e.g. wide on C245D). Defaults to true. */
   ptz_capable?: boolean;
+  /** Physical camera this lens belongs to when an entry carries several; lenses sharing a view are its channels (RGB / depth). */
+  view?: string | null;
+  /** Point-depth readout on the entry's base URL; a live viewer may click the picture for a distance. */
+  depth_path?: string | null;
 }
 
 export interface CameraConfig {

@@ -18,7 +18,7 @@ from urllib.parse import urlencode, urlsplit
 
 import anyio
 import httpx
-from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from websockets.asyncio.client import connect
@@ -229,6 +229,31 @@ def camera_definition(
     raise HTTPException(404, "Unknown or disabled camera feed")
 
 
+def depth_url(request: Request, stream: str) -> str | None:
+    """Registered point-depth readout for a lens, or None if it has none."""
+    for entry in request.app.state.registry.equipment:
+        if entry.enabled and entry.camera:
+            for lens in entry.camera.lenses:
+                if stream == f"{entry.id}_{lens.id}":
+                    path = getattr(lens, "depth_path", None)
+                    base = getattr(entry, "base_url", None)
+                    return base.rstrip("/") + path if path and base else None
+    return None
+
+
+def gateway_headers(request: Request, s: ViewingSession) -> dict[str, str]:
+    """Forward only the broker-verified viewer identity to a registered
+    gateway. Never copy browser-supplied identity or edge headers."""
+    entry = next((e for e in request.app.state.registry.equipment if e.id == s.camera), None)
+    secret_env = getattr(entry, "edge_secret_env", None)
+    if not secret_env:
+        return {}
+    secret = os.getenv(secret_env)
+    if not secret:
+        raise HTTPException(503, "Camera gateway authentication unavailable")
+    return {"X-Edge-Auth": secret, "X-Auth-User": s.user, "X-Auth-Role": "user"}
+
+
 def camera_for(request: Request | WebSocket, stream: str) -> str:
     return camera_definition(request, stream)[0]
 
@@ -322,6 +347,41 @@ def build_camera_streams_router() -> APIRouter:
         await owned(sid, request)
         broker(request).end(sid, "Viewer closed")
 
+    @router.get("/sessions/{sid}/depth")
+    async def depth(
+        sid: str,
+        request: Request,
+        response: Response,
+        x: int = Query(ge=0, le=16384),
+        y: int = Query(ge=0, le=16384),
+    ):
+        # Only the viewer of a live session may read depth, and only from the
+        # lens's registered readout -- the same allow-list as the video.
+        s = await owned(sid, request)
+        url = depth_url(request, s.stream)
+        if not url:
+            raise HTTPException(404, "This camera has no depth readout")
+        client = request.app.state.control_client
+        try:
+            upstream = await client.get(
+                url, params={"x": x, "y": y}, headers=gateway_headers(request, s), timeout=5
+            )
+        except httpx.HTTPError:
+            raise HTTPException(502, "Depth readout unavailable") from None
+        if upstream.status_code != 200:
+            detail = upstream.json().get("detail") if upstream.headers.get(
+                "content-type", ""
+            ).startswith("application/json") else None
+            raise HTTPException(502, f"Depth readout failed: {detail or upstream.status_code}")
+        body = upstream.json()
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "pixel": body.get("pixel"),
+            "distance_m": body.get("distance_m"),
+            "point_m": body.get("point_m"),
+            "valid_samples": body.get("valid_samples"),
+        }
+
     @router.get("/sessions/{sid}/mjpeg")
     async def mjpeg(sid: str, request: Request):
         fetch_site = request.headers.get("sec-fetch-site")
@@ -335,17 +395,11 @@ def build_camera_streams_router() -> APIRouter:
             raise HTTPException(404, "This viewing session is not an MJPEG feed")
         if s.connected:
             raise HTTPException(409, "This viewing session is already connected")
-        # Forward only the broker-verified viewer identity to a registered
-        # gateway. Never copy browser-supplied identity or edge headers.
-        entry = next((e for e in request.app.state.registry.equipment if e.id == s.camera), None)
-        headers = {}
-        secret_env = getattr(entry, "edge_secret_env", None)
-        if secret_env:
-            secret = os.getenv(secret_env)
-            if not secret:
-                broker(request).end(s.id, "Camera gateway authentication unavailable")
-                raise HTTPException(503, "Camera gateway authentication unavailable")
-            headers = {"X-Edge-Auth": secret, "X-Auth-User": s.user, "X-Auth-Role": "user"}
+        try:
+            headers = gateway_headers(request, s)
+        except HTTPException:
+            broker(request).end(s.id, "Camera gateway authentication unavailable")
+            raise
         s.connected = True
         s.ticket = ""
         client = request.app.state.control_client

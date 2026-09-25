@@ -4,6 +4,11 @@ import { createPortal } from "react-dom";
 import { CameraPlayer } from "./CameraPlayer";
 import { useUserAuth } from "@/lib/user-auth";
 
+/** The session layer reads the registered feed from `?src=`, as every player does. */
+export function cameraSource(stream: string) {
+  return `/streams/api/ws?src=${encodeURIComponent(stream)}`;
+}
+
 export function EquipmentCameraButton({ stream, label, transport }: {
   stream: string; label: string; transport?: "go2rtc" | "mjpeg";
 }) {
@@ -71,7 +76,7 @@ function CameraWindow({ stream, label, transport, onClose }: {
       <button type="button" onClick={onClose} aria-label="Turn off and hide camera" title="Turn off and hide"
         className="rounded px-2 py-1 text-lg hover:bg-slate-700">×</button>
     </div>
-    <CameraPlayer src={stream} transport={transport} className="min-h-0 flex-1 w-full" />
+    <CameraPlayer src={cameraSource(stream)} transport={transport} className="min-h-0 flex-1 w-full" />
     <div className="flex h-6 shrink-0 items-center justify-between px-3 text-[11px] text-slate-400">
       <span>Drag title to move · × turns preview off</span>
       <button type="button" aria-label="Resize camera window" title="Drag to resize; arrow keys also resize"

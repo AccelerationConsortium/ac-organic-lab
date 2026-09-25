@@ -56,6 +56,18 @@ def test_flex_camera_is_an_embedded_gibbie_mjpeg_source() -> None:
     assert entry is not None and entry.kind == "liquid_handler"
     assert entry.camera is not None and entry.camera.transport == "mjpeg"
     assert entry.camera.lenses[0].stream_path == "/devices/gibbie_flex/camera/stream"
+    views = [(lens.view, lens.label) for lens in entry.camera.lenses]
+    assert views == [
+        ("Corner Camera", "Deck"),
+        ("Pipette Camera", "RGB"),
+        ("Pipette Camera", "Depth"),
+    ]
+    depth = {lens.id: lens.depth_path for lens in entry.camera.lenses}
+    assert depth == {
+        "main": None,
+        "pipette_rgb": "/devices/gibbie_flex/pipette_camera/depth",
+        "pipette_depth": "/devices/gibbie_flex/pipette_camera/depth",
+    }
 
 
 def test_ur5e_prototype_is_registered_without_auto_connect() -> None:

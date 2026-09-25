@@ -131,6 +131,14 @@ def test_agent_requires_explicit_camera_and_run_approval(monkeypatch):
 @pytest.fixture
 def client():
     def auth(req):
+        if req.url.host == "gibbie" and req.url.path.endswith("/depth"):
+            if req.url.params["x"] == "9999":
+                return httpx.Response(422, json={"detail": "pixel outside the depth map"})
+            return httpx.Response(200, json={
+                "pixel": [int(req.url.params["x"]), int(req.url.params["y"])], "window": 5,
+                "valid_samples": 25, "distance_m": 0.412, "point_m": [0.01, 0.02, 0.412],
+                "frame": {"internal": "not forwarded"},
+            })
         if req.url.host == "gibbie":
             return httpx.Response(
                 200,
@@ -411,3 +419,35 @@ def test_mjpeg_missing_gateway_secret_releases_session(client, monkeypatch):
     response = client.get(f"/api/camera-streams/sessions/{body['id']}/mjpeg", headers={"cookie": "alice"})
     assert response.status_code == 503
     assert body["id"] not in client.app.state.camera_viewing.sessions
+
+
+def _depth_session(client, cookie="alice", depth_path="/devices/gibbie_flex/pipette_camera/depth"):
+    entry = client.app.state.registry.equipment[0]
+    entry.camera.transport = "mjpeg"
+    entry.camera.lenses[0].stream_path = "/devices/gibbie_flex/pipette_camera/stream?stream=depth"
+    entry.camera.lenses[0].depth_path = depth_path
+    return client.post("/api/camera-streams/sessions", json={"stream": "cam_main"},
+                       headers={"cookie": cookie}).json()["id"]
+
+
+def test_depth_readout_is_for_the_live_viewer_only(client):
+    sid = _depth_session(client)
+    url = f"/api/camera-streams/sessions/{sid}/depth?x=640&y=360"
+    reading = client.get(url, headers={"cookie": "alice"})
+    assert reading.status_code == 200
+    assert reading.json() == {"pixel": [640, 360], "distance_m": 0.412,
+                              "point_m": [0.01, 0.02, 0.412], "valid_samples": 25}
+    assert client.get(url, headers={"cookie": "admin"}).status_code == 403
+    client.delete(f"/api/camera-streams/sessions/{sid}", headers={"cookie": "alice"})
+    assert client.get(url, headers={"cookie": "alice"}).status_code == 410
+
+
+def test_depth_readout_needs_a_registered_path_and_reports_refusals(client):
+    sid = _depth_session(client)
+    refused = client.get(f"/api/camera-streams/sessions/{sid}/depth?x=9999&y=1",
+                         headers={"cookie": "alice"})
+    assert refused.status_code == 502 and "outside the depth map" in refused.json()["detail"]
+    client.delete(f"/api/camera-streams/sessions/{sid}", headers={"cookie": "alice"})
+    sid = _depth_session(client, depth_path=None)
+    assert client.get(f"/api/camera-streams/sessions/{sid}/depth?x=1&y=1",
+                      headers={"cookie": "alice"}).status_code == 404

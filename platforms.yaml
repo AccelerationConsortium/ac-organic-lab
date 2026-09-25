@@ -60,11 +60,13 @@ sections:
     description: Multi-phase Reaction Platform based on Opentrons Flex
     href: /platforms/sample_prep
     kind: platform
+    # The Flex follows the camera so it takes the right column's top slot
+    # (EquipmentGrid fills the shorter column first).
     equipment:
       - cam_gibbie_tapo_c100
+      - gibbie_flex
       - gibbie_workflow
       - gibbie_balance
-      - gibbie_flex
       - gibbie_ur_arm
 
   - id: process_chemistry

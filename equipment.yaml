@@ -1323,16 +1323,35 @@ equipment:
     # on the PC 2026-09-20). A "Open" pill here would only ever 404. Add one
     # when a Flex panel ships; see web/src/lib/device-panels.ts.
     pills: {}
-    # Flex's fixed deck camera is served by sdl2-gibbie-server, not the
-    # Kasa/Tapo gateway. The authenticated dashboard proxy opens it only after
-    # a signed-in viewer clicks Show stream.
+    # Two cameras, one toggle each on the tile (`view`). The Flex's own
+    # corner deck camera is served by sdl2-gibbie-server. The pipette camera
+    # is the standalone D435i on the Gibbie PC, owned by sdl-camera-server
+    # (NSSM `sdl-camera-server`, camera id `d435i`), which binds loopback
+    # 127.0.0.1:8071 behind a bearer token; gibbie-server relays its color
+    # and depth streams and its point-depth readout (`depth_path`, deployed
+    # 2026-09-25). Depth is aligned to color, so a click on either pipette
+    # picture reads a distance. The authenticated dashboard proxy opens any
+    # of them only after a signed-in viewer clicks Show stream.
     camera:
       host: sdl2-pc-04.tail6a1dd7.ts.net
       transport: mjpeg
       lenses:
         - id: main
+          view: Corner Camera
           label: Deck
           stream_path: /devices/gibbie_flex/camera/stream
+          ptz_capable: false
+        - id: pipette_rgb
+          view: Pipette Camera
+          label: RGB
+          stream_path: /devices/gibbie_flex/pipette_camera/stream?stream=color
+          depth_path: /devices/gibbie_flex/pipette_camera/depth
+          ptz_capable: false
+        - id: pipette_depth
+          view: Pipette Camera
+          label: Depth
+          stream_path: /devices/gibbie_flex/pipette_camera/stream?stream=depth
+          depth_path: /devices/gibbie_flex/pipette_camera/depth
           ptz_capable: false
 
   - id: gibbie_ur_arm
