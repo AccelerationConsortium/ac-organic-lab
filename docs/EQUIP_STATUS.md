@@ -928,3 +928,35 @@ operator-facing class as camera PTZ. See [`EQUIP_GUIDE.md`](EQUIP_GUIDE.md) §6b
   `LiquidHandlerTile.tsx` after a soak period.
 - **Gate the `/deck` PUT** behind the sign-in middleware if the shared
   layout needs write protection.
+
+
+### xArm force/torque snapshot contract
+
+The dashboard proxies three device-root GET endpoints through
+`/api/equipment/xarm_translocation/force-torque/{data,status,config}` without
+acquiring a claim. `config?revision=<sample.config_revision>` forwards the exact
+revision as a query parameter; missing/expired revisions remain errors and are
+never replaced by the current configuration. The same endpoints are available
+under the device UI prefix `/xarm5/force-torque/`.
+
+`data` now returns one SDK acquisition: `wrench`, `force_magnitude`,
+`torque_magnitude`, `force_direction`, `torque_direction`, `sample_id`,
+`config_revision`, `service_received_at`, `sensor_sampled_at` (unknown/null), and
+`service_tare_applied`. The independent configuration object specifies units,
+controller compensated/filtered channel, service tare, separate N/N*m direction
+deadbands, and explicitly unknown reading geometry and compensation validation.
+A completed service tare is not proof of valid gravity compensation.
+
+`status` returns `last_sample` (null until acquired), current `config_revision`,
+`service_tare_completed`, enabled state, history length and alerts, without a new
+sensor read. Old `data`/nested magnitude and direction/`calibrated` response
+fields and dimensionally invalid `total_magnitude` have been removed, with no
+compatibility aliases. No raw channel or coordinate transformation is exposed.
+
+The robot tile still consumes the unchanged `/status` metric
+`metrics.force_magnitude` in N; this is the latest successful cached FT sample,
+with service receipt time in `timestamp`, not a newly acquired reading per poll.
+It is separate from configured gripper force. Enabling or taring remains an
+explicit claim-gated action; opening a tile or polling must never connect,
+enable or tare the robot. Sensor geometry, payload coverage and compensation
+effectiveness require further manufacturer/physical evidence.
