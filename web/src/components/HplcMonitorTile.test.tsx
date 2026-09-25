@@ -94,7 +94,8 @@ describe("HplcMonitorTile", () => {
     }
     expect(screen.getByText("Read-only monitoring")).toBeTruthy();
     expect(screen.getByText("example-result.D")).toBeTruthy();
-    expect(screen.getByText(/File updated: 2m ago/)).toBeTruthy();
+    expect(screen.getByText(/Updated 2m ago/)).toBeTruthy();
+    expect(screen.getByTitle(/not proof of run completion/)).toBeTruthy();
     expect(screen.queryAllByRole("button")).toHaveLength(0);
     const preview = screen.getByRole("link", { name: "Control preview" });
     expect(preview.getAttribute("href")).toBe("/equipment/lle_hplc/control");
@@ -118,10 +119,10 @@ describe("HplcMonitorTile", () => {
     const software = within(screen.getByRole("region", { name: "Software diagnostics" }));
     expect(software.getAllByText("Open")).toHaveLength(2);
     expect(software.getByText("Readable")).toBeTruthy();
-    const stopped = software.getByText("Stopped").parentElement!;
-    expect(stopped.className).toContain("bg-slate-100");
-    expect(stopped.className).not.toContain("amber");
-    expect(stopped.className).not.toContain("rose");
+    const dot = software.getByText("Stopped").parentElement!.querySelector("[aria-hidden]")!;
+    expect(dot.className).toContain("bg-slate-300");
+    expect(dot.className).not.toContain("amber");
+    expect(dot.className).not.toContain("rose");
   });
 
   it("prioritizes the four instrument modules and preserves their observed states", () => {
@@ -212,16 +213,31 @@ describe("HplcMonitorTile", () => {
     const { rerender } = render(<HplcMonitorTile snapshot={value} />);
     expect(screen.getByText("example-result.D")).toBeTruthy();
     expect(screen.queryByText(/C:\\Data/)).toBeNull();
-    expect(screen.getByText(/File updated: Unknown/)).toBeTruthy();
+    expect(screen.getByText(/Updated Unknown/)).toBeTruthy();
     value.status.details = undefined;
     rerender(<HplcMonitorTile snapshot={value} />);
     expect(screen.queryByText("example-result.D")).toBeNull();
   });
 
-  it("only enables layout stacking on small screens without fixed-height clipping", () => {
+  it("only widens to four columns on larger screens without fixed-height clipping", () => {
     render(<HplcMonitorTile snapshot={snapshot()} />);
-    const grid = screen.getByRole("region", { name: "Software diagnostics" }).querySelector("div")!;
-    expect(grid.className).toContain("grid-cols-1");
-    expect(grid.className).toContain("sm:grid-cols-2");
+    const modules = screen.getByRole("region", { name: "Instrument modules" });
+    expect(modules.className).toContain("grid-cols-2");
+    expect(modules.className).toContain("sm:grid-cols-4");
+    const rows = screen.getByRole("region", { name: "Instrument status" }).parentElement!;
+    expect(rows.className).toContain("grid-cols-1");
+    expect(rows.className).toContain("sm:grid-cols-2");
+  });
+
+  it("names the reader's diagnostic when native readback is unavailable", () => {
+    const value = snapshot();
+    value.status.details!.native_readback = { available: false, problem: "reader deadline exceeded during DDE connect" };
+    const { rerender } = render(<HplcMonitorTile snapshot={value} />);
+    expect(screen.getByText(/Readback unavailable: reader deadline exceeded during DDE connect/)).toBeTruthy();
+    value.fetch_error = { kind: "timeout", message: "timed out" } as EquipmentSnapshot["fetch_error"];
+    rerender(<HplcMonitorTile snapshot={value} />);
+    expect(screen.queryByText(/Readback unavailable/)).toBeNull();
+    rerender(<HplcMonitorTile snapshot={nativeSnapshot()} />);
+    expect(screen.queryByText(/Readback unavailable/)).toBeNull();
   });
 });
