@@ -545,6 +545,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Lab history database
     db_path = resolve_db_path()
+    from .manual_steps import ManualJournal
+    app.state.manual_journal = ManualJournal(db_path.with_name("manual_steps.sqlite3"))
+    app.state.manual_journal.recover()
     db = LabDatabase(db_path)
     try:
         db.open()

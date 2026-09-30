@@ -41,7 +41,7 @@ import logging
 
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .claims import ClaimManager
 from .exceptions import CommandOutcomeUnknown, LabError
@@ -56,6 +56,34 @@ if TYPE_CHECKING:
     from .session import LabSession
 
 
+class ManualSpec(BaseModel):
+    """Reviewed human procedure. Access roles stay claimed throughout the wait."""
+    model_config = ConfigDict(extra="forbid")
+    instructions: str = Field(min_length=8, max_length=8000)
+    title: str = Field(default="Manual step", min_length=1, max_length=200)
+    confirmation_text: str = Field(default="I completed these instructions", min_length=1, max_length=300)
+    access_roles: list[str] = Field(default_factory=list)
+    access_checks: dict[str, dict[str, str | bool | int | float]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def meaningful(self):
+        if len(self.instructions.strip()) < 8 or any(not r.strip() for r in self.access_roles):
+            raise ValueError("manual instructions and access roles must be nonblank")
+        if len(set(self.access_roles)) != len(self.access_roles):
+            raise ValueError("manual access roles must be unique")
+        if set(self.access_checks) != set(self.access_roles) or any(not checks for checks in self.access_checks.values()):
+            raise ValueError("each manual access role requires reviewed device-specific access_checks")
+        return self
+
+
+class ManualOutcome(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    outcome: Literal["completed", "failed"]
+    confirmed_by: str = Field(min_length=1)
+    note: str = ""
+    request_id: str = Field(min_length=1)
+
+
 class Step(BaseModel):
     """One unit of a :class:`Plan`.
 
@@ -65,8 +93,10 @@ class Step(BaseModel):
     ``args_schema``. ``id`` is auto-assigned during validation if missing.
     """
 
-    role: str
-    skill: str
+    role: str = ""
+    skill: str = ""
+    kind: Literal["device", "manual"] = "device"
+    manual: ManualSpec | None = None
     args: dict[str, Any] = {}
     id: str | None = None
     requires: list[str] = []  # step.id deps; advisory in v0.3
@@ -74,6 +104,15 @@ class Step(BaseModel):
     # Populated by validate_plan() - the index of this step in its plan.
     # Surfaced on Violations to make plan reports easy to inspect.
     index: int | None = None
+
+    @model_validator(mode="after")
+    def step_shape(self):
+        if self.kind == "manual":
+            if self.manual is None or self.role or self.skill or self.args:
+                raise ValueError("manual steps require manual instructions and no device command")
+        elif not self.role or not self.skill or self.manual is not None:
+            raise ValueError("device steps require role and skill, without manual instructions")
+        return self
 
     def with_index(self, index: int) -> "Step":
         return self.model_copy(update={"index": index, "id": self.id or f"step_{index}"})
@@ -215,6 +254,18 @@ def validate_plan(plan: Plan, session: LabSession) -> PlanReport:
         step = raw_step.with_index(index)
         violations: list[Violation] = []
         warnings: list[Violation] = []
+
+        if step.kind == "manual":
+            for role in step.manual.access_roles:
+                entry = registry.by_id(binding.get(role, ""))
+                if entry is None or entry.protocol == "1.0" or not entry.enabled or getattr(entry, "maintenance", None):
+                    violations.append(_violation(step, "manual_access_unavailable",
+                        f"manual access role {role!r} requires available equipment with claims"))
+            violations.extend(v for v in run_interlocks(plan, step, session)
+                              if v.severity in _BLOCKING_SEVERITIES)
+            step_reports.append(StepReport(step_id=step.id, step_index=index,
+                role="", skill="", ok=not violations, violations=violations, warnings=warnings))
+            continue
 
         equipment_id = binding.get(step.role)
         entry = registry.by_id(equipment_id) if equipment_id is not None else None
@@ -366,6 +417,7 @@ async def execute_plan(
     poll_interval_s: float = 1.0,
     gate: "Callable[[Step], Awaitable[str | None]] | None" = None,
     on_step: "Callable[[StepRunReport], Awaitable[None]] | None" = None,
+    on_manual: "Callable[[Step], Awaitable[ManualOutcome]] | None" = None,
 ) -> PlanRunReport:
     """Execute a validated :class:`Plan` against live hardware, sequentially.
 
@@ -427,6 +479,9 @@ async def execute_plan(
     if not validation.ok:
         return PlanRunReport(ok=False, dry_run=dry_run, validation=validation)
 
+    if not dry_run and on_manual is None and any(s.kind == "manual" for s in plan.steps):
+        raise ValueError("manual plan requires an operator provider before any execution")
+
     steps_out: list[StepRunReport] = []
     claims_acquired: list[str] = []
     aborted = False
@@ -457,6 +512,25 @@ async def execute_plan(
                 steps_out.append(StepRunReport(status="skipped", error=reason, **base))
                 await _notify(on_step, steps_out[-1])
                 continue
+
+        if step.kind == "manual":
+            violations = [v for v in await run_interlocks_async(plan, step, session)
+                          if v.severity in _BLOCKING_SEVERITIES]
+            if violations:
+                result = StepRunReport(status="blocked", violations=violations, **base)
+            elif dry_run:
+                result = StepRunReport(status="dry_run", **base)
+            else:
+                try:
+                    outcome = await _execute_manual(step, session, owner, ttl_s, on_manual)
+                    result = StepRunReport(status="succeeded" if outcome.outcome == "completed" else "failed",
+                        response=outcome.model_dump(), error=outcome.note if outcome.outcome == "failed" else None, **base)
+                except Exception as exc:
+                    result = StepRunReport(status="failed", error=str(exc), **base)
+            steps_out.append(result)
+            aborted = result.status not in {"succeeded", "dry_run"}
+            await _notify(on_step, result)
+            continue
 
         # (a) resolve the live client. validate_plan already proved the role is
         # bound and not in maintenance, but live state can change under us.
@@ -663,3 +737,51 @@ __all__ = [
     "execute_plan",
     "validate_plan",
 ]
+
+
+async def _execute_manual(step, session, owner, ttl_s, provider) -> ManualOutcome:
+    """Reserve access devices before inviting hands in; never send a command.
+
+    Claim loss cancels the waiting provider and fails closed. Cancellation does
+    not establish whether the physical action occurred; the provider preserves
+    its durable acknowledgment. Devices lacking explicit idle activity refuse.
+    """
+    from contextlib import AsyncExitStack
+    async with AsyncExitStack() as stack:
+        claims = []
+        clients = {session.role(role).equipment_id: session.role(role)
+                   for role in step.manual.access_roles}
+        for _, client in sorted(clients.items()):
+            claim = await stack.enter_async_context(ClaimManager(client, owner=owner, ttl_s=ttl_s))
+            if claim.degraded:
+                raise ValueError("manual access requires enforceable device claims")
+            claims.append(claim)
+        for client in clients.values():
+            status = await client.status()
+            if status.equipment_status != "ready" or getattr(status, "activity", None) != "idle":
+                raise ValueError(f"{client.equipment_id}: manual access requires ready and explicitly idle")
+        for role, checks in step.manual.access_checks.items():
+            status = (await session.role(role).status()).model_dump(mode="json")
+            for path, expected in checks.items():
+                actual = status
+                for part in path.split("."):
+                    actual = actual.get(part) if isinstance(actual, dict) else None
+                if actual != expected or type(actual) is not type(expected):
+                    raise ValueError(f"{role}: manual access check {path} expected {expected!r}, got {actual!r}")
+        task = asyncio.create_task(provider(step))
+        try:
+            while not task.done():
+                await asyncio.wait({task}, timeout=0.5)
+                for claim in claims:
+                    claim.assert_alive()
+            result = ManualOutcome.model_validate(await task)
+            for claim in claims:
+                claim.assert_alive()
+            return result
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
