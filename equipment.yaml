@@ -590,7 +590,7 @@ equipment:
 
   # Second Opentrons OT-2 (robot `sdl2-ot2-complexation`, Tailscale
   # 100.64.254.91) on the Echem bench for complexation work. Fronted by the
-  # second `opentrons-server` gateway instance on sdl2-pc-03 port 8021
+  # second `opentrons-server` gateway instance on sdl2-pc-06-uplc port 8021
   # (service `ot2-gateway-complexation`; deployed 2026-07-10). The gateway is
   # multi-instance by design — one process per robot, own port, own state
   # files; see the opentrons-server README "Running multiple OT-2 gateways".
@@ -604,7 +604,7 @@ equipment:
     adapter: http
     protocol: "1.2"
     edge_secret_env: OT2_EDGE_SECRET
-    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8021
+    base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8021
     tailscale_ip: 100.64.254.91
     status_path: /status
     poll_timeout_seconds: 8.0
@@ -617,23 +617,10 @@ equipment:
       - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
       - { label: Agent discovery, path: /llms.txt, kind: text }
       - { label: Typed plan actions, path: /plans/actions, kind: json }
-    # Robot transport (since 2026-09-12, by decision): the OT-2 (Complexation)
-    # robot (`ot2training`, serial `weathered-dream`, board rev 2.1) is reached
-    # over its **own Wi-Fi + Tailscale address**, OT2_HTTP_BASE_URL=
-    # http://100.64.254.91:31950 (`sdl2-ot2-complexation`). Its USB-B link into
-    # the UPLC PC died on 2026-09-12 (the robot's USB NIC is a phantom device
-    # there; the 31951 portproxy still exists but forwards to nothing), so the
-    # 2026-09-05 bridge path is gone and the "never use the Wi-Fi address" rule
-    # that used to live here is withdrawn. Know what that costs: the Pi 3B+'s
-    # Broadcom firmware hangs 23–43 times a day on BOTH OT-2s (measured
-    # 09-08 → 13); the robot-side wifi-watchdog reloads the driver, tightened
-    # 2026-09-13 to a 1-min cycle so each hang costs ~1–2 min instead of 2–17
-    # (opentrons-server docs/OT2_TAILSCALE.md). The `gateway_fronted` flag
-    # above turns each hang into an "unreachable" span; that is the truth, not
-    # noise. The durable fix is still a USB-to-Ethernet adapter onto the lab
-    # switch (ROADMAP → ot2_hte sub-tasks). Identity rule (robot_serial + board_revision +
-    # api/fw) still applies: 172.31.60.10 (`ot2cytation`, board rev A) is a
-    # DIFFERENT OT-2.
+    # Gateway on UPLC; robot ot2training (serial weathered-dream, board rev 2.1)
+    # reached directly over its USB network at http://169.254.40.81:31950.
+    # platebalanceV1 is a local WZB254-N peripheral on COM3 in deck slot 6.
+    # The robot's own Tailscale identity above remains distinct from its gateway.
     tiles:
       complexation: { w: 2, h: 3 }
     # "Open" pill -> the edge-gated OT-2 gateway operator SPA at

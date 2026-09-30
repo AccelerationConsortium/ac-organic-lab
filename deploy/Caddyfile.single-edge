@@ -172,7 +172,7 @@ http://:8080 {
             copy_headers X-Auth-User X-Auth-Role
         }
         handle_path /ot2/complexation/* {
-            reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8021 {
+            reverse_proxy sdl2-pc-06-uplc.tail6a1dd7.ts.net:8021 {
                 header_up X-Edge-Key {env.OT2_EDGE_SECRET}
             }
         }
