@@ -35,6 +35,7 @@ const UTILS: { slug: string; label: string; description: string; href?: string }
     label: "3D Printers",
     description: "Bambu printers — live MQTT telemetry from the Bambu Gateway.",
   },
+  { slug: "runs", label: "Runs", description: "Authorized execution and human handoffs." },
   {
     slug: "api_reference",
     label: "API Reference",
