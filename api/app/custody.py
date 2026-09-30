@@ -151,6 +151,12 @@ def observe(snapshot: Any, location: Any, locations: Any = None) -> Observation:
                                f"{eid}:details.gripper.object_detected")
     # 4. Presence components.
     for name in _PRESENCE_COMPONENTS:
+        # Cytation service.py publishes self._drawer here, not a presence
+        # sensor. An open carrier can contain the human-placed plate; a closed
+        # carrier can be empty. Named loaded_plate contradictions still apply.
+        if name == "plate_stage" and (eid == "cytation_5" or
+                getattr(status, "equipment_kind", None) == "plate_reader"):
+            continue
         comp = components.get(name)
         state = getattr(comp, "state", None) if comp is not None else None
         if state is None and isinstance(comp, dict):

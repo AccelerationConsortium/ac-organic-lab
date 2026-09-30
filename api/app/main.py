@@ -548,6 +548,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from .manual_steps import ManualJournal
     app.state.manual_journal = ManualJournal(db_path.with_name("manual_steps.sqlite3"))
     app.state.manual_journal.recover()
+    from .reader_measurements import ReaderJournal
+    app.state.reader_journal = ReaderJournal(db_path.with_name("reader_measurements.sqlite3"))
+    app.state.reader_journal.recover()
     db = LabDatabase(db_path)
     try:
         db.open()

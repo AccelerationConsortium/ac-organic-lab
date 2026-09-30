@@ -94,10 +94,10 @@ describe("starting and aborting a run", () => {
   });
 });
 
-it("manual acknowledgments and their history require a human cookie, not an API key", async () => {
+it.each(["manual/carry", "measurements/retry"])("%s requires a human cookie, not an API key", async (endpoint) => {
   const fetchSpy = verifies(true, "chemist@utoronto.ca", "member");
   vi.stubGlobal("fetch", fetchSpy);
-  const result = await middleware(req("/api/workflow/runs/run_1/manual/carry", "POST", {
+  const result = await middleware(req(`/api/workflow/runs/run_1/${endpoint}`, "POST", {
     "x-api-key": "machine-key", "cookie": "session=human", "x-auth-user": "forged",
   }));
   expect(result.status).toBe(200);

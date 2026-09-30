@@ -522,6 +522,8 @@ class RunState:
     events: list[dict] = dataclass_field(default_factory=list)
     changed: "asyncio.Event" = dataclass_field(default_factory=lambda: asyncio.Event())
     has_manual: bool = False
+    has_reader: bool = False
+    measurement_error: str | None = None
     waiting_on: dict | None = None
     project_id: str = ""
     manual_changed: asyncio.Event = dataclass_field(default_factory=asyncio.Event)
@@ -585,6 +587,8 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
     locations_cfg = getattr(request.app.state, "locations_config", None)
 
     async def gate(step) -> str | None:
+        if state.measurement_error:
+            return state.measurement_error
         # Operator abort — checked first, it is free.
         if state.abort_requested:
             return f"aborted by {state.abort_requested}"
@@ -668,7 +672,23 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
                                 duration_s=time.monotonic() - state.started_at)
         return
 
+    from .reader_measurements import ReaderRecorder, READS
+    reader = None
+    if not state.dry_run and any(s.get("skill") in READS for s in auth.steps):
+        reader = ReaderRecorder(request.app.state.reader_journal)
+        try:
+            await reader.prepare(run_id=state.run_id, auth=auth, opened=state.record, operator=identity)
+        except Exception as exc:
+            state.measurement_error = f"Reader sample/record preflight refused: {exc}"
+
     async def on_step(step_report) -> None:
+        if reader is not None and step_report.skill in READS and step_report.status == "succeeded":
+            try:
+                reader.store.capture(state.run_id, step_report.step_id, step_report.response)
+            except Exception as exc:
+                state.measurement_error = f"Reader result could not be durably captured: {exc}. Do not repeat the acquisition."
+                state.custody_notes.append({"kind": "event", "step_id": step_report.step_id,
+                    "body": state.measurement_error, "data": {"response": step_report.response}})
         state.emit("step", {
             "step_id": step_report.step_id, "status": step_report.status,
             "role": step_report.role, "skill": step_report.skill,
@@ -703,6 +723,16 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
                                 duration_s=time.monotonic() - state.started_at)
         return
 
+    measurement_write = None
+    if reader is not None:
+        if reader.store.get(state.run_id) is not None:
+            reader.store.state(state.run_id, "pending")
+            measurement_write = await reader.publish(state.run_id)
+        else:
+            measurement_write = {"state": "refused", "error": state.measurement_error}
+        if state.measurement_error:
+            measurement_write = {**measurement_write, "state": "capture_failed", "error": state.measurement_error}
+        state.emit("measurements", measurement_write)
     duration = time.monotonic() - state.started_at
     state.status = "finished"
     plan_row = plan_row_from(auth, report, launched_by=identity)
@@ -733,8 +763,11 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
         operator=identity,
         started_at=state.started_at_utc,
         summary={"ok": report.ok, "aborted_reason": report.aborted_reason,
-                 "dry_run": report.dry_run, "duration_s": round(duration, 3)},
+                 "dry_run": report.dry_run, "duration_s": round(duration, 3),
+                 "measurements": measurement_write},
     )
+    if measurement_write is not None:
+        state.result["record"]["measurements"] = measurement_write
     # Lineage (D11) files after the Plan is closed and before `done` is emitted,
     # for the same reason the run record does: a consumer that sees the run
     # finish also sees whether its provenance was written. A dry run moved no
@@ -1059,9 +1092,41 @@ def build_workflow_router() -> APIRouter:
     router = APIRouter(prefix="/api/workflow", tags=["workflow"])
 
 
+    @router.get("/runs/{run_id}/measurements", summary="Reader result publication and recovery status")
+    async def measurement_history(run_id: str, request: Request) -> dict:
+        """Project members only; retained raw results survive restart. No hardware I/O."""
+        who = launcher_identity(request, action="read measurement status")
+        scope = await member_scope(request, who)
+        store = getattr(request.app.state, "reader_journal", None)
+        if store is None:
+            raise HTTPException(503, "Reader result journal is unavailable")
+        row = store.get(run_id)
+        project = row["project"] if row else getattr(_RUNS.get(run_id), "project_id", None)
+        if not project or not may_confirm(scope, project):
+            raise HTTPException(403, "Project membership is required")
+        if row is None:
+            return {"state": "not_applicable", "measurements": []}
+        return {"state": row["state"], "error": row["error"], "captured_steps": len(row["points"]),
+                "measurements": [{"hid": p["hid"], "measurement_id": p["measurement_id"],
+                    "plate_hid": p["payload"]["meta"]["plate_hid"], "well": p["payload"]["meta"]["well"]}
+                    for p in row["publications"]]}
+
+    @router.post("/runs/{run_id}/measurements/retry", summary="Retry recording retained reader results without acquiring again")
+    async def retry_measurements(run_id: str, request: Request) -> dict:
+        """Project members only. Reuses frozen measurement IDs/payloads; never repeats a read.
+        Refuses while a run is active. Failed/uncertain writes remain visible and retryable.
+        """
+        await measurement_history(run_id, request)
+        state = _RUNS.get(run_id)
+        if state is not None and state.status == "running":
+            raise HTTPException(409, "Wait for acquisition to stop before retrying recording")
+        from .reader_measurements import ReaderRecorder
+        return await ReaderRecorder(request.app.state.reader_journal).publish(run_id,
+            recorded_by=launcher_identity(request, action="retry measurement recording"))
+
     @router.get("/capabilities", summary="Runner capabilities")
     async def capabilities() -> dict:
-        return {"manual_steps_v1": True, "durable_resume": False}
+        return {"manual_steps_v1": True, "reader_measurements_v1": True, "durable_resume": False}
 
     @router.get("/runs/{run_id}/manual", summary="Manual action history and interrupted requests")
     async def manual_history(run_id: str, request: Request) -> dict:
@@ -1128,6 +1193,14 @@ def build_workflow_router() -> APIRouter:
         # One recorder for the whole attempt: the run-start read below and the
         # executor's own custody / lineage writes are the same client, so a hid
         # is resolved once instead of once per reader.
+        from .reader_measurements import READS, targets
+        if any(s.skill in READS for s in plan.steps):
+            try:
+                targets(auth)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            if not body.dry_run and getattr(request.app.state, "reader_journal", None) is None:
+                raise HTTPException(503, "Reader result journal is unavailable")
         from .manual_steps import check_manual_package, journal
         try:
             check_manual_package(auth, getattr(request.app.state, "locations_config", None))
@@ -1155,6 +1228,7 @@ def build_workflow_router() -> APIRouter:
             started_at_utc=datetime.now(timezone.utc).isoformat(),
             custody_expected=expected_locations(plates), project_id=auth.project_id,
             has_manual=any(s.kind == "manual" for s in plan.steps),
+            has_reader=any(s.skill in {"read.absorbance", "read.fluorescence"} for s in plan.steps),
         )
         _remember(state)
         state.emit("started", {
@@ -1179,7 +1253,7 @@ def build_workflow_router() -> APIRouter:
         state = _RUNS.get(run_id)
         if state is None:
             raise HTTPException(status_code=404, detail=f"no run {run_id!r}")
-        if state.has_manual:
+        if state.has_manual or state.has_reader:
             who = launcher_identity(request, action="read a manual run")
             if not may_confirm(await member_scope(request, who), state.project_id):
                 raise HTTPException(403, "Project membership is required")
@@ -1201,7 +1275,7 @@ def build_workflow_router() -> APIRouter:
         if state is None:
             raise HTTPException(status_code=404, detail=f"no run {run_id!r}")
 
-        if state.has_manual:
+        if state.has_manual or state.has_reader:
             who = launcher_identity(request, action="read manual run events")
             if not may_confirm(await member_scope(request, who), state.project_id):
                 raise HTTPException(403, "Project membership is required")
