@@ -58,7 +58,7 @@ const CUSTODY_PATH_RE = /^\/api\/custody(?:\/.*)?$/;
 // other read here — but identity headers are stripped on ALL methods below,
 // because the backend forwards `X-Auth-User` to bitácora when it fetches the
 // authorization, and a client-chosen value must never reach it.
-const MANUAL_WORKFLOW_RE = /^\/api\/workflow\/runs\/[^/]+\/manual(?:\/.*)?$/;
+const MANUAL_WORKFLOW_RE = /^\/api\/workflow\/runs\/[^/]+\/(?:manual|measurements)(?:\/.*)?$/;
 const WORKFLOW_PATH_RE = /^\/api\/workflow(?:\/.*)?$/;
 
 // -- /api/assistant/* gate (Phase 2) -----------------------------------------

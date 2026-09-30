@@ -126,6 +126,12 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   descriptions/models in OpenAPI so Bitácora's Guide reference stays current.
   A restart interrupts a wait; saved decisions never authorize automatic replay.
 
+- **Reader results** are journaled by `api/app/reader_measurements.py` before
+  continuation and appended to existing physically identified samples. Recovery
+  retries recording only; never recover a lost write by repeating acquisition.
+  Nominal plate/well names alone cannot establish sample identity. See
+  `docs/READER_MEASUREMENTS.md`.
+
 ## 4. Recurring pitfalls (project-specific)
 
 - **The dashboard supports plain HTTP Tailnet URLs.** Browser message IDs
