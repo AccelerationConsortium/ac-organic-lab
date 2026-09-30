@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ManualCard, type ManualRequest } from "./page";
+import { ManualCard, type ManualRequest } from "./manual-card";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const item: ManualRequest = {
