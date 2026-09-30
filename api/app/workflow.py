@@ -30,6 +30,8 @@ evidence it was sane when approved, never clearance to run now.
 
 from __future__ import annotations
 
+from .manual_steps import ManualDecision, journal, member_scope, may_confirm
+
 import asyncio
 import hashlib
 import json
@@ -351,13 +353,18 @@ def plan_from(auth: Authorization):
     steps = []
     for i, s in enumerate(auth.steps):
         try:
-            steps.append(Step(id=s["step_id"], role=s["role"], skill=s["skill"],
-                              args=s.get("args") or {}, index=i))
-        except KeyError as exc:
+            if s.get("kind") == "manual":
+                steps.append(Step(id=s["step_id"], kind="manual", manual=s["manual"], index=i))
+            else:
+                steps.append(Step(id=s["step_id"], kind=s.get("kind", "device"), role=s["role"], skill=s["skill"],
+                                  args=s.get("args") or {}, index=i))
+        except (KeyError, ValueError) as exc:
             raise RunRefused(
-                f"package step {i} is missing {exc.args[0]!r} — it is not a "
+                f"package step {i}: " + (f"missing {exc.args[0]!r}" if isinstance(exc, KeyError) else f"invalid ({exc})") + " — it is not a "
                 "compiled lab-skills step"
             ) from None
+    if len({s.id for s in steps}) != len(steps):
+        raise RunRefused("compiled step IDs must be unique")
     if not steps:
         raise RunRefused("the authorized package has no steps")
     return Plan(steps=steps)
@@ -416,7 +423,7 @@ def plan_row_from(auth: Authorization, report, *, launched_by: str | None = None
         "protocol_path": auth.protocol_path,
         "source_commit": auth.commit_sha,
         "steps": [
-            {"step_id": s.step_id, "action": s.skill,
+            {"step_id": s.step_id, "action": s.skill or "manual",
              "params": {"role": s.role, "equipment_id": s.equipment_id,
                         "status": s.status}}
             for s in report.steps
@@ -450,7 +457,7 @@ def planned_row_from(auth: Authorization, *, launched_by: str | None, dry_run: b
         "protocol_path": auth.protocol_path,
         "source_commit": auth.commit_sha,
         "steps": [
-            {"step_id": s["step_id"], "action": s.get("skill"),
+            {"step_id": s["step_id"], "action": s.get("skill") or "manual",
              "params": {"role": s.get("role"), "status": "planned",
                         **({"custody": s["custody"]} if isinstance(s.get("custody"), dict) else {})}}
             for s in auth.steps
@@ -514,6 +521,11 @@ class RunState:
     started_at_utc: str = ""  # wall-clock ISO-8601 — the record layer's Experiment start
     events: list[dict] = dataclass_field(default_factory=list)
     changed: "asyncio.Event" = dataclass_field(default_factory=lambda: asyncio.Event())
+    has_manual: bool = False
+    waiting_on: dict | None = None
+    project_id: str = ""
+    manual_changed: asyncio.Event = dataclass_field(default_factory=asyncio.Event)
+    manual_plates: set[str] = dataclass_field(default_factory=set)
     abort_requested: str | None = None  # who asked
     result: dict | None = None
     #: The Plan opened at start (D9): {"opened", "plan_id", "experiment_id"}.
@@ -567,6 +579,7 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
     # Resolved before `gate` so the closure cannot be called against a
     # half-built run: the preflight below reads all three.
     custody_by_step = auth.custody_by_step
+    manual_ids = {s["step_id"] for s in auth.steps if s.get("kind") == "manual"}
     if not (custody_by_step or lineage):
         recorder = None
     locations_cfg = getattr(request.app.state, "locations_config", None)
@@ -594,6 +607,14 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
         # nobody had written): is the plate still where this run's own chain of
         # moves says it is? Only for the steps bitácora annotated as handoffs,
         # and only when there is a ledger to ask.
+        # After a manual transfer, dependent device steps require the ledger
+        # to agree even when the package has no robot handoff annotation.
+        for hid in state.manual_plates:
+            if recorder is None:
+                return "Manual custody can no longer be verified"
+            cur = await recorder.current_location(hid, user=identity, project=auth.project_id, refresh=True)
+            if cur.get("found") is not True or cur.get("location_name") != state.custody_expected.get(hid):
+                return f"Manual plate {hid} location changed or could not be verified"
         spec = custody_by_step.get(getattr(step, "id", None))
         if spec is not None and recorder is not None:
             return await custody_preflight(
@@ -654,17 +675,23 @@ async def _drive_run(state: RunState, request: Request, auth: Authorization,
             "equipment_id": step_report.equipment_id, "error": step_report.error,
         })
         spec = custody_by_step.get(step_report.step_id)
-        if spec is not None:
+        if spec is not None and step_report.step_id not in manual_ids:
             await custody_after_step(state, request, auth, step_report, spec,
                                      recorder=recorder, locations=locations_cfg)
 
     from lab_skills import execute_plan
+    from .manual_steps import perform_manual
+
+    async def on_manual(step):
+        return await perform_manual(step, state=state, request=request, auth=auth,
+                                    recorder=recorder, locations=locations_cfg, gate=gate)
 
     try:
         async with connection as session:
             report = await execute_plan(
                 plan, session, owner=identity,
                 dry_run=state.dry_run, gate=gate, on_step=on_step,
+                **({"on_manual": on_manual} if manual_ids else {}),
             )
     except Exception as exc:  # noqa: BLE001 — the task must always conclude
         logger.exception("run %s crashed", state.run_id)
@@ -1031,6 +1058,45 @@ async def custody_at_start(auth: Authorization, *, identity: str,
 def build_workflow_router() -> APIRouter:
     router = APIRouter(prefix="/api/workflow", tags=["workflow"])
 
+
+    @router.get("/capabilities", summary="Runner capabilities")
+    async def capabilities() -> dict:
+        return {"manual_steps_v1": True, "durable_resume": False}
+
+    @router.get("/runs/{run_id}/manual", summary="Manual action history and interrupted requests")
+    async def manual_history(run_id: str, request: Request) -> dict:
+        who = launcher_identity(request, action="read manual actions")
+        scope = await member_scope(request, who)
+        rows = journal(request).for_run(run_id)
+        project = rows[0]["project_id"] if rows else getattr(_RUNS.get(run_id), "project_id", None)
+        if not project or not may_confirm(scope, project):
+            raise HTTPException(403, "Project membership is required")
+        return {"requests": rows, "live": run_id in _RUNS and _RUNS[run_id].status == "running"}
+
+    @router.post("/runs/{run_id}/manual/{step_id}", summary="Acknowledge a pending human action")
+    async def confirm_manual(run_id: str, step_id: str, body: ManualDecision, request: Request) -> dict:
+        """Human project members only. Identical decisions are idempotent;
+        stale/conflicting decisions return 409. Identity is edge-verified.
+        Repeating an uncertain decision retries recording, never physical work.
+        """
+        who = launcher_identity(request, action="confirm manual work")
+        scope = await member_scope(request, who)
+        store = journal(request)
+        row = store.get(body.request_id)
+        if row is None or not may_confirm(scope, row["project_id"]):
+            raise HTTPException(403, "Project membership is required")
+        if row["run_id"] != run_id or row["step_id"] != step_id:
+            raise HTTPException(409, "Stale manual request")
+        state = _RUNS.get(run_id)
+        if row["decision"] is None and (state is None or state.abort_requested or
+                state.status != "running" or not state.waiting_on or
+                state.waiting_on["request_id"] != body.request_id):
+            raise HTTPException(409, "Run is not waiting on this request")
+        result = store.decide(body.request_id, who, body)
+        if state is not None:
+            state.manual_changed.set()
+        return result
+
     @router.post("/runs", status_code=202)
     async def start_run(body: RunRequest, request: Request) -> dict:
         """Start an authorized run in the background; progress is on the SSE
@@ -1062,6 +1128,13 @@ def build_workflow_router() -> APIRouter:
         # One recorder for the whole attempt: the run-start read below and the
         # executor's own custody / lineage writes are the same client, so a hid
         # is resolved once instead of once per reader.
+        from .manual_steps import check_manual_package, journal
+        try:
+            check_manual_package(auth, getattr(request.app.state, "locations_config", None))
+            if not body.dry_run and any(s.kind == "manual" for s in plan.steps):
+                journal(request)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
         recorder = custody_recorder()
         # Where the bound plates are *now*, per the record layer — a warning on
         # the `started` frame, or a refusal under CUSTODY_STRICT (D7).
@@ -1080,7 +1153,8 @@ def build_workflow_router() -> APIRouter:
             dry_run=body.dry_run,
             started_at=time.monotonic(),
             started_at_utc=datetime.now(timezone.utc).isoformat(),
-            custody_expected=expected_locations(plates),
+            custody_expected=expected_locations(plates), project_id=auth.project_id,
+            has_manual=any(s.kind == "manual" for s in plan.steps),
         )
         _remember(state)
         state.emit("started", {
@@ -1101,18 +1175,22 @@ def build_workflow_router() -> APIRouter:
                 "authorization_id": auth.authorization_id}
 
     @router.get("/runs/{run_id}")
-    async def get_run(run_id: str) -> dict:
+    async def get_run(run_id: str, request: Request) -> dict:
         state = _RUNS.get(run_id)
         if state is None:
             raise HTTPException(status_code=404, detail=f"no run {run_id!r}")
+        if state.has_manual:
+            who = launcher_identity(request, action="read a manual run")
+            if not may_confirm(await member_scope(request, who), state.project_id):
+                raise HTTPException(403, "Project membership is required")
         return {"run_id": run_id, "status": state.status,
                 "authorization_id": state.authorization_id,
                 "launched_by": state.launched_by, "dry_run": state.dry_run,
                 "abort_requested": state.abort_requested,
-                "events": len(state.events), "result": state.result}
+                "events": len(state.events), "result": state.result, "waiting_on": state.waiting_on}
 
     @router.get("/runs/{run_id}/events")
-    async def run_events(run_id: str) -> StreamingResponse:
+    async def run_events(run_id: str, request: Request) -> StreamingResponse:
         """SSE stream of run events, replaying from the start.
 
         Replay-then-follow so a client that connects late (or reconnects) sees
@@ -1122,6 +1200,11 @@ def build_workflow_router() -> APIRouter:
         state = _RUNS.get(run_id)
         if state is None:
             raise HTTPException(status_code=404, detail=f"no run {run_id!r}")
+
+        if state.has_manual:
+            who = launcher_identity(request, action="read manual run events")
+            if not may_confirm(await member_scope(request, who), state.project_id):
+                raise HTTPException(403, "Project membership is required")
 
         async def _stream():
             i = 0
@@ -1165,6 +1248,7 @@ def build_workflow_router() -> APIRouter:
                     "detail": "run already finished; nothing to abort"}
         if not state.abort_requested:
             state.abort_requested = who
+            state.manual_changed.set()
             state.emit("abort_requested", {"by": who})
             await _record_run_event(request, state.authorization_id,
                                     outcome="abort_requested", owner=who)
