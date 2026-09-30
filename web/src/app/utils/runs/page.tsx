@@ -24,6 +24,8 @@ export default function RunsPage() {
   }
   const run = useQuery({ queryKey: ["workflow-run", runId], queryFn: () => request<Run>(`/runs/${encodeURIComponent(runId)}`), enabled: !!runId, refetchInterval: 2000, retry: false });
   const history = useQuery({ queryKey: ["manual-history", runId], queryFn: () => request<{ requests: ManualRequest[]; live: boolean }>(`/runs/${encodeURIComponent(runId)}/manual`), enabled: !!runId, refetchInterval: 3000, retry: false });
+  const measurements = useQuery({ queryKey: ["reader-measurements", runId], queryFn: () => request<{ state: string; error?: string; captured_steps?: number; measurements: { hid: string; measurement_id: string | null; plate_hid: string; well: string }[] }>(`/runs/${encodeURIComponent(runId)}/measurements`), enabled: !!runId, refetchInterval: 3000, retry: false });
+  const retryRecording = useMutation({ mutationFn: () => request(`/runs/${encodeURIComponent(runId)}/measurements/retry`, {}), onSuccess: () => { void cache.invalidateQueries({ queryKey: ["reader-measurements", runId] }); } });
   const refresh = () => { void cache.invalidateQueries({ queryKey: ["workflow-run", runId] }); void cache.invalidateQueries({ queryKey: ["manual-history", runId] }); };
   const launch = useMutation({ mutationFn: () => request<{ run_id: string }>("/runs", { authorization_id: authorization.trim(), dry_run: dryRun }), onSuccess: (data) => selectRun(data.run_id) });
   const abort = useMutation({ mutationFn: () => request(`/runs/${encodeURIComponent(runId)}/abort`, {}), onSuccess: refresh });
@@ -49,6 +51,15 @@ export default function RunsPage() {
         {run.data.result != null && <pre className="overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(run.data.result, null, 2)}</pre>}
       </>}
       {abort.isError && <p role="alert">Abort was not confirmed: {abort.error.message}</p>}
+      <h2 className="font-semibold">Reader measurements</h2>
+      {measurements.isError && <p role="alert">Measurement status unavailable: {measurements.error.message}</p>}
+      {measurements.data && <>
+        <p>Recording: {measurements.data.state} · {measurements.data.captured_steps ?? 0} captured reads · {measurements.data.measurements.filter((m) => m.measurement_id).length} saved measurements</p>
+        {measurements.data.error && <p role="alert">{measurements.data.error}</p>}
+        {["pending", "interrupted"].includes(measurements.data.state) && <button className="rounded border px-3 py-2" disabled={retryRecording.isPending || run.data?.status === "running"} onClick={() => retryRecording.mutate()}>Retry saving measurements</button>}
+        {["pending", "interrupted"].includes(measurements.data.state) && <p>This saves retained results; it does not read the plate again.</p>}
+      </>}
+      {retryRecording.isError && <p role="alert">Saving was not confirmed: {retryRecording.error.message}</p>}
       <h2 className="font-semibold">Saved human actions</h2>
       {history.isError ? <p role="alert">Manual history unavailable: {history.error.message}</p> : history.data?.requests.map((item) => <div key={item.request_id} className="rounded border p-3">
         <p>{item.step_id}: {item.state}</p>
