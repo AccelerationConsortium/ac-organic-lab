@@ -26,11 +26,13 @@ export function BambuPrinterPanel({ printers, connections = [] }: {
   connections?: EquipmentSnapshot[];
 }) {
   return (
-    <section className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-      <PrinterTileFrame name="Sample submission" subtitle="Upload artifact · Queue">
-        <SubmissionPanel />
-      </PrinterTileFrame>
-      <div className="grid min-w-0 grid-cols-1 items-start gap-3 md:grid-cols-2">
+    <section className="grid grid-cols-1 items-start gap-3 lg:grid-cols-3">
+      <div className="grid min-w-0 gap-3 lg:col-span-2">
+        <PrinterTileFrame name="Submit Bambu Jobs" subtitle="Upload artifact · Queue">
+          <SubmissionPanel />
+        </PrinterTileFrame>
+      </div>
+      <div className="grid min-w-0 grid-cols-1 items-start gap-3">
         {printers.map(printer => <BambuPrinterTile key={printer.id} snapshot={printer} />)}
         {connections.map(printer => <PrinterConnectionTile key={printer.id} snapshot={printer} />)}
         {printers.length === 0 && connections.length === 0 && <p className="text-sm text-ink-subtle dark:text-slate-400">No printers registered.</p>}

@@ -77,7 +77,7 @@ describe("BambuPrinterPanel", () => {
     expect(screen.getAllByText("Connected")).toHaveLength(2);
   });
 
-  it("pins sample submission first and removes the page introduction and per-printer buttons", () => {
+  it("pins Submit Bambu Jobs first and removes the page introduction and per-printer buttons", () => {
     render(
       <BambuPrinterPanel
         printers={[
@@ -88,7 +88,7 @@ describe("BambuPrinterPanel", () => {
     );
 
     expect(screen.queryByRole("heading", { name: "3D Printers" })).toBeNull();
-    expect(screen.getAllByRole("article")[0].textContent).toContain("Sample submission");
+    expect(screen.getAllByRole("article")[0].textContent).toContain("Submit Bambu Jobs");
     expect(screen.getByRole("heading", { name: "Bambu P1S 01" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Bambu H2D 01" })).toBeTruthy();
     expect(screen.queryByText(/Monitoring only/)).toBeNull();
