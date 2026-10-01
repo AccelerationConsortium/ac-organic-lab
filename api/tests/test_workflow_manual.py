@@ -152,6 +152,34 @@ async def test_missing_identity_outsider_stale_request_and_restart(rig):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["manual", "reader"])
+async def test_launcher_can_watch_own_run_without_project_membership(rig, kind):
+    client, _, scope = rig
+    run = wf.RunState(
+        run_id="run-owned", authorization_id="ra_test",
+        launched_by="hermes@lab.local", dry_run=False,
+        status="finished", project_id="p1",
+        has_manual=kind == "manual", has_reader=kind == "reader",
+    )
+    run.emit("done", {"ok": True})
+    wf._RUNS[run.run_id] = run
+    scope["member"] = False
+    path = f"/api/workflow/runs/{run.run_id}"
+    for suffix in ("", "/events"):
+        assert (await client.get(path + suffix)).status_code == 401
+        assert (await client.get(path + suffix, headers={"X-Auth-User": "other@lab.local"})).status_code == 403
+        response = await client.get(path + suffix, headers={"X-Auth-User": run.launched_by})
+        assert response.status_code == 200
+        if suffix:
+            assert '"type": "done"' in response.text
+        else:
+            assert response.json()["launched_by"] == run.launched_by
+
+    scope["member"] = True
+    assert (await client.get(path, headers={"X-Auth-User": "member@lab.local"})).status_code == 200
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("location", ["bench/wrong", None])
 async def test_wrong_or_unknown_source_refuses_before_inviting_human(rig, location):
     client, app, state = rig

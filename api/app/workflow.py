@@ -1255,7 +1255,7 @@ def build_workflow_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=f"no run {run_id!r}")
         if state.has_manual or state.has_reader:
             who = launcher_identity(request, action="read a manual run")
-            if not may_confirm(await member_scope(request, who), state.project_id):
+            if who != state.launched_by and not may_confirm(await member_scope(request, who), state.project_id):
                 raise HTTPException(403, "Project membership is required")
         return {"run_id": run_id, "status": state.status,
                 "authorization_id": state.authorization_id,
@@ -1277,7 +1277,7 @@ def build_workflow_router() -> APIRouter:
 
         if state.has_manual or state.has_reader:
             who = launcher_identity(request, action="read manual run events")
-            if not may_confirm(await member_scope(request, who), state.project_id):
+            if who != state.launched_by and not may_confirm(await member_scope(request, who), state.project_id):
                 raise HTTPException(403, "Project membership is required")
 
         async def _stream():
