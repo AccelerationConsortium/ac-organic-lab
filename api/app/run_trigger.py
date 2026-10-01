@@ -36,7 +36,8 @@ network position (loopback + the edge), so the attribution is only as honest
 as the process environment — which is why the deployment target for this
 server is the boxed ``hermes`` principal (HERMES_ACCESS_DESIGN Phase 0), with
 ``LAB_ACTOR`` pinned to its Phase-1 roster identity (``hermes@lab.local``).
-Mutating tools fail closed when ``LAB_ACTOR`` is unset; reads work regardless.
+Mutating tools fail closed when ``LAB_ACTOR`` is unset. Reads of manual or
+reader runs require the bound launcher identity or project membership.
 
 Transport
 ---------
