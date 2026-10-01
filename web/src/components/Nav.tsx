@@ -1,5 +1,6 @@
 "use client";
 
+import type { MouseEvent } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { usePlatforms } from "@/lib/use-platforms";
@@ -14,7 +15,23 @@ const STATIC_AFTER = [
   { href: "/utils", label: "Utils" },
 ];
 
-type Tab = { href: string; label: string; external?: boolean };
+// `popup` opens the link in a separate popup window (falling back to a new
+// tab when the browser blocks it); `external` opens a plain new tab.
+type Tab = { href: string; label: string; external?: boolean; popup?: boolean };
+
+// Bitácora is a separate app on the same edge origin with its own sign-in
+// gate, so the tab is visible to everyone; access is enforced there.
+const notebooksTab: Tab[] = [{ href: "/bitacora/", label: "Notebooks", popup: true }];
+
+function openPopup(event: MouseEvent<HTMLAnchorElement>, href: string) {
+  // Modified clicks keep the browser's own new-tab / new-window behaviour.
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const win = window.open(href, "bitacora", "popup,width=1280,height=900");
+  if (win) {
+    event.preventDefault();
+    win.focus();
+  }
+}
 
 export function Nav() {
   const pathname = usePathname();
@@ -28,9 +45,6 @@ export function Nav() {
     ? [{ href: "/platforms", label: "Platforms" }]
     : [];
 
-  // The notebook (Bitácora — a separate app with its own auth/routing) is
-  // hidden from the tab row while it is under test: its only dashboard entry
-  // point is the admin-only link on the Admin page (see app/admin/page.tsx).
   // Inventory is a public, chrome-less read-only embed — it stays inside the
   // dashboard at /inventory and is visible to everyone.
   const inventoryTab = [{ href: "/inventory", label: "Inventory" }];
@@ -42,6 +56,7 @@ export function Nav() {
   const tabs: Tab[] = [
     ...STATIC_BEFORE,
     ...platformTabs,
+    ...notebooksTab,
     ...inventoryTab,
     ...STATIC_AFTER,
     ...adminTabs,
@@ -50,7 +65,7 @@ export function Nav() {
   return (
     <nav className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-800">
       {tabs.map((tab) => {
-        const active = tab.external
+        const active = tab.external || tab.popup
           ? false
           : tab.href === "/"
             ? pathname === "/"
@@ -60,14 +75,15 @@ export function Nav() {
             ? "border-sky-600 text-ink dark:border-sky-400 dark:text-slate-100"
             : "border-transparent text-ink-muted hover:text-ink dark:text-slate-300 dark:hover:text-slate-200"
         }`;
-        // External tabs (none today; the Notebooks tab used this) open in a
-        // new browser tab.
-        return tab.external ? (
+        // External and popup tabs leave the dashboard; a popup tab is an
+        // ordinary new-tab link until the click handler opens the window.
+        return tab.external || tab.popup ? (
           <a
             key={tab.href}
             href={tab.href}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={tab.popup ? (e) => openPopup(e, tab.href) : undefined}
             className={cls}
           >
             {tab.label}
