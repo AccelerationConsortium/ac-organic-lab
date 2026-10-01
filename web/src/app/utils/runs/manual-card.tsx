@@ -47,4 +47,3 @@ export function ManualCard({ runId, item, onChanged }: { runId: string; item: Ma
     {mutation.isSuccess && <p role="status">Response accepted. Waiting for the runner&apos;s checks.</p>}
   </section>;
 }
-

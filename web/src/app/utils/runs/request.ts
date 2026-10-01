@@ -6,4 +6,3 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
   if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
   return response.json();
 }
-
