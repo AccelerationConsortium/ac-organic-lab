@@ -1279,7 +1279,11 @@ def test_force_torque_read_hits_device_root_without_claiming() -> None:
     claim_route = respx.post("http://127.0.0.1:8000/control/claim")
     data_route = respx.get("http://127.0.0.1:8000/force-torque/data").mock(
         return_value=httpx.Response(
-            200, json={"data": [0.1, 0, 0, 0, 0, 0], "calibrated": True}
+            200, json={"wrench": [0.1, 0, 0, 0, 0, 0], "sample_id": "test:1",
+                       "config_revision": "test:2", "service_tare_applied": True,
+                       "sensor_sampled_at": None, "service_received_at": "2026-01-01T00:00:00Z",
+                       "force_magnitude": 0.1, "torque_magnitude": 0,
+                       "force_direction": None, "torque_direction": None}
         )
     )
 
@@ -1287,7 +1291,12 @@ def test_force_torque_read_hits_device_root_without_claiming() -> None:
         r = client.get("/api/equipment/xarm_translocation/force-torque/data")
 
     assert r.status_code == 200
-    assert r.json()["calibrated"] is True
+    assert r.json()["service_tare_applied"] is True
+    assert r.json()["config_revision"] == "test:2"
+    assert r.json()["wrench"] == [0.1, 0, 0, 0, 0, 0]
+    assert r.json() == data_route.calls.last.response.json()
+    assert "calibrated" not in r.json()
+    assert "total_magnitude" not in r.json()
     assert data_route.called
     # Crucially: no /control/ in the path, and no claim taken for a GET.
     assert not claim_route.called
@@ -1374,3 +1383,42 @@ def test_force_torque_surface_is_robot_arm_only() -> None:
 
     assert r.status_code == 404
     assert "force/torque" in str(r.json()["detail"])
+
+
+@respx.mock
+@pytest.mark.parametrize("revision", [None, "session-a:3", "old/session?x=1&y=2"])
+def test_force_torque_config_preserves_revision_without_claim(revision: str | None) -> None:
+    app = _make_app(_xarm_entry())
+    params = {} if revision is None else {"revision": revision}
+    expected = {"revision": revision or "current:1", "geometry": {"status": "unknown"},
+                "controller_compensation": {"validation_status": "unknown"}}
+    claim = respx.post("http://127.0.0.1:8000/control/claim")
+    device = respx.get("http://127.0.0.1:8000/force-torque/config", params=params).mock(
+        return_value=httpx.Response(200, json=expected))
+    with TestClient(app) as client:
+        response = client.get("/api/equipment/xarm_translocation/force-torque/config", params=params)
+    assert response.status_code == 200
+    assert response.json() == expected
+    assert dict(device.calls.last.request.url.params) == params
+    assert not claim.called
+
+
+@respx.mock
+def test_force_torque_expired_revision_does_not_fall_back() -> None:
+    app = _make_app(_xarm_entry())
+    device = respx.get("http://127.0.0.1:8000/force-torque/config", params={"revision": "expired"}).mock(
+        return_value=httpx.Response(404, json={"detail": {"error": "ft_config_revision_unavailable"}}))
+    with TestClient(app) as client:
+        response = client.get("/api/equipment/xarm_translocation/force-torque/config?revision=expired")
+    assert response.status_code == 404
+    assert "ft_config_revision_unavailable" in response.text
+    assert device.call_count == 1
+
+
+@respx.mock
+def test_force_torque_config_is_read_only() -> None:
+    app = _make_app(_xarm_entry())
+    with TestClient(app) as client:
+        assert client.post("/api/equipment/xarm_translocation/force-torque/config").status_code == 405
+        assert client.get("/api/equipment/xarm_translocation/force-torque/data?revision=old").status_code == 422
+    assert not respx.calls

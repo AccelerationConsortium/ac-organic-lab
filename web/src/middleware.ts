@@ -58,6 +58,7 @@ const CUSTODY_PATH_RE = /^\/api\/custody(?:\/.*)?$/;
 // other read here — but identity headers are stripped on ALL methods below,
 // because the backend forwards `X-Auth-User` to bitácora when it fetches the
 // authorization, and a client-chosen value must never reach it.
+const MANUAL_WORKFLOW_RE = /^\/api\/workflow\/runs\/[^/]+\/(?:manual|measurements)(?:\/.*)?$/;
 const WORKFLOW_PATH_RE = /^\/api\/workflow(?:\/.*)?$/;
 
 // -- /api/assistant/* gate (Phase 2) -----------------------------------------
@@ -262,8 +263,8 @@ export async function middleware(request: NextRequest) {
     headers.delete("x-auth-user");
     headers.delete("x-auth-role");
 
-    if (CONTROL_METHODS.has(request.method) && !CONTROL_OPEN) {
-      const v = await verifySession(request);
+    if ((CONTROL_METHODS.has(request.method) && !CONTROL_OPEN) || MANUAL_WORKFLOW_RE.test(pathname)) {
+      const v = await verifySession(request, { cookieOnly: MANUAL_WORKFLOW_RE.test(pathname) });
       if (!v.ok) {
         return NextResponse.json(
           { detail: "Sign in to start or abort a run." },
@@ -274,6 +275,11 @@ export async function middleware(request: NextRequest) {
       if (v.role) headers.set("x-auth-role", v.role);
     }
 
+    if (!CONTROL_METHODS.has(request.method) && !MANUAL_WORKFLOW_RE.test(pathname) && request.headers.get("cookie")) {
+      const v = await verifySession(request, { cookieOnly: true });
+      if (v.ok && v.user) headers.set("x-auth-user", v.user);
+      if (v.ok && v.role) headers.set("x-auth-role", v.role);
+    }
     return NextResponse.next({ request: { headers } });
   }
 

@@ -71,4 +71,23 @@ describe("camera viewing leases", () => {
       expect.objectContaining({ method: "DELETE" }),
     );
   });
+  it("does not mint the next feed until the previous lease is released", async () => {
+    let finishDelete: (value: unknown) => void = () => {};
+    const calls: string[] = [];
+    const fetcher = vi.fn((url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (init?.method === "DELETE") return new Promise((resolve) => { finishDelete = resolve; });
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: `m${calls.length}`, heartbeat_seconds: 20, transport: "mjpeg" }) });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const first = new AbortController();
+    await openMjpegSession("/streams/api/ws?src=flex_rgb", first.signal, vi.fn());
+    first.abort();
+    const next = openMjpegSession("/streams/api/ws?src=flex_depth", new AbortController().signal, vi.fn());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual(["POST /api/camera-streams/sessions", "DELETE /api/camera-streams/sessions/m1"]);
+    finishDelete({ status: 204 });
+    await next;
+    expect(calls[2]).toBe("POST /api/camera-streams/sessions");
+  });
 });

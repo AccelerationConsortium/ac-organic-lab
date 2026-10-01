@@ -18,22 +18,86 @@ import { FetchErrorBand } from "./FetchErrorBand";
 import { TileShell } from "./TileShell";
 import { CameraPlayer } from "./CameraPlayer";
 
-function EmbeddedCamera({ snapshot }: { snapshot: EquipmentSnapshot }) {
-  const [shown, setShown] = useState(false);
-  const lens = snapshot.camera?.lenses?.[0];
-  if (!lens) return null;
+const toggleCls = (active: boolean) =>
+  `px-2 py-1 text-xs font-semibold transition-colors ${
+    active
+      ? "bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900"
+      : "bg-white text-ink hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+  }`;
 
+function Segmented({ label, options, value, onChange }: {
+  label: string;
+  options: { id: string; label: string }[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div role="group" aria-label={label} className="flex overflow-hidden rounded border border-slate-300 dark:border-slate-600">
+      {options.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          aria-pressed={option.id === value}
+          onClick={() => onChange(option.id)}
+          className={toggleCls(option.id === value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * An entry may carry several physical cameras (lens `view`), each with one or
+ * more channels (RGB / depth). Video stays off until Show stream.
+ */
+function EmbeddedCamera({ snapshot }: { snapshot: EquipmentSnapshot }) {
+  const lenses = snapshot.camera?.lenses ?? [];
+  const views = [...new Set(lenses.map((lens) => lens.view ?? lens.label))];
+  const [shown, setShown] = useState(false);
+  const [view, setView] = useState<string | undefined>(views[0]);
+  const [lensId, setLensId] = useState<string | undefined>(lenses[0]?.id);
+  if (lenses.length === 0) return null;
+
+  const inView = lenses.filter((lens) => (lens.view ?? lens.label) === view);
+  const lens = inView.find((l) => l.id === lensId) ?? inView[0];
   const stream = `${snapshot.id}_${lens.id}`;
   const source = `/streams/api/ws?src=${encodeURIComponent(stream)}`;
-  const observed = snapshot.status.components?.["camera"]?.state ?? "unknown";
+  // The envelope's `camera` component reports the entry's primary camera
+  // only; say nothing about the others rather than borrow its state.
+  const observed = view === views[0]
+    ? snapshot.status.components?.["camera"]?.state ?? "unknown"
+    : null;
 
   return (
     <section className="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
-      <div className="flex h-9 items-center gap-2 bg-slate-50 px-2 dark:bg-slate-800/40">
+      <div className="flex min-h-9 flex-wrap items-center gap-2 bg-slate-50 px-2 py-1 dark:bg-slate-800/40">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-subtle dark:text-slate-400">
-          {lens.label} camera
+          {views.length > 1 ? "Cameras" : `${view} camera`}
         </span>
-        <span className="text-[10px] text-ink-subtle dark:text-slate-500">{observed}</span>
+        {views.length > 1 && (
+          <Segmented
+            label="Camera"
+            options={views.map((v) => ({ id: v, label: v }))}
+            value={view ?? ""}
+            onChange={(v) => {
+              setView(v);
+              setLensId(lenses.find((l) => (l.view ?? l.label) === v)?.id);
+            }}
+          />
+        )}
+        {inView.length > 1 && (
+          <Segmented
+            label="Channel"
+            options={inView.map((l) => ({ id: l.id, label: l.label }))}
+            value={lens.id}
+            onChange={setLensId}
+          />
+        )}
+        {observed && (
+          <span className="text-[10px] text-ink-subtle dark:text-slate-500">{observed}</span>
+        )}
         <button
           type="button"
           onClick={() => setShown((value) => !value)}
@@ -45,8 +109,10 @@ function EmbeddedCamera({ snapshot }: { snapshot: EquipmentSnapshot }) {
       </div>
       {shown ? (
         <CameraPlayer
+          key={stream}
           src={source}
           transport={snapshot.camera?.transport}
+          depth={Boolean(lens.depth_path)}
           className="aspect-video w-full bg-black object-contain"
         />
       ) : (

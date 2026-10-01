@@ -116,30 +116,56 @@ describe("EquipmentStatusCard generic INIT", () => {
 });
 
 describe("EquipmentStatusCard embedded camera", () => {
-  it("starts off and opens only after the viewer asks", () => {
+  function flexWithCameras() {
     const withCamera = snapshot({ equipment_status: "requires_init" });
     withCamera.id = "gibbie_flex";
+    const lens = (id: string, view: string, label: string) => ({
+      id, view, label, rtsp_path: "stream1",
+      stream_path: `/devices/gibbie_flex/${id}`, ptz_capable: false,
+    });
     withCamera.camera = {
       host: "sdl2-pc-04.tail6a1dd7.ts.net",
       onvif_port: 2020,
       rtsp_port: 554,
       transport: "mjpeg",
-      lenses: [{
-        id: "main", label: "Deck", rtsp_path: "stream1",
-        stream_path: "/devices/gibbie_flex/camera/stream", ptz_capable: false,
-      }],
+      lenses: [
+        lens("main", "Corner Camera", "Deck"),
+        lens("pipette_rgb", "Pipette Camera", "RGB"),
+        lens("pipette_depth", "Pipette Camera", "Depth"),
+      ],
     };
     withCamera.status.components = {
       camera: { connected: false, state: "off", message: null, last_event_at: null },
     };
+    return withCamera;
+  }
 
-    render(<EquipmentStatusCard snapshot={withCamera} />);
+  it("shows the camera section unfolded, with video off until the viewer asks", () => {
+    render(<EquipmentStatusCard snapshot={flexWithCameras()} />);
     expect(screen.getByText("Camera view off")).toBeTruthy();
     expect(screen.queryByTestId("camera-player")).toBeNull();
+    expect(screen.getByRole("button", { name: "Corner Camera" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Show stream" }));
     expect(screen.getByTestId("camera-player").textContent).toContain("src=gibbie_flex_main");
-    expect(screen.getByRole("button", { name: "Hide stream" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Hide stream" }));
+    expect(screen.queryByTestId("camera-player")).toBeNull();
+  });
+
+  it("switches between corner and pipette cameras, and RGB and depth", () => {
+    render(<EquipmentStatusCard snapshot={flexWithCameras()} />);
+    expect(screen.queryByRole("group", { name: "Channel" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Pipette Camera" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show stream" }));
+    expect(screen.getByTestId("camera-player").textContent).toContain("src=gibbie_flex_pipette_rgb");
+
+    fireEvent.click(screen.getByRole("button", { name: "Depth" }));
+    expect(screen.getByTestId("camera-player").textContent).toContain("src=gibbie_flex_pipette_depth");
+
+    fireEvent.click(screen.getByRole("button", { name: "Corner Camera" }));
+    expect(screen.getByTestId("camera-player").textContent).toContain("src=gibbie_flex_main");
+    expect(screen.queryByRole("group", { name: "Channel" })).toBeNull();
   });
 });
 

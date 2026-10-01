@@ -23,7 +23,7 @@ Configuration (all env):
   without it. Note this deliberately walks back part of decision #10's
   "no API key in the dashboard env" rationale — recorded trade, 2026-08-13.
 * ``ASSISTANT_OPENAI_MODEL`` -- Ask-mode model id
-  (default ``qwen/qwen3.8-2.4t-a95b``).
+  (default ``deepseek/deepseek-v4.1-flash``).
 * ``ASSISTANT_OPENAI_CONTROL_MODEL`` -- Control-mode model id
   (default: same as ``ASSISTANT_OPENAI_MODEL``).
 
@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_URL = os.environ.get(
     "ASSISTANT_OPENAI_BASE_URL", "https://openrouter.ai/api/v1"
 )
-OPENAI_MODEL = os.environ.get("ASSISTANT_OPENAI_MODEL", "qwen/qwen3.8-2.4t-a95b")
+OPENAI_MODEL = os.environ.get("ASSISTANT_OPENAI_MODEL", "deepseek/deepseek-v4.1-flash")
 OPENAI_CONTROL_MODEL = os.environ.get("ASSISTANT_OPENAI_CONTROL_MODEL", OPENAI_MODEL)
 # Optional OpenRouter reasoning_effort, applied to CONTROL turns only. DeepSeek
 # reasoning models orbit far longer on "max"/unset (tens of seconds of silent

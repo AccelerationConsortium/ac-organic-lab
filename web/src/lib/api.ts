@@ -501,6 +501,48 @@ export async function postShakerSetSpeed(
   return controlPost(equipmentId, "shake/set_speed", { speed_level });
 }
 
+// -- Chiller (IKA RC 2 lite / ika-chiller) --------------------------------
+//
+// Note what is NOT here: `chiller/start` accepts `wait_for_temperature`, and
+// the device honours it for up to an hour. The dashboard's control proxy
+// budgets 15 s for a `kind: other` action, so the tile never sends it — the
+// operator watches the bath temperature on the tile instead, which is the
+// same information without a held-open request.
+//
+// There is also no `postChillerShutdown`. `/control/shutdown` closes the
+// serial port and deliberately leaves the chiller running; putting it on a
+// tile next to a power-looking toggle would read as "turn the chiller off",
+// which is exactly what it does not do.
+
+export async function postChillerStartup(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "startup", {});
+}
+
+export async function postChillerSetTemperature(
+  equipmentId: string,
+  temperature_c: number,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "chiller/set_temperature", { temperature_c });
+}
+
+export async function postChillerSetPumpSpeed(
+  equipmentId: string,
+  speed_rpm: number,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "chiller/set_pump_speed", { speed_rpm });
+}
+
+export async function postChillerStart(
+  equipmentId: string,
+  body: { temperature_c?: number; pump_speed_rpm?: number },
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "chiller/start", body);
+}
+
+export async function postChillerStop(equipmentId: string): Promise<ControlAck> {
+  return controlPost(equipmentId, "chiller/stop", {});
+}
+
 // The OT-2's write surface (lifecycle, pause, deck declaration) lives in the
 // gateway's own panel, framed at /ot2/{hte,complexation}/ui/ — see
 // `lib/device-panels.ts`. `getDeckLayout` below stays: the tile reads deck

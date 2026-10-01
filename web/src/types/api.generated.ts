@@ -1439,6 +1439,10 @@ export interface components {
              * @default true
              */
             ptz_capable: boolean;
+            /** View */
+            view?: string | null;
+            /** Depth Path */
+            depth_path?: string | null;
         };
         /** ChatMessage */
         ChatMessage: {

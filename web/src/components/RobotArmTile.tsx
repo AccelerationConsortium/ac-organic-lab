@@ -270,9 +270,11 @@ export function RobotArmTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           <TileButton
             disabled={ctrlBlocked || !isConnected}
             onClick={() => runControl("clear/errors", () => postArmClear(snapshot.id))}
-            title={locked ? lockTitle : "Clear a fault so motion can resume"}
+            title={locked ? lockTitle : snapshot.id === "xarm_translocation"
+              ? "Clear arm and gripper faults, re-enable the servos, and verify controller recovery"
+              : "Clear a fault so motion can resume"}
           >
-            CLEAR
+            {snapshot.id === "xarm_translocation" ? "Clear errors & re-enable" : "CLEAR"}
           </TileButton>
           {panelLink && <div className="ml-auto">{panelLink}</div>}
         </>

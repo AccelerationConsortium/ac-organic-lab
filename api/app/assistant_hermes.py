@@ -13,7 +13,7 @@ from .assistant import (
     _format_prompt, _runtime_dir, _sse, _translate_event,
 )
 
-MODEL = os.environ.get('ASSISTANT_HERMES_MODEL', 'deepseek/deepseek-v4-flash-vision-exp')
+MODEL = os.environ.get('ASSISTANT_HERMES_MODEL', 'deepseek/deepseek-v4.1-flash')
 BINARY = os.environ.get('ASSISTANT_HERMES_BIN', str(Path.home() / '.hermes/hermes-agent/venv/bin/hermes'))
 
 

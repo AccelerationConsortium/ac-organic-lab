@@ -32,6 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
 from .agent_bugs import build_agent_bugs_router
+from .agent_questions import build_agent_questions_router
 from .assistant import build_assistant_router
 from .assistant_sessions import (
     AssistantSessionStore,
@@ -544,6 +545,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Lab history database
     db_path = resolve_db_path()
+    from .manual_steps import ManualJournal
+    app.state.manual_journal = ManualJournal(db_path.with_name("manual_steps.sqlite3"))
+    app.state.manual_journal.recover()
+    from .reader_measurements import ReaderJournal
+    app.state.reader_journal = ReaderJournal(db_path.with_name("reader_measurements.sqlite3"))
+    app.state.reader_journal.recover()
     db = LabDatabase(db_path)
     try:
         db.open()
@@ -652,6 +659,7 @@ app.include_router(build_voice_router())
 # Agent error-reporting bridge: a remote lab agent POSTs an error with its
 # ac_auth X-Api-Key and gets a Hermes diagnosis back in the response.
 app.include_router(build_agent_bugs_router())
+app.include_router(build_agent_questions_router())
 # Admin-only browser SSH console into the lab's host machines (Utils ->
 # Computers and Servers). Human admins only -- never a machine principal; see
 # the module docstring and docs/AGENTIC_LAB_DESIGN.md Part II.

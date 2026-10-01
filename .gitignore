@@ -40,6 +40,7 @@ api/.env
 web/.env.local
 equipment.local.yaml
 network-monitors.local.json
+api/agent-consultant.local.json
 
 # Local SQLite runtime state
 data/*.db

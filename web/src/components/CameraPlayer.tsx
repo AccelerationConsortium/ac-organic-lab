@@ -33,6 +33,8 @@ export function CameraPlayer(props: {
   grantId?: string;
   /** Registry-selected upstream. Defaults to the existing go2rtc path. */
   transport?: "go2rtc" | "mjpeg";
+  /** MJPEG only: the lens has a registered depth readout (click to measure). */
+  depth?: boolean;
 }) {
   const [useWebrtc, setUseWebrtc] = useState(false);
   const [hidden, setHidden] = useState(false);
@@ -59,5 +61,6 @@ export function CameraPlayer(props: {
   if (paused) return <div className={props.className ?? "aspect-video"}>Video paused while this tab is hidden.</div>;
   if (props.transport === "mjpeg") return <MjpegPlayer {...playerProps} />;
 
-  return useWebrtc ? <WebRtcPlayer {...playerProps} /> : <MsePlayer {...playerProps} />;
+  const { depth: _depth, ...videoProps } = playerProps;
+  return useWebrtc ? <WebRtcPlayer {...videoProps} /> : <MsePlayer {...videoProps} />;
 }

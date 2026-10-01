@@ -131,10 +131,10 @@ def _device_url(base_url: str, status_path: str, sub: str) -> str:
 # verb with ``Depends(require_claim)``. These therefore go through ``_proxy``
 # (auth + claim dance + audit), not ``_device_action_proxy``.
 #
-# Split by method because the device splits by claim: the two reads are
+# Split by method because the device splits by claim: the three reads are
 # deliberately ungated there (a status poll must not serialise against a real
 # operation) while the four actions are claim-gated.
-_FORCE_TORQUE_READS = frozenset({"status", "data"})
+_FORCE_TORQUE_READS = frozenset({"status", "data", "config"})
 _FORCE_TORQUE_ACTIONS = frozenset({"enable", "disable", "calibrate", "check-safety"})
 
 # Deliberately NOT exposed. ``move-until-force`` and ``move-joint-until-torque``
@@ -287,22 +287,28 @@ def build_control_router() -> APIRouter:
         equipment_id: str,
         action: str,
         request: Request,
+        revision: str | None = None,
     ) -> dict:
-        """Read the six-axis force/torque sensor.
+        """Read an FT snapshot, its configuration, or cached status without a claim.
 
-        ``status`` reports enabled/calibrated, the zero point and the last
-        reading; ``data`` returns the live 6-vector plus force and torque
-        magnitudes. Both are ungated on the device and ``_proxy`` never claims
-        for GET, so polling here cannot serialise against a real operation.
+        ``data`` is one SDK acquisition with wrench and derived quantities.
+        ``config?revision=...`` explains that sample's channel, units, service
+        tare and unknown geometry/compensation validation. ``status`` contains
+        the last complete sample and does not poll the sensor. Never substitute
+        current configuration for a requested missing/expired revision.
         """
         _assert_force_torque_action(request, equipment_id, action, "GET")
+        action = action.strip('/')
+        if revision is not None and action != "config":
+            raise HTTPException(status_code=422, detail="revision applies only to force-torque/config")
         return await _proxy(
             request,
             equipment_id,
-            f"force-torque/{action.strip('/')}",
+            f"force-torque/{action}",
             "GET",
             None,
             root_level=True,
+            query_params={"revision": revision} if revision is not None else None,
         )
 
     @router.post("/{equipment_id}/force-torque/{action:path}")
@@ -877,6 +883,7 @@ async def _proxy(
     body: dict | None,
     *,
     root_level: bool = False,
+    query_params: dict[str, str] | None = None,
 ) -> dict:
     aggregator = getattr(request.app.state, "aggregator", None)
     if aggregator is None:
@@ -977,7 +984,7 @@ async def _proxy(
                 )
             if method == "GET":
                 return await client.get(
-                    target, headers=headers, timeout=action_timeout
+                    target, params=query_params, headers=headers, timeout=action_timeout
                 )
             if method == "DELETE":
                 return await client.delete(

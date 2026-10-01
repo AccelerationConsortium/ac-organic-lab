@@ -280,3 +280,16 @@ async def test_move_distinguishes_conflict_from_uncertain_failure(status, attemp
     result = await CustodyRecorder(BASE, "s").record_move(hid="p", to="t", performed_by="d", recorder="u")
     assert result["recorded"] is False and result["uncertain"] is uncertain
     assert post.call_count == attempts
+
+
+@pytest.mark.parametrize("drawer", ["in", "out", "unknown"])
+def test_cytation_drawer_position_does_not_observe_plate_presence(drawer):
+    carrier = LOCS.by_name("cytation_5/carrier")
+    status = _Status(details={"drawer": drawer, "loaded_plate": None,
+                             "plate_in_reader": False},
+                     components={"plate_stage": _Comp(drawer)})
+    observation = observe(_Snap(status), carrier, LOCS)
+    assert observation.kind == "none"
+    assert reconcile("PLT-1", observation) == "unobservable"
+    status.details["loaded_plate"] = {"plate_id": "OTHER-PLATE"}
+    assert reconcile("PLT-1", observe(_Snap(status), carrier, LOCS)) == "mismatch"

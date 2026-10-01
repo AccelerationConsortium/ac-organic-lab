@@ -275,6 +275,14 @@ equipment:
     edge_secret_env: OT2_EDGE_SECRET
     base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020
     tailscale_ip: 100.64.254.16
+    camera:
+      host: sdl2-pc-03-cytation.tail6a1dd7.ts.net
+      transport: mjpeg
+      lenses:
+        - id: overhead
+          label: Overhead USB
+          stream_path: /cameras/overhead/stream.mjpg?fps=5
+          ptz_capable: false
     status_path: /status
     # Robot transport (changed 2026-09-04): the OT-2 (HTE) robot
     # (`ot2cytation`, board rev A)is reachable over **instrument-LAN Ethernet** at
@@ -582,7 +590,7 @@ equipment:
 
   # Second Opentrons OT-2 (robot `sdl2-ot2-complexation`, Tailscale
   # 100.64.254.91) on the Echem bench for complexation work. Fronted by the
-  # second `opentrons-server` gateway instance on sdl2-pc-03 port 8021
+  # second `opentrons-server` gateway instance on sdl2-pc-06-uplc port 8021
   # (service `ot2-gateway-complexation`; deployed 2026-07-10). The gateway is
   # multi-instance by design — one process per robot, own port, own state
   # files; see the opentrons-server README "Running multiple OT-2 gateways".
@@ -596,7 +604,7 @@ equipment:
     adapter: http
     protocol: "1.2"
     edge_secret_env: OT2_EDGE_SECRET
-    base_url: http://sdl2-pc-03-cytation.tail6a1dd7.ts.net:8021
+    base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8021
     tailscale_ip: 100.64.254.91
     status_path: /status
     poll_timeout_seconds: 8.0
@@ -609,23 +617,10 @@ equipment:
       - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
       - { label: Agent discovery, path: /llms.txt, kind: text }
       - { label: Typed plan actions, path: /plans/actions, kind: json }
-    # Robot transport (since 2026-09-12, by decision): the OT-2 (Complexation)
-    # robot (`ot2training`, serial `weathered-dream`, board rev 2.1) is reached
-    # over its **own Wi-Fi + Tailscale address**, OT2_HTTP_BASE_URL=
-    # http://100.64.254.91:31950 (`sdl2-ot2-complexation`). Its USB-B link into
-    # the UPLC PC died on 2026-09-12 (the robot's USB NIC is a phantom device
-    # there; the 31951 portproxy still exists but forwards to nothing), so the
-    # 2026-09-05 bridge path is gone and the "never use the Wi-Fi address" rule
-    # that used to live here is withdrawn. Know what that costs: the Pi 3B+'s
-    # Broadcom firmware hangs 23–43 times a day on BOTH OT-2s (measured
-    # 09-08 → 13); the robot-side wifi-watchdog reloads the driver, tightened
-    # 2026-09-13 to a 1-min cycle so each hang costs ~1–2 min instead of 2–17
-    # (opentrons-server docs/OT2_TAILSCALE.md). The `gateway_fronted` flag
-    # above turns each hang into an "unreachable" span; that is the truth, not
-    # noise. The durable fix is still a USB-to-Ethernet adapter onto the lab
-    # switch (ROADMAP → ot2_hte sub-tasks). Identity rule (robot_serial + board_revision +
-    # api/fw) still applies: 172.31.60.10 (`ot2cytation`, board rev A) is a
-    # DIFFERENT OT-2.
+    # Gateway on UPLC; robot ot2training (serial weathered-dream, board rev 2.1)
+    # reached directly over its USB network at http://169.254.40.81:31950.
+    # platebalanceV1 is a local WZB254-N peripheral on COM3 in deck slot 6.
+    # The robot's own Tailscale identity above remains distinct from its gateway.
     tiles:
       complexation: { w: 2, h: 3 }
     # "Open" pill -> the edge-gated OT-2 gateway operator SPA at
@@ -1315,16 +1310,35 @@ equipment:
     # on the PC 2026-09-20). A "Open" pill here would only ever 404. Add one
     # when a Flex panel ships; see web/src/lib/device-panels.ts.
     pills: {}
-    # Flex's fixed deck camera is served by sdl2-gibbie-server, not the
-    # Kasa/Tapo gateway. The authenticated dashboard proxy opens it only after
-    # a signed-in viewer clicks Show stream.
+    # Two cameras, one toggle each on the tile (`view`). The Flex's own
+    # corner deck camera is served by sdl2-gibbie-server. The pipette camera
+    # is the standalone D435i on the Gibbie PC, owned by sdl-camera-server
+    # (NSSM `sdl-camera-server`, camera id `d435i`), which binds loopback
+    # 127.0.0.1:8071 behind a bearer token; gibbie-server relays its color
+    # and depth streams and its point-depth readout (`depth_path`, deployed
+    # 2026-09-25). Depth is aligned to color, so a click on either pipette
+    # picture reads a distance. The authenticated dashboard proxy opens any
+    # of them only after a signed-in viewer clicks Show stream.
     camera:
       host: sdl2-pc-04.tail6a1dd7.ts.net
       transport: mjpeg
       lenses:
         - id: main
+          view: Corner Camera
           label: Deck
           stream_path: /devices/gibbie_flex/camera/stream
+          ptz_capable: false
+        - id: pipette_rgb
+          view: Pipette Camera
+          label: RGB
+          stream_path: /devices/gibbie_flex/pipette_camera/stream?stream=color
+          depth_path: /devices/gibbie_flex/pipette_camera/depth
+          ptz_capable: false
+        - id: pipette_depth
+          view: Pipette Camera
+          label: Depth
+          stream_path: /devices/gibbie_flex/pipette_camera/stream?stream=depth
+          depth_path: /devices/gibbie_flex/pipette_camera/depth
           ptz_capable: false
 
   - id: gibbie_ur_arm
@@ -1500,6 +1514,39 @@ equipment:
       - { label: Swagger UI, path: /docs, kind: swagger }
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
       - { label: Agent guide, path: /agent-docs, kind: markdown }
+    tiles:
+      process_chemistry: { w: 2, h: 1 }
+    pills: {}
+
+  - id: lle_chiller
+    name: IKA RC 2 lite Chiller (Process Chemistry)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    gateway_fronted: true
+    # ika-chiller (NSSM `ika-chiller`, deployed 2026-09-22), talking NAMUR over
+    # COM6 of this PC to an IKA RC 2 lite recirculating chiller. Port 8085, not
+    # 8084: Agilent's Licensing.Service.Host already listens there.
+    #
+    # The first *controllable* device on this bench. `activity` is observed
+    # from the circulation pump; the compressor is not readable over the
+    # interface at all, so what the service commanded is published as a
+    # labelled belief in `details.tempering_commanded` and never as activity.
+    #
+    # Note what `requires_init` means here: this service has no serial link.
+    # It does NOT mean the chiller stopped — stopping the service deliberately
+    # leaves the hardware running, so a reaction being cooled stays cooled
+    # across a restart. `details.hardware_state_observed` says which it is.
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8085
+    tailscale_ip: 100.64.254.13
+    status_path: /status
+    poll_timeout_seconds: 8.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: llms.txt, path: /llms.txt, kind: text }
     tiles:
       process_chemistry: { w: 2, h: 1 }
     pills: {}

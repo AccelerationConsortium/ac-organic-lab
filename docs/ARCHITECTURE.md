@@ -134,6 +134,7 @@ ac-organic-lab/
 │       ├── control.py              # control passthrough (cameras, plugs)
 │       ├── workflow.py             # Phase F: authorized-run executor (SSE, abort)
 │       ├── assistant.py            # /api/assistant/chat — claude-cli backend + backend dispatch (SSE)
+│       ├── agent_questions.py      # /api/agent/questions and /api/agent/feedback — Agent Consultant
 │       ├── assistant_openai.py     # OpenAI-compatible backend (OpenRouter) over the same MCP servers
 │       ├── assistant_sessions.py   # Plan mode: assistant.db + /api/assistant/sessions/* (saved planning sessions)
 │       ├── mcp_server.py           # lab-history MCP server (read-only tools over lab.db)
@@ -314,6 +315,17 @@ Three pieces:
     `reasoning_effort: high`; `claude-cli` (haiku / sonnet) is the fallback
     only. Note `openai` names the wire protocol, not the vendor — the
     endpoint is `ASSISTANT_OPENAI_BASE_URL` (default OpenRouter).
+  **Current deployment (2026-09-21):** both modes run the `hermes` backend
+  (`assistant_hermes.py`, `ASSISTANT_HERMES_MODEL`) on
+  `deepseek/deepseek-v4.1-flash`. It replaced
+  `deepseek/deepseek-v4-flash-vision-exp`, which the OpenRouter workspace
+  guardrail stopped allowing — a blocked slug returns 404 on every turn, so
+  the model pinned here is a live dependency, not a preference. The `openai`
+  and `claude-cli` backends stay installed as fallbacks. Note the two-line
+  journald claim below holds only for those two: `assistant turn done:` is
+  emitted by `assistant_openai.py:853` and `assistant.py:1225`, neither of
+  which the `hermes` backend goes through. On the current deployment, follow
+  `assistant chat:` (`assistant.py:1414`, in the dispatcher) instead.
   Every turn writes two journald lines (`assistant chat:` — who asked;
   `assistant turn done:` — elapsed, rounds, tokens, backend, model) so
   latency and account burn are observable per backend.

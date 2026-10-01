@@ -130,6 +130,17 @@ class CameraLens(BaseModel):
     """False for fixed lenses with no PTZ motor (e.g. wide on Tapo C245D).
     The dashboard uses this to grey out the PTZ pad when the user selects
     a non-moveable lens."""
+    view: str | None = None
+    """Physical camera this lens belongs to, when one equipment entry carries
+    several cameras (the Gibbie Flex: its corner deck camera plus a D435i on
+    the pipette). Lenses sharing a view are alternate channels of that camera
+    (RGB / depth); the dashboard offers one toggle per view, then one per
+    channel, labelled by ``label``."""
+    depth_path: str | None = Field(default=None, pattern=r"^/[^/].*")
+    """Point-depth readout on the entry's base_url (``?x=&y=`` in the
+    stream's pixel coordinates, answering ``distance_m``). Lets a viewer
+    click the picture for a distance; only a live viewing session of this
+    lens may call it through the dashboard."""
 
 
 class CameraConfig(BaseModel):

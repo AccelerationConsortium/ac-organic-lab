@@ -118,6 +118,20 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   `deploy/README.md`. Don't assume the dev machine (this MacBook) is the
   deploy target.
 
+- **Manual workflow steps** use the SDK's `on_manual` provider and the runner's
+  durable acknowledgment journal (`api/app/manual_steps.py`). Physical access
+  roles stay claimed while the human acts; never replace this with a device
+  HTTP call waiting on a person. Confirmation is cookie-authenticated and
+  project-member-gated; abort stays at the identity floor. Keep manual endpoint
+  descriptions/models in OpenAPI so Bitácora's Guide reference stays current.
+  A restart interrupts a wait; saved decisions never authorize automatic replay.
+
+- **Reader results** are journaled by `api/app/reader_measurements.py` before
+  continuation and appended to existing physically identified samples. Recovery
+  retries recording only; never recover a lost write by repeating acquisition.
+  Nominal plate/well names alone cannot establish sample identity. See
+  `docs/READER_MEASUREMENTS.md`.
+
 ## 4. Recurring pitfalls (project-specific)
 
 - **The dashboard supports plain HTTP Tailnet URLs.** Browser message IDs

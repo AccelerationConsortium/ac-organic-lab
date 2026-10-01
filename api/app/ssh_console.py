@@ -280,7 +280,7 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         target="cytation-pc",
         shell="cmd.exe (Windows OpenSSH)",
         note=(
-            "Hosts xarm, plateloc, both OT-2 gateways, the shaker, the Cytation "
+            "Hosts xarm, plateloc, the HTE OT-2 gateway, the shaker, the Cytation "
             "and the BioStack. Service control is `C:\\SDL_Tools\\nssm.exe` — "
             "prefer the whitelisted host-ops surface for routine restarts."
         ),
@@ -321,9 +321,9 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         note=(
             "Hosts the UPLC-MS sidecar. The sidecar owns the run queue — do "
             "not restart it mid-campaign. Also hosts the isolated read-only "
-            "UR5e Robot Motion prototype on :8075. The OT-2 complexation robot's USB-B "
-            "cable stays plugged into this PC as a physical network fallback "
-            "(the portproxy bridge itself was retired 2026-08-27; see ROADMAP)."
+            "UR5e Robot Motion prototype on :8075. Hosts the OT-2 Complexation gateway on :8021, "
+            "connected directly to the robot over USB, and its platebalanceV1 "
+            "Sartorius WZB254-N peripheral on COM3."
         ),
         profiles=(
             SshProfile(id="cmd", label="cmd", args=(), description="Windows cmd.exe (the OpenSSH default shell)."),

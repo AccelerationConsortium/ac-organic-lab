@@ -21,6 +21,7 @@ import { DeckPanel } from "./DeckPanel";
 import { FetchErrorBand } from "./FetchErrorBand";
 import { MetricList } from "./MetricList";
 import { StatusPill } from "./StatusPill";
+import { EquipmentCameraButton } from "./EquipmentCameraButton";
 import { TileShell } from "./TileShell";
 
 type LightsState = "on" | "off" | "unknown";
@@ -214,6 +215,11 @@ export function LiquidHandlerTile({ snapshot }: { snapshot: EquipmentSnapshot })
               interactive={mayToggleLights}
               onToggle={toggleLights}
             />
+            {snapshot.camera?.lenses?.[0] && <EquipmentCameraButton
+              stream={`${snapshot.id}_${snapshot.camera.lenses[0].id}`}
+              label={snapshot.camera.lenses[0].label}
+              transport={snapshot.camera.transport}
+            />}
             <span
               className="flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-ink dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-100"
               title={`Left mount: ${pipLeft?.state ?? "empty"}`}

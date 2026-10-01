@@ -22,7 +22,7 @@ function req(path: string, method = "POST", headers: Record<string, string> = {}
 // The sidecar answers with the resolved principal in RESPONSE HEADERS, not a
 // body — see `verifySession` in middleware.ts.
 function verifies(ok: boolean, user = "op@utoronto.ca", role = "none") {
-  return vi.fn(async (url: string) => {
+  return vi.fn(async (url: string, _init?: RequestInit) => {
     if (!String(url).startsWith(`${AUTH_BASE}/auth/verify`)) throw new Error(`unexpected ${url}`);
     return {
       ok,
@@ -86,10 +86,21 @@ describe("starting and aborting a run", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     const res = await middleware(
-      req("/api/workflow/runs/run_1/events", "GET", { "x-auth-user": "forged@utoronto.ca" }),
+      req("/api/workflow/runs/run_1/events", "GET", { "x-auth-user": "forged@utoronto.ca", cookie: "" }),
     );
     expect(res.status).toBe(200);
     expect(fetchSpy).not.toHaveBeenCalled();      // no session check on a read
     expect(res.headers.get("x-middleware-request-x-auth-user")).toBeNull();
   });
+});
+
+it.each(["manual/carry", "measurements/retry"])("%s requires a human cookie, not an API key", async (endpoint) => {
+  const fetchSpy = verifies(true, "chemist@utoronto.ca", "member");
+  vi.stubGlobal("fetch", fetchSpy);
+  const result = await middleware(req(`/api/workflow/runs/run_1/${endpoint}`, "POST", {
+    "x-api-key": "machine-key", "cookie": "session=human", "x-auth-user": "forged",
+  }));
+  expect(result.status).toBe(200);
+  expect((fetchSpy.mock.calls[0][1]!.headers as Record<string, string>)["x-api-key"]).toBe("");
+  expect(result.headers.get("x-middleware-request-x-auth-user")).toBe("chemist@utoronto.ca");
 });
