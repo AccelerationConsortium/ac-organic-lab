@@ -564,6 +564,26 @@ equipment:
         - { id: main, label: Main, rtsp_path: stream1, ptz_capable: false }
 
   # Lumastir uses equipment-specific SDK skills and a shared claim across its outputs.
+  - id: balance_lift
+    name: Balance lift
+    kind: other
+    adapter: http
+    # flex-balance-lift `balance_lift.motion`, STATUS_SPEC v1.2 with hard
+    # claim enforcement. Runs on the bench Mac next to the Tic T825; the
+    # service must bind its Tailscale address (not loopback) to be polled.
+    # Added 2026-10-01 after decoupled commissioning; a reviewed Plan still
+    # gates every move. Catalog: skill_catalog/plate_lift.py (equipment-
+    # specific, not the generic `other` kind).
+    protocol: "1.2"
+    base_url: http://sdl2-macbook-yang.tail6a1dd7.ts.net:8078
+    tailscale_ip: 100.64.254.7
+    status_path: /status
+    poll_timeout_seconds: 8.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+
   - id: lumastir
     name: Lumastir
     kind: other

@@ -66,6 +66,10 @@ def skills_for(kind: EquipmentKind, equipment_id: str | None = None) -> list[Ski
         from .lumastir import LUMASTIR_SKILLS
 
         return list(LUMASTIR_SKILLS)
+    if kind == "other" and equipment_id == "balance_lift":
+        from .plate_lift import BALANCE_LIFT_SKILLS
+
+        return list(BALANCE_LIFT_SKILLS)
     return list(SKILL_REGISTRY.get(kind, []))
 
 
