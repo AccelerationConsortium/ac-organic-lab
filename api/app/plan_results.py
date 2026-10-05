@@ -237,16 +237,22 @@ class Held(Exception):
     """Not retryable without a human: recorded as the bundle's reason."""
 
 
-async def approver_is_member(client: httpx.AsyncClient, user: str, project: str) -> bool:
+async def user_scope(client: httpx.AsyncClient, user: str) -> dict[str, Any]:
+    """The user's standing from the roster (never from caller headers)."""
     from .control import _authz_base
-    from .manual_steps import may_confirm
 
     r = await client.get(f"{_authz_base()}/authz/scope", params={"user": user})
     r.raise_for_status()
     scope = r.json()
     if not isinstance(scope, dict) or scope.get("user") != user:
         raise ValueError("invalid project scope from the auth service")
-    return may_confirm(scope, project)
+    return scope
+
+
+async def approver_is_member(client: httpx.AsyncClient, user: str, project: str) -> bool:
+    from .manual_steps import may_confirm
+
+    return may_confirm(await user_scope(client, user), project)
 
 
 async def file_one(journal: PlanResultsJournal, row: dict[str, Any],
@@ -391,5 +397,56 @@ def build_plan_results_router() -> APIRouter:
     async def list_plan_results(request: Request) -> list[dict[str, Any]]:
         """Recent OT-2 plan results and whether each reached the ELN."""
         return _journal(request).summaries()
+
+    @router.get("/ingest/plan-results/{device_id}/{plan_id}")
+    async def plan_result_status(device_id: str, plan_id: str, request: Request,
+                                 authorization: str = Header(default="")) -> dict[str, Any]:
+        """What became of one accepted bundle — for the device that sent it.
+
+        ``accepted`` only ever meant "journaled here"; this is how the device
+        learns whether it was *filed* or *held* (and why), so it never shows
+        "filed" for a run the ELN refused. Same per-device token as the push.
+        """
+        expected = device_tokens().get(device_id)
+        presented = authorization.removeprefix("Bearer ").strip()
+        if not expected or not hmac.compare_digest(presented, expected):
+            raise HTTPException(401, "unknown device or bad token")
+        row = _journal(request).get(device_id, plan_id)
+        if row is None:
+            raise HTTPException(404, "no such bundle from this device")
+        return {key: row[key] for key in (
+            "plan_id", "state", "attempts", "last_error", "experiment_id", "note_id", "filed_at")}
+
+    # Under /api/assistant/ on purpose: the dashboard's middleware gates that
+    # prefix — a signed-in session is required and X-Auth-User is replaced by
+    # the verified identity — so this answers for the real user, never for a
+    # header a client typed.
+    @router.get("/assistant/eln-projects")
+    async def eln_projects(request: Request) -> dict[str, Any]:
+        """ELN projects the signed-in user can file instrument results into:
+        projects that exist in BitacoraDB *and* where the roster gives the
+        user standing (member, PI, or admin). The approval card's picker."""
+        user = request.headers.get("x-auth-user")
+        if not user:
+            raise HTTPException(401, "Sign in to list your ELN projects.")
+        base, secret = record.BITACORADB_URL.rstrip("/"), record.edge_secret()
+        if not base or not secret:
+            return {"configured": False, "projects": []}
+        try:
+            async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+                scope = await user_scope(client, user)
+                standing = set(scope.get("member_projects") or []) | set(scope.get("pi_projects") or [])
+                admin = scope.get("is_admin") is True
+                headers = {"X-Edge-Secret": secret, "X-Auth-User": user,
+                           "X-Auth-Projects": ",".join(sorted(standing))}
+                if admin:
+                    headers["X-Auth-Role"] = "admin"
+                r = await client.get(f"{base}/projects", headers=headers)
+                r.raise_for_status()
+                titles = {row["title"] for row in r.json() if isinstance(row, dict) and row.get("title")}
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            raise HTTPException(503, f"Could not list ELN projects: {exc}") from exc
+        allowed = titles if admin else titles & standing
+        return {"configured": True, "projects": sorted(allowed)}
 
     return router
