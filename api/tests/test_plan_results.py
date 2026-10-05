@@ -224,3 +224,57 @@ def test_route_refuses_unknown_devices_bad_tokens_and_simulations(client, monkey
     assert client.post(url, json={**BUNDLE, "eln_project": ""}, headers=good).status_code == 422
     monkeypatch.delenv("PLAN_RESULTS_DEVICE_TOKENS")
     assert client.post(url, json=BUNDLE, headers=good).status_code == 401
+
+
+# ── filing status for the device; the picker's project list ──────────────
+
+
+def test_the_device_can_read_what_became_of_its_bundle(client, configured):
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    client.post("/api/ingest/plan-results", json=BUNDLE, headers=headers)
+    configured.update("ot2_complexation", BUNDLE["plan_id"], state=pr.HELD,
+                      last_error="BitacoraDB refused the Experiment: project 'x' does not exist")
+    r = client.get(f"/api/ingest/plan-results/ot2_complexation/{BUNDLE['plan_id']}", headers=headers)
+    assert r.status_code == 200
+    assert r.json()["state"] == pr.HELD and "does not exist" in r.json()["last_error"]
+    assert client.get(f"/api/ingest/plan-results/ot2_complexation/{BUNDLE['plan_id']}").status_code == 401
+    assert client.get("/api/ingest/plan-results/ot2_complexation/nope", headers=headers).status_code == 404
+    assert client.get(f"/api/ingest/plan-results/ot2_hte/{BUNDLE['plan_id']}", headers=headers).status_code == 401
+
+
+def _projects_mock(scope: dict, titles: list[str]):
+    respx.get(f"{AUTHZ}/authz/scope").mock(return_value=httpx.Response(200, json={"user": "ada@lab", **scope}))
+    return respx.get(f"{BASE}/projects").mock(
+        return_value=httpx.Response(200, json=[{"title": t, "project_id": str(i)} for i, t in enumerate(titles)]))
+
+
+@respx.mock
+def test_the_picker_lists_eln_projects_the_user_has_standing_in(client):
+    listing = _projects_mock({"member_projects": ["a"], "pi_projects": ["b"], "is_admin": False},
+                             ["a", "b", "c"])
+    r = client.get("/api/assistant/eln-projects", headers={"X-Auth-User": "ada@lab"})
+    assert r.json() == {"configured": True, "projects": ["a", "b"]}
+    assert "X-Auth-Role" not in listing.calls.last.request.headers
+
+
+@respx.mock
+def test_the_picker_never_offers_a_roster_project_missing_from_the_eln(client):
+    _projects_mock({"member_projects": [], "pi_projects": ["basf-solubility", "sdl-safety-agent"],
+                    "is_admin": False}, ["sdl-safety-agent"])
+    r = client.get("/api/assistant/eln-projects", headers={"X-Auth-User": "ada@lab"})
+    assert r.json()["projects"] == ["sdl-safety-agent"]
+
+
+@respx.mock
+def test_an_admin_sees_every_eln_project(client):
+    listing = _projects_mock({"member_projects": [], "pi_projects": [], "is_admin": True}, ["a", "c"])
+    r = client.get("/api/assistant/eln-projects", headers={"X-Auth-User": "ada@lab"})
+    assert r.json()["projects"] == ["a", "c"]
+    assert listing.calls.last.request.headers["X-Auth-Role"] == "admin"
+
+
+def test_the_picker_needs_a_signed_in_user_and_a_configured_eln(client, monkeypatch):
+    assert client.get("/api/assistant/eln-projects").status_code == 401
+    monkeypatch.setattr(rec, "BITACORADB_URL", "")
+    r = client.get("/api/assistant/eln-projects", headers={"X-Auth-User": "ada@lab"})
+    assert r.json() == {"configured": False, "projects": []}
