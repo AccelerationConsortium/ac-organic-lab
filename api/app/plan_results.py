@@ -393,10 +393,33 @@ def build_plan_results_router() -> APIRouter:
             asyncio.create_task(file_pending(journal))
         return {"status": "accepted", "plan_id": body.plan_id, "state": row["state"]}
 
-    @router.get("/plan-results")
+    # Under /api/assistant/ so the dashboard middleware requires a signed-in
+    # session and stamps the verified X-Auth-User (the old /api/plan-results
+    # was outside it and answered anyone). Rows are filtered like the device
+    # filters its run records: the approver, members/PIs of the run's ELN
+    # project, and admins.
+    @router.get("/assistant/plan-results")
     async def list_plan_results(request: Request) -> list[dict[str, Any]]:
-        """Recent OT-2 plan results and whether each reached the ELN."""
-        return _journal(request).summaries()
+        """Recent OT-2 plan results you may see, and whether each reached the ELN."""
+        user = request.headers.get("x-auth-user")
+        if not user:
+            raise HTTPException(401, "Sign in to list plan results.")
+        try:
+            async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+                scope = await user_scope(client, user)
+        except (httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(503, f"Could not verify your projects: {exc}") from exc
+        standing = set(scope.get("member_projects") or []) | set(scope.get("pi_projects") or [])
+        admin = scope.get("is_admin") is True
+        journal = _journal(request)
+        out = []
+        for row in journal.summaries():
+            full = journal.get(row["device_id"], row["plan_id"]) or {}
+            bundle = full.get("payload") or {}
+            if admin or bundle.get("approved_by") == user or bundle.get("eln_project") in standing:
+                out.append({**row, "approved_by": bundle.get("approved_by"),
+                            "eln_project": bundle.get("eln_project")})
+        return out
 
     @router.get("/ingest/plan-results/{device_id}/{plan_id}")
     async def plan_result_status(device_id: str, plan_id: str, request: Request,

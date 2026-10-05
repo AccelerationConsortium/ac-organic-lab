@@ -211,7 +211,7 @@ def test_route_accepts_a_device_with_its_token(client, configured):
     assert r.status_code == 202, r.text
     assert r.json() == {"status": "accepted", "plan_id": BUNDLE["plan_id"], "state": pr.PENDING}
     assert configured.get("ot2_complexation", BUNDLE["plan_id"])["payload"]["eln_project"] == "Complexation"
-    assert client.get("/api/plan-results").json()[0]["state"] == pr.PENDING
+    assert client.get("/api/plan-results").status_code == 404  # the open list is gone
 
 
 def test_route_refuses_unknown_devices_bad_tokens_and_simulations(client, monkeypatch):
@@ -278,3 +278,22 @@ def test_the_picker_needs_a_signed_in_user_and_a_configured_eln(client, monkeypa
     monkeypatch.setattr(rec, "BITACORADB_URL", "")
     r = client.get("/api/assistant/eln-projects", headers={"X-Auth-User": "ada@lab"})
     assert r.json() == {"configured": False, "projects": []}
+
+
+@respx.mock
+def test_the_results_list_needs_a_user_and_shows_only_their_runs(client, configured):
+    client.post("/api/ingest/plan-results", json=BUNDLE, headers={"Authorization": f"Bearer {TOKEN}"})
+    assert client.get("/api/assistant/plan-results").status_code == 401
+
+    def scope_for(user, **kw):
+        return httpx.Response(200, json={"user": user, "member_projects": [], "pi_projects": [],
+                                         "is_admin": False, **kw})
+
+    route = respx.get(f"{AUTHZ}/authz/scope")
+    route.mock(return_value=scope_for("carol@lab"))
+    assert client.get("/api/assistant/plan-results", headers={"X-Auth-User": "carol@lab"}).json() == []
+    route.mock(return_value=scope_for("ada@lab"))  # the approver
+    rows = client.get("/api/assistant/plan-results", headers={"X-Auth-User": "ada@lab"}).json()
+    assert [r["plan_id"] for r in rows] == [BUNDLE["plan_id"]] and rows[0]["eln_project"] == "Complexation"
+    route.mock(return_value=scope_for("pi@lab", pi_projects=["Complexation"]))
+    assert len(client.get("/api/assistant/plan-results", headers={"X-Auth-User": "pi@lab"}).json()) == 1
