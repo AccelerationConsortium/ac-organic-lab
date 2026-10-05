@@ -76,7 +76,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .plan_contract import MAX_PLAN_STEPS, PLAN_TTL_S, REFUSAL_CODES, plan_step_hash
-from .scopes import EquipmentScope, scope_system_prompt, scoped_control_env
+from .scopes import SCOPABLE_KINDS, EquipmentScope, scope_system_prompt, scoped_control_env
 
 # Named for its former module so the service log reads exactly as before.
 logger = logging.getLogger("app.assistant")
@@ -302,10 +302,7 @@ def _write_mcp_config(
             "args": control_args,
             "env": scoped_control_env(_control_server_env(actor), scope),
         }}
-        fd, name = tempfile.mkstemp(prefix="mcp.scope.", suffix=".json", dir=_runtime_dir())
-        with os.fdopen(fd, "w") as handle:
-            handle.write(json.dumps({"mcpServers": scoped}, indent=2))
-        return Path(name)
+        return _write_turn_config("scope", scoped)
 
     history_cmd, history_args = _mcp_server_command("lab-history-mcp")
     history_env = _history_server_env(actor)
@@ -342,10 +339,22 @@ def _write_mcp_config(
     # between write and launch, and one user's turn ran as the other. The mode
     # stays in the name so a control config is never read by an ask turn.
     mode = "control" if include_control and actor else "ask"
+    return _write_turn_config(mode, servers)
+
+
+def _write_turn_config(mode: str, servers: dict[str, Any]) -> Path:
+    """One private file per turn (0600, unique name); removed again if the
+    write itself fails, so no half-written config naming an actor remains."""
+
     fd, name = tempfile.mkstemp(prefix=f"mcp.{mode}.", suffix=".json", dir=_runtime_dir())
-    with os.fdopen(fd, "w") as handle:
-        handle.write(json.dumps({"mcpServers": servers}, indent=2))
-    return Path(name)
+    path = Path(name)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(json.dumps({"mcpServers": servers}, indent=2))
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return path
 
 
 def _claude_cwd() -> str:
@@ -1119,197 +1128,203 @@ async def _run_claude(
     model = CONTROL_MODEL if include_control else DEFAULT_MODEL
     prompt = _format_prompt(messages)
     mcp_config_path = _write_mcp_config(include_control=include_control, actor=actor, scope=scope)
-    # ``extra_system_prompt`` is how Plan mode (assistant_sessions.py) adds
-    # its addendum without touching the toolset: it rides the same read-only
-    # servers Ask uses.
-    system_prompt = (
-        (scope_system_prompt(scope) if scope is not None else SYSTEM_PROMPT)
-        + (CONTROL_PROMPT_ADDENDUM if include_control else "")
-        + (extra_system_prompt or "")
-    )
-    if scope is not None:
-        allowed_tools = CONTROL_TOOL_GLOB
-    else:
-        allowed_tools = f"{ALLOWED_TOOL_GLOB} {INVENTORY_TOOL_GLOB}"
-        if include_control:
-            allowed_tools = f"{allowed_tools} {CONTROL_TOOL_GLOB}"
-    args = [
-        binary,
-        "--print",
-        "--output-format",
-        "stream-json",
-        "--include-partial-messages",
-        "--verbose",  # required alongside stream-json
-        "--no-session-persistence",
-        "--append-system-prompt",
-        system_prompt,
-        "--mcp-config",
-        str(mcp_config_path),
-        "--strict-mcp-config",
-        "--allowedTools",
-        allowed_tools,
-        "--model",
-        model,
-        "--permission-mode",
-        "default",
-        prompt,
-    ]
-
+    # The per-turn config binds this turn's actor; it must not outlive the
+    # turn on any exit path — spawn failure, client disconnect at any yield,
+    # cancellation while waiting for the CLI, or normal completion.
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            cwd=_claude_cwd(),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            # stream-json is one JSON object per line, and a single tool_result
-            # event carries the whole tool payload — an OT-2 deck/tip snapshot
-            # alone clears asyncio's 64 KiB default, which readline() answers
-            # with "Separator is found, but chunk is longer than limit".
-            limit=10 * 1024 * 1024,
+        # ``extra_system_prompt`` is how Plan mode (assistant_sessions.py) adds
+        # its addendum without touching the toolset: it rides the same read-only
+        # servers Ask uses.
+        system_prompt = (
+            (scope_system_prompt(scope) if scope is not None else SYSTEM_PROMPT)
+            + (CONTROL_PROMPT_ADDENDUM if include_control else "")
+            + (extra_system_prompt or "")
         )
-    except FileNotFoundError:
-        mcp_config_path.unlink(missing_ok=True)
-        yield _sse({"type": "error", "message": f"could not spawn {binary}"})
-        return
-
-    assert proc.stdout is not None
-
-    timeout_handle: asyncio.TimerHandle | None = None
-    timed_out = False
-
-    def _on_timeout() -> None:
-        nonlocal timed_out
-        timed_out = True
-        if proc.returncode is None:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-
-    loop = asyncio.get_running_loop()
-    timeout_handle = loop.call_later(DEFAULT_TIMEOUT_S, _on_timeout)
-
-    # Before any CLI output: process spawn, MCP server handshakes, then the
-    # model's first think. Announce the phase so the bubble shows a live pill
-    # for that stretch instead of an empty turn.
-    yield _sse({"type": "status", "phase": "thinking"})
-
-    last_rate_limit: dict[str, Any] | None = None
-    saw_terminal = False  # did we already yield a done/error frame?
-    result_info: dict[str, Any] | None = None  # the CLI's final "result" event
-    started = time.monotonic()
-
-    try:
-        while True:
-            try:
-                line = await proc.stdout.readline()
-            except asyncio.CancelledError:
-                # Client disconnected. Kill the subprocess so it doesn't
-                # keep burning quota on a response no one will see.
-                if proc.returncode is None:
-                    proc.kill()
-                raise
-            if not line:
-                break
-            try:
-                event = json.loads(line.decode("utf-8", errors="replace"))
-            except json.JSONDecodeError:
-                logger.debug("non-JSON line from claude: %s", line[:200])
-                continue
-            if event.get("type") == "rate_limit_event":
-                info = event.get("rate_limit_info")
-                if isinstance(info, dict):
-                    last_rate_limit = info
-            elif event.get("type") == "result":
-                result_info = event
-            for frame in _translate_event(event):
-                if frame.get("type") in ("done", "error"):
-                    saw_terminal = True
-                if frame.get("type") == "proposal" and on_proposal is not None:
-                    proposal = frame.get("proposal")
-                    if isinstance(proposal, dict):
-                        try:
-                            await on_proposal(proposal)
-                        except Exception:  # noqa: BLE001 - audit must not break the stream
-                            logger.warning("assistant_proposal audit failed", exc_info=True)
-                if frame.get("type") == "plan" and on_plan is not None:
-                    plan = frame.get("plan")
-                    if isinstance(plan, dict):
-                        try:
-                            await on_plan(plan)
-                        except Exception:  # noqa: BLE001 - audit must not break the stream
-                            logger.warning("assistant_plan audit failed", exc_info=True)
-                yield _sse(frame)
-    finally:
-        if timeout_handle is not None:
-            timeout_handle.cancel()
-        if proc.returncode is None:
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=3.0)
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
-        # The CLI read its config at launch; this turn's file binds this
-        # turn's actor and must not outlive it.
-        mcp_config_path.unlink(missing_ok=True)
-        stderr_bytes = b""
-        if proc.stderr is not None:
-            try:
-                stderr_bytes = await proc.stderr.read()
-            except Exception:  # noqa: BLE001
-                pass
-        # One completion line per turn so latency and account burn are
-        # observable in the journal (the start line logs who asked; this one
-        # logs what it cost). Runs on every exit path, including client
-        # disconnect and timeout.
-        usage = (result_info or {}).get("usage") or {}
-        logger.info(
-            "assistant turn done: user=%s mode=%s elapsed=%.1fs num_turns=%s "
-            "api_ms=%s tokens_out=%s cache_read=%s rc=%s timed_out=%s "
-            "rate_limit=%s backend=claude-cli model=%s",
-            actor or "unauthenticated(dev-open)",
-            "control" if include_control else "ask",
-            time.monotonic() - started,
-            (result_info or {}).get("num_turns"),
-            (result_info or {}).get("duration_api_ms"),
-            usage.get("output_tokens"),
-            usage.get("cache_read_input_tokens"),
-            proc.returncode,
-            timed_out,
-            (last_rate_limit or {}).get("status"),
-            model,
-        )
-
-    if timed_out:
-        yield _sse(
-            {
-                "type": "error",
-                "message": f"claude exceeded {DEFAULT_TIMEOUT_S:.0f}s timeout",
-            }
-        )
-        return
-    # If a terminal frame already went out (normal done, or an error the model
-    # reported via the result event), don't double-report on exit code.
-    if not saw_terminal and proc.returncode and proc.returncode != 0:
-        stderr_text = stderr_bytes.decode("utf-8", errors="replace")[-2000:].strip()
-        rate_limit_msg = _rate_limit_block_message(last_rate_limit)
-        logger.warning(
-            "claude exited %s (rate_limit=%s): %s",
-            proc.returncode,
-            last_rate_limit,
-            stderr_text,
-        )
-        if rate_limit_msg:
-            message = rate_limit_msg
-        elif stderr_text:
-            message = f"claude exited {proc.returncode}: {stderr_text}"
+        if scope is not None:
+            allowed_tools = CONTROL_TOOL_GLOB
         else:
-            message = (
-                f"claude exited {proc.returncode} with no error output — "
-                "check `journalctl -u ac-organic-lab-api` on the dashboard host."
+            allowed_tools = f"{ALLOWED_TOOL_GLOB} {INVENTORY_TOOL_GLOB}"
+            if include_control:
+                allowed_tools = f"{allowed_tools} {CONTROL_TOOL_GLOB}"
+        args = [
+            binary,
+            "--print",
+            "--output-format",
+            "stream-json",
+            "--include-partial-messages",
+            "--verbose",  # required alongside stream-json
+            "--no-session-persistence",
+            "--append-system-prompt",
+            system_prompt,
+            "--mcp-config",
+            str(mcp_config_path),
+            "--strict-mcp-config",
+            "--allowedTools",
+            allowed_tools,
+            # A panel scope also removes the CLI's built-in tools (file reads and
+            # the rest): --allowedTools grants permission, it does not take tools
+            # away, and the scope promises the lab-control reads and nothing else.
+            *(["--tools", ""] if scope is not None else []),
+            "--model",
+            model,
+            "--permission-mode",
+            "default",
+            prompt,
+        ]
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                cwd=_claude_cwd(),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                # stream-json is one JSON object per line, and a single tool_result
+                # event carries the whole tool payload — an OT-2 deck/tip snapshot
+                # alone clears asyncio's 64 KiB default, which readline() answers
+                # with "Separator is found, but chunk is longer than limit".
+                limit=10 * 1024 * 1024,
             )
-        yield _sse({"type": "error", "message": message})
+        except FileNotFoundError:
+            yield _sse({"type": "error", "message": f"could not spawn {binary}"})
+            return
+
+        assert proc.stdout is not None
+
+        timeout_handle: asyncio.TimerHandle | None = None
+        timed_out = False
+
+        def _on_timeout() -> None:
+            nonlocal timed_out
+            timed_out = True
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+
+        loop = asyncio.get_running_loop()
+        timeout_handle = loop.call_later(DEFAULT_TIMEOUT_S, _on_timeout)
+
+        # Before any CLI output: process spawn, MCP server handshakes, then the
+        # model's first think. Announce the phase so the bubble shows a live pill
+        # for that stretch instead of an empty turn.
+        yield _sse({"type": "status", "phase": "thinking"})
+
+        last_rate_limit: dict[str, Any] | None = None
+        saw_terminal = False  # did we already yield a done/error frame?
+        result_info: dict[str, Any] | None = None  # the CLI's final "result" event
+        started = time.monotonic()
+
+        try:
+            while True:
+                try:
+                    line = await proc.stdout.readline()
+                except asyncio.CancelledError:
+                    # Client disconnected. Kill the subprocess so it doesn't
+                    # keep burning quota on a response no one will see.
+                    if proc.returncode is None:
+                        proc.kill()
+                    raise
+                if not line:
+                    break
+                try:
+                    event = json.loads(line.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    logger.debug("non-JSON line from claude: %s", line[:200])
+                    continue
+                if event.get("type") == "rate_limit_event":
+                    info = event.get("rate_limit_info")
+                    if isinstance(info, dict):
+                        last_rate_limit = info
+                elif event.get("type") == "result":
+                    result_info = event
+                for frame in _translate_event(event):
+                    if frame.get("type") in ("done", "error"):
+                        saw_terminal = True
+                    if frame.get("type") == "proposal" and on_proposal is not None:
+                        proposal = frame.get("proposal")
+                        if isinstance(proposal, dict):
+                            try:
+                                await on_proposal(proposal)
+                            except Exception:  # noqa: BLE001 - audit must not break the stream
+                                logger.warning("assistant_proposal audit failed", exc_info=True)
+                    if frame.get("type") == "plan" and on_plan is not None:
+                        plan = frame.get("plan")
+                        if isinstance(plan, dict):
+                            try:
+                                await on_plan(plan)
+                            except Exception:  # noqa: BLE001 - audit must not break the stream
+                                logger.warning("assistant_plan audit failed", exc_info=True)
+                    yield _sse(frame)
+        finally:
+            if timeout_handle is not None:
+                timeout_handle.cancel()
+            if proc.returncode is None:
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=3.0)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+            stderr_bytes = b""
+            if proc.stderr is not None:
+                try:
+                    stderr_bytes = await proc.stderr.read()
+                except Exception:  # noqa: BLE001
+                    pass
+            # One completion line per turn so latency and account burn are
+            # observable in the journal (the start line logs who asked; this one
+            # logs what it cost). Runs on every exit path, including client
+            # disconnect and timeout.
+            usage = (result_info or {}).get("usage") or {}
+            logger.info(
+                "assistant turn done: user=%s mode=%s elapsed=%.1fs num_turns=%s "
+                "api_ms=%s tokens_out=%s cache_read=%s rc=%s timed_out=%s "
+                "rate_limit=%s backend=claude-cli model=%s",
+                actor or "unauthenticated(dev-open)",
+                "control" if include_control else "ask",
+                time.monotonic() - started,
+                (result_info or {}).get("num_turns"),
+                (result_info or {}).get("duration_api_ms"),
+                usage.get("output_tokens"),
+                usage.get("cache_read_input_tokens"),
+                proc.returncode,
+                timed_out,
+                (last_rate_limit or {}).get("status"),
+                model,
+            )
+
+        if timed_out:
+            yield _sse(
+                {
+                    "type": "error",
+                    "message": f"claude exceeded {DEFAULT_TIMEOUT_S:.0f}s timeout",
+                }
+            )
+            return
+        # If a terminal frame already went out (normal done, or an error the model
+        # reported via the result event), don't double-report on exit code.
+        if not saw_terminal and proc.returncode and proc.returncode != 0:
+            stderr_text = stderr_bytes.decode("utf-8", errors="replace")[-2000:].strip()
+            rate_limit_msg = _rate_limit_block_message(last_rate_limit)
+            logger.warning(
+                "claude exited %s (rate_limit=%s): %s",
+                proc.returncode,
+                last_rate_limit,
+                stderr_text,
+            )
+            if rate_limit_msg:
+                message = rate_limit_msg
+            elif stderr_text:
+                message = f"claude exited {proc.returncode}: {stderr_text}"
+            else:
+                message = (
+                    f"claude exited {proc.returncode} with no error output — "
+                    "check `journalctl -u ac-organic-lab-api` on the dashboard host."
+                )
+            yield _sse({"type": "error", "message": message})
+    finally:
+        mcp_config_path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1606,8 +1621,14 @@ def build_assistant_router() -> APIRouter:
         except ValueError:
             raise HTTPException(status_code=404, detail=f"Unknown equipment id: {equipment_id}")
         aggregator = getattr(request.app.state, "aggregator", None)
-        if aggregator is not None and aggregator.entry(equipment_id) is None:
+        entry = aggregator.entry(equipment_id) if aggregator is not None else None
+        if aggregator is not None and entry is None:
             raise HTTPException(status_code=404, detail=f"Unknown equipment id: {equipment_id}")
+        if entry is not None and getattr(entry, "kind", None) not in SCOPABLE_KINDS:
+            raise HTTPException(
+                status_code=409,
+                detail=f"No panel assistant for {equipment_id} yet (supported: liquid handlers).",
+            )
 
         runner = _runner_for(DEFAULT_BACKEND)
         logger.info(

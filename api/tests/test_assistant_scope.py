@@ -137,7 +137,9 @@ async def test_claude_cli_turn_runs_with_only_the_scoped_tools(tmp_path, monkeyp
 
 class _Aggregator:
     def entry(self, equipment_id: str):
-        return object() if equipment_id == "ot2_complexation" else None
+        if equipment_id != "ot2_complexation":
+            return None
+        return type("Entry", (), {"kind": "liquid_handler"})()
 
 
 def _app() -> FastAPI:
@@ -180,3 +182,110 @@ async def test_route_needs_a_verified_actor_and_a_known_device():
     assert (await _post(app, "/api/assistant/equipment/bad%20id/chat", body, auth)).status_code == 404
     stale = {**body, "conversation_owner": "bob@example.edu"}
     assert (await _post(app, "/api/assistant/equipment/ot2_complexation/chat", stale, auth)).status_code == 409
+
+
+# ── review fixes (Codex) ─────────────────────────────────────────────────
+
+
+async def test_a_scoped_cli_turn_disables_the_builtin_tools(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASSISTANT_RUNTIME_DIR", str(tmp_path))
+    argv_file = tmp_path / "argv.json"
+    fake = tmp_path / "claude"
+    fake.write_text(
+        "#!/usr/bin/env python3\nimport json, sys\n"
+        f"json.dump(sys.argv[1:], open({str(argv_file)!r}, 'w'))\n"
+        "print(json.dumps({'type': 'result', 'subtype': 'success', 'result': 'ok'}))\n"
+    )
+    fake.chmod(0o755)
+    monkeypatch.setattr(assistant, "_claude_binary", lambda: str(fake))
+    msgs = [assistant.ChatMessage(role="user", content="hi")]
+    async for _ in assistant._run_claude(msgs, actor=ACTOR, scope=EquipmentScope("ot2_complexation")):
+        pass
+    argv = json.loads(argv_file.read_text())
+    assert argv[argv.index("--tools") + 1] == ""
+    # The unscoped dashboard turn is unchanged.
+    async for _ in assistant._run_claude(msgs, actor=ACTOR):
+        pass
+    assert "--tools" not in json.loads(argv_file.read_text())
+
+
+def test_a_scoped_action_list_names_no_other_device():
+    payload = {
+        "allowed_actions": ["home"],
+        "motion_graph": {"current_node": "n1"},
+        "locations": [
+            {"name": "ot2_complexation.slot_2", "label": "Slot 2", "slot": "2",
+             "also_known_as": {"xarm": ["ot2_slot2_pick"]}},
+            {"name": "cytation.stage", "label": "Stage", "on": "cytation_5", "nodes": ["n9"]},
+        ],
+    }
+    from lab_assistant.scopes import project_actions_to_scope
+
+    projected = project_actions_to_scope(payload)
+    assert "motion_graph" not in projected
+    assert projected["locations"] == [{"name": "ot2_complexation.slot_2", "label": "Slot 2", "slot": "2"}]
+    assert projected["allowed_actions"] == ["home"]
+    assert "xarm" not in json.dumps(projected) and "cytation" not in json.dumps(projected)
+
+
+def test_only_liquid_handlers_are_scopable(monkeypatch):
+    monkeypatch.setenv("LAB_SCOPE_EQUIPMENT", "xarm")
+    arm = Registry(equipment=[EquipmentEntry(id="xarm", name="xArm", kind="robot_arm",
+                                             adapter="http", base_url="http://xarm.test",
+                                             status_path="/status", protocol="1.2")])
+    assert json.loads(ac._out_of_scope(arm, "xarm"))["code"] == "out_of_scope"
+
+
+async def test_route_refuses_a_kind_without_a_panel_scope():
+    class _Arm:
+        def entry(self, equipment_id):
+            return type("E", (), {"kind": "robot_arm"})()
+
+    app = FastAPI()
+    app.state.aggregator = _Arm()
+    app.include_router(assistant.build_assistant_router())
+    r = await _post(app, "/api/assistant/equipment/xarm/chat",
+                    {"messages": [{"role": "user", "content": "hi"}]}, {"X-Auth-User": ACTOR})
+    assert r.status_code == 409
+
+
+@pytest.mark.parametrize("failure", ["spawn", "disconnect"])
+async def test_the_turn_config_is_removed_on_every_exit(tmp_path, monkeypatch, failure):
+    import asyncio
+
+    monkeypatch.setenv("ASSISTANT_RUNTIME_DIR", str(tmp_path))
+    if failure == "spawn":
+        async def refuse(*_a, **_k):
+            raise PermissionError("not executable")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", refuse)
+        monkeypatch.setattr(assistant, "_claude_binary", lambda: "/bin/true")
+        with pytest.raises(PermissionError):
+            async for _ in assistant._run_claude(
+                [assistant.ChatMessage(role="user", content="hi")], control=True, actor=ACTOR,
+            ):
+                pass
+    else:
+        fake = tmp_path / "claude"
+        fake.write_text("#!/bin/sh\nsleep 5\n")
+        fake.chmod(0o755)
+        monkeypatch.setattr(assistant, "_claude_binary", lambda: str(fake))
+        stream = assistant._run_claude(
+            [assistant.ChatMessage(role="user", content="hi")], control=True, actor=ACTOR,
+        )
+        await stream.__anext__()  # first frame out; the client then goes away
+        assert list(tmp_path.glob("mcp.*.json"))
+        await stream.aclose()
+    assert list(tmp_path.glob("mcp.*.json")) == []
+
+
+def test_a_failed_config_write_leaves_no_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASSISTANT_RUNTIME_DIR", str(tmp_path))
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(assistant.json, "dumps", boom)
+    with pytest.raises(OSError):
+        assistant._write_mcp_config(include_control=True, actor=ACTOR)
+    assert list(tmp_path.glob("mcp.*.json")) == []

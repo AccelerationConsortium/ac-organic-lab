@@ -22,7 +22,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+#: Kinds a panel scope is offered for. Each kind's tool responses have to be
+#: checked for other devices' data first: an arm's action list carries the
+#: whole motion graph and every shelf it reaches, so arms are not scopable yet.
+SCOPABLE_KINDS: frozenset[str] = frozenset({"liquid_handler"})
+
 #: The lab-control tools a panel scope registers: reads of one device only.
+#: ``lookup_custom_labware`` reads the lab's shared labware definitions —
+#: reference data about plates and racks, not any device's state — and is the
+#: one deliberate exception to "only this device".
 SCOPED_TOOLS: tuple[str, ...] = (
     "get_equipment_docs",
     "list_available_actions",
@@ -78,3 +86,24 @@ say so rather than guess.
 
 Be terse: 1-3 sentences by default, the answer first, no preamble. Use a \
 short list only for 3+ genuine items."""
+
+
+def project_actions_to_scope(payload: dict) -> dict:
+    """Remove other devices from a ``list_available_actions`` response.
+
+    The place vocabulary lists, for each of this device's slots, the names
+    other devices use for it (``also_known_as``), and places on other devices
+    this one reaches (``on``); the motion graph is an arm's. None of that is
+    this device's own state, so a panel scope never sees it.
+    """
+
+    out = dict(payload)
+    out.pop("motion_graph", None)
+    locations = out.get("locations")
+    if isinstance(locations, list):
+        out["locations"] = [
+            {k: v for k, v in item.items() if k != "also_known_as"}
+            for item in locations
+            if isinstance(item, dict) and "on" not in item
+        ]
+    return out
