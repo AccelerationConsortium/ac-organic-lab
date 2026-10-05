@@ -199,7 +199,8 @@ _MIGRATIONS: list[str] = [
 
 # The host's lab.db location, registered by the dashboard (app.assistant_sessions)
 # so this package never imports the dashboard. The store is that file's sibling.
-_lab_db_path: Callable[[], Path] | None = None
+# Survives importlib.reload: the dashboard registers once, at import of its alias.
+_lab_db_path: Callable[[], Path] | None = globals().get("_lab_db_path")
 
 
 def set_lab_db_path_resolver(resolve: Callable[[], Path]) -> None:

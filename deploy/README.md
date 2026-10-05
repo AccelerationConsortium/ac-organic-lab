@@ -62,10 +62,12 @@ sudo useradd --system --create-home --home /opt/ac-organic-lab \
 # 2. Clone the repo
 sudo -u ac git clone <repo-url> /opt/ac-organic-lab
 
-# 3. Install the API
+# 3. Install the API. The repo is a uv workspace: the API depends on the
+#    sibling members lab-skills (skills/) and lab-assistant (assistant/), which
+#    a plain `pip install -e .` in api/ cannot resolve. Install all three.
 cd /opt/ac-organic-lab/api
 sudo -u ac python3 -m venv .venv
-sudo -u ac .venv/bin/pip install -e .
+sudo -u ac .venv/bin/pip install -e ../skills -e ../assistant -e .
 
 # 4. Build the web app
 cd /opt/ac-organic-lab/web

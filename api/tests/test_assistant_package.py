@@ -36,7 +36,7 @@ def test_the_plan_vocabulary_has_one_definition():
         assert getattr(assistant, name) is getattr(plan_contract, name)
 
 
-def test_the_engine_never_imports_the_dashboard():
+def test_importing_the_engine_never_imports_the_dashboard():
     code = (
         "import sys\n"
         "import lab_assistant.engine, lab_assistant.openai_backend, "
@@ -48,7 +48,7 @@ def test_the_engine_never_imports_the_dashboard():
     assert result.returncode == 0, result.stderr
 
 
-def test_mcp_servers_still_launch_from_the_api_project():
+def test_the_mcp_launch_fallback_still_points_at_the_api_project():
     from app import assistant
 
     root = assistant._repo_root()
@@ -61,4 +61,15 @@ def test_sessions_store_still_sits_beside_lab_db(tmp_path, monkeypatch):
 
     monkeypatch.delenv("ASSISTANT_DB_PATH", raising=False)
     monkeypatch.setenv("LAB_DB_PATH", str(tmp_path / "lab.db"))
+    assert assistant_sessions.resolve_sessions_db_path() == tmp_path / "assistant.db"
+
+
+def test_the_lab_db_resolver_survives_a_reload(tmp_path, monkeypatch):
+    import importlib
+
+    from app import assistant_sessions
+
+    monkeypatch.delenv("ASSISTANT_DB_PATH", raising=False)
+    monkeypatch.setenv("LAB_DB_PATH", str(tmp_path / "lab.db"))
+    importlib.reload(assistant_sessions)
     assert assistant_sessions.resolve_sessions_db_path() == tmp_path / "assistant.db"

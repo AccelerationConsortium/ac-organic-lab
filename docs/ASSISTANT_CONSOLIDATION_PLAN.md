@@ -189,6 +189,14 @@ Codex's review is right that the first draft of this section overclaimed:
 
 ### Proposed amendment (draft — not in force until approved)
 
+> **AGENTIC_LAB_DESIGN Part I, rules 1 and 4, add:** *A device executing its
+> own approved plan.* Rules 1 and 4 bind clients: nothing outside a device
+> composes HTTP to its control surface or acts without an SDK claim. A device
+> gateway running a step list through its own executor, under a claim it holds
+> itself, is the device, not a client; the SDK boundary and claim rules apply
+> unchanged to everything that reaches it — including the dashboard engine,
+> whose only device write is the draft below, made through the SDK.
+>
 > **AGENTIC_LAB_DESIGN Part I, rule 3, add:** *Device-run step approvals.* A
 > device gateway that implements the plan contract (`POST /plans`,
 > `/plans/actions`, `/docs/agent`) may execute an ad-hoc single-device step
