@@ -61,6 +61,7 @@ from .engine import (
     _snapshot_from_tool_result,
     _sse,
 )
+from .scopes import EquipmentScope, scope_system_prompt, scoped_control_env
 
 logger = logging.getLogger("app.assistant_openai")
 
@@ -182,9 +183,21 @@ def api_key() -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _server_specs(control: bool, actor: str | None) -> dict[str, dict[str, Any]]:
+def _server_specs(
+    control: bool, actor: str | None, scope: EquipmentScope | None = None,
+) -> dict[str, dict[str, Any]]:
     """Mirror ``assistant._write_mcp_config``'s server set + env binding,
     minus the JSON file (we spawn the servers ourselves)."""
+
+    if scope is not None:
+        if not actor:
+            raise ValueError("an equipment scope needs a verified actor")
+        control_cmd, control_args = _mcp_server_command("lab-control-mcp")
+        return {"lab-control": {
+            "command": control_cmd,
+            "args": control_args,
+            "env": scoped_control_env(_control_server_env(actor), scope),
+        }}
 
     history_cmd, history_args = _mcp_server_command("lab-history-mcp")
     # Includes LAB_HISTORY_TOOLS: this loop registers whatever list_tools
@@ -214,7 +227,7 @@ def _server_specs(control: bool, actor: str | None) -> dict[str, dict[str, Any]]
 
 
 @contextlib.asynccontextmanager
-async def _mcp_sessions(control: bool, actor: str | None):
+async def _mcp_sessions(control: bool, actor: str | None, scope: EquipmentScope | None = None):
     """Spawn the mode's MCP servers; yield ``(tool_defs, call)`` where
     ``tool_defs`` is the OpenAI ``tools`` array and ``call(name, args)``
     invokes the right server. Namespacing matches the claude CLI
@@ -226,7 +239,7 @@ async def _mcp_sessions(control: bool, actor: str | None):
     async with contextlib.AsyncExitStack() as stack:
         tool_defs: list[dict[str, Any]] = []
         routes: dict[str, tuple[Any, str]] = {}
-        for server_name, spec in _server_specs(control, actor).items():
+        for server_name, spec in _server_specs(control, actor, scope).items():
             params = StdioServerParameters(
                 command=spec["command"],
                 args=spec["args"],
@@ -489,9 +502,10 @@ async def run_openai_turn(
     on_proposal: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
     on_plan: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
     extra_system_prompt: str | None = None,
+    scope: EquipmentScope | None = None,
 ) -> AsyncIterator[bytes]:
     key = api_key()
-    include_control = control and bool(actor)
+    include_control = control and bool(actor) and scope is None
     model = OPENAI_CONTROL_MODEL if include_control else OPENAI_MODEL
     if key is None:
         yield _sse(
@@ -503,7 +517,7 @@ async def run_openai_turn(
         return
 
     system_prompt = (
-        SYSTEM_PROMPT
+        (scope_system_prompt(scope) if scope is not None else SYSTEM_PROMPT)
         + (CONTROL_PROMPT_ADDENDUM if include_control else "")
         + (extra_system_prompt or "")  # Plan mode's addendum (assistant_sessions.py)
     )
@@ -542,7 +556,11 @@ async def run_openai_turn(
     yield _sse({"type": "status", "phase": "thinking", "label": "waiting…"})
 
     try:
-        async with _mcp_sessions(include_control, actor) as (tool_defs, call):
+        # The scope is passed only when there is one, so an unscoped turn calls
+        # _mcp_sessions exactly as before.
+        sessions = (_mcp_sessions(include_control, actor) if scope is None
+                    else _mcp_sessions(include_control, actor, scope))
+        async with sessions as (tool_defs, call):
             async with httpx.AsyncClient(
                 base_url=DEFAULT_BASE_URL,
                 headers={

@@ -12,6 +12,7 @@ from .engine import (
     CONTROL_PROMPT_ADDENDUM, DEFAULT_TIMEOUT_S, SYSTEM_PROMPT,
     _format_prompt, _runtime_dir, _sse, _translate_event,
 )
+from .scopes import scope_system_prompt
 
 MODEL = os.environ.get('ASSISTANT_HERMES_MODEL', 'deepseek/deepseek-v4.1-flash')
 BINARY = os.environ.get('ASSISTANT_HERMES_BIN', str(Path.home() / '.hermes/hermes-agent/venv/bin/hermes'))
@@ -21,18 +22,22 @@ def configured() -> bool:
     return os.access(BINARY, os.X_OK) and bool(os.environ.get('ASSISTANT_HERMES_API_KEY'))
 
 
-def turn_config(actor, extra_system_prompt=None, *, control=False):
+def turn_config(actor, extra_system_prompt=None, *, control=False, scope=None):
     from .openai_backend import _server_specs
-    include_control = control and bool(actor)
-    servers = _server_specs(include_control, actor)
+    include_control = control and bool(actor) and scope is None
+    servers = _server_specs(include_control, actor, scope)
     # Hermes sanitizes the environment of each MCP child. Bind these explicitly
-    # so history reads the same database/registry as the dashboard process.
-    for key in ('LAB_DB_PATH', 'LAB_REGISTRY_PATH'):
-        if key in os.environ:
-            servers['lab-history']['env'][key] = os.environ[key]
+    # so history reads the same database/registry as the dashboard process. A
+    # panel scope spawns no history server; lab-control already carries
+    # LAB_REGISTRY_PATH from _control_server_env.
+    if 'lab-history' in servers:
+        for key in ('LAB_DB_PATH', 'LAB_REGISTRY_PATH'):
+            if key in os.environ:
+                servers['lab-history']['env'][key] = os.environ[key]
+    base_prompt = scope_system_prompt(scope) if scope is not None else SYSTEM_PROMPT
     return {
         'model': {'default': MODEL, 'provider': 'openrouter'},
-        'agent': {'max_turns': 12, 'system_prompt': SYSTEM_PROMPT
+        'agent': {'max_turns': 12, 'system_prompt': base_prompt
                   + (CONTROL_PROMPT_ADDENDUM if include_control else '')
                   + (extra_system_prompt or '')},
         # Every turn starts fresh MCP processes. The interactive 1.5-second
@@ -77,7 +82,7 @@ def control_events(event):
 
 
 async def run_hermes_turn(messages, *, control=False, actor=None, on_proposal=None,
-                          on_plan=None, extra_system_prompt=None):
+                          on_plan=None, extra_system_prompt=None, scope=None):
     if control and not actor:
         yield _sse({'type': 'error', 'message': 'Control requires a verified signed-in user.'})
         return
@@ -89,7 +94,7 @@ async def run_hermes_turn(messages, *, control=False, actor=None, on_proposal=No
     # session history or tools are inherited from the full-access admin agent.
     with tempfile.TemporaryDirectory(prefix='hermes-turn-', dir=_runtime_dir()) as home:
         root = Path(home)
-        config = turn_config(actor, extra_system_prompt, control=control)
+        config = turn_config(actor, extra_system_prompt, control=control, scope=scope)
         (root / 'config.yaml').write_text(json.dumps(config))
         # JSON is valid YAML. Secrets are passed only in the child environment.
         (root / 'query.txt').write_text(_format_prompt(messages))
