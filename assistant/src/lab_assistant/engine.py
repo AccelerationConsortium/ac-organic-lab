@@ -76,6 +76,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .plan_contract import MAX_PLAN_STEPS, PLAN_TTL_S, REFUSAL_CODES, plan_step_hash
+from .scopes import EquipmentScope, scope_system_prompt, scoped_control_env
 
 # Named for its former module so the service log reads exactly as before.
 logger = logging.getLogger("app.assistant")
@@ -276,7 +277,10 @@ def _history_server_env(actor: str | None) -> dict[str, str]:
     return env
 
 
-def _write_mcp_config(*, include_control: bool = False, actor: str | None = None) -> Path:
+def _write_mcp_config(
+    *, include_control: bool = False, actor: str | None = None,
+    scope: EquipmentScope | None = None,
+) -> Path:
     """Materialise the explicit MCP config and return its path.
 
     Always registers the read-only ``lab-history`` and ``lab-inventory``
@@ -285,6 +289,23 @@ def _write_mcp_config(*, include_control: bool = False, actor: str | None = None
     absolute (see :func:`_mcp_server_command`), so the servers resolve
     regardless of the subprocess cwd.
     """
+
+    if scope is not None:
+        # A panel turn: lab-control alone, pinned to one device, read tools
+        # only (scopes.py). Never the fleet-wide history/inventory servers.
+        if not actor:
+            raise ValueError("an equipment scope needs a verified actor")
+        control_cmd, control_args = _mcp_server_command("lab-control-mcp")
+        scoped = {"lab-control": {
+            "type": "stdio",
+            "command": control_cmd,
+            "args": control_args,
+            "env": scoped_control_env(_control_server_env(actor), scope),
+        }}
+        fd, name = tempfile.mkstemp(prefix="mcp.scope.", suffix=".json", dir=_runtime_dir())
+        with os.fdopen(fd, "w") as handle:
+            handle.write(json.dumps({"mcpServers": scoped}, indent=2))
+        return Path(name)
 
     history_cmd, history_args = _mcp_server_command("lab-history-mcp")
     history_env = _history_server_env(actor)
@@ -772,6 +793,14 @@ class ChatRequest(BaseModel):
     mode: Literal["ask", "control"] = "ask"
 
 
+class EquipmentChatRequest(BaseModel):
+    """A device panel's chat turn. No ``mode``: the panel scope is Ask only,
+    and the scope itself comes from the route path."""
+
+    messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+    conversation_owner: str | None = Field(default=None, max_length=320)
+
+
 # ---------------------------------------------------------------------------
 # SSE helpers
 # ---------------------------------------------------------------------------
@@ -1071,6 +1100,7 @@ async def _run_claude(
     on_proposal: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
     on_plan: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
     extra_system_prompt: str | None = None,
+    scope: EquipmentScope | None = None,
 ) -> AsyncIterator[bytes]:
     binary = _claude_binary()
     if binary is None:
@@ -1085,21 +1115,24 @@ async def _run_claude(
         )
         return
 
-    include_control = control and bool(actor)
+    include_control = control and bool(actor) and scope is None
     model = CONTROL_MODEL if include_control else DEFAULT_MODEL
     prompt = _format_prompt(messages)
-    mcp_config_path = _write_mcp_config(include_control=include_control, actor=actor)
+    mcp_config_path = _write_mcp_config(include_control=include_control, actor=actor, scope=scope)
     # ``extra_system_prompt`` is how Plan mode (assistant_sessions.py) adds
     # its addendum without touching the toolset: it rides the same read-only
     # servers Ask uses.
     system_prompt = (
-        SYSTEM_PROMPT
+        (scope_system_prompt(scope) if scope is not None else SYSTEM_PROMPT)
         + (CONTROL_PROMPT_ADDENDUM if include_control else "")
         + (extra_system_prompt or "")
     )
-    allowed_tools = f"{ALLOWED_TOOL_GLOB} {INVENTORY_TOOL_GLOB}"
-    if include_control:
-        allowed_tools = f"{allowed_tools} {CONTROL_TOOL_GLOB}"
+    if scope is not None:
+        allowed_tools = CONTROL_TOOL_GLOB
+    else:
+        allowed_tools = f"{ALLOWED_TOOL_GLOB} {INVENTORY_TOOL_GLOB}"
+        if include_control:
+            allowed_tools = f"{allowed_tools} {CONTROL_TOOL_GLOB}"
     args = [
         binary,
         "--print",
@@ -1284,6 +1317,53 @@ async def _run_claude(
 # ---------------------------------------------------------------------------
 
 
+def _runner_for(backend: str):
+    """The turn runner for ``backend``, or a 503 naming what is missing."""
+
+    if backend == "hermes":
+        from . import hermes_backend as assistant_hermes
+
+        if not assistant_hermes.configured():
+            raise HTTPException(status_code=503, detail="Hermes assistant is not configured")
+        return assistant_hermes.run_hermes_turn
+    if backend == "openai":
+        from . import openai_backend as assistant_openai
+
+        if assistant_openai.api_key() is None:
+            raise HTTPException(
+                status_code=503,
+                detail="ASSISTANT_OPENAI_API_KEY is not set on the dashboard host",
+            )
+        return assistant_openai.run_openai_turn
+    if _claude_binary() is None:
+        raise HTTPException(
+            status_code=503,
+            detail="claude CLI is not installed on the dashboard host",
+        )
+    return _run_claude
+
+
+def _sse_response(stream: AsyncIterator[bytes]) -> StreamingResponse:
+    return StreamingResponse(
+        stream,
+        media_type="text/event-stream",
+        headers={
+            # `no-transform` is load-bearing, not boilerplate. Next.js's
+            # rewrite proxy runs its default gzip `compression` over this
+            # response, and that middleware buffers text/event-stream in
+            # zlib until the stream ENDS when the browser sends
+            # Accept-Encoding: gzip (it always does). Every progress pill
+            # and text delta then arrives in one burst with `done` — the
+            # "no thinking progress shown" symptom. `compression` honours
+            # RFC 7234 no-transform and passes the stream through
+            # untouched; curl without Accept-Encoding never showed the
+            # problem, which is why it survived local testing.
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def build_assistant_router() -> APIRouter:
     router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
@@ -1397,28 +1477,7 @@ def build_assistant_router() -> APIRouter:
         control = body.mode == "control" and bool(actor) and not control_open
 
         backend = CONTROL_BACKEND if control else DEFAULT_BACKEND
-        if backend == "hermes":
-            from . import hermes_backend as assistant_hermes
-
-            if not assistant_hermes.configured():
-                raise HTTPException(status_code=503, detail="Hermes assistant is not configured")
-            runner = assistant_hermes.run_hermes_turn
-        elif backend == "openai":
-            from . import openai_backend as assistant_openai
-
-            if assistant_openai.api_key() is None:
-                raise HTTPException(
-                    status_code=503,
-                    detail="ASSISTANT_OPENAI_API_KEY is not set on the dashboard host",
-                )
-            runner = assistant_openai.run_openai_turn
-        else:
-            if _claude_binary() is None:
-                raise HTTPException(
-                    status_code=503,
-                    detail="claude CLI is not installed on the dashboard host",
-                )
-            runner = _run_claude
+        runner = _runner_for(backend)
 
         logger.info(
             "assistant chat: user=%s mode=%s->%s backend=%s messages=%d",
@@ -1520,24 +1579,54 @@ def build_assistant_router() -> APIRouter:
                 logger.exception("assistant stream errored")
                 yield _sse({"type": "error", "message": str(exc)})
 
-        return StreamingResponse(
-            gen(),
-            media_type="text/event-stream",
-            headers={
-                # `no-transform` is load-bearing, not boilerplate. Next.js's
-                # rewrite proxy runs its default gzip `compression` over this
-                # response, and that middleware buffers text/event-stream in
-                # zlib until the stream ENDS when the browser sends
-                # Accept-Encoding: gzip (it always does). Every progress pill
-                # and text delta then arrives in one burst with `done` — the
-                # "no thinking progress shown" symptom. `compression` honours
-                # RFC 7234 no-transform and passes the stream through
-                # untouched; curl without Accept-Encoding never showed the
-                # problem, which is why it survived local testing.
-                "Cache-Control": "no-cache, no-transform",
-                "X-Accel-Buffering": "no",
-            },
+        return _sse_response(gen())
+
+    @router.post("/equipment/{equipment_id}/chat")
+    async def equipment_chat(
+        equipment_id: str, request: Request, body: EquipmentChatRequest
+    ) -> StreamingResponse:
+        """A device panel's assistant (consolidation plan, step 2).
+
+        The scope comes from this path, never from the body, so a request
+        cannot widen it. Ask only: the toolset reads this one device
+        (scopes.py), enforced inside lab-control at every tool call. Needs a
+        verified actor, as lab-control binds one.
+        """
+
+        actor = request.headers.get("x-auth-user")
+        if not actor:
+            raise HTTPException(status_code=401, detail="Sign in to use this instrument's assistant.")
+        if body.conversation_owner is not None and body.conversation_owner != actor:
+            raise HTTPException(
+                status_code=409,
+                detail="The signed-in account changed. Refresh before continuing this conversation.",
+            )
+        try:
+            scope = EquipmentScope(equipment_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail=f"Unknown equipment id: {equipment_id}")
+        aggregator = getattr(request.app.state, "aggregator", None)
+        if aggregator is not None and aggregator.entry(equipment_id) is None:
+            raise HTTPException(status_code=404, detail=f"Unknown equipment id: {equipment_id}")
+
+        runner = _runner_for(DEFAULT_BACKEND)
+        logger.info(
+            "assistant chat: user=%s scope=%s backend=%s messages=%d",
+            actor, scope.name, DEFAULT_BACKEND, len(body.messages),
         )
+
+        async def gen() -> AsyncIterator[bytes]:
+            yield SSE_PREAMBLE
+            try:
+                async for frame in runner(body.messages, control=False, actor=actor, scope=scope):
+                    yield frame
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("assistant stream errored (scope=%s)", scope.name)
+                yield _sse({"type": "error", "message": str(exc)})
+
+        return _sse_response(gen())
 
     @router.post("/plans/{plan_id}/approve")
     async def approve_plan(

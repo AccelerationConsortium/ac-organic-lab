@@ -45,6 +45,8 @@ REFUSAL_CODES = frozenset(
         "ambiguous_location",
         "identity_mismatch",
         "capability_unknown",
+        # Step 2: a panel-scoped assistant asked about another device.
+        "out_of_scope",
     }
 )
 

@@ -1531,6 +1531,46 @@ async def _propose_plan(
 # ---------------------------------------------------------------------------
 
 
+def _scope_equipment() -> str | None:
+    """The one device this server may touch, when a panel scope spawned it
+    (``LAB_SCOPE_EQUIPMENT``, set by lab_assistant.scopes). None: unscoped."""
+
+    return os.environ.get("LAB_SCOPE_EQUIPMENT", "").strip() or None
+
+
+def _enabled_tools() -> frozenset[str] | None:
+    """``LAB_CONTROL_TOOLS``: the tools to register, or None for all — the
+    server-side twin of the CLI's ``--allowedTools``, and the only filter the
+    openai and Hermes backends have (as ``LAB_HISTORY_TOOLS`` is for history)."""
+
+    raw = os.environ.get("LAB_CONTROL_TOOLS", "").strip()
+    if not raw:
+        return None
+    return frozenset(t.strip() for t in raw.split(",") if t.strip())
+
+
+def _out_of_scope(registry: Registry, equipment_id: str) -> str | None:
+    """A refusal when a scoped server is asked about any other device.
+
+    Checked at invocation, so it holds whichever backend called the tool.
+    The id is resolved the same way the tools resolve it, so a spelling
+    variant of the scoped device is allowed and anything else is not.
+    """
+
+    scope = _scope_equipment()
+    if scope is None:
+        return None
+    entry = _resolve_equipment_id(registry, equipment_id)
+    if entry is not None and entry.id == scope:
+        return None
+    return _err(
+        "out_of_scope",
+        f"this assistant is scoped to {scope!r}; {equipment_id!r} is outside it. "
+        "Ask the dashboard assistant about other equipment.",
+        scope=scope,
+    )
+
+
 def _build_server(registry: Registry):
     """Build the FastMCP server. ``mcp`` is imported here so the module and its
     tool logic import without the package installed (matches mcp_server.py)."""
@@ -1538,8 +1578,19 @@ def _build_server(registry: Registry):
     from mcp.server.fastmcp import FastMCP
 
     server = FastMCP("lab-control")
+    enabled = _enabled_tools()
 
-    @server.tool()
+    def tool():
+        """``server.tool()``, unless ``LAB_CONTROL_TOOLS`` leaves this tool out."""
+
+        def register(fn):
+            if enabled is None or fn.__name__ in enabled:
+                return server.tool()(fn)
+            return fn
+
+        return register
+
+    @tool()
     async def get_equipment_docs(equipment_id: str) -> str:
         """Read a liquid handler's live status and its self-published
         ``/docs/agent``, ``/plans/actions`` and ``/openapi.json`` documents.
@@ -1548,9 +1599,12 @@ def _build_server(registry: Registry):
         Read this before proposing liquid-handler work, and resolve installed
         labware/pipettes from ``live_status.details.snapshot``."""
 
+        refused = _out_of_scope(registry, equipment_id)
+        if refused:
+            return refused
         return await _get_equipment_docs(registry, equipment_id)
 
-    @server.tool()
+    @tool()
     async def list_available_actions(equipment_id: str) -> str:
         """The device's live ``allowed_actions`` plus, for each action the
         assistant can propose, its argument JSON-Schema. Call this before
@@ -1571,9 +1625,12 @@ def _build_server(registry: Registry):
         devices use for the same shelf; for the arm each shelf it can reach
         with the node ids that reach it. Read it before naming a slot."""
 
+        refused = _out_of_scope(registry, equipment_id)
+        if refused:
+            return refused
         return await _list_available_actions(registry, equipment_id)
 
-    @server.tool()
+    @tool()
     async def lookup_custom_labware(load_name: str) -> str:
         """Fetch one custom labware's full Opentrons schema-2 definition from
         the dashboard's labware store. Call this BEFORE proposing
@@ -1589,7 +1646,7 @@ def _build_server(registry: Registry):
 
         return await _lookup_custom_labware(load_name)
 
-    @server.tool()
+    @tool()
     async def propose_action(
         equipment_id: str,
         action: str,
@@ -1603,9 +1660,12 @@ def _build_server(registry: Registry):
         subordinate to the device's authoritative state. Returns an ``error`` +
         ``code`` object when the proposal is refused."""
 
+        refused = _out_of_scope(registry, equipment_id)
+        if refused:
+            return refused
         return await _propose_action(registry, equipment_id, action, args, reason)
 
-    @server.tool()
+    @tool()
     async def propose_plan(
         equipment_id: str,
         steps: list[dict[str, Any]],
@@ -1629,9 +1689,12 @@ def _build_server(registry: Registry):
         Returns an ``error`` + ``code`` object (with the failing ``step``
         number) when refused."""
 
+        refused = _out_of_scope(registry, equipment_id)
+        if refused:
+            return refused
         return await _propose_plan(registry, equipment_id, steps, reason)
 
-    @server.tool()
+    @tool()
     async def decline_proposal(reason_code: str, explanation: str = "") -> str:
         """End a control-mode reply WITHOUT proposing. Call this whenever the
         user's request will not get a propose_action/propose_plan call this
@@ -1661,11 +1724,14 @@ def run() -> None:
     registry = load_registry()
     locations = _get_locations()
     logger.info(
-        "lab-control MCP server: %d devices, %d locations, actor=%s, authz_enforced=%s",
+        "lab-control MCP server: %d devices, %d locations, actor=%s, authz_enforced=%s, "
+        "scope=%s, tools=%s",
         len(registry.equipment),
         len(locations.locations),
         _actor(),
         _authz_enforced(),
+        _scope_equipment() or "unscoped",
+        ",".join(sorted(_enabled_tools())) if _enabled_tools() is not None else "all",
     )
     _build_server(registry).run()
 
