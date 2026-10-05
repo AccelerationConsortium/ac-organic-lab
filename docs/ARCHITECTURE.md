@@ -222,6 +222,17 @@ Owns:
   surfaced in the run's `done` frame — it never fails the run, and it is a
   no-op until `BITACORADB_URL` + `BITACORADB_EDGE_SECRET_PATH` are set
   (configured in production the same day).
+- **OT-2 plan results → ELN** (`plan_results.py`): an OT-2 gateway pushes each
+  finished, operator-approved assistant plan to `POST /api/ingest/plan-results`
+  (bearer token per device, `PLAN_RESULTS_DEVICE_TOKENS` JSON). The bundle is
+  journaled in `plan_results.sqlite3` before `accepted` is returned, then filed
+  — retried every minute — into BitacoraDB as an `UNFORMATTED` Experiment
+  (`hid` `<equipment>-plan-<id>`, operator = approver, `meta.unformatted`) with
+  one `observation` note carrying the per-well weights and per-step readings.
+  The approver's membership of the chosen project is checked against
+  `/authz/scope` first; a non-member is held, never filed. No BitacoraDB Plan
+  row: a device-local step approval is not a Run Authorization. Status at
+  `GET /api/plan-results`.
 - **Operator control passthrough** (`control.py`): mirrors each device's
   `/control/*` surface for operator-initiated writes, runs the per-request
   claim → action → release dance for v1.1 devices, and writes one

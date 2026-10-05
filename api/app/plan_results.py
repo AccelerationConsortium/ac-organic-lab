@@ -1,0 +1,395 @@
+"""OT-2 plan results -> BitacoraDB, filed as *unformatted* Experiments.
+
+An operator approves an assistant-proposed step list in an OT-2 gateway panel
+and the plan runs on the device (``opentrons-server`` ``gateway/plans.py``).
+That is a device-local step approval, not a Run Authorization, and until this
+module its measurements lived only in the gateway's memory. Now the gateway
+saves each finished plan and pushes it here; this files it in the ELN for the
+approver to curate later.
+
+Three properties this file holds:
+
+1. **Accepted means durable.** A bundle is written to the SQLite journal
+   before the gateway is told ``accepted``; the gateway then stops retrying.
+   Filing into BitacoraDB is retried from here, across restarts.
+
+2. **The record is truthful about what it is.** The Experiment says
+   ``UNFORMATTED`` and its ``meta`` records an assistant proposal approved in a
+   device panel — never a Run Authorization, never a completed protocol Plan.
+   No BitacoraDB Plan row is written: a plan that already ran cannot honestly
+   pass through ``draft -> approved`` there. Simulations are refused outright.
+
+3. **Identity is checked here, not trusted from the device.** A gateway proves
+   *which device* it is with its token (``PLAN_RESULTS_DEVICE_TOKENS``); the
+   approver's membership of the chosen project is then checked against the
+   roster (``/authz/scope``), as ``manual_steps.member_scope`` does. A bundle
+   whose approver is not a member is held with that reason, never filed.
+
+Configuration: ``PLAN_RESULTS_DEVICE_TOKENS`` (JSON ``{device_id: token}``;
+unset refuses every push), plus the record layer's own ``BITACORADB_URL`` /
+``BITACORADB_EDGE_SECRET_PATH`` (``record.py``) and ``AUTH_SERVICE_BASE``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hmac
+import json
+import logging
+import os
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Literal, Optional
+
+import httpx
+from fastapi import APIRouter, Header, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
+
+from . import record
+
+logger = logging.getLogger(__name__)
+
+RETRY_INTERVAL_S = 60.0
+
+PENDING = "pending"  # accepted, not yet filed (or a transient failure)
+FILED = "filed"
+HELD = "held"  # needs a human: not a member, unknown project, rejected row
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class PlanResultsBundle(BaseModel):
+    """What ``opentrons-server`` ``gateway/plan_results.py`` sends."""
+
+    model_config = ConfigDict(extra="allow")
+
+    schema_: Literal["ot2.plan_results.v1"] = Field(alias="schema")
+    plan_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    device_id: str = Field(min_length=1, max_length=80)
+    equipment_id: str = Field(min_length=1, max_length=80)
+    gateway_version: str = ""
+    simulation: bool
+    approved_by: str = Field(min_length=1, max_length=200)
+    proposed_by: Optional[str] = None
+    eln_project: str = Field(min_length=1, max_length=200)
+    status: str
+    halt_reason: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    steps_total: int
+    steps_ok: int
+    steps_failed: int
+    steps_skipped: int
+    plate_report: Optional[dict[str, Any]] = None
+    plan: dict[str, Any]
+
+
+def device_tokens() -> dict[str, str]:
+    raw = os.environ.get("PLAN_RESULTS_DEVICE_TOKENS", "").strip()
+    if not raw:
+        return {}
+    tokens = json.loads(raw)
+    if not isinstance(tokens, dict):
+        raise ValueError("PLAN_RESULTS_DEVICE_TOKENS must be a JSON object")
+    return {str(k): str(v) for k, v in tokens.items()}
+
+
+class PlanResultsJournal:
+    """One row per (device, plan): the frozen bundle and its filing state."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with self.connect() as db:
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS plan_results ("
+                " device_id TEXT NOT NULL, plan_id TEXT NOT NULL, state TEXT NOT NULL,"
+                " payload TEXT NOT NULL, received_at TEXT NOT NULL, attempts INTEGER NOT NULL,"
+                " last_error TEXT, experiment_id TEXT, note_id TEXT, filed_at TEXT,"
+                " PRIMARY KEY (device_id, plan_id))")
+
+    @contextmanager
+    def connect(self):
+        db = sqlite3.connect(self.path, timeout=10)
+        db.row_factory = sqlite3.Row
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
+    def accept(self, bundle: dict[str, Any]) -> dict[str, Any]:
+        """Store a bundle once. A retry of the same bundle is a no-op; a
+        different bundle under the same plan id is refused (409)."""
+        payload = json.dumps(bundle, sort_keys=True)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT payload FROM plan_results WHERE device_id=? AND plan_id=?",
+                             (bundle["device_id"], bundle["plan_id"])).fetchone()
+            if row is None:
+                db.execute("INSERT INTO plan_results VALUES (?,?,?,?,?,0,NULL,NULL,NULL,NULL)",
+                           (bundle["device_id"], bundle["plan_id"], PENDING, payload, _now()))
+            elif row["payload"] != payload:
+                raise HTTPException(409, "a different result bundle was already accepted for this plan")
+        return self.get(bundle["device_id"], bundle["plan_id"])
+
+    def get(self, device_id: str, plan_id: str) -> Optional[dict[str, Any]]:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM plan_results WHERE device_id=? AND plan_id=?",
+                             (device_id, plan_id)).fetchone()
+        if row is None:
+            return None
+        out = dict(row)
+        out["payload"] = json.loads(out["payload"])
+        return out
+
+    def pending(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            keys = db.execute("SELECT device_id, plan_id FROM plan_results WHERE state=?"
+                              " ORDER BY received_at", (PENDING,)).fetchall()
+        return [self.get(k["device_id"], k["plan_id"]) for k in keys]
+
+    def summaries(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT device_id, plan_id, state, received_at, attempts, last_error,"
+                " experiment_id, note_id, filed_at FROM plan_results"
+                " ORDER BY received_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def update(self, device_id: str, plan_id: str, **fields: Any) -> None:
+        cols = ", ".join(f"{k}=?" for k in fields)
+        with self.connect() as db:
+            db.execute(f"UPDATE plan_results SET {cols} WHERE device_id=? AND plan_id=?",
+                       (*fields.values(), device_id, plan_id))
+
+
+# ---------------------------------------------------------------------------
+# Filing
+# ---------------------------------------------------------------------------
+
+
+def experiment_hid(bundle: dict[str, Any]) -> str:
+    """Stable per plan, so a retried filing finds its own Experiment."""
+    return f"{bundle['equipment_id']}-plan-{bundle['plan_id']}"
+
+
+def experiment_meta(bundle: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "unformatted": True,
+        "created_by": "ac-organic-lab/plan_results",
+        "source": "ot2-gateway plan",
+        "approval": "OT-2 gateway step approval (not a Run Authorization)",
+        "plan_id": bundle["plan_id"],
+        "device_id": bundle["device_id"],
+        "equipment_id": bundle["equipment_id"],
+        "gateway_version": bundle.get("gateway_version"),
+        "approved_by": bundle["approved_by"],
+        "proposed_by": bundle.get("proposed_by"),
+        "status": bundle["status"],
+    }
+
+
+def note_body(bundle: dict[str, Any]) -> str:
+    stats = ((bundle.get("plate_report") or {}).get("stats") or {})
+    weighed = ""
+    if stats.get("n"):
+        weighed = (f" {stats['n']} wells weighed: mean {stats.get('mean_g')} g, "
+                   f"range {stats.get('min_g')}-{stats.get('max_g')} g, CV {stats.get('cv_pct')}%.")
+    halt = f" Halted: {bundle['halt_reason']}." if bundle.get("halt_reason") else ""
+    return (
+        f"UNFORMATTED results of OT-2 plan {bundle['plan_id']} on {bundle['equipment_id']}: "
+        f"{bundle['status']}, {bundle['steps_ok']}/{bundle['steps_total']} steps ok "
+        f"({bundle['steps_failed']} failed, {bundle['steps_skipped']} skipped).{halt}{weighed} "
+        f"Proposed by {bundle.get('proposed_by') or 'unknown'}; approved and run from the OT-2 "
+        f"panel by {bundle['approved_by']} (a device-local step approval, not a Run "
+        f"Authorization). Curate this Experiment: retitle it and add notes as needed."
+    )
+
+
+def note_data(bundle: dict[str, Any]) -> dict[str, Any]:
+    plan = bundle.get("plan") or {}
+    steps = plan.get("steps") or []
+    results = plan.get("results") or []
+    step_results = [
+        {"index": i + 1, "action": r.get("action"),
+         "args": (steps[i] or {}).get("args") if i < len(steps) else None,
+         "outcome": r.get("outcome"), "message": r.get("message"),
+         "reading": r.get("reading"), "finished_at": r.get("finished_at")}
+        for i, r in enumerate(results)
+    ]
+    return {
+        "source": "ot2-gateway plan",
+        **{k: bundle.get(k) for k in (
+            "plan_id", "device_id", "equipment_id", "gateway_version", "status", "halt_reason",
+            "started_at", "finished_at", "steps_total", "steps_ok", "steps_failed",
+            "steps_skipped", "approved_by", "proposed_by")},
+        "plate_report": bundle.get("plate_report"),
+        "step_results": step_results,
+    }
+
+
+class Held(Exception):
+    """Not retryable without a human: recorded as the bundle's reason."""
+
+
+async def approver_is_member(client: httpx.AsyncClient, user: str, project: str) -> bool:
+    from .control import _authz_base
+    from .manual_steps import may_confirm
+
+    r = await client.get(f"{_authz_base()}/authz/scope", params={"user": user})
+    r.raise_for_status()
+    scope = r.json()
+    if not isinstance(scope, dict) or scope.get("user") != user:
+        raise ValueError("invalid project scope from the auth service")
+    return may_confirm(scope, project)
+
+
+async def file_one(journal: PlanResultsJournal, row: dict[str, Any],
+                   client: httpx.AsyncClient) -> str:
+    """File one accepted bundle; returns its new state. Never raises."""
+    bundle = row["payload"]
+    device_id, plan_id = row["device_id"], row["plan_id"]
+    attempts = row["attempts"] + 1
+    base, secret = record.BITACORADB_URL.rstrip("/"), record.edge_secret()
+    if not base or not secret:
+        journal.update(device_id, plan_id, attempts=attempts,
+                       last_error="record layer not configured (BITACORADB_URL / edge secret)")
+        return PENDING
+    user, project = bundle["approved_by"], bundle["eln_project"]
+    headers = {"X-Edge-Secret": secret, "X-Auth-User": user, "X-Auth-Projects": project}
+    try:
+        if not await approver_is_member(client, user, project):
+            raise Held(f"{user} is not a member of ELN project {project!r}")
+
+        experiment_id = row["experiment_id"]
+        if experiment_id is None:
+            hid = experiment_hid(bundle)
+            started = bundle.get("started_at") or row["received_at"]
+            title = f"UNFORMATTED — OT-2 plan {plan_id} ({started[:10]})"
+
+            async def _find() -> Optional[str]:
+                r = await client.get(f"{base}/experiments", headers=headers,
+                                     params={"project": project, "hid": hid})
+                r.raise_for_status()
+                rows = r.json()
+                return str(rows[0]["experiment_id"]) if rows else None
+
+            experiment_id = await _find()
+            if experiment_id is None:
+                r = await client.post(f"{base}/experiments", headers=headers, json={
+                    "hid": hid, "title": title, "project": project, "operator": user,
+                    "creator": user, "started_at": started, "meta": experiment_meta(bundle)})
+                if r.status_code == 422:
+                    raise Held(f"BitacoraDB refused the Experiment: {r.text[:300]}")
+                if r.status_code == 409:
+                    experiment_id = await _find()
+                    if experiment_id is None:
+                        raise RuntimeError(f"experiment {hid!r} exists (409) but is not readable")
+                else:
+                    r.raise_for_status()
+                    experiment_id = str(r.json()["experiment_id"])
+            journal.update(device_id, plan_id, experiment_id=experiment_id)
+
+        # Notes are append-only and carry no idempotency key, so a crash after
+        # a successful POST but before the journal update would file the note
+        # twice. The Experiment is per plan, so this plan's note is found by
+        # its data before posting another.
+        r = await client.get(f"{base}/notes", headers=headers,
+                             params={"experiment_id": experiment_id, "kind": "observation"})
+        r.raise_for_status()
+        existing = next(
+            (n for n in r.json()
+             if (n.get("data") or {}).get("source") == "ot2-gateway plan"
+             and (n.get("data") or {}).get("plan_id") == plan_id
+             and (n.get("data") or {}).get("device_id") == device_id),
+            None,
+        )
+        if existing is not None:
+            note_id = str(existing["note_id"])
+        else:
+            r = await client.post(f"{base}/notes", headers=headers, json={
+                "experiment_id": experiment_id, "kind": "observation", "creator": user,
+                "body": note_body(bundle), "data": note_data(bundle)})
+            if r.status_code == 422:
+                raise Held(f"BitacoraDB refused the note: {r.text[:300]}")
+            r.raise_for_status()
+            note_id = str(r.json()["note_id"])
+        journal.update(device_id, plan_id, state=FILED, attempts=attempts, last_error=None,
+                       note_id=note_id, filed_at=_now())
+        return FILED
+    except Held as exc:
+        journal.update(device_id, plan_id, state=HELD, attempts=attempts, last_error=str(exc))
+        logger.warning("plan results %s/%s held: %s", device_id, plan_id, exc)
+        return HELD
+    except Exception as exc:  # noqa: BLE001 — transient; retried by the loop
+        journal.update(device_id, plan_id, attempts=attempts, last_error=str(exc)[:500])
+        logger.warning("plan results %s/%s not filed (attempt %d): %s",
+                       device_id, plan_id, attempts, exc)
+        return PENDING
+
+
+async def file_pending(journal: PlanResultsJournal) -> int:
+    filed = 0
+    async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+        for row in journal.pending():
+            if await file_one(journal, row, client) == FILED:
+                filed += 1
+    return filed
+
+
+async def retry_loop(journal: PlanResultsJournal, interval_s: float = RETRY_INTERVAL_S) -> None:
+    while True:
+        try:
+            await file_pending(journal)
+        except Exception:  # noqa: BLE001 — keep the loop alive; the rows carry the error
+            logger.exception("plan results filing pass failed")
+        await asyncio.sleep(interval_s)
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+
+def _journal(request: Request) -> PlanResultsJournal:
+    journal = getattr(request.app.state, "plan_results_journal", None)
+    if journal is None:
+        raise HTTPException(503, "plan results journal is not configured")
+    return journal
+
+
+def build_plan_results_router() -> APIRouter:
+    router = APIRouter(prefix="/api", tags=["plan-results"])
+
+    @router.post("/ingest/plan-results", status_code=202)
+    async def ingest_plan_results(body: PlanResultsBundle, request: Request,
+                                  authorization: str = Header(default="")) -> dict[str, Any]:
+        """Accept one finished OT-2 plan's results for filing in the ELN.
+
+        The device proves its identity with its bearer token; unconfigured
+        tokens refuse every push. ``accepted`` means stored durably here.
+        """
+        expected = device_tokens().get(body.device_id)
+        presented = authorization.removeprefix("Bearer ").strip()
+        if not expected or not hmac.compare_digest(presented, expected):
+            raise HTTPException(401, "unknown device or bad token")
+        if body.simulation:
+            raise HTTPException(422, "simulated plans never enter the record")
+        journal = _journal(request)
+        row = journal.accept(body.model_dump(mode="json", by_alias=True))
+        if row["state"] == PENDING:
+            # File now rather than at the next loop tick; the loop is the backstop.
+            asyncio.create_task(file_pending(journal))
+        return {"status": "accepted", "plan_id": body.plan_id, "state": row["state"]}
+
+    @router.get("/plan-results")
+    async def list_plan_results(request: Request) -> list[dict[str, Any]]:
+        """Recent OT-2 plan results and whether each reached the ELN."""
+        return _journal(request).summaries()
+
+    return router

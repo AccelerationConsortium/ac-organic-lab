@@ -61,6 +61,7 @@ from .history import build_history_router
 from .hosts import build_hosts_router
 from .labware import build_labware_router
 from .ssh_console import build_ssh_router
+from .plan_results import build_plan_results_router
 from .presentation import (
     AggregatorHealth,
     EquipmentList,
@@ -551,6 +552,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from .reader_measurements import ReaderJournal
     app.state.reader_journal = ReaderJournal(db_path.with_name("reader_measurements.sqlite3"))
     app.state.reader_journal.recover()
+    # Finished OT-2 plans pushed by the gateways, filed into BitacoraDB as
+    # unformatted Experiments. The journal is the durable outbox; the loop
+    # retries anything not yet filed (plan_results.py).
+    from .plan_results import PlanResultsJournal, retry_loop as plan_results_retry_loop
+    app.state.plan_results_journal = PlanResultsJournal(db_path.with_name("plan_results.sqlite3"))
+    plan_results_task = asyncio.create_task(
+        plan_results_retry_loop(app.state.plan_results_journal))
     db = LabDatabase(db_path)
     try:
         db.open()
@@ -588,6 +596,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        plan_results_task.cancel()
         camera_task.cancel()
         try:
             await camera_task
@@ -650,6 +659,7 @@ app.include_router(build_custody_router())
 app.include_router(build_labware_router())
 # History + ingest endpoints (SQLite-backed).
 app.include_router(build_history_router())
+app.include_router(build_plan_results_router())
 # Read-only Claude assistant -- streams chat over SSE, has tool access to
 # the history DB and a whitelisted set of systemd journals. See assistant.py.
 app.include_router(build_assistant_router())
