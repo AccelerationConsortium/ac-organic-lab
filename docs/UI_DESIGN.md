@@ -1574,11 +1574,14 @@ symptom is maddeningly indirect: the model says its tools are unreachable,
 Ask mode is equally toolless, the CLI exits 0, and the failed init event is
 not forwarded by the SSE bridge.
 
-**Observables when debugging mode behaviour.** The reliable signal for
-whether Control mode was granted is which file `assistant.py` wrote in
-`$ASSISTANT_RUNTIME_DIR`: `mcp.control.json` (granted) vs `mcp.json`
-(downgraded to ask). The `assistant chat: mode=…` log line is invisible under
-a bare `uvicorn` (unconfigured logger); do not rely on it.
+**Observables when debugging mode behaviour.** Since 2026-10-05 each turn
+writes its own config in `$ASSISTANT_RUNTIME_DIR` — `mcp.control.<random>.json`
+(Control granted), `mcp.ask.<random>.json` (downgraded to ask) or
+`mcp.scope.<random>.json` (a device panel) — and deletes it when the turn ends;
+a fixed per-mode file let concurrent users' turns swap identities. So the file
+is only visible while a turn runs. The `assistant chat: mode=…` / `scope=…` log
+line is the after-the-fact signal, but it is invisible under a bare `uvicorn`
+(unconfigured logger).
 
 **Authorization semantics, as measured.** §5.2's "`operator`+ on that
 equipment" is in practice "**holds any grant** on that equipment":

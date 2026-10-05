@@ -112,6 +112,8 @@ from lab_skills.exceptions import (
 )
 from lab_skills.registry import EquipmentEntry, Registry
 from lab_skills.skill_catalog import SkillDef, skills_for
+from lab_assistant.scopes import SCOPABLE_KINDS, project_actions_to_scope
+
 # The plan vocabulary shared with the chat engine (lab_assistant.plan_contract):
 # re-exported here because this module and its tests use them by these names.
 from lab_assistant.plan_contract import (  # noqa: F401
@@ -1561,7 +1563,7 @@ def _out_of_scope(registry: Registry, equipment_id: str) -> str | None:
     if scope is None:
         return None
     entry = _resolve_equipment_id(registry, equipment_id)
-    if entry is not None and entry.id == scope:
+    if entry is not None and entry.id == scope and entry.kind in SCOPABLE_KINDS:
         return None
     return _err(
         "out_of_scope",
@@ -1628,7 +1630,11 @@ def _build_server(registry: Registry):
         refused = _out_of_scope(registry, equipment_id)
         if refused:
             return refused
-        return await _list_available_actions(registry, equipment_id)
+        result = await _list_available_actions(registry, equipment_id)
+        if _scope_equipment() is None:
+            return result
+        payload = json.loads(result)
+        return _dumps(project_actions_to_scope(payload) if "error" not in payload else payload)
 
     @tool()
     async def lookup_custom_labware(load_name: str) -> str:
