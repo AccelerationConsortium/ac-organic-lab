@@ -327,6 +327,13 @@ http://:8080 {
 # the global `auto_https off`. Routes are the shared :8080 router.
 https://sdl2-server-agents.tail6a1dd7.ts.net {
     tls /etc/dashboard-staging/certs/sdl2-server-agents.tail6a1dd7.ts.net.crt /etc/dashboard-staging/certs/sdl2-server-agents.tail6a1dd7.ts.net.key
+    # Undermind requires an HTTPS redirect URI, but ac_auth signs people in only
+    # on the IP origin (AUTH_LOGIN_URL), so this origin never has a session and
+    # forward_auth would drop the code. Bounce the callback, query intact, to the
+    # IP origin where the caller's session (and X-Auth-User) exists. The hop
+    # stays on the tailnet (WireGuard) and the code is PKCE-bound.
+    @undermind_callback path /bitacora/api/integrations/undermind/callback
+    redir @undermind_callback http://100.64.254.6{uri} 302
     reverse_proxy 127.0.0.1:8080
 }
 
