@@ -155,7 +155,7 @@ http://:8080 {
         forward_auth @ot2_hte 127.0.0.1:8009 {
             uri /auth/verify
             # Projects feed the approval card's ELN project picker (/me).
-            copy_headers X-Auth-User X-Auth-Role X-Auth-Projects
+            copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
         }
         handle_path /ot2/hte/* {
             reverse_proxy sdl2-pc-03-cytation.tail6a1dd7.ts.net:8020 {
@@ -171,7 +171,7 @@ http://:8080 {
         forward_auth @ot2_complexation 127.0.0.1:8009 {
             uri /auth/verify
             # Projects feed the approval card's ELN project picker (/me).
-            copy_headers X-Auth-User X-Auth-Role X-Auth-Projects
+            copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
         }
         handle_path /ot2/complexation/* {
             reverse_proxy sdl2-pc-06-uplc.tail6a1dd7.ts.net:8021 {
