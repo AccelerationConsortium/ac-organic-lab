@@ -29,7 +29,7 @@ def test_write_mcp_config_ask_is_read_only_servers(tmp_path, monkeypatch) -> Non
         cfg["mcpServers"]["lab-inventory"]["env"]["BITACORA_URL"]
         == "http://bitacora.test:8050"
     )
-    assert path.name == "mcp.json"
+    assert path.name.startswith("mcp.ask.") and path.suffix == ".json"
 
 
 def test_write_mcp_config_control_adds_lab_control(tmp_path, monkeypatch) -> None:
@@ -44,7 +44,19 @@ def test_write_mcp_config_control_adds_lab_control(tmp_path, monkeypatch) -> Non
     assert ctl["env"]["LAB_ACTOR"] == "alice@example.edu"
     assert ctl["env"]["AUTH_SERVICE_BASE"] == "http://authz.test:8009"
     # A distinct filename so a control config never lingers into an ask turn.
-    assert path.name == "mcp.control.json"
+    assert path.name.startswith("mcp.control.") and path.suffix == ".json"
+
+
+def test_concurrent_turns_never_share_a_config_file(tmp_path, monkeypatch) -> None:
+    """Each config binds its turn's actor. A shared per-mode file let one
+    user's turn overwrite another's between write and launch."""
+
+    monkeypatch.setenv("ASSISTANT_RUNTIME_DIR", str(tmp_path))
+    alice = assistant._write_mcp_config(include_control=True, actor="alice@example.edu")
+    bob = assistant._write_mcp_config(include_control=True, actor="bob@example.edu")
+    assert alice != bob
+    assert json.loads(alice.read_text())["mcpServers"]["lab-control"]["env"]["LAB_ACTOR"] == "alice@example.edu"
+    assert json.loads(bob.read_text())["mcpServers"]["lab-control"]["env"]["LAB_ACTOR"] == "bob@example.edu"
 
 
 def test_write_mcp_config_binds_actor_to_lab_history(tmp_path, monkeypatch) -> None:
@@ -595,3 +607,24 @@ def test_plan_with_wrong_hash_from_tool_is_not_approvable(monkeypatch) -> None:
     )
     assert r.status_code == 404
     assert db.events == []
+
+
+async def test_a_finished_turn_removes_its_config_file(tmp_path, monkeypatch) -> None:
+    """The per-turn config binds that turn's actor; it must not outlive it."""
+
+    monkeypatch.setenv("ASSISTANT_RUNTIME_DIR", str(tmp_path))
+    fake = tmp_path / "claude"
+    fake.write_text(
+        "#!/bin/sh\n"
+        "echo '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\"}'\n"
+    )
+    fake.chmod(0o755)
+    monkeypatch.setattr(assistant, "_claude_binary", lambda: str(fake))
+    frames = [
+        frame async for frame in assistant._run_claude(
+            [assistant.ChatMessage(role="user", content="hi")],
+            control=True, actor="alice@example.edu",
+        )
+    ]
+    assert frames
+    assert list(tmp_path.glob("mcp.*.json")) == []
