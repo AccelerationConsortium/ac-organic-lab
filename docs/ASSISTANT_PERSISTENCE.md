@@ -240,7 +240,7 @@ expire.
 deployed):** saved Plan sessions, per D-1/D-2. What shipped, against the list
 D-2 asked for before saved sessions could:
 
-- **Store.** `api/app/assistant_sessions.py` — `assistant.db` (SQLite WAL,
+- **Store.** `assistant/src/lab_assistant/sessions.py` — `assistant.db` (SQLite WAL,
   one serialised writer, `PRAGMA user_version` migrations) beside the resolved
   `lab.db`, or at `ASSISTANT_DB_PATH`. Never `lab.db`'s schema, never
   BitacoraDB. Opened in the API lifespan; if it cannot open, the routes answer

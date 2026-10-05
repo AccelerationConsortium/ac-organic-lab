@@ -83,7 +83,6 @@ without it.
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import logging
 import os
@@ -113,6 +112,14 @@ from lab_skills.exceptions import (
 )
 from lab_skills.registry import EquipmentEntry, Registry
 from lab_skills.skill_catalog import SkillDef, skills_for
+# The plan vocabulary shared with the chat engine (lab_assistant.plan_contract):
+# re-exported here because this module and its tests use them by these names.
+from lab_assistant.plan_contract import (  # noqa: F401
+    MAX_PLAN_STEPS,
+    PLAN_TTL_S,
+    REFUSAL_CODES,
+    plan_step_hash,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,43 +127,6 @@ logger = logging.getLogger(__name__)
 # must be re-proposed. The device's 412/423 at click time remains the real
 # backstop; this only bounds how stale the confirm card may be (UI_DESIGN §5.3).
 PROPOSAL_TTL_S = 120
-# A plan card takes longer to read than a single action's — N steps with
-# arguments — and the operator approves it, then runs it, then watches it
-# finish; the dashboard keeps the plan record for this long from proposal
-# (extended by the same amount on approval) before dropping it.
-PLAN_TTL_S = 600
-# Review-ability bound. A card nobody can read end to end is a rubber stamp;
-# past this the model is told to split the work or recommend a workflow plan.
-MAX_PLAN_STEPS = 256
-
-# Every machine code a propose_action / propose_plan refusal can carry (the
-# ``_err`` calls in the propose paths). assistant.py matches tool-result
-# payloads against this set to emit a visible ``proposal_refused`` frame:
-# without one, a refused proposal is indistinguishable from the model never
-# proposing at all — the operator sees the request "understood" and no
-# authorize button, and the why lives only in prose the model may not write.
-REFUSAL_CODES = frozenset(
-    {
-        "no_actor",
-        "unknown_equipment",
-        "disabled",
-        "unreachable",
-        "not_allowed",
-        "unmappable_action",
-        "invalid_args",
-        "forbidden_field",
-        "not_authorized",
-        "empty_plan",
-        "too_many_steps",
-        "invalid_step",
-        # Step 1m: a slot argument naming another device's place, or a
-        # registry place with several keys on this device.
-        "wrong_device_location",
-        "ambiguous_location",
-        "identity_mismatch",
-        "capability_unknown",
-    }
-)
 
 # The reason vocabulary for decline_proposal — mirrors the control prompt's
 # "why not" list. An unknown code coerces to "other" rather than erroring:
@@ -1401,28 +1371,6 @@ def _decline_proposal(reason_code: str, explanation: str) -> str:
             "read on screen; call it again with one",
         )
     return _dumps({"declined": {"reason_code": code, "explanation": text}})
-
-
-def plan_step_hash(steps: list[dict[str, Any]]) -> str:
-    """Stable digest of a plan's ``(action, args)`` list.
-
-    Canonical JSON (sorted keys, no incidental whitespace) so a re-ordered dict
-    or reformatting cannot change it while any change to an action or an
-    argument value does. The operator approves THIS value, and the dashboard
-    refuses an approval whose hash differs from the plan it cached (409) —
-    which is what makes the approval a review of exactly what was shown rather
-    than a rubber stamp. Same construction as opentrons-server's
-    ``compute_step_hash``, so the two review surfaces agree on what "the same
-    plan" means.
-    """
-
-    payload = json.dumps(
-        [{"action": s["action"], "args": s.get("args") or {}} for s in steps],
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 async def _propose_plan(

@@ -15,7 +15,7 @@
  *      out or hunt for a stop button during.
  *
  * This lands softly because the assistant's system prompt already asks for
- * "1-3 sentences" with "the answer first" (see api/app/assistant.py). The
+ * "1-3 sentences" with "the answer first" (see assistant/src/lab_assistant/engine.py). The
  * lead sentence IS the summary; everything trimmed here is detail that was
  * already meant for the eyes.
  *

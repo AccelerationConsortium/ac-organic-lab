@@ -280,7 +280,7 @@ Three pieces:
   `/api/assistant/sessions/{id}/turns` with only the new text and an
   idempotency key, and the server rebuilds the model's context from what it
   stored. Saved messages restore as display-only history — never a card.
-- **`api/app/assistant_sessions.py`** — the Plan-mode store and routes.
+- **`assistant/src/lab_assistant/sessions.py`** — the Plan-mode store and routes.
   `assistant.db` (SQLite WAL, one serialised writer, migrations, bounded
   retention) beside `lab.db` — deliberately neither the telemetry DB nor
   BitacoraDB, because a chat transcript is neither telemetry nor a scientific
@@ -290,7 +290,7 @@ Three pieces:
   `completed` / `failed` / `interrupted` state, so a disconnect or restart can
   never promote an unfinished answer. Saving files nothing: there is no route
   here that registers a protocol or starts a run.
-- **`api/app/assistant.py`** — `POST /api/assistant/chat`. Two selectable
+- **`assistant/src/lab_assistant/engine.py`** — `POST /api/assistant/chat`. Two selectable
   backends behind one SSE contract (per-mode via `ASSISTANT_BACKEND` /
   `ASSISTANT_CONTROL_BACKEND`); the bubble cannot tell them apart:
   - **`claude-cli`** (the original): shells out to the locally-installed

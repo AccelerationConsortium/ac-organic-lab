@@ -1,7 +1,7 @@
 /**
  * Plan mode — saved planning sessions (docs/ASSISTANT_PERSISTENCE.md step 2).
  *
- * Thin client for `/api/assistant/sessions/*` (api/app/assistant_sessions.py).
+ * Thin client for `/api/assistant/sessions/*` (assistant/src/lab_assistant/sessions.py).
  * Everything here is a read or a metadata write; the only thing that talks to
  * a model is the turn stream, which the bubble opens itself with `fetch` so it
  * can share the SSE reader it already has for `/api/assistant/chat`.
