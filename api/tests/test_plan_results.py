@@ -84,6 +84,7 @@ async def test_files_an_unformatted_experiment_and_a_note_as_the_approver(config
     respx.get(f"{BASE}/experiments").mock(return_value=httpx.Response(200, json=[]))
     create = respx.post(f"{BASE}/experiments").mock(
         return_value=httpx.Response(201, json={"experiment_id": "exp-1"}))
+    respx.get(f"{BASE}/notes").mock(return_value=httpx.Response(200, json=[]))
     note = respx.post(f"{BASE}/notes").mock(
         return_value=httpx.Response(201, json={"note_id": "note-1"}))
 
@@ -135,6 +136,7 @@ async def test_a_failed_note_is_retried_without_a_second_experiment(configured):
     respx.get(f"{BASE}/experiments").mock(return_value=httpx.Response(200, json=[]))
     create = respx.post(f"{BASE}/experiments").mock(
         return_value=httpx.Response(201, json={"experiment_id": "exp-1"}))
+    respx.get(f"{BASE}/notes").mock(return_value=httpx.Response(200, json=[]))
     note = respx.post(f"{BASE}/notes").mock(side_effect=[
         httpx.Response(503, text="down"),
         httpx.Response(201, json={"note_id": "note-1"}),
@@ -146,6 +148,29 @@ async def test_a_failed_note_is_retried_without_a_second_experiment(configured):
 
     assert await _file(journal) == [pr.FILED]
     assert create.call_count == 1 and note.call_count == 2
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_a_note_filed_before_a_crash_is_adopted_not_duplicated(configured):
+    """The note POST succeeded but the journal update never happened (crash):
+    the retry must find that note, not file a second observation."""
+    journal = configured
+    journal.accept(BUNDLE)
+    journal.update("ot2_complexation", BUNDLE["plan_id"], experiment_id="exp-1")
+    respx.get(f"{AUTHZ}/authz/scope").mock(return_value=_scope(True))
+    respx.get(f"{BASE}/notes").mock(return_value=httpx.Response(200, json=[
+        {"note_id": "other", "data": {"source": "ot2-gateway plan", "plan_id": "different",
+                                      "device_id": "ot2_complexation"}},
+        {"note_id": "note-1", "data": {"source": "ot2-gateway plan",
+                                       "plan_id": BUNDLE["plan_id"],
+                                       "device_id": "ot2_complexation"}},
+    ]))
+    post = respx.post(f"{BASE}/notes")
+
+    assert await _file(journal) == [pr.FILED]
+    assert not post.called
+    assert journal.get("ot2_complexation", BUNDLE["plan_id"])["note_id"] == "note-1"
 
 
 @pytest.mark.anyio

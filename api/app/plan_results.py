@@ -295,14 +295,32 @@ async def file_one(journal: PlanResultsJournal, row: dict[str, Any],
                     experiment_id = str(r.json()["experiment_id"])
             journal.update(device_id, plan_id, experiment_id=experiment_id)
 
-        r = await client.post(f"{base}/notes", headers=headers, json={
-            "experiment_id": experiment_id, "kind": "observation", "creator": user,
-            "body": note_body(bundle), "data": note_data(bundle)})
-        if r.status_code == 422:
-            raise Held(f"BitacoraDB refused the note: {r.text[:300]}")
+        # Notes are append-only and carry no idempotency key, so a crash after
+        # a successful POST but before the journal update would file the note
+        # twice. The Experiment is per plan, so this plan's note is found by
+        # its data before posting another.
+        r = await client.get(f"{base}/notes", headers=headers,
+                             params={"experiment_id": experiment_id, "kind": "observation"})
         r.raise_for_status()
+        existing = next(
+            (n for n in r.json()
+             if (n.get("data") or {}).get("source") == "ot2-gateway plan"
+             and (n.get("data") or {}).get("plan_id") == plan_id
+             and (n.get("data") or {}).get("device_id") == device_id),
+            None,
+        )
+        if existing is not None:
+            note_id = str(existing["note_id"])
+        else:
+            r = await client.post(f"{base}/notes", headers=headers, json={
+                "experiment_id": experiment_id, "kind": "observation", "creator": user,
+                "body": note_body(bundle), "data": note_data(bundle)})
+            if r.status_code == 422:
+                raise Held(f"BitacoraDB refused the note: {r.text[:300]}")
+            r.raise_for_status()
+            note_id = str(r.json()["note_id"])
         journal.update(device_id, plan_id, state=FILED, attempts=attempts, last_error=None,
-                       note_id=str(r.json()["note_id"]), filed_at=_now())
+                       note_id=note_id, filed_at=_now())
         return FILED
     except Held as exc:
         journal.update(device_id, plan_id, state=HELD, attempts=attempts, last_error=str(exc))
