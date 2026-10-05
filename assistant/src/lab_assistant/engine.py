@@ -64,6 +64,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import sys
 import time
 from datetime import datetime, timezone
@@ -314,12 +315,16 @@ def _write_mcp_config(*, include_control: bool = False, actor: str | None = None
             "args": control_args,
             "env": _control_server_env(actor),
         }
-    # A distinct filename per mode so a control-mode config never lingers into
-    # a later ask-mode turn (and vice versa).
-    name = "mcp.control.json" if include_control and actor else "mcp.json"
-    path = _runtime_dir() / name
-    path.write_text(json.dumps({"mcpServers": servers}, indent=2))
-    return path
+    # One file per turn, removed when the turn ends (``_run_claude``). The
+    # config binds the signed-in actor (LAB_ACTOR) into the servers, so a
+    # shared per-mode file let two concurrent turns overwrite each other
+    # between write and launch, and one user's turn ran as the other. The mode
+    # stays in the name so a control config is never read by an ask turn.
+    mode = "control" if include_control and actor else "ask"
+    fd, name = tempfile.mkstemp(prefix=f"mcp.{mode}.", suffix=".json", dir=_runtime_dir())
+    with os.fdopen(fd, "w") as handle:
+        handle.write(json.dumps({"mcpServers": servers}, indent=2))
+    return Path(name)
 
 
 def _claude_cwd() -> str:
@@ -1131,6 +1136,7 @@ async def _run_claude(
             limit=10 * 1024 * 1024,
         )
     except FileNotFoundError:
+        mcp_config_path.unlink(missing_ok=True)
         yield _sse({"type": "error", "message": f"could not spawn {binary}"})
         return
 
@@ -1211,6 +1217,9 @@ async def _run_claude(
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
+        # The CLI read its config at launch; this turn's file binds this
+        # turn's actor and must not outlive it.
+        mcp_config_path.unlink(missing_ok=True)
         stderr_bytes = b""
         if proc.stderr is not None:
             try:
