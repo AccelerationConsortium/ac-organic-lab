@@ -13,6 +13,12 @@ device, at invocation, whichever backend called it) and ``LAB_CONTROL_TOOLS``
 and write observations. The route fixes the scope from its own path, so a
 request cannot widen it.
 
+Known boundary: the scope guarantees which *tools* a panel turn can call and
+which *device* they address, and strips other devices from the lab's own
+additions (the place vocabulary). ``get_equipment_docs`` returns what the
+device itself publishes (its status, guide, catalog) unedited; whatever a
+device says about itself is the panel's to see.
+
 Step 2 is Ask-only. Drafting plans on a device (step 3) waits on the rules
 amendment in the consolidation plan.
 """
