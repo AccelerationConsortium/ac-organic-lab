@@ -597,7 +597,7 @@ project model, to match the BitacoraDB catalog; the two share one policy.)
 
 ## Assistant chat (read surface — inherits auth + data scope)
 
-The dashboard's chat bubble (`api/app/assistant.py`) shells out to the `claude`
+The dashboard's chat bubble (`assistant/src/lab_assistant/engine.py`) shells out to the `claude`
 CLI with the read-only `lab-history` MCP tools. It is **stateless**:
 `--no-session-persistence`, a fresh agent loop per request, the transcript held
 in the **browser** and re-sent each turn (max 40 messages); the server stores no

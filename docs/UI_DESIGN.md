@@ -252,7 +252,7 @@ audit opacity without benefit at single-lab scale.
 | Tier | Surface | Tools | Model class | Agent loop runs on | Inference |
 |---|---|---|---|---|---|
 | **1. Panel micro-assistant** | xArm control page (pattern for future per-device panels) | One structured-intent tool, device-local; no loop (single translate call) | Cheap/fast (GLM-class via OpenRouter) | *Inside the device gateway process* (`assistant_llm.py` in `xarm_api_server.py`, the device's Windows PC) | OpenRouter cloud API |
-| **2. Dashboard assistant** | Chat bubble, all dashboard pages | Ask mode: eight read-only `lab-history` MCP tools (history DB, live `/api/equipment`, whitelisted journald) + the append-only `record_observation` journal. Control mode (§5, shipped) adds the propose-only `lab-control` server — still no actuating tool, so this row's trust level is unchanged | Per mode/backend (Ask: Qwen-flagship-class; Control: sonnet-class) | Central dashboard host — `api/app/assistant.py` dispatches per mode to a `claude` CLI subprocess or the `assistant_openai.py` tool loop; the MCP servers are local stdio children either way | Anthropic cloud via the host's Claude Code OAuth (claude-cli backend) or OpenRouter via `ASSISTANT_OPENAI_API_KEY` (openai backend) — ARCHITECTURE #10 records the trade |
+| **2. Dashboard assistant** | Chat bubble, all dashboard pages | Ask mode: eight read-only `lab-history` MCP tools (history DB, live `/api/equipment`, whitelisted journald) + the append-only `record_observation` journal. Control mode (§5, shipped) adds the propose-only `lab-control` server — still no actuating tool, so this row's trust level is unchanged | Per mode/backend (Ask: Qwen-flagship-class; Control: sonnet-class) | Central dashboard host — `assistant/src/lab_assistant/engine.py` dispatches per mode to a `claude` CLI subprocess or the `assistant_openai.py` tool loop; the MCP servers are local stdio children either way | Anthropic cloud via the host's Claude Code OAuth (claude-cli backend) or OpenRouter via `ASSISTANT_OPENAI_API_KEY` (openai backend) — ARCHITECTURE #10 records the trade |
 | **3. Lab / ELN agent** | ELN chat + planning page (LaAgenteAnalitica) | Lab-skills MCP (read-only first; `execute_plan` behind `--allow-control` + human approval), AnaliticaDB HTTP tools | Best available | The LaAgenteAnalitica backend service — its own host/service (deployment target open, D-8); tools reached **over the tailnet** | Provider cloud API |
 
 Trust level rises down the table; so does the gating (tier 3 actuation
@@ -585,7 +585,7 @@ Per-step `state` machine (mirrors `execute_plan`'s fail-fast semantics):
 `running → failed` (execution error; `last_error` surfaces on the device)
 any terminal failure ⇒ remaining steps emitted once as `skipped`.
 
-Reuse the assistant bubble's SSE frame conventions (`api/app/assistant.py`
+Reuse the assistant bubble's SSE frame conventions (`assistant/src/lab_assistant/engine.py`
 already streams SSE); no new transport dependency. WebSocket is a later upgrade
 if bi-directional control (pause/resume mid-step) is wanted — the roadmap lists
 WebSocket real-time pages as the next step, so the run view is a natural first
@@ -1628,7 +1628,7 @@ design is [`ASSISTANT_PERSISTENCE.md`](ASSISTANT_PERSISTENCE.md) (§0 UX, D-1
 **What it is.** Ask and Control are temporary: the conversation lives in the
 tab. Plan is the mode for developing a reusable protocol over days — the
 conversation is a **named, owner-private session saved on the dashboard**
-(`assistant.db`, `api/app/assistant_sessions.py`), reopened from a rail under
+(`assistant.db`, `assistant/src/lab_assistant/sessions.py`), reopened from a rail under
 the mode notice. It has **Ask's toolset**: the read-only `lab-history` and
 `lab-inventory` servers plus a Plan addendum to the system prompt. It never
 registers `lab-control`, so no proposal card can be produced in a saved

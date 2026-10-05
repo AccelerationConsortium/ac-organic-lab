@@ -69,6 +69,10 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   per-device adapters, workflow-facing session API. The layer that owns claims
   and preconditions.
 - **`api/`** — FastAPI dashboard server; thin presentation over `skills/`.
+- **`assistant/`** — `lab-assistant`, the chat engine (model backends, agent
+  loop, SSE, Plan-mode sessions) mounted by `api/`. It never imports `api/`;
+  tools stay in the MCP servers under `api/app/`. The old `app.assistant*`
+  names are one-release aliases. See `docs/ASSISTANT_CONSOLIDATION_PLAN.md`.
 - **`web/`** — Next.js 14 (App Router) + TypeScript + TanStack Query.
 - **`auth/`** — `ac_auth` email-code login + `roster.yaml`.
 - **`equipment.yaml`** — the single source of truth for what the dashboard
@@ -91,7 +95,7 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
 
 - **Device documentation:** follow [EQUIP_GUIDE §1, Step B3](docs/EQUIP_GUIDE.md#step-b3---documentation-endpoints) for documentation endpoints, packaging, discovery, and compatibility.
 - **Environment: `uv`.** This is a uv virtual workspace (`skills/`, `api/`,
-  `auth/` are members sharing one root `.venv/`). Use `uv sync` to set up,
+  `auth/`, `assistant/` are members sharing one root `.venv/`). Use `uv sync` to set up,
   `uv run …` to execute.
 - **Private Bitácora beta access** uses the cookie-only
   `/api/admin/bitacora-beta` verifier and server-side tester allowlist. Caddy

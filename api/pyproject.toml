@@ -9,6 +9,7 @@ description = "Dashboard FastAPI server for the AC Organic Self-driving Lab. Thi
 requires-python = ">=3.10"
 dependencies = [
     "lab-skills",
+    "lab-assistant",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "websockets>=15",
@@ -38,6 +39,7 @@ dev = [
 
 [tool.uv.sources]
 lab-skills = { workspace = true }
+lab-assistant = { workspace = true }
 
 [tool.setuptools.packages.find]
 where = ["."]
