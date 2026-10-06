@@ -176,6 +176,14 @@ weight.
    `/assistant/*` routes, `OT2_ASSISTANT_*` and the Claude login on the UPLC
    PC, after step 4 has run on Complexation. `tools/ot2_agent_mcp.py` stays
    (Hermes), now documented as a client of the same contract.
+6. **Dashboard Control mode creates gateway drafts — done 2026-10-06** on
+   devices flagged `runs_plans` in the registry (both OT-2s); design below.
+   The browser-run plan path stays for every other device. Tests:
+   `api/tests/test_assistant_delegated.py`.
+7. **Panel chat lookups — done 2026-10-06**: bounded, access-checked reads
+   of this device's run results and the inventory from the device chat,
+   without giving the model a tool surface; design below. Tests in
+   `api/tests/test_assistant_device.py` (step 7 section).
 
 ## Rules — decided 2026-10-05
 
@@ -334,3 +342,136 @@ needed. `tools/ot2_agent_mcp.py` stays for Hermes.
    members' and PIs' plans arrive unredacted, exactly as in the panel.
 3. v1 is tool-free with plate summaries pre-attached; follow-up tools wait
    for a need.
+
+## Step 6 design: dashboard Control mode creates gateway drafts (implemented 2026-10-06, Codex review skipped at the operator's request)
+
+### Why
+
+The dashboard bubble and the panel bubble now share one engine but not one
+execution model. A dashboard `propose_plan` on an OT-2 is approved in the
+bubble and **run from the browser** step by step (UI_DESIGN §5.3b): closing
+the tab halts it, nothing is recorded beyond audit rows, nothing reaches the
+ELN, and the plan is capped at 256 written-out steps. The same steps drafted
+from the panel run **on the gateway** under its own claim, survive the tab,
+produce run records and file to the ELN. Rule 3's device-run step approvals
+(decided 2026-10-05) make the gateway path the sanctioned one for these
+devices; this step routes the dashboard's proposals through it.
+
+### Shape
+
+```
+dashboard bubble (Control mode)            lab-control MCP (api/app/assistant_control.py)
+  propose_plan(equipment_id, steps|pattern)  ──▶ existing gates: actor bound, device enabled,
+                                                 identity check, each step resolved + schema-valid,
+                                                 operator+ authz
+                                                 entry.runs_plans?
+                                                   no  → today's plan {plan_id, step_hash, …}
+                                                         (approve + browser run, unchanged)
+                                                   yes → POST <base_url>/plans as the actor
+                                                         (X-Auth-User + the device's edge secret,
+                                                          server-resolved X-Auth-Projects/Pi)
+                                                         → {"plan": {…, "delegated": {device_plan_id,
+                                                            panel_path, pattern_summary}}}
+engine on_plan: delegated → audit row only, NO entry in the dashboard plan store
+web card: "Draft #<id> created on OT-2 Complexation — review and run in its panel"
+          (steps shown read-only; link to the panel; no Approve/Run buttons)
+```
+
+- **Which devices.** A new registry field `runs_plans: bool = False`
+  (`lab_skills.registry.EquipmentEntry`), set on `ot2_hte` and
+  `ot2_complexation`. Declarative and reviewable; the proposal-time discovery
+  read must also actually serve `/plans/actions`, else `not_proposable`.
+- **Validation is layered, not duplicated.** lab-control keeps every gate it
+  has (it is what makes a proposal *proposable* in the lab's terms); the
+  gateway then validates again as it does for any proposer (`validated_args`,
+  pattern expansion, `MAX_EXPANDED_STEPS`). A gateway refusal comes back to
+  the model as `device_refused` with the gateway's own message, so it can
+  revise, exactly like the panel chat's `propose_plan` refusals.
+- **Patterns.** `propose_plan` gains optional `prelude` / `for_each_well` /
+  `epilogue` (the gateway's vocabulary, JSON as given) accepted **only** for
+  `runs_plans` devices; for others a pattern is refused `not_proposable`
+  ("this device runs plans from the browser; write the steps out, ≤256").
+  The 256-step cap no longer applies to delegated drafts (the gateway's
+  2000-expanded-step cap does).
+- **Identity.** The draft is created as the signed-in actor (`LAB_ACTOR`,
+  bound by the engine) with the device's own edge secret from
+  `edge_secret_env` — fail closed, no global fallback (same helper as the
+  panel chat: `lab_assistant.device_chat.device_from_entry` /
+  `device_headers`, which `api/` may import as it already imports
+  `lab_assistant.plan_contract`). `created_by` is
+  `assistant (dashboard) for <actor>`; the gateway appends the verified
+  identity if a label ever omits it.
+- **Approval stays where the claim is.** The card has no Approve/Run; the
+  hash the operator approves is the gateway's, over the *expanded* steps as
+  the panel shows them. The dashboard's `/api/assistant/plans/{id}/approve`
+  and `/finish` are untouched and never see a delegated plan (there is no
+  record to approve — `on_plan` writes an `assistant_plan_delegated` audit
+  row with the device plan id and returns).
+- **The web card.** `plan.delegated` present → read-only steps (or the
+  pattern summary for a pattern draft), the device plan id, and a link to
+  the device panel. The panel path comes from `web/src/lib/device-panels.ts`
+  (`devicePanelPath`), the same table the tile's "Control interface" uses —
+  it describes the edge's routing, not the device, so it stays out of the
+  registry; a device without an entry gets a card without a link.
+- **Out of scope.** Approving or running a gateway plan from the dashboard
+  bubble (it would need the claim dance per plan and a second copy of the
+  hash check); Hermes' MCP (`tools/ot2_agent_mcp.py`) is unchanged.
+
+### Tests
+
+Mocked gateway: a `runs_plans` device gets the draft POSTed with the resolved
+steps as the actor with roster headers; the returned plan carries
+`delegated` and no `step_hash`-approvable record is stored; the device's 422
+becomes `device_refused`; a non-`runs_plans` device is byte-for-byte the old
+behaviour; a pattern on a non-`runs_plans` device is refused; the approve
+route 404s a delegated id.
+
+## Step 7 design: panel chat lookups (implemented 2026-10-06, Codex review skipped at the operator's request)
+
+### Why
+
+The panel chat is tool-free by design (one structured call, the engine does
+the reads). It therefore cannot answer "what did I dispense into B3 last
+week" or "is there enough acetonitrile" without the operator switching to
+the dashboard bubble. Both answers come from lab data the dashboard already
+serves with an access rule.
+
+### Shape — lookups, not tools
+
+The reply schema gains `lookups: [{name, args_json}]`. A reply with lookups
+and no draft is not final: the engine runs them (in-process, allow-listed,
+access-checked), attaches `lookup_results` to the payload and asks once
+more. **At most one lookup round per turn** (two model calls) and **at most
+four lookups per round**; a second round of lookups is answered as "I could
+not complete the lookups" rather than looping. The model still has no tool
+surface: it names a lookup, the engine decides whether and how to run it.
+
+| lookup | source | access rule |
+|---|---|---|
+| `query_run_results(since_days≤90 \| plan_id, well?)` | the plan-results journal (`app.state.plan_results_journal`), **this device only** | the same rule `/api/assistant/plan-results` applies: approver, ELN-project member or PI, admin — resolved from `/authz/scope` once per turn (already fetched for the device headers); others' runs are listed as existing, not read |
+| `search_inventory(query)`, `check_stock(cas, needed, unit)`, `get_chemical(cas)` | `api/app/inventory_mcp.py` plain functions (BitacoraDB inventory, read-only) | signed in (as on the dashboard) |
+
+Not included: lab-history's `query_well_results` / `query_runs` (the
+dashboard `runs` table has no per-user rule and is a different data set),
+journals, cameras, other devices' status — the panel scope stays one device.
+
+- **Events.** Each lookup is a `tool_started` / `tool_finished` pair with
+  the lookup's name, so the pills show what was read; a refused lookup
+  (unknown name, out of scope, denied) is `success: false` with the reason,
+  and the reason is what the model sees.
+- **Bounds.** Results are truncated server-side (runs: ≤20 summaries or one
+  plan's per-well results; inventory: the tool's own compact rows) before
+  they reach the model; the system prompt stays static so the second call
+  hits the prompt cache.
+- **Prompt.** One paragraph: when the attached context lacks it, name a
+  lookup instead of guessing; never answer a run question from memory.
+
+### Tests
+
+A reply with a `query_run_results` lookup for another user's run yields
+`success: false` with the denial and a second model call whose payload names
+the denial; a two-lookup reply yields two pill pairs and one extra model
+call; a lookups reply after a lookups round ends the turn without a third
+call; inventory lookups call the plain functions with the given args and
+never see a network (mocked); an unknown lookup name is refused without
+running anything.

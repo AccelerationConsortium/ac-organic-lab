@@ -91,6 +91,16 @@ _TEMPLATE_STEP = {
     "required": ["action", "args_json", "id"],
     "additionalProperties": False,
 }
+_LOOKUP = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "enum": ["query_run_results", "search_inventory", "check_stock",
+                                            "get_chemical"]},
+        "args_json": {"type": "string", "description": "the lookup's arguments as a JSON object, encoded as text"},
+    },
+    "required": ["name", "args_json"],
+    "additionalProperties": False,
+}
 REPLY_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -113,8 +123,13 @@ REPLY_SCHEMA: Dict[str, Any] = {
             "additionalProperties": False,
         },
         "epilogue": {"type": "array", "items": _STEP, "description": "steps after the per-well loop"},
+        "lookups": {
+            "type": "array", "items": _LOOKUP,
+            "description": "reads you need before answering (run results, inventory); "
+                           "empty when the attached context suffices or you are proposing a draft",
+        },
     },
-    "required": ["reply", "steps", "prelude", "for_each_well", "epilogue"],
+    "required": ["reply", "steps", "prelude", "for_each_well", "epilogue", "lookups"],
     "additionalProperties": False,
 }
 
@@ -365,6 +380,133 @@ async def create_draft(client: httpx.AsyncClient, device: Device, headers: Dict[
 
 
 # ---------------------------------------------------------------------------
+# Lookups — reads the engine runs on the model's behalf (step 7)
+# ---------------------------------------------------------------------------
+
+#: One lookup round per turn (two model calls), at most this many lookups.
+MAX_LOOKUPS = 4
+MAX_RUN_SUMMARIES = 20
+MAX_RUN_RESULTS = 200
+
+
+@dataclass
+class LookupContext:
+    """What a turn may read on the operator's behalf, bound by the route:
+    the plan-results journal (this device's runs under the dashboard's own
+    access rule) and the inventory functions. ``standing`` is the user's
+    ELN projects (member or PI) from the roster; ``admin`` their role."""
+    user: str
+    equipment_id: str
+    standing: frozenset
+    admin: bool
+    journal: Any = None
+    inventory: Dict[str, Callable[..., Awaitable[str]]] = field(default_factory=dict)
+
+    def may_read(self, bundle: Dict[str, Any]) -> bool:
+        return (self.admin or bundle.get("approved_by") == self.user
+                or bundle.get("eln_project") in self.standing)
+
+
+class LookupRefused(Exception):
+    pass
+
+
+def _run_summary(row: Dict[str, Any], bundle: Dict[str, Any], readable: bool) -> Dict[str, Any]:
+    out = {k: bundle.get(k) for k in ("plan_id", "status", "approved_by", "eln_project",
+                                      "started_at", "finished_at", "steps_total", "steps_ok",
+                                      "steps_failed", "steps_skipped", "simulation")}
+    out["eln"] = row.get("state")
+    if not readable:
+        out["redacted"] = True
+        out.pop("eln_project", None)
+    return out
+
+
+async def lookup_run_results(ctx: LookupContext, args: Dict[str, Any]) -> Dict[str, Any]:
+    """This device's run records from the plan-results journal. A list of
+    summaries (others' runs marked redacted), or one plan's results when
+    ``plan_id`` is given — only if the user may read it."""
+    if ctx.journal is None:
+        raise LookupRefused("run records are not available on this dashboard")
+    plan_id = args.get("plan_id")
+    since_days = args.get("since_days")
+    rows = [r for r in ctx.journal.summaries(limit=500) if r.get("device_id") == ctx.equipment_id
+            or r.get("equipment_id") == ctx.equipment_id]
+    if since_days is not None:
+        try:
+            days = max(1, min(90, int(since_days)))
+        except (TypeError, ValueError):
+            raise LookupRefused("since_days must be a number of days (1–90)")
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        rows = [r for r in rows if str(r.get("received_at") or "") >= cutoff]
+    if plan_id:
+        match = [r for r in rows if r.get("plan_id") == plan_id]
+        if not match:
+            raise LookupRefused(f"no run record {plan_id!r} for this device")
+        full = ctx.journal.get(match[0]["device_id"], plan_id) or {}
+        bundle = full.get("payload") or {}
+        if not ctx.may_read(bundle):
+            raise LookupRefused(f"run {plan_id} belongs to another user's project; its data is "
+                                "open only to its approver, that project's members and PIs, and admins")
+        plan = bundle.get("plan") or {}
+        results = plan.get("results") or []
+        out = {"run": _run_summary(match[0], bundle, True),
+               "halt_reason": bundle.get("halt_reason"),
+               "results": [{"step": i + 1, "action": r.get("action"), "outcome": r.get("outcome"),
+                            "message": r.get("message"), "reading": r.get("reading")}
+                           for i, r in enumerate(results[:MAX_RUN_RESULTS])],
+               "results_truncated": max(0, len(results) - MAX_RUN_RESULTS)}
+        if isinstance(bundle.get("plate_report"), dict):
+            out["plate_report"] = summarize_report(bundle["plate_report"])
+        return out
+    summaries = []
+    for row in rows[:MAX_RUN_SUMMARIES]:
+        full = ctx.journal.get(row["device_id"], row["plan_id"]) or {}
+        bundle = full.get("payload") or {}
+        summaries.append(_run_summary(row, bundle, ctx.may_read(bundle)))
+    return {"runs": summaries, "more": max(0, len(rows) - MAX_RUN_SUMMARIES)}
+
+
+async def run_lookup(ctx: LookupContext, name: str, args: Dict[str, Any]) -> Any:
+    if name == "query_run_results":
+        return await lookup_run_results(ctx, args)
+    fn = ctx.inventory.get(name)
+    if fn is None:
+        raise LookupRefused(f"unknown lookup {name!r}")
+    if name == "search_inventory":
+        text = await fn(str(args.get("query") or ""), int(args.get("limit") or 20))
+    elif name == "check_stock":
+        if not args.get("cas"):
+            raise LookupRefused("check_stock needs a cas")
+        needed = args.get("needed")
+        text = await fn(str(args["cas"]), float(needed) if needed is not None else None,
+                        str(args.get("unit") or "mL"))
+    elif name == "get_chemical":
+        if not args.get("cas"):
+            raise LookupRefused("get_chemical needs a cas")
+        text = await fn(str(args["cas"]))
+    else:
+        raise LookupRefused(f"unknown lookup {name!r}")
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        return {"text": str(text)[:4000]}
+
+
+def lookups_from_reply(structured: Dict[str, Any]) -> List[tuple[str, Dict[str, Any]]]:
+    raw = structured.get("lookups") or []
+    if not isinstance(raw, list):
+        raise ReplyError("lookups must be a list")
+    out = []
+    for i, item in enumerate(raw[:MAX_LOOKUPS], start=1):
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+            raise ReplyError(f"lookup {i}: needs a name")
+        out.append((item["name"], _parse_json_text(item.get("args_json", "{}"), f"lookup {i} args", dict)))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Prompt
 # ---------------------------------------------------------------------------
 
@@ -483,6 +625,16 @@ enumerations. No headings or tables — the chat window is narrow. \
 Return `steps: []` and `for_each_well: null` when proposing nothing. Encode \
 every `args_json` / `wells_json` / `overrides_json` as valid JSON object or \
 string text.
+8. Lookups. When a question needs data the attached context lacks, return \
+`lookups` (and no draft) instead of guessing; the gateway runs them and asks \
+you again with `lookup_results` attached, once. `query_run_results` \
+({{"since_days": n}} for this robot's recent run records, or {{"plan_id": \
+"..."}} for one run's step results and plate report) — runs you may not read \
+arrive marked `redacted`; say they exist, not what they measured. \
+`search_inventory` ({{"query": "name or CAS"}}), `check_stock` ({{"cas": "...", \
+"needed": 50, "unit": "mL"}}) and `get_chemical` ({{"cas": "..."}}) read the \
+lab's chemical inventory. Never answer a run or stock question from memory. \
+Return `lookups: []` otherwise.
 """
 
 
@@ -783,6 +935,7 @@ async def panel_turn(
     choice: ModelChoice,
     turn: Turn,
     on_draft: Callable[[Dict[str, Any]], Awaitable[None]] | None = None,
+    lookups: Optional[LookupContext] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """One turn as the events the gateway bubble already understands:
     ``thinking`` / ``tool_started`` / ``tool_finished`` / ``complete`` /
@@ -815,15 +968,53 @@ async def panel_turn(
     system = system_prompt(static["get_equipment_docs"], device, static["list_actions"])
     payload = {"messages": messages, **context}
     t1 = time.monotonic()
-    if choice.backend == "claude-cli":
-        structured = await run_claude(turn, choice.id, system, payload)
-    else:
-        structured = await run_openrouter(client, turn, choice.id, system, payload)
-    t2 = time.monotonic()
+
+    async def ask(current: Dict[str, Any]) -> Dict[str, Any]:
+        if choice.backend == "claude-cli":
+            return await run_claude(turn, choice.id, system, current)
+        return await run_openrouter(client, turn, choice.id, system, current)
+
+    structured = await ask(payload)
     if turn.cancel.is_set():
         raise Cancelled()
+    wanted = lookups_from_reply(structured)
+    lookups_run = 0
+    if wanted and not (structured.get("steps") or structured.get("for_each_well")):
+        # One lookup round: run what was asked (allow-listed, access-checked,
+        # bounded), show each as a pill, ask once more with the results.
+        yield {"type": "thinking", "round": 3}
+        results = []
+        for i, (name, args) in enumerate(wanted, start=1):
+            event_id = f"3:lookup-{i}"
+            if name not in used:
+                used.append(name)
+            yield {"type": "tool_started", "id": event_id, "name": name}
+            error: Optional[str] = None
+            value: Any = None
+            try:
+                if lookups is None:
+                    raise LookupRefused("lookups are not available on this dashboard")
+                value = await run_lookup(lookups, name, args)
+            except LookupRefused as exc:
+                error = str(exc)
+            except Exception as exc:  # noqa: BLE001 - a failed read is reported, not hidden
+                logger.exception("device chat lookup %s failed", name)
+                error = f"{name} failed ({type(exc).__name__})"
+            yield {"type": "tool_finished", "id": event_id, "name": name,
+                   "success": error is None, "error": error}
+            results.append({"name": name, "args": args, "result": value, "error": error})
+            lookups_run += 1
+            if turn.cancel.is_set():
+                raise Cancelled()
+        structured = await ask({**payload, "lookup_results": results,
+                                "note": "This is the one lookup round; answer now from lookup_results."})
+        if turn.cancel.is_set():
+            raise Cancelled()
+        if structured.get("lookups") and not (structured.get("reply") or "").strip():
+            structured["reply"] = "I could not complete the lookups needed to answer that."
+    t2 = time.monotonic()
     reply, body = proposal_from_reply(structured)
-    timings = {"reads_s": round(t1 - t0, 2), "model_s": round(t2 - t1, 2),
+    timings = {"reads_s": round(t1 - t0, 2), "model_s": round(t2 - t1, 2), "lookups": lookups_run,
                "system_chars": len(system), "payload_chars": len(json.dumps(payload, default=str))}
     plan_id: Optional[str] = None
     if body is not None:

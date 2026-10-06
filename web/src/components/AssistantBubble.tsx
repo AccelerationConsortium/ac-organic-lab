@@ -28,6 +28,7 @@ import {
   type SeedMessage,
 } from "@/lib/assistant-sessions";
 import { AssistantSessionRail, CarryOverDialog } from "./AssistantSessionRail";
+import { devicePanelPath } from "@/lib/device-panels";
 
 /**
  * Floating bottom-right chat bubble that talks to the dashboard's
@@ -204,6 +205,15 @@ interface Plan {
   };
   resolved_locations?: ResolvedLocation[];
   deck_checks?: DeckCheck[];
+  /** Step 6: the draft was created on a device that runs its own plans.
+   *  Approval and execution live in that device's panel; this card is a
+   *  read-only receipt with a link, never an Approve/Run surface. */
+  delegated?: {
+    device_plan_id: string;
+    created_by: string;
+    step_count: number;
+    pattern_summary?: string | null;
+  };
 }
 
 type PlanPhase = "draft" | "approving" | "approved" | "running" | "executed" | "failed";
@@ -1403,6 +1413,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
           expired: false,
         });
         if (planExpiryRef.current) clearTimeout(planExpiryRef.current);
+        if (p.delegated) return; // the device owns the draft's lifetime, not this tab
         const ttlMs = Math.max(5, Number(p.expires_in_s) || 600) * 1000;
         planExpiryRef.current = setTimeout(
           () =>
@@ -2446,6 +2457,64 @@ function PlanCard({
   const busy = run.phase === "approving" || run.phase === "running";
   const settled = run.phase === "executed" || run.phase === "failed";
   const okCount = run.outcomes.filter((o) => o === "ok").length;
+  if (plan.delegated) {
+    const panel = devicePanelPath(plan.equipment_id);
+    return (
+      <div className="rounded-lg border border-purple-300 bg-purple-50 p-2 text-[13px] dark:border-purple-700 dark:bg-purple-950/40">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-[13px] font-semibold text-purple-900 dark:text-purple-100">
+            Draft created on {plan.equipment_name} · {plan.delegated.step_count} steps
+          </span>
+          <span className="text-xs text-purple-700 dark:text-purple-300">for {plan.actor}</span>
+        </div>
+        <dl className="space-y-1 text-[13px] text-ink dark:text-slate-100">
+          <Row label="Draft" value={plan.delegated.device_plan_id} />
+          <Row label="Device" value={`${plan.equipment_name} (${plan.equipment_id})`} />
+        </dl>
+        {plan.delegated.pattern_summary && (
+          <p className="mt-1 text-[13px] text-purple-900 dark:text-purple-100">{plan.delegated.pattern_summary}</p>
+        )}
+        <ol className="mt-1 flex flex-col gap-1" aria-label="proposed steps">
+          {plan.steps.map((s, i) => (
+            <li key={i} className="text-[13px] leading-snug text-ink dark:text-slate-100">
+              {i + 1}. {s.action}
+              {Object.keys(s.args ?? {}).length > 0 && (
+                <span className="text-ink-subtle dark:text-slate-300">
+                  {" "}{Object.entries(s.args ?? {}).map(([k, v]) => `${k}=${formatArg(v)}`).join(", ")}
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+        {plan.reason && (
+          <p className="mt-1 text-xs italic text-purple-800 dark:text-purple-300">{plan.reason}</p>
+        )}
+        <p className="mt-1 text-xs text-purple-800 dark:text-purple-300">
+          This device runs its own plans: review the expanded steps, approve and run them in its panel.
+          Nothing has moved.
+        </p>
+        <div className="mt-2 flex items-center gap-2">
+          {panel && (
+            <a
+              href={panel}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded bg-purple-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-purple-700"
+            >
+              Open the panel
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="rounded px-2 py-1 text-xs text-ink-subtle hover:bg-purple-100 dark:text-slate-300 dark:hover:bg-purple-900/40"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
   const title =
     run.phase === "executed"
       ? "Plan finished"
