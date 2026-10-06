@@ -38,11 +38,12 @@ PATTERN_BUNDLE = {
 
 def test_a_pattern_plan_becomes_one_per_well_action_with_brackets():
     built = pa.as_run_protocol(PATTERN_BUNDLE)
-    name = "asrun-ff3vfsttxlzc8fcc"
+    name, action_id = "asrun-ff3vfsttxlzc8fcc", "asrun_ff3vfsttxlzc8fcc"
     proto, actions = built["protocol"], built["actions"]["actions"]
-    assert proto["protocol"] == name and proto["steps"] == [{"step_id": "s001", "action": name}]
+    # Protocol/design names take hyphens, action names underscores (the schemas differ).
+    assert proto["protocol"] == name and proto["steps"] == [{"step_id": "s001", "action": action_id}]
     assert "not an authored protocol" in proto["description"]
-    action = actions[name]
+    action = actions[action_id]
     assert action["for_each_well"] is True and action["role"] == "liquid_handler"
     assert action["before_wells"] == [{"id": "pre1", "skill": "pick_up_tip", "args": {"pipette": "left"}}]
     assert action["after_wells"] == [{"id": "post1", "skill": "drop_tip", "args": {"pipette": "left"}}]
@@ -64,7 +65,7 @@ def test_a_flat_plan_becomes_one_action_per_step():
     built = pa.as_run_protocol(bundle)
     assert [s["step_id"] for s in built["protocol"]["steps"]] == ["s001", "s002"]
     acts = built["actions"]["actions"]
-    assert acts["asrun-ff3vfsttxlzc8fcc-s001"] == {"role": "liquid_handler", "skill": "lights.set",
+    assert acts["asrun_ff3vfsttxlzc8fcc_s001"] == {"role": "liquid_handler", "skill": "lights.set",
                                                    "args": {"on": True}}
     assert built["warnings"] == []
 
@@ -78,7 +79,7 @@ def test_the_yaml_round_trips_and_an_index_placeholder_is_a_warning_not_a_guess(
         "for_each_well": {**PATTERN_BUNDLE["plan"]["pattern"]["for_each_well"],
                           "steps": [{"action": "comment", "args": {"text": "well {index}"}}]}}}}
     built = pa.as_run_protocol(bundle)
-    assert built["actions"]["actions"]["asrun-ff3vfsttxlzc8fcc"]["steps"][0]["args"]["text"] == "well {index}"
+    assert built["actions"]["actions"]["asrun_ff3vfsttxlzc8fcc"]["steps"][0]["args"]["text"] == "well {index}"
     assert any("{index}" in w for w in built["warnings"])
 
 
