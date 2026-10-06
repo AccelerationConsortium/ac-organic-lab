@@ -472,21 +472,22 @@ SSH_HOSTS: tuple[SshHost, ...] = (
     ),
     SshHost(
         id="vial-doser-pi",
-        label="Vial Solid Doser",
+        label="Flex Plate Weigher Pi",
         kind="Raspberry Pi 5",
-        hostname="sdl2-pi5-cnc-doser-sam.tail6a1dd7.ts.net",
+        hostname="sdl2-pi5-cnc-doser.tail6a1dd7.ts.net",
         user="sdl2",
         target="vial-doser-pi",
         shell="bash",
         group="device",
         note=(
-            "Pi 5 for the Vial solid doser (100.64.254.81, "
-            "sdl2-pi5-cnc-doser-sam). Login is `sdl2` — the lab Pi key is "
-            "granted under that account here, not `caoyang` as on the other "
-            "doser Pi. Alias `vial-doser-pi` added to the dashboard host's SSH "
-            "config 2026-09-20, and the login is verified from a shell; the "
-            "console additionally needs this IP in the API unit's "
-            "`IPAddressAllow=` egress list (DEVICE_PC_SETUP §2.4). No tmux."
+            "Pi 5 at 100.64.254.81, renamed sdl2-pi5-cnc-doser on 2026-10-06 (was "
+            "sdl2-pi5-cnc-doser-sam; the SSH alias keeps its old id). Runs the "
+            "weigh-every-plate service (`flex_plate_weigher`, :8078, systemd unit "
+            "`weigh-every-plate`). The Vial solid doser head it used to drive has "
+            "moved to another host; Sam's dose_every_well checkout remains in "
+            "~/Projects and must not be disturbed. Login is `sdl2` — the lab Pi key "
+            "is granted under that account here, not `caoyang` as on the other "
+            "doser Pi. The IP is in the API unit's `IPAddressAllow=` list. No tmux."
         ),
         profiles=(
             SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),

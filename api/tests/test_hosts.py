@@ -148,7 +148,7 @@ def test_committed_registry_groups_cleanly():
     named = {g["id"]: g for g in payload["other_hosts"] if g.get("id")}
     assert named["flex-doser-pi"]["label"] == "Flex Solid Doser"
     assert named["flex-doser-pi"]["kind"] == "Raspberry Pi Zero 2W"
-    assert named["vial-doser-pi"]["label"] == "Vial Solid Doser"
+    assert named["vial-doser-pi"]["label"] == "Flex Plate Weigher Pi"
     assert named["vial-doser-pi"]["kind"] == "Raspberry Pi 5"
     # gaia retains AnaliticaDB and the Agente app at .5.
     gaia_ids = {s["id"] for s in _by_id(payload, "gaia")["services"]}
@@ -256,7 +256,7 @@ def test_flex_and_vial_doser_pis_group_by_tailnet_ip():
     assert named["flex-doser-pi"]["label"] == "Flex Solid Doser"
     assert named["flex-doser-pi"]["kind"] == "Raspberry Pi Zero 2W"
     assert [s["id"] for s in named["flex-doser-pi"]["services"]] == ["flex_later"]
-    assert named["vial-doser-pi"]["label"] == "Vial Solid Doser"
+    assert named["vial-doser-pi"]["label"] == "Flex Plate Weigher Pi"
     assert named["vial-doser-pi"]["kind"] == "Raspberry Pi 5"
     assert [s["id"] for s in named["vial-doser-pi"]["services"]] == ["vial_later"]
     assert [g for g in payload["other_hosts"] if not g.get("id")] == []
