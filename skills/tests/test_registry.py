@@ -80,7 +80,7 @@ def test_ur5e_prototype_is_registered_without_auto_connect() -> None:
     assert entry.do_not_call_connect is True
     assert entry.gateway_fronted is False  # unknown readiness != offline service
     assert "ligand_development" in entry.tiles
-    assert entry.pills.link_href == "/utils/robot_motion"
+    assert entry.pills.link_href == "/ur5e/web/"
     assert entry.pills.link_label == "Open"
     assert not entry.pills.internal  # keep SDL2 equipment-role gating
     hostops = registry.by_id("hostops_uplc_pc")

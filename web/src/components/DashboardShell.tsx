@@ -2,13 +2,11 @@
 
 import { usePathname } from "next/navigation";
 
-export function isRobotMotionWorkspace(pathname: string | null) {
-  return pathname === "/utils/robot_motion" || pathname === "/utils/robot_motion/";
-}
-
+/** Routes that frame a device panel full-height without dashboard chrome. The
+ *  UR5e panel left this list 2026-10-06: it is now the device's own page at
+ *  the edge path /ur5e/web/ (lib/device-panels.ts), like the xArm's. */
 export function isFramedWorkspace(pathname: string | null) {
-  return isRobotMotionWorkspace(pathname) ||
-    pathname === "/equipment/lle_hplc/control" || pathname === "/equipment/lle_hplc/control/";
+  return pathname === "/equipment/lle_hplc/control" || pathname === "/equipment/lle_hplc/control/";
 }
 
 /** Presentation only: the root auth banner/providers and API gate stay intact. */

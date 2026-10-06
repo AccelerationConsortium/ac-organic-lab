@@ -640,9 +640,10 @@ and behind path prefixes.
 
 ## Robot Motion workspace
 
-The Ligand UR5e's compact tile links to `/utils/robot_motion`, using the existing
-SDL2 login layout. A cookie-only, equipment-authorized API proxy serves its
-prototype UI, status, and offline graph calculations; no physical-control paths
-are exposed. The other UR monitors and xArm integration are unchanged. See
-[ROBOT_MOTION_PANEL.md](ROBOT_MOTION_PANEL.md) for the allowlist, authentication
-boundary, raw Tailnet-port limitation, and independent deployment scopes.
+The Ligand UR5e's compact tile links to the device's own panel at the edge path
+`/ur5e/web/`, gated by `forward_auth` and proxied to the robot-motion service on
+the Prototyping PC — the same arrangement as the xArm at `/xarm5/web/`. The
+earlier dashboard-side `/api/robot-motion/*` proxy and `/utils/robot_motion`
+page were retired on 2026-10-06. The other UR monitors are unchanged. See
+[ROBOT_MOTION_PANEL.md](ROBOT_MOTION_PANEL.md) for the edge route, identity
+hand-off, physical-control boundary and deployment steps.
