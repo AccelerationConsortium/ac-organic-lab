@@ -1409,6 +1409,34 @@ equipment:
       sample_prep: { w: 2, h: 2 }
     pills: {}
 
+  - id: flex_plate_weigher
+    name: Flex Plate Weigher
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    # weigh-every-plate (github.com/cyrilcaoyang/weigh-every-plate) on the Pi 5
+    # sdl2-pi5-cnc-doser (renamed from sdl2-pi5-cnc-doser-sam 2026-10-06).
+    # Sartorius balance over USB-serial plus a PCA9685 servo plate lift and
+    # lid for the Flex deck corner: the weighing half of the weigher/doser
+    # split (dose_every_well/docs/WEIGHER_DOSER_SPLIT.md). Hard claim
+    # enforcement; `startup` moves the servos, so the dashboard's lifecycle
+    # buttons are real motion. Registered 2026-10-06 with the service live
+    # and `requires_init`; the first supervised `startup` is still pending.
+    # systemd unit `weigh-every-plate` on the Pi; the Pi's IP is already in
+    # the API unit's IPAddressAllow list.
+    base_url: http://sdl2-pi5-cnc-doser.tail6a1dd7.ts.net:8078
+    tailscale_ip: 100.64.254.81
+    status_path: /status
+    poll_timeout_seconds: 8.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: llms.txt, path: /llms.txt, kind: text }
+    tiles:
+      sample_prep: { w: 2, h: 2 }
+    pills: {}
+
   - id: gibbie_hotplate
     name: IKA Hotplate (Gibbie)
     kind: other

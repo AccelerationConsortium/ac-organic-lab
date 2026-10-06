@@ -67,6 +67,7 @@ sections:
       - gibbie_flex
       - gibbie_workflow
       - gibbie_balance
+      - flex_plate_weigher
       - gibbie_ur_arm
 
   - id: process_chemistry
