@@ -549,26 +549,65 @@ def _claude_env() -> Dict[str, str]:
     return env
 
 
-_readiness: Dict[str, tuple[float, bool]] = {}
+_readiness: Dict[str, tuple[float, Optional[str]]] = {}
+
+#: Where Claude Code's inference goes. A login check passes offline, so a
+#: host that cannot reach this (the dashboard's API unit egresses only
+#: through its proxy, which allows a fixed list of hosts) would otherwise
+#: offer a model that fails three minutes into every turn.
+CLAUDE_API_HOST = os.environ.get("ASSISTANT_CLAUDE_API_HOST", "api.anthropic.com")
 
 
-async def _claude_ready(binary: str) -> bool:
+async def _tcp_reachable(host: str, port: int = 443, *, timeout: float = 5.0) -> Optional[str]:
+    """``None`` when a TLS port on ``host`` answers from this process — directly,
+    or through ``HTTPS_PROXY`` with a CONNECT — else the reason it did not."""
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+    try:
+        if proxy:
+            from urllib.parse import urlsplit
+
+            parts = urlsplit(proxy)
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(parts.hostname, parts.port or 3128), timeout)
+            writer.write(f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n".encode())
+            await writer.drain()
+            line = await asyncio.wait_for(reader.readline(), timeout)
+            writer.close()
+            status = line.decode("ascii", "replace").split(" ")
+            if len(status) < 2 or not status[1].startswith("2"):
+                return f"proxy {parts.hostname}:{parts.port} refused CONNECT {host}:{port} ({line.decode('ascii', 'replace').strip() or 'closed'})"
+            return None
+        _reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
+        writer.close()
+        return None
+    except (OSError, asyncio.TimeoutError) as exc:
+        return f"cannot reach {host}:{port}{' via ' + proxy if proxy else ''}: {exc or type(exc).__name__}"
+
+
+async def claude_unavailable_reason(binary: str) -> Optional[str]:
+    """``None`` when Claude Code can answer here: logged in *and* its API
+    host reachable from this process. Cached briefly."""
     cached = _readiness.get("claude")
     now = time.monotonic()
     if cached and now - cached[0] < _READINESS_TTL_S:
         return cached[1]
-    ok = False
+    reason: Optional[str] = None
     try:
         proc = await asyncio.create_subprocess_exec(
             binary, "auth", "status", "--json", stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL, env=_claude_env())
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
         status = json.loads(out or b"{}")
-        ok = proc.returncode == 0 and status.get("loggedIn") is True
-    except (OSError, ValueError, asyncio.TimeoutError):
-        ok = False
-    _readiness["claude"] = (now, ok)
-    return ok
+        if proc.returncode != 0 or status.get("loggedIn") is not True:
+            reason = "Claude Code is not logged in on the dashboard host"
+    except (OSError, ValueError, asyncio.TimeoutError) as exc:
+        reason = f"Claude Code did not answer `auth status` ({type(exc).__name__})"
+    if reason is None:
+        reason = await _tcp_reachable(CLAUDE_API_HOST)
+    if reason:
+        logger.warning("claude-cli not offered: %s", reason)
+    _readiness["claude"] = (now, reason)
+    return reason
 
 
 def _openrouter_key() -> Optional[str]:
@@ -580,15 +619,26 @@ def _openrouter_base() -> str:
     return os.environ.get("ASSISTANT_OPENAI_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
 
 
-async def available_models() -> List[ModelChoice]:
-    """What this host can run right now, probed (and cached briefly)."""
+async def available_models() -> tuple[List[ModelChoice], List[str]]:
+    """What this host can run right now, probed (and cached briefly), and
+    why anything configured is missing — so /health can say so."""
     out: List[ModelChoice] = []
+    reasons: List[str] = []
     binary = _claude_binary()
-    if binary and CLAUDE_MODELS and await _claude_ready(binary):
-        out.extend(ModelChoice(m, "claude-cli") for m in CLAUDE_MODELS)
+    if CLAUDE_MODELS:
+        if binary is None:
+            reasons.append("claude CLI is not installed on the dashboard host")
+        else:
+            reason = await claude_unavailable_reason(binary)
+            if reason:
+                reasons.append(reason)
+            else:
+                out.extend(ModelChoice(m, "claude-cli") for m in CLAUDE_MODELS)
     if _openrouter_key():
         out.extend(ModelChoice(m, "openrouter") for m in OPENROUTER_MODELS)
-    return out
+    else:
+        reasons.append("ASSISTANT_OPENAI_API_KEY is not set (no OpenRouter models)")
+    return out, reasons
 
 
 class Cancelled(Exception):
@@ -655,12 +705,20 @@ async def run_claude(turn: Turn, model: str, system: str, payload: Dict[str, Any
     if turn.cancel.is_set():
         raise Cancelled()
     if proc.returncode != 0:
-        raise RuntimeError(f"Claude Code exited with status {proc.returncode}: "
-                           f"{err.decode('utf-8', 'replace')[-400:].strip()}")
+        # The CLI puts its reason on stdout as a result envelope more often
+        # than on stderr; show whichever says something.
+        detail = err.decode("utf-8", "replace").strip()
+        try:
+            envelope = json.loads(out.decode("utf-8", "replace"))
+            detail = str(envelope.get("result") or envelope.get("error") or detail)
+        except (ValueError, AttributeError):
+            detail = detail or out.decode("utf-8", "replace").strip()
+        logger.error("Claude Code exited %s: %s", proc.returncode, detail[-2000:])
+        raise RuntimeError(f"Claude Code exited with status {proc.returncode}: {detail[-400:] or 'no output'}")
     try:
         envelope = json.loads(out.decode("utf-8", "replace"))
         if envelope.get("is_error"):
-            raise ReplyError("Claude Code reported an error")
+            raise ReplyError(f"Claude Code reported an error: {str(envelope.get('result') or '')[:300]}")
         structured = envelope.get("structured_output")
         if structured is None:
             structured = json.loads(envelope["result"])
