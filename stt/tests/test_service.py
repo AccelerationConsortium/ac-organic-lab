@@ -123,3 +123,56 @@ def test_health_reports_tts(client):
     assert client.get("/health").json()["tts"] is True
     service.app.state.tts = None
     assert client.get("/health").json()["tts"] is False
+
+
+# --- TTS-only instance (STT_ASR=0) -------------------------------------------
+
+
+def _wait_loaded(c: TestClient) -> dict:
+    import time
+
+    for _ in range(200):
+        body = c.get("/health").json()
+        if body["tts"] or body["load_failed"]:
+            return body
+        time.sleep(0.01)
+    raise AssertionError("load never finished")
+
+
+def test_tts_only_loads_tts_not_asr(monkeypatch):
+    def _no_asr(**_kw):
+        raise AssertionError("a TTS-only instance must not load the ASR model")
+
+    monkeypatch.setenv("STT_MODEL", "fake-asr")
+    monkeypatch.setenv("STT_ASR", "0")
+    monkeypatch.setattr(service, "QwenAsrEngine", _no_asr)
+    monkeypatch.setattr(service, "KokoroTtsEngine", lambda **_kw: _FakeTts())
+    with TestClient(service.app) as c:
+        body = _wait_loaded(c)
+        assert body["tts"] is True
+        assert body["asr"] is False and body["loaded"] is False and body["model"] is None
+        r = c.post("/transcribe", files={"audio": ("clip", b"xx", "audio/webm")})
+        assert r.status_code == 503
+        assert "not served" in r.json()["detail"]
+
+
+def test_tts_only_surfaces_tts_load_failure(monkeypatch):
+    def _broken(**_kw):
+        raise RuntimeError("no xpu")
+
+    monkeypatch.setenv("STT_MODEL", "fake-asr")
+    monkeypatch.setenv("STT_ASR", "0")
+    monkeypatch.setattr(service, "KokoroTtsEngine", _broken)
+    with TestClient(service.app) as c:
+        body = _wait_loaded(c)
+        assert body["load_failed"] is True
+        assert body["tts"] is False
+
+
+def test_tts_only_without_voice_refuses_to_start(monkeypatch):
+    monkeypatch.setenv("STT_MODEL", "fake-asr")
+    monkeypatch.setenv("STT_ASR", "0")
+    monkeypatch.setenv("STT_TTS_VOICE", "")
+    with pytest.raises(RuntimeError, match="serve nothing"):
+        with TestClient(service.app):
+            pass

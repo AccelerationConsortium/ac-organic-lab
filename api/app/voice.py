@@ -19,10 +19,15 @@ device, and never bypasses the proposal/authorize flow.
 Env:
   ASSISTANT_STT_URL   base URL of the STT service (default http://127.0.0.1:8070);
                       unset the default by setting it to "" to disable voice.
+  ASSISTANT_TTS_URL   base URL of the service behind /speak (default: the STT
+                      URL — one instance can serve both). Set when TTS runs
+                      elsewhere, e.g. a TTS-only instance on this host while
+                      ASR stays on a GPU host; "" disables server TTS.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -39,6 +44,22 @@ def _stt_url() -> str:
     return os.environ.get("ASSISTANT_STT_URL", "http://127.0.0.1:8070").rstrip("/")
 
 
+def _tts_url() -> str:
+    url = os.environ.get("ASSISTANT_TTS_URL")
+    return _stt_url() if url is None else url.rstrip("/")
+
+
+async def _probe(client: httpx.AsyncClient, url: str) -> dict | None:
+    """A speech service's /health body, or None when unset or unreachable."""
+    if not url:
+        return None
+    try:
+        r = await client.get(f"{url}/health", timeout=3.0)
+        return r.json()
+    except Exception:
+        return None
+
+
 def build_voice_router() -> APIRouter:
     router = APIRouter(prefix="/api/assistant/voice", tags=["assistant"])
 
@@ -46,21 +67,22 @@ def build_voice_router() -> APIRouter:
     async def health(request: Request) -> dict:
         """Whether the mic button should render at all — the same pattern as
         ``/api/assistant/health`` gating the whole bubble."""
-        url = _stt_url()
-        if not url:
-            return {"configured": False}
         client: httpx.AsyncClient = request.app.state.control_client
-        try:
-            r = await client.get(f"{url}/health", timeout=3.0)
-            body = r.json()
-        except Exception:
+        stt_url, tts_url = _stt_url(), _tts_url()
+        if tts_url == stt_url:
+            stt = tts = await _probe(client, stt_url)
+        else:
+            # Separate hosts: probe both at once, so a slow or down ASR host
+            # does not delay (or hide) read-aloud, and vice versa.
+            stt, tts = await asyncio.gather(_probe(client, stt_url), _probe(client, tts_url))
+        if stt is None and tts is None:
             return {"configured": False}
         return {
-            "configured": bool(body.get("loaded")),
-            "model": body.get("model"),
+            "configured": bool(stt and stt.get("loaded")),
+            "model": stt.get("model") if stt else None,
             # Server-side neural TTS (Kokoro). The bubble prefers it over the
             # browser's own speechSynthesis voices when true.
-            "tts": bool(body.get("tts")),
+            "tts": bool(tts and tts.get("tts")),
         }
 
     @router.post("/transcribe")
@@ -106,14 +128,14 @@ def build_voice_router() -> APIRouter:
     @router.post("/speak")
     async def speak(request: Request) -> "Response":
         """Synthesize a short utterance (the shaped read-aloud summary).
-        Same identity rule as /transcribe: it spends lab GPU time, so it is
+        Same identity rule as /transcribe: it spends lab compute, so it is
         not an anonymous surface."""
         actor = request.headers.get("x-auth-user")
         if not actor:
             raise HTTPException(401, "sign in to use voice output")
-        url = _stt_url()
+        url = _tts_url()
         if not url:
-            raise HTTPException(503, "voice is not configured on this host")
+            raise HTTPException(503, "voice output is not configured on this host")
         body = await request.json()
         text = str(body.get("text", ""))[:600]
 

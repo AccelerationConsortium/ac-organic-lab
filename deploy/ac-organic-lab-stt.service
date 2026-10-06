@@ -11,6 +11,7 @@ User=sdl2
 WorkingDirectory=/home/sdl2/caoyang/ac-organic-lab/stt
 Environment=STT_HOST=127.0.0.1
 Environment=STT_PORT=8070
+Environment=STT_TTS_VOICE=
 Environment=STT_EQUIPMENT_YAML=/home/sdl2/caoyang/ac-organic-lab/equipment.yaml
 # uv run self-syncs the stt venv at start (same pattern as the device PCs).
 ExecStart=/home/sdl2/.local/bin/uv run --project /home/sdl2/caoyang/ac-organic-lab/stt lab-stt-serve

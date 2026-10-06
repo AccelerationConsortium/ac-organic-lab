@@ -1,0 +1,12 @@
+[Unit]
+Description=Dashboard-only listener for Gaia GPU voice
+
+[Socket]
+ListenStream=100.64.254.5:8070
+NoDelay=true
+FreeBind=true
+IPAddressDeny=any
+IPAddressAllow=100.64.254.6/32
+
+[Install]
+WantedBy=sockets.target

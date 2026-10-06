@@ -433,6 +433,49 @@ For storage paths (snapshots and recordings on disk), `ffmpeg` install,
 and the systemd unit details, see
 [`kasa_tapo_services/deploy/README.md`](https://github.com/cyrilcaoyang/kasa_tapo_services/blob/main/deploy/README.md).
 
+## Optional: voice (push-to-talk + read-aloud)
+
+The assistant bubble's mic and read-aloud go through `api/app/voice.py`,
+which owns identity and forwards to the [`stt/`](../stt/README.md) service.
+One codebase, two instances on two hosts:
+
+| Unit | Host | Serves | The API reaches it as |
+| --- | --- | --- | --- |
+| `ac-organic-lab-stt` | gaia (RTX 5080) | Qwen3-ASR `/transcribe`; Kokoro off there (`STT_TTS_VOICE=`) | `ASSISTANT_STT_URL=http://100.64.254.5:8070`, via `dashboard-voice-relay` |
+| `ac-organic-lab-tts` | this host (CPU) | Kokoro `/speak` (`STT_ASR=0`) | `ASSISTANT_TTS_URL=http://127.0.0.1:8072` |
+
+Both URLs live in the root-only `/etc/dashboard-integrations/voice.env` on
+this host. The API's `/api/assistant/voice/health` merges the two, so a gaia
+outage hides the mic but keeps read-aloud; with neither reachable the bubble
+falls back to the browser's own `speechSynthesis` voice.
+
+**gaia's relay.** gaia's STT binds `127.0.0.1:8070`.
+`dashboard-voice-relay.socket` listens on gaia's tailnet address and
+`systemd-socket-proxyd` forwards to loopback, admitting only this host
+(`100.64.254.6`). The copies here are byte-identical to gaia's
+`/etc/systemd/system/`. The socket needs `FreeBind=true`: without it, it starts
+before tailscale assigns `100.64.254.5`, fails the bind (`Result=resources`)
+and never retries — gaia's 2026-10-05 reboot left the mic dead that way until
+2026-10-06. Any `.socket` with `ListenStream=` on a literal tailnet address
+needs the same.
+
+**Installing the TTS unit on this host:**
+
+```bash
+cd ~/caoyang/ac-organic-lab/stt
+uv sync --frozen          # the CUDA torch wheel; it runs fine on CPU
+# The unit runs offline (HF_HUB_OFFLINE=1): fetch Kokoro once, as sdl2.
+uv run --frozen python -c "from huggingface_hub import hf_hub_download as d; [d('hexgrad/Kokoro-82M', f) for f in ('config.json', 'kokoro-v1_0.pth', 'voices/af_heart.pt')]"
+sudo install -m 0644 ../deploy/ac-organic-lab-tts.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now ac-organic-lab-tts
+curl -s 127.0.0.1:8072/health        # "tts": true after ~10 s
+# then ASSISTANT_TTS_URL=http://127.0.0.1:8072 in voice.env, and restart ac-organic-lab-api
+```
+
+The unit starts the venv's binary directly and has no network beyond
+loopback, so after changing `stt/` dependencies run `uv sync --frozen` before
+restarting it — nothing syncs at start.
+
 ## Healthchecks / monitoring
 
 The aggregator exposes:

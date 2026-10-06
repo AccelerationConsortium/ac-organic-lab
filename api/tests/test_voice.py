@@ -140,3 +140,63 @@ def test_health_passes_tts_flag() -> None:
     )
     with TestClient(_make_app()) as client:
         assert client.get("/api/assistant/voice/health").json()["tts"] is True
+
+
+# --- TTS served by a separate instance (ASSISTANT_TTS_URL) ---------------------
+
+TTS = "http://127.0.0.1:8072"
+
+
+@respx.mock
+def test_speak_goes_to_tts_url_when_split(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASSISTANT_STT_URL", "http://100.64.0.5:8070")
+    monkeypatch.setenv("ASSISTANT_TTS_URL", TTS)
+    asr_host = respx.post("http://100.64.0.5:8070/speak").mock(return_value=httpx.Response(500))
+    tts_host = respx.post(f"{TTS}/speak").mock(
+        return_value=httpx.Response(200, content=b"RIFFlocal", headers={"content-type": "audio/wav"})
+    )
+    with TestClient(_make_app()) as client:
+        r = client.post(
+            "/api/assistant/voice/speak",
+            json={"text": "The press is ready."},
+            headers={"X-Auth-User": "alice@example.edu"},
+        )
+    assert r.status_code == 200
+    assert r.content == b"RIFFlocal"
+    assert tts_host.called and not asr_host.called
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("asr_up", "expect"),
+    [
+        (True, {"configured": True, "model": "m", "tts": True}),
+        # The mic hides with the ASR host down, but read-aloud stays on.
+        (False, {"configured": False, "model": None, "tts": True}),
+    ],
+)
+def test_health_split_combines_both_services(
+    monkeypatch: pytest.MonkeyPatch, asr_up: bool, expect: dict
+) -> None:
+    monkeypatch.setenv("ASSISTANT_STT_URL", "http://100.64.0.5:8070")
+    monkeypatch.setenv("ASSISTANT_TTS_URL", TTS)
+    asr = respx.get("http://100.64.0.5:8070/health")
+    if asr_up:
+        asr.mock(return_value=httpx.Response(200, json={"loaded": True, "model": "m", "tts": False}))
+    else:
+        asr.mock(side_effect=httpx.ConnectError("down"))
+    respx.get(f"{TTS}/health").mock(
+        return_value=httpx.Response(200, json={"asr": False, "loaded": False, "model": None, "tts": True})
+    )
+    with TestClient(_make_app()) as client:
+        assert client.get("/api/assistant/voice/health").json() == expect
+
+
+@respx.mock
+def test_health_split_both_down(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASSISTANT_STT_URL", "http://100.64.0.5:8070")
+    monkeypatch.setenv("ASSISTANT_TTS_URL", TTS)
+    respx.get("http://100.64.0.5:8070/health").mock(side_effect=httpx.ConnectError("down"))
+    respx.get(f"{TTS}/health").mock(side_effect=httpx.ConnectError("down"))
+    with TestClient(_make_app()) as client:
+        assert client.get("/api/assistant/voice/health").json() == {"configured": False}

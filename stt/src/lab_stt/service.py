@@ -1,14 +1,19 @@
-"""Loopback STT service: POST an audio clip, get text back.
+"""Loopback speech service: POST an audio clip, get text back; POST text, get WAV.
 
-Runs as its own systemd unit on 127.0.0.1:8070 — never exposed on the
-tailnet. The only caller is the dashboard's /api/assistant/voice/transcribe
-endpoint (api/app/voice.py), which owns identity; this process owns nothing
-but the model. Audio is decoded in a TemporaryDirectory and never persisted
+Runs as its own systemd unit, bound to loopback — never exposed on the
+tailnet directly. The only caller is the dashboard's /api/assistant/voice/*
+proxy (api/app/voice.py), which owns identity; this process owns nothing
+but the models. Audio is decoded in a TemporaryDirectory and never persisted
 or logged: what an operator says near a mic is not telemetry.
 
+One instance can serve ASR, TTS, or both. Deployed today as two: ASR on
+gaia's NVIDIA GPU, and a TTS-only instance (STT_ASR=0, STT_DEVICE=cpu) on
+the orchestration host, which has no NVIDIA GPU.
+
 Env:
-  STT_MODEL           model id            (default Qwen/Qwen3-ASR-1.7B-hf)
-  STT_DEVICE          torch device        (default cuda)
+  STT_MODEL           ASR model id        (default Qwen/Qwen3-ASR-1.7B-hf)
+  STT_ASR             "0" = TTS-only: no ASR model, /transcribe refuses (default on)
+  STT_DEVICE          torch device        (default cuda; cpu for Kokoro alone)
   STT_HOST/STT_PORT   bind                (default 127.0.0.1:8070)
   STT_EQUIPMENT_YAML  registry for the vocabulary prompt
   STT_VOCAB_FILE      optional extra terms, one per line
@@ -42,6 +47,7 @@ async def lifespan(app: FastAPI):
     app.state.engine = None
     model_id = os.environ.get("STT_MODEL", DEFAULT_MODEL)
     device = os.environ.get("STT_DEVICE", "cuda")
+    app.state.asr = os.environ.get("STT_ASR", "1") != "0"
 
     # STT_MODEL="" skips the load entirely — the tests' seam for exercising
     # the HTTP contract without a GPU or a 4 GB download.
@@ -54,6 +60,9 @@ async def lifespan(app: FastAPI):
 
     voice = os.environ.get("STT_TTS_VOICE", DEFAULT_VOICE)
     app.state.tts = None
+    asr = app.state.asr
+    if not asr and not voice:
+        raise RuntimeError("STT_ASR=0 with STT_TTS_VOICE empty: this instance would serve nothing")
 
     # ONE loader thread, ASR then TTS — deliberately not parallel threads:
     # both stacks import transformers submodules through its lazy-import
@@ -61,12 +70,15 @@ async def lifespan(app: FastAPI):
     # practice (kokoro's `from transformers import AlbertModel` failed with
     # ImportError while the ASR thread was mid-import; the same import
     # succeeds in isolation). Boot is ~15s+~15s instead of max() of the two.
-    def _load() -> QwenAsrEngine:
-        engine = QwenAsrEngine(model_id=model_id, device=device)
+    def _load() -> QwenAsrEngine | None:
+        engine = QwenAsrEngine(model_id=model_id, device=device) if asr else None
         if voice:
             try:
                 app.state.tts = KokoroTtsEngine(voice=voice, device=device)
-            except Exception:  # TTS is optional; ASR must survive its failure
+            except Exception:
+                if not asr:  # TTS is all a TTS-only instance does: fail the load
+                    raise
+                # Otherwise TTS is optional; ASR must survive its failure.
                 logger.exception("tts load failed (voice input still up)")
         return engine
 
@@ -98,7 +110,8 @@ async def health() -> dict:
     task = app.state.load_task
     return {
         "status": "healthy",
-        "model": os.environ.get("STT_MODEL", DEFAULT_MODEL),
+        "asr": app.state.asr,
+        "model": os.environ.get("STT_MODEL", DEFAULT_MODEL) if app.state.asr else None,
         "loaded": app.state.engine is not None,
         "load_failed": bool(task.done() and not task.cancelled() and task.exception()),
         "tts": app.state.tts is not None,
@@ -108,6 +121,8 @@ async def health() -> dict:
 
 @app.post("/transcribe")
 async def transcribe(audio: UploadFile = File(...)) -> dict:
+    if not app.state.asr:
+        raise HTTPException(503, "speech recognition is not served by this instance (STT_ASR=0)")
     engine = app.state.engine
     if engine is None:
         task = app.state.load_task
