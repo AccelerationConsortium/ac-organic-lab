@@ -96,7 +96,12 @@ def test_the_design_skeleton_leaves_intent_to_the_human():
     plain = {**PATTERN_BUNDLE, "plan": {**PATTERN_BUNDLE["plan"], "pattern": {
         **PATTERN_BUNDLE["plan"]["pattern"],
         "for_each_well": {**PATTERN_BUNDLE["plan"]["pattern"]["for_each_well"], "overrides": {}}}}}
-    assert "TODO_factor" in pa.design_skeleton(plain)
+    assert "- name: todo_factor" in pa.design_skeleton(plain)
+    # Deck-recorded labels are offered as a comment, not as (invalid) substances.
+    named = {**PATTERN_BUNDLE, "plan": {**PATTERN_BUNDLE["plan"], "steps": [
+        {"action": "plate.load", "args": {"contents": "acetonitrile"}}]}}
+    text = pa.design_skeleton(named)
+    assert "#   acetonitrile: acetonitrile" in text and "\nsubstances:" not in text
 
 
 def test_well_samples_carry_the_measured_mass_and_the_lineage_key():
@@ -107,3 +112,16 @@ def test_well_samples_carry_the_measured_mass_and_the_lineage_key():
     assert a1["meta"]["mass_g"] == 0.1 and a1["meta"]["plate"] == "2" and a1["meta"]["well"] == "A1"
     assert a1["meta"]["plan_id"] == "fF3vFstTxLZc8FCc" and a1["meta"]["unit"] == "g"
     assert "deviation_pct" not in samples[1]["meta"]  # absent, not invented
+
+
+def test_the_skeleton_parses_as_a_valid_design_skeleton_once_parsed():
+    """What the attach flow will hand Bitácora's DesignEditor: valid YAML whose
+    only schema violations are the TODO values a human replaces."""
+    import yaml
+
+    doc = yaml.safe_load(pa.design_skeleton(PATTERN_BUNDLE))
+    assert doc["design"] == "asrun-ff3vfsttxlzc8fcc"
+    assert doc["objective"] == "TODO" and doc["factors"][0]["name"] == "d_volume_ul"
+    assert doc["controls"] == [] and doc["replicates"] == 1
+    assert all(k in {"design", "objective", "hypothesis", "factors", "fixed", "controls", "replicates",
+                     "readout"} for k in doc)

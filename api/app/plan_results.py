@@ -180,7 +180,7 @@ def experiment_hid(bundle: dict[str, Any]) -> str:
 
 #: Bumped when the generated artefacts change shape; the back-fill re-files
 #: experiments whose meta carries an older (or no) version.
-ARTIFACTS_VERSION = 1
+ARTIFACTS_VERSION = 2
 
 
 def experiment_artifacts(bundle: dict[str, Any]) -> dict[str, Any]:

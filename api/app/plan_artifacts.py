@@ -189,7 +189,7 @@ def design_skeleton(bundle: dict[str, Any]) -> str:
             lines += [f"  - name: {fname}  # realized levels from per-well overrides; rename to what it MEANS",
                       f"    levels: [{lvls}]"]
     else:
-        lines += ["  - name: TODO_factor  # the run varied nothing per well that the record shows",
+        lines += ["  - name: todo_factor  # the run varied nothing per well that the record shows",
                   "    levels: [TODO]"]
     lines += [
         "fixed:",
@@ -201,9 +201,12 @@ def design_skeleton(bundle: dict[str, Any]) -> str:
     ]
     substances = _substances(plan)
     if substances:
-        lines.append("substances:")
+        # The design schema wants a structural identity (cas / smiles /
+        # inchikey) per substance; the deck records carry only labels. Offer
+        # them as a comment the human completes, never as an invalid entry.
+        lines.append("# substances the deck records named (add cas/smiles/inchikey to declare them):")
         for label, text in sorted(substances.items()):
-            lines.append(f"  {label}: {yaml.safe_dump(text, default_flow_style=True).strip()}")
+            lines.append(f"#   {label}: {text}")
     return "\n".join(lines) + "\n"
 
 
