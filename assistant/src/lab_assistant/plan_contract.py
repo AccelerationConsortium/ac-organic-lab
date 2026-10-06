@@ -47,6 +47,12 @@ REFUSAL_CODES = frozenset(
         "capability_unknown",
         # Step 2: a panel-scoped assistant asked about another device.
         "out_of_scope",
+        # Step 6: a device that runs its own plans refused the draft (its own
+        # validation message follows), or served no catalog to propose from.
+        "device_refused",
+        # …and a draft shape this device cannot take (a for_each_well pattern on
+        # a device that runs plans from the browser, or no catalog to draw on).
+        "not_proposable",
     }
 )
 

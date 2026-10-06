@@ -263,6 +263,13 @@ class EquipmentEntry(BaseModel):
     #: ``docs/AUTH_DESIGN.md`` → "How a device learns who the operator is".
     edge_secret_env: str | None = None
 
+    #: The device runs its own human-approved step plans (``POST /plans``,
+    #: ``/plans/actions``, ``/docs/agent`` — the OT-2 gateway's plan contract).
+    #: The dashboard assistant then creates *drafts* on it instead of running
+    #: steps from the browser; approval and execution stay in the device's
+    #: panel. See ``docs/ASSISTANT_CONSOLIDATION_PLAN.md`` step 6.
+    runs_plans: bool = False
+
     #: Read-only documentation paths that the dashboard may expose through its
     #: same-origin API Reference. Availability still comes from the running
     #: server: an older deployment's 404 is returned unchanged.

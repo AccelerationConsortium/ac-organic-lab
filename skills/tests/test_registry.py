@@ -247,3 +247,17 @@ def test_lab_registry_path_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
     registry = load_registry()
     assert registry.by_id("plateloc") is not None
     assert registry.by_id("dose_every_well") is None
+
+
+def test_runs_plans_marks_the_devices_that_run_their_own_plans() -> None:
+    """Step 6 of the assistant consolidation: only devices flagged here take
+    drafts from the dashboard assistant; everything else keeps the
+    browser-run plan path. Both OT-2 gateways implement the plan contract."""
+    from pathlib import Path
+
+    from lab_skills.registry import EquipmentEntry, load_registry
+
+    assert EquipmentEntry(id="x", name="x", kind="liquid_handler", adapter="http").runs_plans is False
+    registry = load_registry(Path(__file__).resolve().parents[2] / "equipment.yaml")
+    flagged = sorted(e.id for e in registry.equipment if e.runs_plans)
+    assert flagged == ["ot2_complexation", "ot2_hte"]

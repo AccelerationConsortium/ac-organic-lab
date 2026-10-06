@@ -27,7 +27,8 @@ RID = "0123456789abcdef0123456789abcdef"
 
 
 def _reply(**kw: Any) -> dict[str, Any]:
-    return {"reply": "ok", "steps": [], "prelude": [], "for_each_well": None, "epilogue": [], **kw}
+    return {"reply": "ok", "steps": [], "prelude": [], "for_each_well": None, "epilogue": [],
+            "lookups": [], **kw}
 
 
 def test_a_reply_without_a_draft_proposes_nothing():
@@ -130,8 +131,9 @@ class _Gateway:
         self.requests.append(request)
         path = request.url.path
         if request.url.host == "authz":
-            return httpx.Response(200, json={"user": ACTOR, "projects": ["alpha"], "pi_projects": [],
-                                             "role": "member"})
+            # The real /authz/scope shape (auth/ac_auth/main.py authz_scope).
+            return httpx.Response(200, json={"user": ACTOR, "member_projects": ["alpha"],
+                                             "pi_projects": [], "is_admin": False})
         if request.headers.get("X-Edge-Auth") != "s3cret":
             return httpx.Response(401, json={"detail": "login_required"})
         if path == "/status":
@@ -164,11 +166,14 @@ def _app(gateway: _Gateway, monkeypatch, *, models=None, structured=None) -> Fas
         return offered, ([] if offered else ["Claude Code is not logged in on the dashboard host"])
 
     monkeypatch.setattr(device_chat, "available_models", available)
-    seen: dict[str, Any] = {}
+    seen: dict[str, Any] = {"payloads": []}
+    queue = list(structured) if isinstance(structured, list) else [structured]
 
     async def fake_claude(turn, model, system, payload):
         seen.update(model=model, system=system, payload=payload)
-        return structured if structured is not None else _reply(reply="all quiet")
+        seen["payloads"].append(payload)
+        nxt = queue.pop(0) if len(queue) > 1 else queue[0]
+        return nxt if nxt is not None else _reply(reply="all quiet")
 
     monkeypatch.setattr(device_chat, "run_claude", fake_claude)
     import app.control as control
@@ -421,3 +426,116 @@ async def test_claude_is_offered_only_when_its_api_host_is_reachable(tmp_path, m
     finally:
         server.close()
     assert [m.id for m in models if m.backend == "claude-cli"] == device_chat.CLAUDE_MODELS
+
+
+# ── step 7: lookups ──────────────────────────────────────────────────────
+
+
+class _Journal:
+    """A plan-results journal with one run of ours and one of someone else's."""
+
+    def __init__(self):
+        self.rows = {
+            ("ot2_complexation", "mine"): {"approved_by": ACTOR, "eln_project": "alpha", "status": "executed",
+                                           "steps_total": 2, "steps_ok": 2, "steps_failed": 0,
+                                           "steps_skipped": 0, "simulation": False, "plan_id": "mine",
+                                           "plan": {"results": [{"action": "platebalance.read",
+                                                                 "outcome": "ok", "reading": {"g": 0.1}}]},
+                                           "plate_report": {"labware": "2", "plans": ["mine"], "stats": {},
+                                                            "wells": {"A1": {"mass_g": 0.1}}}},
+            ("ot2_complexation", "theirs"): {"approved_by": "bob@example.edu", "eln_project": "zeta",
+                                             "status": "failed", "plan_id": "theirs", "plan": {"results": []}},
+            ("ot2_hte", "other-device"): {"approved_by": ACTOR, "eln_project": "alpha", "plan_id": "other-device"},
+        }
+
+    def summaries(self, limit=100):
+        return [{"device_id": d, "plan_id": p, "state": "filed", "received_at": "2026-10-06T00:00:00+00:00"}
+                for (d, p) in self.rows]
+
+    def get(self, device_id, plan_id):
+        row = self.rows.get((device_id, plan_id))
+        return {"payload": row} if row else None
+
+
+def _ctx(**kw):
+    base = dict(user=ACTOR, equipment_id="ot2_complexation", standing=frozenset({"alpha"}), admin=False,
+                journal=_Journal())
+    return device_chat.LookupContext(**{**base, **kw})
+
+
+async def test_run_results_follow_the_dashboard_access_rule_and_stay_on_this_device():
+    listing = await device_chat.lookup_run_results(_ctx(), {})
+    by_id = {r["plan_id"]: r for r in listing["runs"]}
+    assert set(by_id) == {"mine", "theirs"}  # the HTE run is another device's
+    assert by_id["theirs"]["redacted"] is True and "eln_project" not in by_id["theirs"]
+    assert by_id["mine"]["eln_project"] == "alpha" and by_id["mine"]["eln"] == "filed"
+    mine = await device_chat.lookup_run_results(_ctx(), {"plan_id": "mine"})
+    assert mine["results"][0]["reading"] == {"g": 0.1} and mine["plate_report"]["wells"] == {"A1": {"mass_g": 0.1}}
+    with pytest.raises(device_chat.LookupRefused, match="another user"):
+        await device_chat.lookup_run_results(_ctx(), {"plan_id": "theirs"})
+    # A project member or an admin may read it.
+    assert (await device_chat.lookup_run_results(_ctx(standing=frozenset({"zeta"})), {"plan_id": "theirs"}))["run"]["status"] == "failed"
+    assert (await device_chat.lookup_run_results(_ctx(admin=True), {"plan_id": "theirs"}))["run"]["plan_id"] == "theirs"
+    with pytest.raises(device_chat.LookupRefused, match="no run record"):
+        await device_chat.lookup_run_results(_ctx(), {"plan_id": "other-device"})
+
+
+async def test_inventory_lookups_call_the_dashboard_functions_and_nothing_else():
+    calls = []
+
+    async def search(query, limit):
+        calls.append(("search", query, limit))
+        return json.dumps({"results": [1]})
+
+    async def stock(cas, needed, unit):
+        calls.append(("stock", cas, needed, unit))
+        return "not json"
+
+    ctx = _ctx(inventory={"search_inventory": search, "check_stock": stock})
+    assert await device_chat.run_lookup(ctx, "search_inventory", {"query": "acetonitrile"}) == {"results": [1]}
+    assert await device_chat.run_lookup(ctx, "check_stock", {"cas": "75-05-8", "needed": 50}) == {"text": "not json"}
+    assert calls == [("search", "acetonitrile", 20), ("stock", "75-05-8", 50.0, "mL")]
+    with pytest.raises(device_chat.LookupRefused):
+        await device_chat.run_lookup(ctx, "check_stock", {})
+    with pytest.raises(device_chat.LookupRefused, match="unknown lookup"):
+        await device_chat.run_lookup(ctx, "tail_journald", {"unit": "x"})
+    with pytest.raises(device_chat.LookupRefused, match="unknown lookup"):
+        await device_chat.run_lookup(ctx, "get_chemical", {"cas": "1"})  # not bound in this ctx
+
+
+async def test_a_lookup_round_is_one_extra_model_call_shown_as_pills(monkeypatch):
+    gw = _Gateway()
+    first = _reply(reply="", lookups=[{"name": "query_run_results", "args_json": '{"since_days": 7}'},
+                                      {"name": "query_run_results", "args_json": '{"plan_id": "theirs"}'},
+                                      {"name": "nope", "args_json": "{}"}])
+    second = _reply(reply="Two runs this week; one is not yours to read.",
+                    lookups=[{"name": "query_run_results", "args_json": "{}"}])  # ignored: one round only
+    app = _app(gw, monkeypatch, structured=[first, second])
+    monkeypatch.setattr(app.state, "plan_results_journal", _Journal(), raising=False)
+    r = await _call(app, "POST", "/api/assistant/equipment/ot2_complexation/chat/stream",
+                    {"messages": [{"role": "user", "content": "what ran this week?"}]}, {"X-Auth-User": ACTOR})
+    events = _events(r)
+    finished = [e for e in events if e["type"] == "tool_finished" and e["id"].startswith("3:lookup")]
+    assert [(e["name"], e["success"]) for e in finished] == [
+        ("query_run_results", True), ("query_run_results", False), ("nope", False)]
+    assert "another user" in finished[1]["error"] and "unknown lookup" in finished[2]["error"]
+    assert events[-1]["result"]["reply"] == "Two runs this week; one is not yours to read."
+    assert events[-1]["result"]["plan_id"] is None
+    payloads = app.state.seen["payloads"]
+    assert len(payloads) == 2 and "lookup_results" not in payloads[0]
+    results = payloads[1]["lookup_results"]
+    assert results[0]["result"]["runs"][0]["plan_id"] in {"mine", "theirs"}
+    assert results[1]["result"] is None and "another user" in results[1]["error"]
+    assert "lookups" in app.state.seen["system"]  # the prompt explains them
+
+
+async def test_a_draft_reply_never_triggers_lookups(monkeypatch):
+    gw = _Gateway()
+    app = _app(gw, monkeypatch, structured=_reply(
+        reply="Lights.", steps=[{"action": "lights.set", "args_json": '{"on": true}'}],
+        lookups=[{"name": "search_inventory", "args_json": '{"query": "x"}'}]))
+    r = await _call(app, "POST", "/api/assistant/equipment/ot2_complexation/chat/stream",
+                    {"messages": [{"role": "user", "content": "lights"}]}, {"X-Auth-User": ACTOR})
+    events = _events(r)
+    assert not any(e.get("id", "").startswith("3:") for e in events)
+    assert events[-1]["result"]["plan_id"] == "p2" and len(app.state.seen["payloads"]) == 1

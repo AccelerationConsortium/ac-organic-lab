@@ -1380,6 +1380,7 @@ async def _propose_plan(
     equipment_id: str,
     steps: list[dict[str, Any]] | None,
     reason: str,
+    pattern: dict[str, Any] | None = None,
 ) -> str:
     """Validate an ordered multi-step sequence on ONE device and return a
     normalized plan proposal (Step 1i).
@@ -1405,21 +1406,29 @@ async def _propose_plan(
             "no verified actor is bound to this session (LAB_ACTOR unset); "
             "control proposals require a signed-in operator",
         )
-    if not isinstance(steps, list) or not steps:
-        return _err("empty_plan", "a plan needs at least one step ({action, args})")
-    if len(steps) > MAX_PLAN_STEPS:
-        return _err(
-            "too_many_steps",
-            f"a plan may carry at most {MAX_PLAN_STEPS} steps (got {len(steps)}); "
-            "split the work, or recommend a validated workflow plan",
-        )
-
     entry = _resolve_equipment_id(registry, equipment_id)
     if entry is None:
         return _err("unknown_equipment", f"no equipment with id {equipment_id!r}")
     equipment_id = entry.id
     if not entry.enabled or entry.maintenance is not None:
         return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
+    if pattern is not None and not entry.runs_plans:
+        return _err(
+            "not_proposable",
+            f"{equipment_id!r} runs plans from the browser; a for_each_well pattern needs a "
+            f"device that runs its own plans — write the steps out (at most {MAX_PLAN_STEPS})",
+        )
+    if pattern is None:
+        if not isinstance(steps, list) or not steps:
+            return _err("empty_plan", "a plan needs at least one step ({action, args})")
+        if len(steps) > MAX_PLAN_STEPS and not entry.runs_plans:
+            return _err(
+                "too_many_steps",
+                f"a plan may carry at most {MAX_PLAN_STEPS} steps (got {len(steps)}); "
+                "split the work, or recommend a validated workflow plan",
+            )
+    elif steps:
+        return _err("invalid_step", "give either steps or a for_each_well pattern, not both")
 
     discovery = None
     try:
@@ -1437,12 +1446,15 @@ async def _propose_plan(
         return _err("identity_mismatch", problem)
     remote_actions = _remote_action_map(discovery)
 
+    if entry.runs_plans:
+        return await _delegate_plan(entry, actor, status, remote_actions, steps, pattern, reason)
+
     resolved_steps: list[dict[str, Any]] = []
     # Step-tagged place labels for the card. Kept OUTSIDE ``steps`` so the
     # step hash the operator approves covers exactly what the browser sends.
     plan_locations: list[dict[str, Any]] = []
     deck_checks: list[dict[str, Any] | None] = []
-    for index, raw in enumerate(steps, start=1):
+    for index, raw in enumerate(steps or [], start=1):
         if not isinstance(raw, dict) or not isinstance(raw.get("action"), str):
             return _err(
                 "invalid_step",
@@ -1525,6 +1537,163 @@ async def _propose_plan(
     merged_checks = _merge_deck_checks(deck_checks)
     if merged_checks:
         plan["deck_checks"] = merged_checks
+    return _dumps({"plan": plan})
+
+
+# ---------------------------------------------------------------------------
+# Step 6: devices that run their own plans take the draft themselves
+# ---------------------------------------------------------------------------
+
+
+def _pattern_steps(pattern: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
+    """The steps a pattern names (prelude, template, epilogue), for the gate
+    checks and the card; or a message when its shape is wrong."""
+    few = pattern.get("for_each_well")
+    if not isinstance(few, dict) or not isinstance(few.get("steps"), list) or not few["steps"]:
+        return [], "for_each_well needs labware_nickname, wells and a non-empty steps template"
+    out = []
+    for part in ("prelude", "steps", "epilogue"):
+        raw = few["steps"] if part == "steps" else pattern.get(part) or []
+        if not isinstance(raw, list):
+            return [], f"{part} must be a list of steps"
+        out.extend(raw)
+    return out, None
+
+
+async def _actor_scope(actor: str) -> dict[str, Any] | None:
+    """The actor's roster standing from the auth sidecar (member/PI projects,
+    admin), resolved here so the device sees it from its trusted edge."""
+    if not _authz_enforced():
+        return {"member_projects": [], "pi_projects": [], "is_admin": False}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{_authz_base()}/authz/scope", params={"user": actor})
+            r.raise_for_status()
+            scope = r.json()
+    except Exception:  # noqa: BLE001 - fail closed, named below
+        return None
+    return scope if isinstance(scope, dict) and scope.get("user") == actor else None
+
+
+async def _delegate_plan(
+    entry: EquipmentEntry,
+    actor: str,
+    status: Any,
+    remote_actions: dict[str, Any] | None,
+    steps: list[dict[str, Any]] | None,
+    pattern: dict[str, Any] | None,
+    reason: str,
+) -> str:
+    """Create the draft on a device that runs its own plans (``runs_plans``).
+
+    Every gate this server applies still applies — actor bound, device
+    enabled and identified, each named action published by the device's own
+    catalog and proposable here (safety floor), operator+ authorization —
+    and then the device validates the draft as it does for any proposer
+    (argument schemas, pattern expansion, its own caps). Approval and
+    execution stay in the device's panel: the returned plan carries
+    ``delegated`` and no dashboard record is kept for it.
+    """
+
+    from lab_assistant.device_chat import DeviceConfigError, device_from_entry, device_headers
+
+    if remote_actions is None:
+        return _err(
+            "not_proposable",
+            f"{entry.id!r} is registered as running its own plans but serves no action catalog",
+        )
+    if pattern is not None:
+        named, problem = _pattern_steps(pattern)
+        if problem:
+            return _err("invalid_step", problem)
+    else:
+        named = list(steps or [])
+    for index, raw in enumerate(named, start=1):
+        if not isinstance(raw, dict) or not isinstance(raw.get("action"), str):
+            return _err("invalid_step", f"step {index} must be an object with a string 'action'", step=index)
+        if raw.get("args") is not None and not isinstance(raw.get("args"), dict):
+            return _err("invalid_step", f"step {index}: args must be an object", step=index)
+        action = _canonical_action(entry.kind, raw["action"])
+        if action not in remote_actions:
+            return _err(
+                "capability_unknown",
+                f"step {index} ({action}): the running gateway's /plans/actions does not publish it",
+                step=index,
+            )
+        try:
+            _resolve(entry, action, dict(raw.get("args") or {}))
+        except ProposalRefused as exc:
+            if exc.code in ("safety_floor", "not_proposable", "operator_only", "forbidden_field"):
+                return _err(exc.code, f"step {index} ({action}): {exc.message}", step=index)
+            # Anything else (local arg mapping) is the device's call: it
+            # validates the real arguments against its own schemas below.
+    if pattern is None and named and not _action_startable(entry, status, _canonical_action(entry.kind, named[0]["action"])):
+        return _err(
+            "not_allowed",
+            f"step 1 {named[0]['action']!r} is not in {entry.id!r}'s current allowed_actions, "
+            "so the plan cannot start",
+            step=1,
+            allowed_actions=list(status.allowed_actions or []),
+        )
+
+    ok, why = await _check_authz(actor, entry.id)
+    if not ok:
+        return _err("not_authorized", why or "not authorized")
+    scope = await _actor_scope(actor)
+    if scope is None:
+        return _err("not_authorized", "could not resolve your project standing from the auth service")
+    try:
+        device = device_from_entry(entry)
+    except DeviceConfigError as exc:
+        return _err("not_proposable", str(exc))
+    headers = device_headers(
+        device, user=actor, role="admin" if scope.get("is_admin") is True else None,
+        projects=list(scope.get("member_projects") or []), pi_projects=list(scope.get("pi_projects") or []),
+    )
+    created_by = f"assistant (dashboard) for {actor}"
+    body: dict[str, Any] = {"created_by": created_by}
+    if pattern is not None:
+        body.update({k: pattern[k] for k in ("prelude", "for_each_well", "epilogue") if pattern.get(k) is not None})
+    else:
+        body["steps"] = [{"action": _canonical_action(entry.kind, s["action"]), "args": s.get("args") or {}}
+                         for s in named]
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(f"{device.base_url}/plans", json=body, headers=headers)
+    except httpx.HTTPError as exc:
+        return _err("unreachable", f"the device did not take the draft: {exc}")
+    if r.status_code >= 400:
+        try:
+            detail = r.json().get("detail", r.text)
+        except ValueError:
+            detail = r.text
+        return _err("device_refused", f"{entry.id} refused the draft ({r.status_code}): {detail}")
+    created = r.json()
+    device_steps = created.get("steps") or []
+    card_steps = [{"action": s["action"], "passthrough_action": s["action"], "args": s.get("args") or {}}
+                  for s in named]
+    plan = {
+        "plan_id": str(created.get("plan_id")),
+        "equipment_id": entry.id,
+        "equipment_name": entry.name,
+        "kind": entry.kind,
+        "steps": card_steps,
+        "step_hash": plan_step_hash(card_steps),
+        "reason": reason,
+        "actor": actor,
+        "expires_in_s": 0,
+        "device_state": {
+            "equipment_status": status.equipment_status,
+            "activity": status.activity,
+            "message": status.message,
+        },
+        "delegated": {
+            "device_plan_id": str(created.get("plan_id")),
+            "created_by": created.get("created_by") or created_by,
+            "step_count": len(device_steps),
+            "pattern_summary": created.get("pattern_summary"),
+        },
+    }
     return _dumps({"plan": plan})
 
 
@@ -1674,8 +1843,11 @@ def _build_server(registry: Registry):
     @tool()
     async def propose_plan(
         equipment_id: str,
-        steps: list[dict[str, Any]],
+        steps: list[dict[str, Any]] | None = None,
         reason: str = "",
+        prelude: list[dict[str, Any]] | None = None,
+        for_each_well: dict[str, Any] | None = None,
+        epilogue: list[dict[str, Any]] | None = None,
     ) -> str:
         """Propose an ORDERED multi-step sequence on ONE device that the
         operator approves and runs as a whole. Use this instead of several
@@ -1693,12 +1865,27 @@ def _build_server(registry: Registry):
         device per plan, at most 256 steps; safety-floor actions
         (stop verbs, the xArm's connect/clear_errors) are never proposable.
         Returns an ``error`` + ``code`` object (with the failing ``step``
-        number) when refused."""
+        number) when refused.
+
+        Devices that run their own plans (the OT-2 gateways): the draft is
+        created ON the device and the operator approves and runs it in that
+        device's panel; the card here is a receipt with a link. For those
+        devices only, work repeated over wells goes as a pattern instead of
+        ``steps``: ``for_each_well`` = {"labware_nickname": "<plate>",
+        "wells": "A1:H12" | ["A1", ...], "order": "column" | "row",
+        "steps": [{"id": "d", "action": ..., "args": {... "{well}" ...}}],
+        "overrides": {"H12": {"d": {...}}}} with optional ``prelude`` /
+        ``epilogue`` step lists (tip pickup, tip drop). Put "{well}" where the
+        well name goes; the device expands it and the operator reviews the
+        expansion. Never write a plate out as hundreds of steps."""
 
         refused = _out_of_scope(registry, equipment_id)
         if refused:
             return refused
-        return await _propose_plan(registry, equipment_id, steps, reason)
+        pattern = None
+        if for_each_well is not None:
+            pattern = {"prelude": prelude, "for_each_well": for_each_well, "epilogue": epilogue}
+        return await _propose_plan(registry, equipment_id, steps, reason, pattern)
 
     @tool()
     async def decline_proposal(reason_code: str, explanation: str = "") -> str:

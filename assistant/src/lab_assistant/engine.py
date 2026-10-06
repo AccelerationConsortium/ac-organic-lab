@@ -249,6 +249,15 @@ def _control_server_env(actor: str) -> dict[str, str]:
         value = os.environ.get(key)
         if value:
             env[key] = value
+    # Step 6: a device that runs its own plans (`runs_plans`) takes the
+    # draft as the signed-in actor with that device's edge secret, named by
+    # its registry entry (`edge_secret_env`). Hermes and the CLI do not pass
+    # the parent environment to MCP children, so the per-device secrets ride
+    # along explicitly — never the global DEVICE_EDGE_SHARED_SECRET.
+    for key, value in os.environ.items():
+        if value and (key.endswith("_EDGE_SECRET") or key.endswith("_EDGE_SHARED_SECRET")) \
+                and key != "DEVICE_EDGE_SHARED_SECRET":
+            env[key] = value
     return env
 
 
@@ -1556,6 +1565,20 @@ def build_assistant_router() -> APIRouter:
 
             plan_id = plan.get("plan_id")
             steps = plan.get("steps")
+            delegated = plan.get("delegated")
+            if isinstance(delegated, dict) and plan.get("actor") == actor:
+                # Step 6: the draft already exists on the device, which owns
+                # approval and execution. Nothing to cache — the dashboard
+                # approve/finish routes must never see this id — only audit.
+                equipment_id = str(plan.get("equipment_id") or "unknown")
+                await _audit(
+                    db, equipment_id, "assistant_plan_delegated",
+                    f"assistant created draft {delegated.get('device_plan_id')} on {equipment_id} for {actor}",
+                    {"actor": actor, "device_plan_id": delegated.get("device_plan_id"),
+                     "steps": delegated.get("step_count"), "pattern_summary": delegated.get("pattern_summary"),
+                     "reason": plan.get("reason")},
+                )
+                return
             if (
                 not isinstance(plan_id, str)
                 or not plan_id
@@ -1699,21 +1722,41 @@ def build_assistant_router() -> APIRouter:
             raise HTTPException(status_code=503, detail=str(exc))
 
     async def _actor_headers(client: httpx.AsyncClient, actor: str, role: str | None,
-                             device: device_chat.Device) -> dict[str, str]:
+                             device: device_chat.Device) -> tuple[dict[str, str], dict[str, Any]]:
         """The actor's roster standing, resolved here (never relayed from the
-        browser), as the headers the gateway trusts from its edge."""
+        browser), as the headers the gateway trusts from its edge — and the
+        scope itself, for the turn's lookups."""
         from app.plan_results import user_scope
 
         try:
             scope = await user_scope(client, actor)
         except (httpx.HTTPError, ValueError) as exc:
             raise HTTPException(status_code=503, detail=f"could not resolve your project standing: {exc}")
-        projects = sorted(scope.get("projects") or [])
+        # /authz/scope: {user, member_projects, pi_projects, is_admin}.
+        projects = sorted(scope.get("member_projects") or [])
         pi_projects = sorted(scope.get("pi_projects") or [])
-        if role is None and scope.get("role") == "admin":
+        if role is None and scope.get("is_admin") is True:
             role = "admin"
-        return device_chat.device_headers(device, user=actor, role=role,
-                                          projects=projects, pi_projects=pi_projects)
+        headers = device_chat.device_headers(device, user=actor, role=role,
+                                             projects=projects, pi_projects=pi_projects)
+        return headers, scope
+
+    def _lookup_context(request: Request, actor: str, equipment_id: str,
+                        scope: dict[str, Any]) -> device_chat.LookupContext:
+        """What this turn may read for the operator: this device's run
+        records under the dashboard's own rule (plan_results.py), and the
+        inventory reads the dashboard bubble has."""
+        from app import inventory_mcp
+
+        standing = frozenset(scope.get("member_projects") or []) | frozenset(scope.get("pi_projects") or [])
+        return device_chat.LookupContext(
+            user=actor, equipment_id=equipment_id, standing=standing,
+            admin=scope.get("is_admin") is True,
+            journal=getattr(request.app.state, "plan_results_journal", None),
+            inventory={"search_inventory": inventory_mcp._search_inventory,
+                       "check_stock": inventory_mcp._check_stock,
+                       "get_chemical": inventory_mcp._get_chemical},
+        )
 
     @router.get("/equipment/{equipment_id}/health")
     async def equipment_assistant_health(equipment_id: str, request: Request) -> dict[str, Any]:
@@ -1758,7 +1801,8 @@ def build_assistant_router() -> APIRouter:
             device_turns[key] = turn
         client = device_chat.make_client()
         try:
-            headers = await _actor_headers(client, actor, request.headers.get("x-auth-role"), device)
+            headers, scope = await _actor_headers(client, actor, request.headers.get("x-auth-role"), device)
+            lookups = _lookup_context(request, actor, equipment_id, scope)
             # The gateway's own assistant is claim-gated: a proposal is only
             # useful to whoever holds the device. Same rule here, read from
             # the device rather than trusted from the browser.
@@ -1792,6 +1836,7 @@ def build_assistant_router() -> APIRouter:
                     async for event in device_chat.panel_turn(
                         client=client, device=device, headers=headers, user=actor,
                         messages=messages, choice=choice, turn=turn, on_draft=on_draft,
+                        lookups=lookups,
                     ):
                         yield _sse(event)
             except device_chat.Cancelled:
