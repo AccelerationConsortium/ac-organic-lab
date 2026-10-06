@@ -57,6 +57,18 @@ situation isn't covered, stop and ask a human.
    protocol merged to its project repo's `main` (the human sign-off), a
    registered `Plan` in BitacoraDB, and a passing `validate_plan()`
    (interlock layer 4). No ad-hoc command sequences against live hardware.
+   *Device-run step approvals (added 2026-10-05):* a device gateway that
+   implements the plan contract (`POST /plans`, `/plans/actions`,
+   `/docs/agent`) may execute an ad-hoc single-device step list approved in
+   its own panel by a human who holds the device claim, with the hash of
+   exactly the steps shown. Such a run is recorded as what it is — an
+   UNFORMATTED Experiment, never a Run Authorization or a registered Plan —
+   and stays single-device. Cross-device or campaign work still requires a
+   validated plan. Rules 1 and 4 bind *clients*: a gateway running a step
+   list through its own executor, under a claim it holds itself, is the
+   device, not a client; the SDK boundary and claim rules apply unchanged to
+   everything that reaches it, including the dashboard's chat engine, whose
+   only device write is creating such a draft.
 4. **Respect claims.** Acquire equipment through the SDK's claim mechanism;
    never operate equipment claimed by another session, and release claims
    when done.

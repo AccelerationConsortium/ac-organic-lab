@@ -1,7 +1,9 @@
 # Assistant consolidation — one chat engine, scoped surfaces, device-run plans
 
-**Status:** step 1 implemented 2026-10-05 (extraction, no behaviour change).
-Steps 2–5 wait on the rules amendment below. Reviewed twice by Codex
+**Status:** steps 1–2 implemented 2026-10-05; the rules amendment below was
+decided the same day; steps 3–4 implemented 2026-10-06
+(`lab_assistant/device_chat.py`, the panel switch in opentrons-server).
+Step 5 waits on acceptance on Complexation. Reviewed three times by Codex
 (GPT-6-Astra); its findings are folded in.
 Supersedes the first draft of this file, which proposed a dashboard-side
 step runner; that was dropped because it conflicts with AGENTIC_LAB_DESIGN
@@ -154,40 +156,36 @@ weight.
    pinning, mode set, prompt fragment from the device's `/docs/agent`.
    Tests: a panel scope cannot list or call another device's tools; an
    argument naming another device is refused; unknown scope refused.
-3. **Delegated drafts.** `propose_plan` for a delegating device creates the
-   draft on the device. Tests with a mocked gateway: draft created with the
-   validated steps and hash; non-delegating devices unchanged; gateway errors
-   surface as tool errors; no dashboard plan record created.
-4. **OT-2 panel switches** (opentrons-server): the bubble streams from
-   `/api/assistant/chat` with `scope=equipment:<equipment_id>` and keeps
-   rendering plans from the gateway's own `/plans`. Its events (`complete`,
-   `tool_started`/`tool_finished`) are mapped onto the engine's frames; live
-   plan cards, plate-report links, the ELN project picker (gateway `/me`) and
-   explicit cancel are kept. The built-in assistant stays behind
-   `OT2_ASSISTANT_LOCAL=1` until a central-host outage and a rollback have
-   both been exercised. All hands-on acceptance on Complexation only (never
-   HTE), with the UI bundle rebuilt.
+3. **The device chat on the server. — done 2026-10-06.**
+   `lab_assistant/device_chat.py` plus three routes under
+   `/api/assistant/equipment/{id}/` (`health`, `chat/stream`, `chat/cancel`),
+   as designed below. Tests (`api/tests/test_assistant_device.py`) with a
+   mocked gateway: the draft reaches the device with the parsed steps as the
+   signed-in user with their roster standing; device refusals reach the
+   operator; the device secret fails closed; the turn is claim-gated; cancel
+   is owned by (user, device, request id).
+4. **OT-2 panel switches. — done 2026-10-06** (opentrons-server
+   `ui/src/lib/api.ts`): under the edge the bubble calls the server routes
+   root-relative; on direct gateway access it keeps using the gateway's own
+   assistant. The event vocabulary is the gateway's, so the bubble itself is
+   unchanged — live plan cards, plate-report links, the ELN project picker
+   and explicit cancel all keep working. The gateway stamps the verified edge
+   identity onto `created_by`. Hands-on acceptance on Complexation only
+   (never HTE).
 5. **Retire** `gateway/assistant.py`, `assistant_claude.py`, the
    `/assistant/*` routes, `OT2_ASSISTANT_*` and the Claude login on the UPLC
    PC, after step 4 has run on Complexation. `tools/ot2_agent_mcp.py` stays
    (Hermes), now documented as a client of the same contract.
 
-## Rules check — needs a human decision before steps 2–5
+## Rules — decided 2026-10-05
 
-Codex's review is right that the first draft of this section overclaimed:
+The operator (Yang Cao) directed the switch of the OT-2 panel chat to the
+server engine on 2026-10-05, which is the human decision steps 3–5 waited
+on. The amendment below is therefore applied to AGENTIC_LAB_DESIGN Part I and
+UI_DESIGN §5.1 in this same change, with the wording that was drafted here
+and reviewed by Codex.
 
-1. **Pre-existing discrepancy, not created here.** OT-2 gateway plans (panel
-   approve + run, `gateway/plans.py`) do not meet AGENTIC_LAB_DESIGN Part I
-   rule 3 (main-merged protocol, registered BitacoraDB Plan, passing
-   `validate_plan()`); they execute through the gateway's own store, not the
-   SDK (rule 1). This plan neither fixes nor worsens that, but it should be
-   written down rather than assumed accepted.
-2. **UI_DESIGN §5.1** says no model-driven code path POSTs to a device.
-   Step 3's draft creation is such a POST (it moves nothing). §2.3's
-   "centralise the inference" note describes tool-free translation, not a
-   central tool loop, so it does not cover this either.
-
-### Proposed amendment (draft — not in force until approved)
+### Amendment (applied)
 
 > **AGENTIC_LAB_DESIGN Part I, rules 1 and 4, add:** *A device executing its
 > own approved plan.* Rules 1 and 4 bind clients: nothing outside a device
@@ -195,7 +193,7 @@ Codex's review is right that the first draft of this section overclaimed:
 > gateway running a step list through its own executor, under a claim it holds
 > itself, is the device, not a client; the SDK boundary and claim rules apply
 > unchanged to everything that reaches it — including the dashboard engine,
-> whose only device write is the draft below, made through the SDK.
+> whose only device write is the draft below.
 >
 > **AGENTIC_LAB_DESIGN Part I, rule 3, add:** *Device-run step approvals.* A
 > device gateway that implements the plan contract (`POST /plans`,
@@ -206,22 +204,133 @@ Codex's review is right that the first draft of this section overclaimed:
 > and stays single-device. Cross-device or campaign work still requires a
 > validated plan.
 >
-> **UI_DESIGN §5.1, replace the sentence** "no model-driven code path POSTs to
-> a device" **with:** "No model-driven code path makes a device *act*. The one
-> exception is creating a *draft* on a device that runs its own
-> human-approved plans (Part I rule 3, device-run step approvals); the model
-> can never approve, run or modify an approved plan."
+> **UI_DESIGN §5.1, replace** "no model-driven code path POSTs to a device"
+> **with:** "No model-driven code path makes a device *act*. The one exception
+> is creating a *draft* on a device that runs its own human-approved plans
+> (Part I rule 3, device-run step approvals); the model can never approve,
+> run or modify an approved plan."
 
-## Open questions for review
+## Step 3–4 design: the device chat on the server (implemented 2026-10-06)
 
-1. ~~`lab-control` placement~~ — stays in `api/` (decided in step 1).
-2. ~~Same origin~~ — confirmed: both panel prefixes are edge-authenticated
-   (`deploy/Caddyfile.single-edge`), root `/api/assistant/*` falls through to
-   Next, whose middleware verifies the cookie, strips forged identity and
-   injects `X-Auth-User`. Root-relative fetches need no CORS change; direct
-   gateway origins would need an explicit policy.
-3. Availability (panel chat down when the central host is down): a human
-   decision. Proposed: keep the local fallback until an outage and a rollback
-   have been exercised.
-4. HTE: same codebase, so steps 4–5 reach it; all live testing stays on
-   Complexation.
+### Shape
+
+```
+OT-2 panel bubble (served under /ot2/<name>/ui/, same edge origin)
+   │ POST /api/assistant/equipment/{id}/chat/stream  {messages, model?, request_id?}
+   │ GET  /api/assistant/equipment/{id}/health       {configured, model, models}
+   ▼  (Next middleware: session required, X-Auth-User injected)
+lab_assistant.device_chat  — ONE tool-free loop, any model:
+   1. read the device, as the signed-in user, through the dashboard's device
+      auth (X-Auth-User + X-Edge-Auth): /status, /docs/agent, /plans/actions,
+      /plans (recent, as that user → the gateway's run-access rule applies),
+      and the plate summaries the gateway's own Claude path sends today
+   2. one structured model call: {reply, steps|for_each_well, prelude,
+      epilogue} — claude-cli (--json-schema, --tools ""), openrouter
+      (response_format json_schema, strict); see Models for why not Codex
+   3. if a draft was returned: POST <gateway>/plans as the user
+      (created_by "assistant (<model>) for <user>") — the device validates,
+      expands patterns, stores the draft; approve/run stay in the panel
+   4. SSE events in the gateway bubble's existing vocabulary
+      (thinking / tool_started / tool_finished / complete{reply, plan_id,
+      tools_used, model} / error), so the panel UI is unchanged
+```
+
+This is exactly how the gateway's own Claude path works today
+(`gateway/assistant.py::_chat_claude_events`), moved to the server and made
+model-agnostic. It is UI_DESIGN §2.3's "host the translation centrally, keep
+resolution/execution in the gateway": the model has no tools; the engine
+does the reads and the one write (a draft).
+
+### Models
+
+`GET …/health.models` lists what the host can actually run, probed at
+request time, never a static list:
+
+| model id | backend | available when |
+|---|---|---|
+| `claude-sonnet-5-5` (+ others in `ASSISTANT_DEVICE_CLAUDE_MODELS`) | `claude -p --json-schema` | `claude auth status` logged in |
+| `ASSISTANT_OPENAI_MODEL` (+ `ASSISTANT_DEVICE_OPENAI_MODELS`) | OpenRouter (`response_format` json_schema, strict, `require_parameters`) | `ASSISTANT_OPENAI_API_KEY` set |
+
+The first available is the default. A model the request names that is not
+in the list is a 422. Hermes is not offered here (it is a tool-using agent
+chat, not a structured translator); it stays on the dashboard bubble.
+
+**Codex (`gpt-6-sol`) is not offered yet.** Codex's own review raised it as
+P0 and a probe confirmed it: `codex exec -s read-only` still gives the model
+a shell with read access to every file the service user can read (it ran
+`head -n 1 /etc/hostname` when asked), and `codex features list` has no
+switch that removes it. Behind this unit that means `~/.claude`, the
+dashboard's env files and the lab DB. Two ways to add it later, either of
+which needs a human decision: run `codex exec` under a dedicated
+unprivileged account with its own login and nothing else readable, or use an
+OpenAI API key through the OpenRouter-style backend (no CLI, no shell). The
+`gpt-6-sol` id would then join the table with `codex` as its backend.
+
+Strict structured output (OpenAI, and OpenRouter's pass-through) forbids open
+objects and requires every property, so step arguments travel as JSON text
+(`args_json`, `wells_json`, `overrides_json`) and are parsed and validated by
+the engine before anything reaches the device; the Claude CLI takes the same
+schema (nullable `for_each_well` via `"type": ["object","null"]`, verified
+against the pinned CLI 2.1.290).
+
+### Identity and access
+
+- The route is under `/api/assistant/`, so the middleware requires a session
+  and stamps `X-Auth-User`; the engine forwards that user, their role and
+  their roster projects (`X-Auth-Projects` / `X-Auth-Pi-Projects`, resolved
+  from `/authz/scope` here — never relayed from the browser, which the
+  middleware strips anyway) to the gateway with the device's edge secret, so
+  the gateway's `OT2_REQUIRE_LOGIN` and run-data access rule see the real
+  user. The secret is the one the registry entry names
+  (`edge_secret_env`); a device without one is refused (503), never served
+  with a global fallback.
+- The turn is claim-gated like the gateway's own bubble — the engine reads
+  `/status` and refuses (423) unless the user holds the claim directly or
+  through a plan they approved (`automation (approved by <user>)`). The draft
+  itself is created without a claim token (the gateway's `POST /plans` needs
+  none); approving and running still need the claim in the panel.
+- `created_by` is `assistant (<model>) for <user>`, and the gateway appends
+  the verified edge identity whenever a label does not already name it, so
+  the card and the audit name who the draft was for regardless of the client.
+- Cancellation is owned: an in-flight turn is keyed by (user, device,
+  request id); a cancel from anyone else is a no-op. It kills the model
+  subprocess and is checked again before the draft POST; it cannot undo a
+  draft the device has already accepted (the bubble refreshes `/plans` after
+  a stop for exactly this reason).
+- Reads: `/status` and `/plans` live every turn; `/docs/agent` and
+  `/plans/actions` cached five minutes per device; plate summaries for at
+  most ten recent readable plans. One deadline (`ASSISTANT_DEVICE_TIMEOUT_S`,
+  240 s) on the model call; at most `ASSISTANT_DEVICE_CONCURRENCY` (4) panel
+  turns at once.
+- No conversation is stored server-side for the panel scope (as today:
+  the panel keeps it in the tab); `assistant_panel_draft` audit rows record
+  user, device, model and the draft id when one was created.
+
+### Panel switch (opentrons-server)
+
+- Under the edge (`/ot2/<name>/ui/`), the bubble calls the root-relative
+  server routes (`/api/assistant/equipment/ot2_<name>/…`, the id mapped
+  explicitly from the edge prefix in `ui/src/lib/api.ts`); on direct gateway
+  access (`/ui/`) it uses the gateway's own assistant if configured, else
+  hides. Behind the edge there is deliberately **no** fallback to the
+  gateway's assistant: a refusal (401/423/503) is shown, never worked around
+  with a second credential path. Rollback is redeploying the previous UI
+  bundle; the gateway assistant stays installed until step 5.
+- Cancel: `POST …/chat/cancel {request_id}`, same body and reply as the
+  gateway's route.
+
+### Step 5 (after acceptance on Complexation)
+
+Remove `gateway/assistant.py`, `assistant_claude.py`, the `/assistant/*`
+routes and `OT2_ASSISTANT_*`; the Claude login on the UPLC PC is no longer
+needed. `tools/ot2_agent_mcp.py` stays for Hermes.
+
+### Review outcomes
+
+1. Codex CLI: deferred (see Models) — not a sandboxing question any more but
+   a tool-removal one; the unit's `IPAddressDeny`/proxy posture is moot until
+   a runner account exists.
+2. Reads as the user carry the server-resolved project headers, so project
+   members' and PIs' plans arrive unredacted, exactly as in the panel.
+3. v1 is tool-free with plate summaries pre-attached; follow-up tools wait
+   for a need.

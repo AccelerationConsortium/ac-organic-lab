@@ -75,6 +75,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+import httpx
+
+from . import device_chat
 from .plan_contract import MAX_PLAN_STEPS, PLAN_TTL_S, REFUSAL_CODES, plan_step_hash
 from .scopes import SCOPABLE_KINDS, EquipmentScope, scope_system_prompt, scoped_control_env
 
@@ -802,6 +805,19 @@ class ChatRequest(BaseModel):
     mode: Literal["ask", "control"] = "ask"
 
 
+class DeviceChatRequest(BaseModel):
+    """The panel bubble's turn (gateway ``AssistantChatRequest`` vocabulary)."""
+
+    messages: list[ChatMessage] = Field(min_length=1)
+    model: str | None = Field(default=None, min_length=1, max_length=200)
+    request_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    conversation_owner: str | None = Field(default=None, max_length=320)
+
+
+class DeviceChatCancel(BaseModel):
+    request_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
 class EquipmentChatRequest(BaseModel):
     """A device panel's chat turn. No ``mode``: the panel scope is Ask only,
     and the scope itself comes from the route path."""
@@ -813,6 +829,10 @@ class EquipmentChatRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # SSE helpers
 # ---------------------------------------------------------------------------
+
+
+#: Panel turns running at once across all devices and users.
+DEVICE_CHAT_CONCURRENCY = int(os.environ.get("ASSISTANT_DEVICE_CONCURRENCY", "4"))
 
 
 def _sse(payload: dict[str, Any]) -> bytes:
@@ -1648,6 +1668,167 @@ def build_assistant_router() -> APIRouter:
                 yield _sse({"type": "error", "message": str(exc)})
 
         return _sse_response(gen())
+
+    # ── the device panel's assistant (consolidation plan, steps 3–4) ──────
+    #
+    # device_chat.py: a tool-free structured turn, any model, acting on the
+    # device as the signed-in user. Three routes in the gateway bubble's own
+    # vocabulary (health / chat/stream / chat/cancel) so the panel switches
+    # by changing a URL prefix.
+
+    device_turns: dict[tuple[str, str, str], device_chat.Turn] = {}
+    device_turn_slots = asyncio.Semaphore(DEVICE_CHAT_CONCURRENCY)
+
+    def _device_for(request: Request, equipment_id: str) -> tuple[str, device_chat.Device]:
+        actor = request.headers.get("x-auth-user")
+        if not actor:
+            raise HTTPException(status_code=401, detail="Sign in to use this instrument's assistant.")
+        aggregator = getattr(request.app.state, "aggregator", None)
+        entry = aggregator.entry(equipment_id) if aggregator is not None else None
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"Unknown equipment id: {equipment_id}")
+        if getattr(entry, "kind", None) not in SCOPABLE_KINDS:
+            raise HTTPException(
+                status_code=409,
+                detail=f"No panel assistant for {equipment_id} yet (supported: liquid handlers).",
+            )
+        try:
+            return actor, device_chat.device_from_entry(entry)
+        except device_chat.DeviceConfigError as exc:
+            logger.error("%s", exc)
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    async def _actor_headers(client: httpx.AsyncClient, actor: str, role: str | None,
+                             device: device_chat.Device) -> dict[str, str]:
+        """The actor's roster standing, resolved here (never relayed from the
+        browser), as the headers the gateway trusts from its edge."""
+        from app.plan_results import user_scope
+
+        try:
+            scope = await user_scope(client, actor)
+        except (httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=f"could not resolve your project standing: {exc}")
+        projects = sorted(scope.get("projects") or [])
+        pi_projects = sorted(scope.get("pi_projects") or [])
+        if role is None and scope.get("role") == "admin":
+            role = "admin"
+        return device_chat.device_headers(device, user=actor, role=role,
+                                          projects=projects, pi_projects=pi_projects)
+
+    @router.get("/equipment/{equipment_id}/health")
+    async def equipment_assistant_health(equipment_id: str, request: Request) -> dict[str, Any]:
+        """Whether the panel bubble should render for this device, and which
+        models the operator may pick (default first). Signed in only (the
+        dashboard middleware gates everything under /api/assistant but
+        /health), so an anonymous probe sees nothing."""
+        _device_for(request, equipment_id)
+        models = await device_chat.available_models()
+        if not models:
+            return {"configured": False, "model": None, "models": [],
+                    "reason": "no model is ready on the dashboard host (Claude Code login or "
+                              "ASSISTANT_OPENAI_API_KEY)"}
+        return {"configured": True, "reason": None, "model": models[0].id,
+                "models": [m.id for m in models]}
+
+    @router.post("/equipment/{equipment_id}/chat/stream")
+    async def equipment_assistant_stream(
+        equipment_id: str, request: Request, body: DeviceChatRequest
+    ) -> StreamingResponse:
+        """One panel turn as the gateway bubble's progress events. Access is
+        settled before the stream opens (login, device, model, duplicate
+        request id, claim held) so refusals keep their HTTP status."""
+        actor, device = _device_for(request, equipment_id)
+        if body.conversation_owner is not None and body.conversation_owner != actor:
+            raise HTTPException(
+                status_code=409,
+                detail="The signed-in account changed. Refresh before continuing this conversation.",
+            )
+        models = await device_chat.available_models()
+        if not models:
+            raise HTTPException(status_code=503, detail="no model is ready on the dashboard host")
+        choice = next((m for m in models if m.id == body.model), None) if body.model else models[0]
+        if choice is None:
+            raise HTTPException(status_code=422,
+                                detail=f"unknown model {body.model!r}; offered: {[m.id for m in models]}")
+        key = (actor, equipment_id, body.request_id or "")
+        turn = device_chat.Turn(user=actor, equipment_id=equipment_id, request_id=body.request_id or "")
+        if body.request_id:
+            if key in device_turns:
+                raise HTTPException(status_code=409, detail="assistant request ID is already active")
+            device_turns[key] = turn
+        client = device_chat.make_client()
+        try:
+            headers = await _actor_headers(client, actor, request.headers.get("x-auth-role"), device)
+            # The gateway's own assistant is claim-gated: a proposal is only
+            # useful to whoever holds the device. Same rule here, read from
+            # the device rather than trusted from the browser.
+            try:
+                r = await client.get(f"{device.base_url}/status", headers=headers, timeout=15)
+                r.raise_for_status()
+                status = r.json()
+            except httpx.HTTPError as exc:
+                raise HTTPException(status_code=502, detail=f"the device did not answer: {exc}")
+            if not device_chat.holds_claim(status, actor):
+                raise HTTPException(status_code=423, detail="Take control of the device to use the assistant.")
+        except BaseException:
+            device_turns.pop(key, None)
+            await client.aclose()
+            raise
+        messages = [m.model_dump() for m in body.messages]
+        db = getattr(request.app.state, "db", None)
+        logger.info("device chat: user=%s device=%s model=%s messages=%d",
+                    actor, equipment_id, choice.id, len(messages))
+
+        async def on_draft(plan: dict[str, Any]) -> None:
+            await _audit(db, equipment_id, "assistant_panel_draft",
+                         f"{actor} received draft {plan.get('plan_id')} from {choice.id}",
+                         {"actor": actor, "model": choice.id, "plan_id": plan.get("plan_id"),
+                          "steps": len(plan.get("steps") or [])})
+
+        async def gen() -> AsyncIterator[bytes]:
+            try:
+                yield SSE_PREAMBLE
+                async with device_turn_slots:
+                    async for event in device_chat.panel_turn(
+                        client=client, device=device, headers=headers, user=actor,
+                        messages=messages, choice=choice, turn=turn, on_draft=on_draft,
+                    ):
+                        yield _sse(event)
+            except device_chat.Cancelled:
+                yield _sse({"type": "error", "message": "Assistant reply stopped."})
+            except (asyncio.CancelledError, GeneratorExit):
+                # The browser went away (Stop aborts the fetch; a closed tab
+                # does the same): stop the model, keep the device untouched.
+                turn.stop()
+                raise
+            except (device_chat.ReplyError, TimeoutError) as exc:
+                yield _sse({"type": "error", "message": str(exc)})
+            except httpx.HTTPStatusError as exc:
+                yield _sse({"type": "error", "message": f"the device refused a read: "
+                            f"{exc.response.status_code} {exc.response.text[:200]}"})
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("device chat errored (device=%s)", equipment_id)
+                yield _sse({"type": "error", "message": f"assistant request failed ({type(exc).__name__})"})
+            finally:
+                turn.stop()
+                if device_turns.get(key) is turn:
+                    del device_turns[key]
+                await asyncio.shield(client.aclose())
+
+        return _sse_response(gen())
+
+    @router.post("/equipment/{equipment_id}/chat/cancel")
+    async def equipment_assistant_cancel(
+        equipment_id: str, request: Request, body: DeviceChatCancel
+    ) -> dict[str, bool]:
+        """Stop one in-flight turn of *this* user on *this* device. It never
+        touches a robot plan, and it cannot undo a draft already accepted."""
+        actor, _device = _device_for(request, equipment_id)
+        turn = device_turns.get((actor, equipment_id, body.request_id))
+        if turn is None:
+            return {"canceled": False}
+        turn.stop()
+        return {"canceled": True}
 
     @router.post("/plans/{plan_id}/approve")
     async def approve_plan(
