@@ -1722,11 +1722,10 @@ def build_assistant_router() -> APIRouter:
         dashboard middleware gates everything under /api/assistant but
         /health), so an anonymous probe sees nothing."""
         _device_for(request, equipment_id)
-        models = await device_chat.available_models()
+        models, reasons = await device_chat.available_models()
         if not models:
             return {"configured": False, "model": None, "models": [],
-                    "reason": "no model is ready on the dashboard host (Claude Code login or "
-                              "ASSISTANT_OPENAI_API_KEY)"}
+                    "reason": "no model is ready on the dashboard host: " + "; ".join(reasons)}
         return {"configured": True, "reason": None, "model": models[0].id,
                 "models": [m.id for m in models]}
 
@@ -1743,9 +1742,10 @@ def build_assistant_router() -> APIRouter:
                 status_code=409,
                 detail="The signed-in account changed. Refresh before continuing this conversation.",
             )
-        models = await device_chat.available_models()
+        models, reasons = await device_chat.available_models()
         if not models:
-            raise HTTPException(status_code=503, detail="no model is ready on the dashboard host")
+            raise HTTPException(status_code=503,
+                                detail="no model is ready on the dashboard host: " + "; ".join(reasons))
         choice = next((m for m in models if m.id == body.model), None) if body.model else models[0]
         if choice is None:
             raise HTTPException(status_code=422,

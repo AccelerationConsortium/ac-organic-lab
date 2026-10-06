@@ -160,8 +160,8 @@ def _app(gateway: _Gateway, monkeypatch, *, models=None, structured=None) -> Fas
                         lambda: httpx.AsyncClient(transport=httpx.MockTransport(gateway.handler)))
     offered = models if models is not None else [device_chat.ModelChoice("claude-sonnet-5-5", "claude-cli")]
 
-    async def available() -> list[device_chat.ModelChoice]:
-        return offered
+    async def available() -> tuple[list[device_chat.ModelChoice], list[str]]:
+        return offered, ([] if offered else ["Claude Code is not logged in on the dashboard host"])
 
     monkeypatch.setattr(device_chat, "available_models", available)
     seen: dict[str, Any] = {}
@@ -206,6 +206,7 @@ async def test_health_needs_a_user_and_a_known_device_and_lists_models(monkeypat
     app = _app(_Gateway(), monkeypatch, models=[])
     r = await _call(app, "GET", "/api/assistant/equipment/ot2_complexation/health", headers=auth)
     assert r.json()["configured"] is False and r.json()["models"] == []
+    assert "not logged in" in r.json()["reason"]
 
 
 async def test_a_turn_reads_as_the_user_and_creates_the_draft_on_the_device(monkeypatch):
@@ -375,3 +376,48 @@ def test_the_status_is_compacted_without_inventing_anything():
     assert len(json.dumps(compact)) < before / 10
     # The original is untouched.
     assert "wells" in status["details"]["snapshot"]["deck"]["slots"]["2"]["labware"]["definition"]
+
+
+async def test_claude_is_offered_only_when_its_api_host_is_reachable(tmp_path, monkeypatch):
+    """A login check passes offline; the API unit egresses only through a
+    proxy with an allowlist, so reachability is probed too (2026-10-06: every
+    turn failed three minutes in because the proxy refused api.anthropic.com)."""
+    import asyncio
+
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\necho '{\"loggedIn\": true}'\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(device_chat, "_claude_binary", lambda: str(fake))
+    monkeypatch.setattr(device_chat, "_readiness", {})
+
+    # A proxy that refuses the CONNECT.
+    async def refuse(reader, writer):
+        await reader.readline()
+        writer.write(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+        await writer.drain()
+        writer.close()
+    server = await asyncio.start_server(refuse, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setenv("HTTPS_PROXY", f"http://127.0.0.1:{port}")
+    try:
+        models, reasons = await device_chat.available_models()
+    finally:
+        server.close()
+    assert models == [] or all(m.backend != "claude-cli" for m in models)
+    assert any("refused CONNECT api.anthropic.com:443" in r for r in reasons), reasons
+
+    # A proxy that accepts it: offered.
+    async def accept(reader, writer):
+        await reader.readline()
+        writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        await writer.drain()
+        writer.close()
+    server = await asyncio.start_server(accept, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setenv("HTTPS_PROXY", f"http://127.0.0.1:{port}")
+    monkeypatch.setattr(device_chat, "_readiness", {})
+    try:
+        models, _reasons = await device_chat.available_models()
+    finally:
+        server.close()
+    assert [m.id for m in models if m.backend == "claude-cli"] == device_chat.CLAUDE_MODELS
