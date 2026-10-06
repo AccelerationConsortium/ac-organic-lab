@@ -238,6 +238,10 @@ async def test_a_turn_reads_as_the_user_and_creates_the_draft_on_the_device(monk
     assert payload["messages"] == [{"role": "user", "content": "lights on"}]
     assert payload["reads"]["get_status"]["equipment_status"] == "ready"
     assert payload["current_plans"][0]["redacted"] is True and payload["plate_reports"] == []
+    # The static reads ride in the (cacheable) system prompt, not the payload.
+    assert "static" not in payload and "list_actions" not in payload["reads"]
+    system = app.state.seen["system"]
+    assert '"lights.set"' in system and "reads.get_equipment_docs" in system
 
 
 async def test_a_turn_is_claim_gated_like_the_gateway_bubble(monkeypatch):
@@ -341,3 +345,33 @@ def test_the_prompt_keeps_the_gateway_safety_lines():
                      "force_direct=true", "Operator-only actions include", "You do not decide chemistry",
                      "force_drop: true", "{well}", "OT-2 Complexation", "You have NO tools"):
         assert fragment in text, fragment
+
+
+def test_the_status_is_compacted_without_inventing_anything():
+    wells = {f"{r}{c}": {"depth": 12.6, "shape": "rectangular", "totalLiquidVolume": 700,
+                         "x": 1.0, "y": 2.0, "z": 6.4, "xDimension": 7.4, "yDimension": 7.4}
+             for r in "ABCDEFGH" for c in range(1, 13)}
+    definition = {"ordering": [["A1", "B1"]], "parameters": {"loadName": "plate_96"},
+                  "metadata": {"displayName": "Plate"}, "dimensions": {"zDimension": 14},
+                  "wells": wells, "groups": [{"wells": list(wells)}], "brand": {"brand": "x"},
+                  "cornerOffsetFromSlot": {"x": 0}, "namespace": "custom", "version": 1}
+    labware = {"load_name": "plate_96", "kind": "plate", "definition": definition}
+    status = {"equipment_status": "ready", "details": {"snapshot": {"deck": {"slots": {
+        "2": {"labware": labware, "declared": json.loads(json.dumps(labware)), "slot_state": "declared"},
+        "11": {"labware": {"load_name": "block", "definition": None}, "declared": None},
+    }}}, "tip_racks": [1]}}
+    before = len(json.dumps(status))
+    compact = device_chat.compact_status(status)
+    slot = compact["details"]["snapshot"]["deck"]["slots"]["2"]
+    d = slot["labware"]["definition"]
+    assert "wells" not in d and "groups" not in d and "brand" not in d
+    assert d["ordering"] == [["A1", "B1"]] and d["parameters"] == {"loadName": "plate_96"}
+    assert d["well_count"] == 96
+    assert d["well_example"] == {"depth": 12.6, "totalLiquidVolume": 700, "shape": "rectangular",
+                                 "xDimension": 7.4, "yDimension": 7.4}
+    assert slot["declared"]["definition"] == "same as labware.definition"
+    assert compact["details"]["snapshot"]["deck"]["slots"]["11"]["labware"]["definition"] is None
+    assert compact["details"]["tip_racks"] == [1]
+    assert len(json.dumps(compact)) < before / 10
+    # The original is untouched.
+    assert "wells" in status["details"]["snapshot"]["deck"]["slots"]["2"]["labware"]["definition"]

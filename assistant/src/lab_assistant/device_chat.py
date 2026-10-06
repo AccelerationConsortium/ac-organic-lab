@@ -228,10 +228,50 @@ def device_headers(device: Device, *, user: str, role: Optional[str],
 _docs_cache: Dict[str, tuple[float, Dict[str, Any], Dict[str, Any]]] = {}
 
 
+#: Labware definition keys the model never needs: per-well geometry (96
+#: entries of x/y/z/depth), well groups, brand, slot offset. Measured on
+#: Complexation 2026-10-06: two plates made /status 74 KB, 64 KB of it this.
+_DEFINITION_DROP = ("wells", "groups", "brand", "cornerOffsetFromSlot")
+
+
+def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
+    """``/status`` with each deck labware definition reduced to what a plan
+    needs — load name, ordering (well names and traversal order), parameters,
+    metadata, outer dimensions, one well's depth/volume/shape — and a
+    ``declared`` definition identical to the loaded one replaced by a note.
+    Nothing is invented; the full envelope stays on the gateway."""
+    out = json.loads(json.dumps(status, default=str))
+    slots = (((out.get("details") or {}).get("snapshot") or {}).get("deck") or {}).get("slots") or {}
+    for slot in slots.values():
+        if not isinstance(slot, dict):
+            continue
+        loaded = slot.get("labware") if isinstance(slot.get("labware"), dict) else None
+        declared = slot.get("declared") if isinstance(slot.get("declared"), dict) else None
+        if (loaded and declared and declared is not loaded
+                and declared.get("definition") and declared.get("definition") == loaded.get("definition")):
+            declared["definition"] = "same as labware.definition"
+        for item in (loaded, declared):
+            definition = item.get("definition") if item else None
+            if not isinstance(definition, dict):
+                continue
+            wells = definition.get("wells") if isinstance(definition.get("wells"), dict) else {}
+            compact = {k: v for k, v in definition.items() if k not in _DEFINITION_DROP}
+            compact["well_count"] = len(wells)
+            if wells:
+                first = next(iter(wells.values()))
+                if isinstance(first, dict):
+                    compact["well_example"] = {k: first.get(k) for k in
+                                               ("depth", "totalLiquidVolume", "shape", "diameter",
+                                                "xDimension", "yDimension") if first.get(k) is not None}
+            item["definition"] = compact
+    return out
+
+
 async def read_context(client: httpx.AsyncClient, device: Device, headers: Dict[str, str],
                        *, on_read: Callable[[str], Awaitable[None]] | None = None) -> Dict[str, Any]:
     """What the gateway's own assistant read before every turn: status (with
-    deck and consumables), the equipment guide and action catalog (cached),
+    deck and consumables, compacted), the equipment guide and action catalog
+    (cached; they go into the system prompt, see :func:`system_prompt`),
     recent plans as this user (so the gateway's access rule applies), and
     plate summaries for recent plans with readings."""
     async def get(path: str, **kw: Any) -> Any:
@@ -241,7 +281,7 @@ async def read_context(client: httpx.AsyncClient, device: Device, headers: Dict[
         r.raise_for_status()
         return r.json()
 
-    status = await get("/status")
+    status = compact_status(await get("/status"))
     now = time.monotonic()
     cached = _docs_cache.get(device.equipment_id)
     if cached and now - cached[0] < DOCS_TTL_S:
@@ -282,13 +322,11 @@ async def read_context(client: httpx.AsyncClient, device: Device, headers: Dict[
     return {
         "reads": {
             "get_status": status,
-            "get_deck": details.get("deck", {}),
             "get_consumables": {k: details.get(k) for k in
                                 ("tip_racks", "loaded_plate", "mounted_tips", "pipette_channels")}
                                | {"modules": robot.get("modules")},
-            "list_actions": actions,
-            "get_equipment_docs": docs,
         },
+        "static": {"list_actions": actions, "get_equipment_docs": docs},
         "current_plans": recent,
         "plate_reports": reports,
     }
@@ -398,10 +436,13 @@ one, decline and ask what they want.
 
 How to work:
 You have NO tools. Everything you may read is attached to the request as JSON: \
-`reads.get_status` (incl. deck and consumables), `reads.list_actions` (the action \
-catalog with argument schemas), `reads.get_equipment_docs` (the equipment guide: \
-API coverage, naming conventions, limitations), `current_plans` and \
-`plate_reports`. Answer from this context; if it lacks what you need, say so.
+`reads.get_status` (incl. deck and consumables; labware definitions are \
+reduced to load name, well ordering, parameters and one example well) and \
+`reads.get_consumables` in the request; `reads.list_actions` (the action \
+catalog with argument schemas) and `reads.get_equipment_docs` (the equipment \
+guide: API coverage, naming conventions, limitations) below in these \
+instructions; `current_plans` and `plate_reports` in the request. Answer from \
+this context; if it lacks what you need, say so.
 1. Read the state first. A plan built without looking at the deck is a guess.
 2. Check consumables before proposing pipetting — a rack with no fresh tips or \
 an unloaded plate will fail at the first step.
@@ -445,15 +486,30 @@ string text.
 """
 
 
-def system_prompt(docs: Dict[str, Any], device: Device) -> str:
+def system_prompt(docs: Dict[str, Any], device: Device,
+                  actions: Optional[Dict[str, Any]] = None) -> str:
+    """The instructions plus the device's *static* reads — the equipment
+    guide and the action catalog. They change only on a gateway deploy, so
+    they live in the system prompt, which is byte-identical from turn to turn
+    and user to user for one device and therefore prompt-cached by the
+    provider; the per-turn payload carries only live state. The guide's own
+    copy of the action catalog (``actions``) is dropped: it is the same
+    catalog ``/plans/actions`` serves."""
     model = str(docs.get("model") or "Opentrons OT-2")
     flex = "flex" in model.lower()
-    return SYSTEM_PROMPT.format(
+    text = SYSTEM_PROMPT.format(
         robot_model=model, equipment_name=device.name,
         trash_guidance=("Flex has no assumed fixed trash: register a physically present bin "
                         "or name an explicit drop well." if flex else
                         "propose drop_tip with only the pipette when its fixed trash is registered."),
     )
+    guide = {k: v for k, v in docs.items() if k != "actions"}
+    text += ("\n\nreads.get_equipment_docs (the equipment guide, JSON):\n"
+             + json.dumps(guide, default=str, separators=(",", ":")))
+    if actions is not None:
+        text += ("\n\nreads.list_actions (the action catalog with argument schemas, JSON):\n"
+                 + json.dumps(actions, default=str, separators=(",", ":")))
+    return text
 
 
 def _history(messages: List[Dict[str, str]]) -> str:
@@ -690,21 +746,27 @@ async def panel_turn(
                             "success": True, "error": None})
 
     yield_queue: List[Dict[str, Any]] = []
+    t0 = time.monotonic()
     context = await read_context(client, device, headers, on_read=started)
     for event in yield_queue:
         yield event
     if turn.cancel.is_set():
         raise Cancelled()
     yield {"type": "thinking", "round": 2}
-    system = system_prompt(context["reads"]["get_equipment_docs"], device)
+    static = context.pop("static")
+    system = system_prompt(static["get_equipment_docs"], device, static["list_actions"])
     payload = {"messages": messages, **context}
+    t1 = time.monotonic()
     if choice.backend == "claude-cli":
         structured = await run_claude(turn, choice.id, system, payload)
     else:
         structured = await run_openrouter(client, turn, choice.id, system, payload)
+    t2 = time.monotonic()
     if turn.cancel.is_set():
         raise Cancelled()
     reply, body = proposal_from_reply(structured)
+    timings = {"reads_s": round(t1 - t0, 2), "model_s": round(t2 - t1, 2),
+               "system_chars": len(system), "payload_chars": len(json.dumps(payload, default=str))}
     plan_id: Optional[str] = None
     if body is not None:
         used.append("propose_plan")
@@ -728,6 +790,9 @@ async def panel_turn(
             reply = f"I could not create that draft: {error}"
         elif not reply:
             reply = "I proposed a draft for your review and approval."
+    timings["draft_s"] = round(time.monotonic() - t2, 2)
+    logger.info("device chat turn: device=%s model=%s %s", device.equipment_id, choice.id,
+                " ".join(f"{k}={v}" for k, v in timings.items()))
     yield {"type": "complete", "result": {
         "reply": reply or "The model returned no reply or draft.",
         "tools_used": used, "plan_id": plan_id, "model": choice.id,
