@@ -1,7 +1,7 @@
 # Unformatted runs → the ELN: as-run protocols, design skeletons, attach-to-design
 
-**Status:** proposed 2026-10-06, for the operator's review (Codex review
-pending — credits). Follows [`ASSISTANT_CONSOLIDATION_PLAN.md`](ASSISTANT_CONSOLIDATION_PLAN.md)
+**Status:** decided 2026-10-06 (decisions below), ready to build; Codex review
+pending — credits. Follows [`ASSISTANT_CONSOLIDATION_PLAN.md`](ASSISTANT_CONSOLIDATION_PLAN.md)
 (steps 1–7 shipped) and the filing described in
 [`ARCHITECTURE.md`](ARCHITECTURE.md) → *OT-2 plan results → ELN*. Spans three
 repos: this one (the filing), `bitacora` (the notebook UI and its record
@@ -49,9 +49,8 @@ model call:
   with `{well}`, `prelude` → `before_wells`, `epilogue` → `after_wells`; a
   flat plan → one step per action. `step_id`s `s001`… assigned once and kept
   (they are permanent once merged). Actions keep their lab-skills names;
-  gateway-local actions without a skill (`platebalance.read` / `tare` /
-  `zero`) are emitted as `manual` instruction steps naming the balance until
-  a skill exists. Numbers from the run become fixed `params`; the plate
+  `platebalance.read` / `tare` / `zero` gain lab-skills skills (decision 3)
+  so they compile like any other action. Numbers from the run become fixed `params`; the plate
   becomes a `plate` parameter of type `container` bound to the run's labware.
   Stored on the Experiment as `meta.as_run_protocol` (text) and in the note's
   `data`; **never** committed to a project repo by the filing.
@@ -121,15 +120,25 @@ compiler consumes).
 - Access: unformatted runs follow BitacoraDB `can_read` (approver, project
   members/PIs, admins) — the same rule the panel and dashboard apply.
 
-## Open questions for the operator
+## Decisions (operator, 2026-10-06)
 
-1. **Where do PRs go** — the project repo Bitácora already manages (then
-   Attach needs the room's git identity), or a `drafts/` branch per project?
-2. **Measurements for every run, or only on attach?** Every run is simpler
-   and makes the well view work immediately; it also puts ~96 samples +
-   readings per run into BitacoraDB for runs nobody will ever attach.
-3. **`platebalance.*` as lab-skills skills** (so the as-run protocol compiles
-   without `manual` placeholders)? Small, but it is a lab-skills change.
+1. **PRs, and why.** Protocols and designs are *files in the project's git
+   repo*, and `main` is, by rule 1, the human-signed-off version: the Plan
+   row stores the commit hash it ran from, CI on pull requests enforces that
+   `step_id`s are never renamed or reused, and the PR history is the only
+   record of who approved which version. If the Attach action wrote
+   straight to `main`, the notebook's "approved protocol" would be a file no
+   human read — the same shortcut the panel's Approve button exists to
+   prevent. A PR is the file landing on a branch plus one human click. The
+   PRs go to the **project repo Bitácora already manages**, and Bitácora
+   gets an in-app *review → merge* step for them so the operator never has to
+   visit GitHub; a draft the operator rejects is closed, and the run simply
+   stays unformatted.
+2. **Measurements for every run** (not only on attach): the well view works
+   the moment a run is attached, and the data exists either way.
+3. **`platebalance.read` / `tare` / `zero` become lab-skills skills**, so
+   as-run protocols compile with no `manual` placeholders; the compiler's
+   action map picks them up from the skill catalog.
 
 ## Tests (each repo)
 
