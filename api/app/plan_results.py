@@ -178,8 +178,30 @@ def experiment_hid(bundle: dict[str, Any]) -> str:
     return f"{bundle['equipment_id']}-plan-{bundle['plan_id']}"
 
 
+#: Bumped when the generated artefacts change shape; the back-fill re-files
+#: experiments whose meta carries an older (or no) version.
+ARTIFACTS_VERSION = 1
+
+
+def experiment_artifacts(bundle: dict[str, Any]) -> dict[str, Any]:
+    """What the run can truthfully tell the notebook, in Bitácora's formats
+    (plan_artifacts.py): the as-run protocol + action map, the design
+    skeleton with its TODOs, and the artefact version."""
+    from . import plan_artifacts
+
+    files = plan_artifacts.protocol_yaml(bundle)
+    return {
+        "artifacts_version": ARTIFACTS_VERSION,
+        "as_run_protocol": {"name": plan_artifacts.artifact_name(bundle),
+                            "protocol_yaml": files["protocol"], "actions_yaml": files["actions"],
+                            "warnings": files["warnings"]},
+        "design_skeleton": plan_artifacts.design_skeleton(bundle),
+    }
+
+
 def experiment_meta(bundle: dict[str, Any]) -> dict[str, Any]:
     return {
+        **experiment_artifacts(bundle),
         "unformatted": True,
         "created_by": "ac-organic-lab/plan_results",
         "source": "ot2-gateway plan",
@@ -249,6 +271,46 @@ async def user_scope(client: httpx.AsyncClient, user: str) -> dict[str, Any]:
     return scope
 
 
+async def ensure_artifacts(client: httpx.AsyncClient, base: str, headers: dict[str, str],
+                           experiment_id: str, bundle: dict[str, Any],
+                           meta: Optional[dict[str, Any]] = None) -> dict[str, int]:
+    """Bring one filed Experiment up to the current artefacts: its meta carries
+    the as-run protocol and design skeleton, and every weighed well has a
+    Sample. Idempotent — meta is PATCHed only when its version is behind, and
+    only wells whose ``hid`` is not there yet are posted — so it serves both
+    the filing path and the back-fill. Returns what it did."""
+    from . import plan_artifacts
+
+    done = {"meta_patched": 0, "samples_posted": 0}
+    if meta is None:
+        r = await client.get(f"{base}/experiments/{experiment_id}", headers=headers)
+        r.raise_for_status()
+        meta = (r.json().get("meta") or {})
+    if int(meta.get("artifacts_version") or 0) < ARTIFACTS_VERSION:
+        r = await client.patch(f"{base}/experiments/{experiment_id}", headers=headers,
+                               json={"meta": {**meta, **experiment_artifacts(bundle)}})
+        if r.status_code == 422:
+            raise Held(f"BitacoraDB refused the artefacts: {r.text[:300]}")
+        r.raise_for_status()
+        done["meta_patched"] = 1
+    wanted = plan_artifacts.well_samples(bundle)
+    if wanted:
+        r = await client.get(f"{base}/samples", headers=headers, params={"experiment_id": experiment_id})
+        r.raise_for_status()
+        present = {str(s.get("hid")) for s in r.json()}
+        for sample in wanted:
+            if sample["hid"] in present:
+                continue
+            r = await client.post(f"{base}/samples", headers=headers,
+                                  json={**sample, "experiment_id": experiment_id})
+            if r.status_code == 422:
+                raise Held(f"BitacoraDB refused a well sample: {r.text[:300]}")
+            if r.status_code != 409:
+                r.raise_for_status()
+                done["samples_posted"] += 1
+    return done
+
+
 async def approver_is_member(client: httpx.AsyncClient, user: str, project: str) -> bool:
     from .manual_steps import may_confirm
 
@@ -278,12 +340,18 @@ async def file_one(journal: PlanResultsJournal, row: dict[str, Any],
             started = bundle.get("started_at") or row["received_at"]
             title = f"UNFORMATTED — OT-2 plan {plan_id} ({started[:10]})"
 
+            found_meta: Optional[dict[str, Any]] = None
+
             async def _find() -> Optional[str]:
+                nonlocal found_meta
                 r = await client.get(f"{base}/experiments", headers=headers,
                                      params={"project": project, "hid": hid})
                 r.raise_for_status()
                 rows = r.json()
-                return str(rows[0]["experiment_id"]) if rows else None
+                if rows:
+                    found_meta = rows[0].get("meta") or {}
+                    return str(rows[0]["experiment_id"])
+                return None
 
             experiment_id = await _find()
             if experiment_id is None:
@@ -299,7 +367,11 @@ async def file_one(journal: PlanResultsJournal, row: dict[str, Any],
                 else:
                     r.raise_for_status()
                     experiment_id = str(r.json()["experiment_id"])
+                    found_meta = experiment_meta(bundle)  # just written: nothing to patch
             journal.update(device_id, plan_id, experiment_id=experiment_id)
+            known_meta = found_meta
+        else:
+            known_meta = None  # a retry: read the live meta before deciding
 
         # Notes are append-only and carry no idempotency key, so a crash after
         # a successful POST but before the journal update would file the note
@@ -325,6 +397,10 @@ async def file_one(journal: PlanResultsJournal, row: dict[str, Any],
                 raise Held(f"BitacoraDB refused the note: {r.text[:300]}")
             r.raise_for_status()
             note_id = str(r.json()["note_id"])
+        # The artefacts the notebook can import from (UNFORMATTED_RUNS_PLAN.md
+        # step 1): as-run protocol + design skeleton on the Experiment, one
+        # Sample per weighed well. Idempotent, so a retry completes them.
+        await ensure_artifacts(client, base, headers, experiment_id, bundle, meta=known_meta)
         journal.update(device_id, plan_id, state=FILED, attempts=attempts, last_error=None,
                        note_id=note_id, filed_at=_now())
         return FILED
@@ -392,6 +468,38 @@ def build_plan_results_router() -> APIRouter:
             # File now rather than at the next loop tick; the loop is the backstop.
             asyncio.create_task(file_pending(journal))
         return {"status": "accepted", "plan_id": body.plan_id, "state": row["state"]}
+
+    @router.post("/plan-results/backfill")
+    async def backfill_artifacts(request: Request) -> dict[str, Any]:
+        """Bring every already-filed run up to the current artefacts (as-run
+        protocol, design skeleton, well samples). Admin only — it writes to
+        the ELN on the approvers' behalf, with each approver's own standing,
+        exactly as the original filing did. Idempotent; safe to re-run."""
+        if request.headers.get("x-auth-role") != "admin" or not request.headers.get("x-auth-user"):
+            raise HTTPException(403, "admin only")
+        journal = _journal(request)
+        base, secret = record.BITACORADB_URL.rstrip("/"), record.edge_secret()
+        if not base or not secret:
+            raise HTTPException(503, "record layer not configured")
+        out: dict[str, Any] = {"examined": 0, "meta_patched": 0, "samples_posted": 0, "errors": []}
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+            for row in journal.summaries(limit=1000):
+                if row.get("state") != FILED:
+                    continue
+                full = journal.get(row["device_id"], row["plan_id"]) or {}
+                bundle, experiment_id = full.get("payload") or {}, full.get("experiment_id")
+                if not bundle or not experiment_id:
+                    continue
+                out["examined"] += 1
+                headers = {"X-Edge-Secret": secret, "X-Auth-User": bundle["approved_by"],
+                           "X-Auth-Projects": bundle["eln_project"]}
+                try:
+                    done = await ensure_artifacts(client, base, headers, str(experiment_id), bundle)
+                    out["meta_patched"] += done["meta_patched"]
+                    out["samples_posted"] += done["samples_posted"]
+                except Exception as exc:  # noqa: BLE001 - reported per run, never hidden
+                    out["errors"].append({"plan_id": row["plan_id"], "error": str(exc)[:300]})
+        return out
 
     # Under /api/assistant/ so the dashboard middleware requires a signed-in
     # session and stamps the verified X-Auth-User (the old /api/plan-results

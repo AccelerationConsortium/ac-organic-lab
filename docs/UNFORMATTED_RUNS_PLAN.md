@@ -39,7 +39,25 @@ panel prompt's "you do not decide chemistry" applies to the notebook too.
 
 ## Design
 
-### 1. The filing writes an as-run protocol, a design skeleton and measurements
+### 1. The filing writes an as-run protocol, a design skeleton and well samples — done 2026-10-06
+
+Implemented in `api/app/plan_artifacts.py` (pure, tested) and
+`plan_results.py` (`experiment_artifacts`, `ensure_artifacts`, the admin
+`POST /api/plan-results/backfill`). **One deviation from the text below, found
+while building:** BitacoraDB's `Measurement` requires a per-technique
+`acquisition_params` variant and its `TechniqueType` enum has no gravimetric
+entry, so a mass cannot yet be a Measurement without a BitacoraDB schema
+change (enum + params variant + migration). The filing therefore writes one
+**Sample** per weighed well (`hid` `<plate>:<well>`, the key Bitácora's
+lineage join uses) with the mass in `meta` (`mass_g`, `deviation_pct`,
+`volume_ul`, `stable`, `plan_id`, `unit`). A `GRAVIMETRY` technique in
+BitacoraDB is the follow-up that turns these into Measurements; the samples
+are already in place for it. Also learned: the per-well template lives in
+Bitácora's **action map** (`compile/actions.yaml`: `for_each_well`,
+`before_wells` / `steps` / `after_wells`, sub-steps `{id, skill, args}`), not
+in the protocol's steps — so the as-run artefact is a protocol file *plus*
+its action-map entries; `{row}`/`{column}` map to `{well_row}`/`{well_column}`,
+and `{index}` (no Bitácora equivalent) is reported as a warning.
 
 `api/app/plan_results.py` (this repo), at `file_one`, deterministically, no
 model call:

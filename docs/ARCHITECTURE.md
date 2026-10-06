@@ -232,9 +232,13 @@ Owns:
   The approver's membership of the chosen project is checked against
   `/authz/scope` first; a non-member is held, never filed. No BitacoraDB Plan
   row: a device-local step approval is not a Run Authorization. Status at
-  `GET /api/plan-results`. Getting these runs *into* the notebook (as-run
-  protocol, design skeleton, per-well measurements, attach-to-design) is
-  planned in [`UNFORMATTED_RUNS_PLAN.md`](UNFORMATTED_RUNS_PLAN.md).
+  `GET /api/plan-results`. Since 2026-10-06 the Experiment's `meta` also
+  carries the import artefacts (`plan_artifacts.py`: an as-run protocol with
+  its action-map entries, a design skeleton with TODOs for every intent
+  field) and each weighed well is a `Sample` (`<plate>:<well>`, mass in
+  `meta`); `POST /api/plan-results/backfill` (admin) brings older filings up
+  to date. The notebook side (an *Unformatted runs* section, attach-to-design
+  by PR) is planned in [`UNFORMATTED_RUNS_PLAN.md`](UNFORMATTED_RUNS_PLAN.md).
 - **Operator control passthrough** (`control.py`): mirrors each device's
   `/control/*` surface for operator-initiated writes, runs the per-request
   claim → action → release dance for v1.1 devices, and writes one
