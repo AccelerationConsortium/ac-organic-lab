@@ -1,0 +1,41 @@
+# Loopback text-to-speech for the lab assistant's read-aloud (stt/ in the
+# monorepo, TTS-only: STT_ASR=0). Kokoro-82M on the orchestration host's CPU;
+# ASR stays on gaia's GPU (ac-organic-lab-stt.service via dashboard-voice-relay).
+# 127.0.0.1 only — the dashboard's /api/assistant/voice/speak proxy is its
+# single caller and owns identity (ASSISTANT_TTS_URL). Install: deploy/README.md.
+#
+# Why CPU, not this host's Arc iGPU: measured 2026-10-06, the iGPU (PyTorch XPU)
+# is ~0.25 s per sentence only for sentence lengths it has seen before; every
+# new length compiles kernels for 1-14 s, again after each restart. The CPU is
+# a steady ~0.5-1 s per sentence. The NPU cannot compile Kokoro at all.
+[Unit]
+Description=SDL2 lab assistant text-to-speech (Kokoro on CPU, loopback)
+After=network.target
+
+[Service]
+User=sdl2
+WorkingDirectory=/home/sdl2/caoyang/ac-organic-lab/stt
+Environment=STT_HOST=127.0.0.1
+Environment=STT_PORT=8072
+Environment=STT_ASR=0
+Environment=STT_DEVICE=cpu
+Environment=STT_EQUIPMENT_YAML=/home/sdl2/caoyang/ac-organic-lab/equipment.yaml
+# 8 threads measured fastest on the Core Ultra 9 285H; torch's default (16)
+# spreads onto the E-cores and runs 3-5x slower.
+Environment=OMP_NUM_THREADS=8
+# Kokoro and its voice live in sdl2's Hugging Face cache; never fetch at start.
+Environment=HF_HUB_OFFLINE=1
+# The venv's own binary, not `uv run`: nothing syncs at start, so the egress
+# lock below cannot break a boot. After a dependency change, rebuild with
+# `uv sync --frozen` in stt/ (the CUDA torch wheel runs fine on CPU).
+ExecStart=/home/sdl2/caoyang/ac-organic-lab/stt/.venv/bin/lab-stt-serve
+Restart=on-failure
+RestartSec=5
+# Text in, audio out, nothing else: no network beyond loopback.
+IPAddressDeny=any
+IPAddressAllow=localhost
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

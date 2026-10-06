@@ -1,0 +1,17 @@
+[Unit]
+Description=Relay dashboard voice to existing Gaia loopback inference
+Requires=dashboard-voice-relay.socket
+After=network.target
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd 127.0.0.1:8070
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1/32
+IPAddressAllow=100.64.254.6/32
