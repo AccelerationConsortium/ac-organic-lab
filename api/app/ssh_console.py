@@ -240,12 +240,7 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         user="sdl2",
         target="localhost",
         shell="bash",
-        note=(
-            "The dashboard's own host since the 2026-09 migration (tailnet "
-            "sdl2-server-agents, 100.64.254.6) — the session loops back over "
-            "ssh rather than inheriting the API service's systemd sandbox, so "
-            "you get a normal login shell."
-        ),
+        note="",
         profiles=(
             SshProfile(id="shell", label="Shell", args=(), description="Plain bash login shell."),
             _PROFILE_TMUX,

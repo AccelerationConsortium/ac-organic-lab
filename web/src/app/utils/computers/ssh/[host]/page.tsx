@@ -32,7 +32,9 @@ function Banner({ host }: { host: SshHost }) {
           <span className="font-mono">{host.hostname}</span>
         </p>
       </div>
-      <p className="text-xs text-ink-subtle dark:text-slate-300">{host.note}</p>
+      {host.note ? (
+        <p className="text-xs text-ink-subtle dark:text-slate-300">{host.note}</p>
+      ) : null}
       <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
         This session runs as <span className="font-mono">{host.user}</span> using the
         dashboard host&apos;s SSH key, and is recorded in the lab history DB with your
