@@ -32,6 +32,7 @@ original custom build, which is gone). The unit runs as `sdl2` with
 
 Secrets are **not** in any file here. The Caddyfile references
 `{env.XARM_EDGE_SHARED_SECRET}`, `{env.MG400_EDGE_SHARED_SECRET}`,
+`{env.ROBOT_MOTION_EDGE_SHARED_SECRET}` (UR5e panel, `/ur5e`),
 `{env.OT2_EDGE_SECRET}`, `{env.BITACORADB_EDGE_SECRET}`,
 `{env.BAMBU_EDGE_SHARED_SECRET}`; the unit loads them from root-0600
 `EnvironmentFile`s (`/etc/device-gateway-staging/edge.env`,

@@ -34,6 +34,9 @@ export const DEVICE_PANEL_PATHS: Readonly<Record<string, string>> = Object.freez
   ot2_complexation: "/ot2/complexation/ui/",
   xarm_translocation: "/xarm5/web/",
   dobot_mg400: "/mg400/web/",
+  // Robot Motion service on the Prototyping PC (:8075) serving the shared
+  // xArm panel; replaced the dashboard-framed /utils/robot_motion 2026-10-06.
+  ligand_ur5e: "/ur5e/web/",
 });
 
 /** The device's own panel path, or `null` when it hosts no panel. */

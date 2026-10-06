@@ -16,7 +16,7 @@ function Shell() {
   </>;
 }
 
-it.each(["/utils/robot_motion", "/utils/robot_motion/", "/equipment/lle_hplc/control", "/equipment/lle_hplc/control/"])("shows only auth and content on %s", pathname => {
+it.each(["/equipment/lle_hplc/control", "/equipment/lle_hplc/control/"])("shows only auth and content on %s", pathname => {
   route.pathname = pathname;
   render(<Shell />);
   expect(screen.getByText("Auth banner")).toBeTruthy();
@@ -26,7 +26,9 @@ it.each(["/utils/robot_motion", "/utils/robot_motion/", "/equipment/lle_hplc/con
   expect(screen.getByRole("main").className).toContain("overflow-hidden");
 });
 
-it.each(["/", "/platforms", "/utils/computers", "/utils/robot_motion_extra", "/equipment/lle_hplc/control_extra"])("preserves dashboard chrome on %s", pathname => {
+// /utils/robot_motion was retired 2026-10-06 (the UR5e panel is the device's
+// own page at /ur5e/web/); it must render as an ordinary dashboard route now.
+it.each(["/", "/platforms", "/utils/computers", "/utils/robot_motion", "/equipment/lle_hplc/control_extra"])("preserves dashboard chrome on %s", pathname => {
   route.pathname = pathname;
   render(<Shell />);
   expect(screen.getByRole("navigation")).toBeTruthy();
@@ -35,7 +37,7 @@ it.each(["/", "/platforms", "/utils/computers", "/utils/robot_motion_extra", "/e
 });
 
 it("restores dashboard chrome after client-side navigation", () => {
-  route.pathname = "/utils/robot_motion";
+  route.pathname = "/equipment/lle_hplc/control";
   const view = render(<Shell />);
   route.pathname = "/utils/computers";
   view.rerender(<Shell />);

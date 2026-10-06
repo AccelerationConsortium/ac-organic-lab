@@ -43,9 +43,16 @@ def _ident(text: str) -> str:
 
 
 def artifact_name(bundle: dict[str, Any]) -> str:
-    """``asrun-<plan id>``: valid for a protocol name, a design name and an
-    action name (lower-case; the plan id keeps its case in ``meta``)."""
+    """``asrun-<plan id>``: a protocol / design name (lower-case, hyphens —
+    the schemas' ``^[a-z0-9][a-z0-9-]*$``). The plan id keeps its case in ``meta``."""
     return f"{PROTOCOL_PREFIX}-{str(bundle['plan_id']).lower()}"
+
+
+def action_name(bundle: dict[str, Any]) -> str:
+    """``asrun_<plan id>``: an *action* name. Protocol steps and the action
+    map use ``^[a-z0-9][a-z0-9_]*$`` — underscores, no hyphens — unlike
+    protocol and design names; the two must not be confused."""
+    return f"{PROTOCOL_PREFIX}_{str(bundle['plan_id']).lower()}"
 
 
 def _translate(value: Any) -> Any:
@@ -85,6 +92,7 @@ def as_run_protocol(bundle: dict[str, Any]) -> dict[str, Any]:
     plan = bundle.get("plan") or {}
     pattern = plan.get("pattern")
     name = artifact_name(bundle)
+    action_id = action_name(bundle)
     warnings: list[str] = []
     labware = (bundle.get("plate_report") or {}).get("labware")
     description = (
@@ -117,8 +125,8 @@ def as_run_protocol(bundle: dict[str, Any]) -> dict[str, Any]:
         if overrides:
             warnings.append("per-well overrides are recorded as well conditions in the plate map; "
                             "the template shows the unoverridden arguments")
-        actions[name] = action
-        steps.append({"step_id": "s001", "action": name})
+        actions[action_id] = action
+        steps.append({"step_id": "s001", "action": action_id})
         well_entries: dict[str, Any] = {}
         for well in wells:
             entry: dict[str, Any] = {}
@@ -136,10 +144,10 @@ def as_run_protocol(bundle: dict[str, Any]) -> dict[str, Any]:
         plate_map = {"labware": str(labware or "plate"), "role": "conditions", "wells": well_entries}
     else:
         for i, step in enumerate(plan.get("steps") or [], start=1):
-            action_name = f"{name}-s{i:03d}"
-            actions[action_name] = {"role": "liquid_handler", "skill": step["action"],
+            step_action = f"{action_id}_s{i:03d}"
+            actions[step_action] = {"role": "liquid_handler", "skill": step["action"],
                                     "args": _translate(step.get("args") or {})}
-            steps.append({"step_id": f"s{i:03d}", "action": action_name})
+            steps.append({"step_id": f"s{i:03d}", "action": step_action})
         if labware:
             report_wells = ((bundle.get("plate_report") or {}).get("wells") or {})
             if report_wells:
@@ -189,7 +197,7 @@ def design_skeleton(bundle: dict[str, Any]) -> str:
             lines += [f"  - name: {fname}  # realized levels from per-well overrides; rename to what it MEANS",
                       f"    levels: [{lvls}]"]
     else:
-        lines += ["  - name: TODO_factor  # the run varied nothing per well that the record shows",
+        lines += ["  - name: todo_factor  # the run varied nothing per well that the record shows",
                   "    levels: [TODO]"]
     lines += [
         "fixed:",
@@ -201,9 +209,12 @@ def design_skeleton(bundle: dict[str, Any]) -> str:
     ]
     substances = _substances(plan)
     if substances:
-        lines.append("substances:")
+        # The design schema wants a structural identity (cas / smiles /
+        # inchikey) per substance; the deck records carry only labels. Offer
+        # them as a comment the human completes, never as an invalid entry.
+        lines.append("# substances the deck records named (add cas/smiles/inchikey to declare them):")
         for label, text in sorted(substances.items()):
-            lines.append(f"  {label}: {yaml.safe_dump(text, default_flow_style=True).strip()}")
+            lines.append(f"#   {label}: {text}")
     return "\n".join(lines) + "\n"
 
 

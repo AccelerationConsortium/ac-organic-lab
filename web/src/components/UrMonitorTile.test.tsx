@@ -26,11 +26,11 @@ function snapshot(): EquipmentSnapshot {
 afterEach(() => { cleanup(); auth.authenticated = true; auth.requestLogin.mockClear(); });
 
 describe("read-only UR arms", () => {
-  it("links only the Ligand UR5e to its SDL2-authenticated workspace in a new tab", () => {
+  it("links only the Ligand UR5e to its edge-routed device panel in a new tab", () => {
     const value = { ...snapshot(), id: "ligand_ur5e" };
     render(<UrMonitorTile snapshot={value} />);
     const link = screen.getByRole("link", { name: "Open control panel ↗" });
-    expect(link.getAttribute("href")).toBe("/utils/robot_motion");
+    expect(link.getAttribute("href")).toBe("/ur5e/web/");
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.className).toContain("border-orange-300");
     expect(screen.queryAllByRole("button")).toHaveLength(0);

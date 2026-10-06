@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { pillClass, stickyPillRow } from "@/lib/pill";
-import { isRobotMotionWorkspace } from "@/components/DashboardShell";
 
 /**
  * Utils section — operator tools that aren't tied to one piece of equipment.
@@ -56,7 +55,6 @@ const UTILS: { slug: string; label: string; description: string; href?: string }
 
 export default function UtilsLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  if (isRobotMotionWorkspace(pathname)) return <>{children}</>;
   return (
     <div className="flex flex-col gap-4">
       <div className={`${stickyPillRow}`} role="tablist" aria-label="Utilities">

@@ -129,6 +129,31 @@ http://:8080 {
                 header_up X-Edge-Auth {env.XARM_EDGE_SHARED_SECRET}
             }
         }
+        # UR5e Robot Motion panel (ligand_ur5e) on the Prototyping PC :8075. The
+        # service serves the shared xArm panel at /web/ with its API at the
+        # device root (/status, /ws, /api/configurations, config-gated
+        # /control/*), so this block is the same shape as /xarm5: strip only
+        # the /ur5e prefix, exempt /ur5e/ws from forward_auth, and pass the
+        # device its edge secret (ROBOT_MOTION_EDGE_SHARED_SECRET in
+        # device-edge-secrets.env; the device refuses control without it and
+        # serves the panel read-only). Replaces the retired dashboard-side
+        # /api/robot-motion/* proxy and the /utils/robot_motion page (2026-10-06).
+        @ur5e_ui {
+            path /ur5e /ur5e/*
+            not path /ur5e/ws
+        }
+        redir /ur5e /ur5e/web/ 308
+        redir /ur5e/ /ur5e/web/ 308
+        redir /ur5e/web /ur5e/web/ 308
+        forward_auth @ur5e_ui 127.0.0.1:8009 {
+            uri /auth/verify
+            copy_headers X-Auth-User X-Auth-Role
+        }
+        handle_path /ur5e/* {
+            reverse_proxy sdl2-pc-05.tail6a1dd7.ts.net:8075 {
+                header_up X-Edge-Auth {env.ROBOT_MOTION_EDGE_SHARED_SECRET}
+            }
+        }
         @mg400_ui {
             path /mg400 /mg400/*
             not path /mg400/ws

@@ -365,6 +365,7 @@ still answer their auth gate rather than 502:
 ```bash
 systemctl show caddy.service -p Environment          # expect: Environment=
 curl -s -o /dev/null -w '%{http_code}\n' http://100.64.254.6/xarm5/web/    # 401 (gate), not 502
+curl -s -o /dev/null -w '%{http_code}\n' http://100.64.254.6/ur5e/web/     # 401 (gate), not 502
 curl -s -o /dev/null -w '%{http_code}\n' http://100.64.254.6/              # 200
 ```
 

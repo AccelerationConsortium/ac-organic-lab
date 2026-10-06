@@ -596,6 +596,33 @@ class TrashBinArgs(_StrictArgs):
     location: str = Field(pattern=r"^[A-D][13]$")
 
 
+class PlateBalanceReadArgs(_StrictArgs):
+    """``POST /control/platebalance/read`` — the local plate balance's weight,
+    as observed. ``wait_until_stable`` holds for two stable readings within
+    ``timeout_s`` (1–30 s, the gateway's own bounds)."""
+
+    wait_until_stable: bool = False
+    timeout_s: float = Field(default=10.0, ge=1, le=30)
+
+
+class PlateBalanceTareArgs(PlateBalanceReadArgs):
+    """``POST /control/platebalance/tare`` — set the loaded plate's weight as
+    the baseline. Non-idempotent; the gateway waits for two stable near-zero
+    readings and may resend up to ``attempts`` times (1–3) if the baseline
+    settles off zero, halting the plan when it never does."""
+
+    timeout_s: float = Field(default=30.0, ge=1, le=30)
+    attempts: Optional[int] = Field(default=None, ge=1, le=3)
+
+
+class PlateBalanceZeroArgs(_StrictArgs):
+    """``POST /control/platebalance/zero`` — zero the *unloaded* balance.
+    Non-idempotent; the gateway reports ``sent_unconfirmed`` (it cannot read
+    back that the zero took). No stability wait is offered."""
+
+    timeout_s: float = Field(default=10.0, ge=1, le=30)
+
+
 def _http_action(
     name: str,
     endpoint: str,
@@ -800,6 +827,33 @@ _NEW_HTTP_SKILLS = [
         "/control/load-trash-bin",
         TrashBinArgs,
         "Register an explicit Flex movable-trash location in column 1 or 3.",
+    ),
+    # The gateway-local plate balance (platebalanceV1, opentrons-server
+    # docs/PLATEBALANCE_V1.md): a serial peripheral on the OT-2 deck, never an
+    # Opentrons module. Plannable on the gateway since 2026-09; in the catalog
+    # since 2026-10-06 so Bitácora's compiler can name them in an action map
+    # (as-run protocols generated from runs use them; UNFORMATTED_RUNS_PLAN).
+    # Runtime discovery decides whether a given gateway has a balance at all.
+    _http_action(
+        "platebalance.read",
+        "/control/platebalance/read",
+        PlateBalanceReadArgs,
+        "Read the deck plate balance; the weight actually observed, in grams.",
+        duration=12,
+    ),
+    _http_action(
+        "platebalance.tare",
+        "/control/platebalance/tare",
+        PlateBalanceTareArgs,
+        "Tare the deck plate balance with the plate loaded; waits for a stable zero (non-idempotent).",
+        duration=35,
+    ),
+    _http_action(
+        "platebalance.zero",
+        "/control/platebalance/zero",
+        PlateBalanceZeroArgs,
+        "Zero the unloaded deck plate balance (non-idempotent, sent-unconfirmed).",
+        duration=12,
     ),
 ]
 

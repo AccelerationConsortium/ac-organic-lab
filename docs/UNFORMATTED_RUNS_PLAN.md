@@ -90,7 +90,20 @@ model call:
   bundles with the new artefacts (same `hid`, PATCH + POSTs), so the runs
   collected since 2026-10-05 are not second-class.
 
-### 2. Bitácora: an *Unformatted runs* section in the Runs tab
+### 2. Bitácora: an *Unformatted runs* section in the Runs tab — built 2026-10-06 (PR pending in `bitacora`)
+
+Implemented on `bitacora` branch `feat/unformatted-runs`: `GET …/runs`
+returns `unformatted`; `POST …/rooms/{room}/unformatted/{experiment}/attach`
+writes the as-run protocol (+ action-map entries, + design skeleton on
+request) into the room and PATCHes the Experiment; the Runs tab renders the
+section with *Attach to design…* and *Make a design from this run*. The
+merge is the room's existing **local review** (`/local-review` → maintainer
+merge), so no GitHub PR is involved for the operator — the "in-app merge" of
+decision 1 was already there. Two deviations from the text below: the
+section sits in the Runs tab *below* authorized runs (not a separate route),
+and `meta.unformatted` stays `true` after attach — the row shows "attached
+to … awaiting review" from `meta.attached`; a post-merge flip is a
+follow-up.
 
 `bitacora/web` + `bitacora/app` (`main.py` runs routes, `record.py`):
 

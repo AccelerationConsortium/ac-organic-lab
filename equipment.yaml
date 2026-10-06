@@ -225,7 +225,8 @@ equipment:
   # Isolated robot-motion prerelease on the Prototyping PC (sdl2-pc-05, wired
   # lab network to the UR5e at 192.168.254.49). Migrated from the UPLC PC on
   # 2026-10-06; the UPLC copy is stopped and disabled, not removed.
-  # Read-only RTDE observation only; physical control is not implemented.
+  # Read-only RTDE observation; its control routes exist only when the device's
+  # local config enables them (not enabled). Operator panel: edge path /ur5e/web/.
   - id: ligand_ur5e
     name: UR5e Arm
     kind: robot_arm
@@ -247,9 +248,10 @@ equipment:
     tiles:
       ligand_development: { w: 2, h: 1 }
     pills:
-      # SDL2-authenticated workspace; never send viewers to the raw PC address.
+      # Edge-routed device panel (forward_auth gated, like /xarm5/web/); never
+      # send viewers to the raw PC address.
       link_label: "Open"
-      link_href: /utils/robot_motion
+      link_href: /ur5e/web/
 
   - id: fume_hood_actuator
     name: Fume Hood Actuator
