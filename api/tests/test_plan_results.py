@@ -72,6 +72,12 @@ async def _file(journal) -> list[str]:
         return [await pr.file_one(journal, row, client) for row in journal.pending()]
 
 
+def _mock_samples(existing: list[dict] | None = None):
+    """The artefact step reads then writes well samples on every filing."""
+    respx.get(f"{BASE}/samples").mock(return_value=httpx.Response(200, json=existing or []))
+    return respx.post(f"{BASE}/samples").mock(return_value=httpx.Response(201, json={"sample_id": "s-1"}))
+
+
 # ── filing ───────────────────────────────────────────────────────────────
 
 
@@ -87,6 +93,7 @@ async def test_files_an_unformatted_experiment_and_a_note_as_the_approver(config
     respx.get(f"{BASE}/notes").mock(return_value=httpx.Response(200, json=[]))
     note = respx.post(f"{BASE}/notes").mock(
         return_value=httpx.Response(201, json={"note_id": "note-1"}))
+    samples = _mock_samples()
 
     assert await _file(journal) == [pr.FILED]
 
@@ -95,6 +102,13 @@ async def test_files_an_unformatted_experiment_and_a_note_as_the_approver(config
     assert sent["title"].startswith("UNFORMATTED")
     assert sent["operator"] == "ada@lab" and sent["project"] == "Complexation"
     assert sent["meta"]["unformatted"] is True
+    # The import artefacts ride on the Experiment from the start.
+    assert sent["meta"]["artifacts_version"] == pr.ARTIFACTS_VERSION
+    assert sent["meta"]["as_run_protocol"]["name"] == "asrun-nbzn1dsxvfscwwv0"
+    assert "protocol: asrun-nbzn1dsxvfscwwv0" in sent["meta"]["as_run_protocol"]["protocol_yaml"]
+    assert "objective: TODO" in sent["meta"]["design_skeleton"]
+    # This bundle's plate report has stats but no per-well cells: no samples.
+    assert not samples.called
     assert "not a Run Authorization" in sent["meta"]["approval"]
     headers = create.calls.last.request.headers
     assert headers["X-Auth-User"] == "ada@lab"
@@ -141,6 +155,10 @@ async def test_a_failed_note_is_retried_without_a_second_experiment(configured):
         httpx.Response(503, text="down"),
         httpx.Response(201, json={"note_id": "note-1"}),
     ])
+    _mock_samples()
+    # The retry re-reads the live Experiment before deciding whether to patch.
+    respx.get(f"{BASE}/experiments/exp-1").mock(return_value=httpx.Response(200, json={
+        "experiment_id": "exp-1", "meta": {"artifacts_version": pr.ARTIFACTS_VERSION}}))
 
     assert await _file(journal) == [pr.PENDING]
     row = journal.get("ot2_complexation", "nBZn1DsXVfSCWwV0")
@@ -167,10 +185,17 @@ async def test_a_note_filed_before_a_crash_is_adopted_not_duplicated(configured)
                                        "device_id": "ot2_complexation"}},
     ]))
     post = respx.post(f"{BASE}/notes")
+    _mock_samples()
+    respx.get(f"{BASE}/experiments/exp-1").mock(return_value=httpx.Response(200, json={
+        "experiment_id": "exp-1", "meta": {"unformatted": True}}))
+    patch = respx.patch(f"{BASE}/experiments/exp-1").mock(return_value=httpx.Response(200, json={}))
 
     assert await _file(journal) == [pr.FILED]
     assert not post.called
     assert journal.get("ot2_complexation", BUNDLE["plan_id"])["note_id"] == "note-1"
+    # An older Experiment gets the artefacts on the retry, keeping its meta.
+    body = json.loads(patch.calls.last.request.content)
+    assert body["meta"]["unformatted"] is True and body["meta"]["artifacts_version"] == pr.ARTIFACTS_VERSION
 
 
 @pytest.mark.anyio
@@ -297,3 +322,51 @@ def test_the_results_list_needs_a_user_and_shows_only_their_runs(client, configu
     assert [r["plan_id"] for r in rows] == [BUNDLE["plan_id"]] and rows[0]["eln_project"] == "Complexation"
     route.mock(return_value=scope_for("pi@lab", pi_projects=["Complexation"]))
     assert len(client.get("/api/assistant/plan-results", headers={"X-Auth-User": "pi@lab"}).json()) == 1
+
+
+# ── artefacts: as-run protocol, design skeleton, well samples ────────────
+
+
+WELLS_BUNDLE = {**BUNDLE, "plan_id": "wells001", "plate_report": {
+    "labware": "2", "stats": {"n": 2, "mean_g": 0.1},
+    "wells": {"A1": {"mass_g": 0.1, "status": "weighed"}, "B1": {"mass_g": 0.1, "status": "weighed"},
+              "C1": {"mass_g": None, "status": "unweighed"}}},
+    "plan": {**BUNDLE["plan"], "plan_id": "wells001"}}
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_every_weighed_well_becomes_a_sample_once(configured):
+    journal = configured
+    journal.accept(WELLS_BUNDLE)
+    respx.get(f"{AUTHZ}/authz/scope").mock(return_value=_scope(True))
+    respx.get(f"{BASE}/experiments").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{BASE}/experiments").mock(return_value=httpx.Response(201, json={"experiment_id": "exp-w"}))
+    respx.get(f"{BASE}/notes").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{BASE}/notes").mock(return_value=httpx.Response(201, json={"note_id": "n"}))
+    post = _mock_samples(existing=[{"hid": "2:A1"}])  # A1 was filed before a crash
+
+    assert await _file(journal) == [pr.FILED]
+    bodies = [json.loads(c.request.content) for c in post.calls]
+    assert [b["hid"] for b in bodies] == ["2:B1"]  # A1 adopted, C1 never weighed
+    assert bodies[0]["experiment_id"] == "exp-w" and bodies[0]["meta"]["mass_g"] == 0.1
+    assert bodies[0]["meta"]["plate"] == "2" and bodies[0]["meta"]["well"] == "B1"
+
+
+@respx.mock
+def test_backfill_is_admin_only_and_brings_filed_runs_up_to_date(client, configured):
+    journal = configured
+    journal.accept(WELLS_BUNDLE)
+    journal.update("ot2_complexation", "wells001", state=pr.FILED, experiment_id="exp-old")
+    respx.get(f"{BASE}/experiments/exp-old").mock(return_value=httpx.Response(200, json={
+        "experiment_id": "exp-old", "meta": {"unformatted": True}}))
+    patch = respx.patch(f"{BASE}/experiments/exp-old").mock(return_value=httpx.Response(200, json={}))
+    post = _mock_samples()
+
+    assert client.post("/api/plan-results/backfill", headers={"X-Auth-User": "ada@lab"}).status_code == 403
+    r = client.post("/api/plan-results/backfill", headers={"X-Auth-User": "ada@lab", "X-Auth-Role": "admin"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"examined": 1, "meta_patched": 1, "samples_posted": 2, "errors": []}
+    assert patch.calls.last.request.headers["X-Auth-User"] == "ada@lab"  # the approver, not the admin
+    assert "as_run_protocol" in json.loads(patch.calls.last.request.content)["meta"]
+    assert post.call_count == 2
