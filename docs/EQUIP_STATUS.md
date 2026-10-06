@@ -671,7 +671,12 @@ state, track position).
   the static range; the slot lights up automatically once the device
   emits the metric.
 
-### Dobot MG400 (`dobot_mg400`)
+### Dobot MG400 (`dobot_mg400`) — retired 2026-10-06
+
+> The registry entry is commented out and the `dobot-mg400` service was
+> uninstalled from the Prototyping PC. The section is kept because the
+> dialect/tile behaviour it documents is still in the code and applies to
+> any future `control_dialect: control` arm.
 
 A second `kind: robot_arm` on the Ligand Development Platform PC
 (`sdl2-pc-05.tail6a1dd7.ts.net:8050`, `100.64.254.18`, STATUS_SPEC

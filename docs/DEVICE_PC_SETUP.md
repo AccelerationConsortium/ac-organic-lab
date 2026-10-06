@@ -98,17 +98,21 @@ Granted keys (one per line, keep this list current):
 
 The Prototyping PC also trusts the lab-ops key. Its host-ops service
 is installed with automatic startup and token-protected HTTP on port 8060.
-It is read-only: only host-ops itself is in the service inspection whitelist,
-no services are restartable, and the local status probe allows port 8050.
-The dashboard registers it as `hostops_dobot_pc`. The Dobot gateway is a
-separate automatic-start NSSM service (`dobot-mg400`); it is not restartable
-through this read-only host-ops instance. The dashboard's UR5e Robot Motion
-service (`robot-motion-prototype`, :8075) moved here from the UPLC PC on
+It is read-only: the service inspection whitelist is `sdl-lab-hostops` and
+`robot-motion-prototype`, no services are restartable, and the local status
+probe allows port 8075 (config `C:\Users\sdl2\Projects\sdl-lab-hostops\config.toml`,
+updated 2026-10-06; the previous copy is beside it as `config.toml.bak-20261006`).
+The dashboard registers it as `hostops_dobot_pc`. The dashboard's UR5e Robot
+Motion service (`robot-motion-prototype`, :8075) moved here from the UPLC PC on
 2026-10-06: this PC's wired interface (192.168.254.90) reaches the UR5e at
 192.168.254.49 directly. The UPLC copy is stopped and set to disabled, with its
-checkout kept for rollback. The PC display label is **Prototyping PC**; the
-Tailnet hostname is now `sdl2-pc-05` (was `sdl2-pc-05-dobot`) and the stable
-`dobot-pc` dashboard ID is unchanged.
+checkout kept for rollback. **The Dobot MG400 gateway (`dobot-mg400`, :8050) was
+uninstalled from this PC the same day** — service, checkout
+(`dobot-MG400-server`), logs and the `dobot-mg400 8050` firewall rule are all
+gone; only `C:\SDL_Logs\install-dobot-mg400-nssm.ps1` remains, and its
+`equipment.yaml` entry is commented out. The PC display label is
+**Prototyping PC**; the Tailnet hostname is now `sdl2-pc-05` (was
+`sdl2-pc-05-dobot`) and the stable `dobot-pc` dashboard ID is unchanged.
 
 A console target needs **three** things, and two of them are on the central
 server, not the device. Missing any one produces a different symptom:
@@ -459,7 +463,7 @@ The lab account also needs the "Log on as a service" right. NSSM grants this aut
 | `mt-xpr-balance-server`   | `mt-xpr-balance` | 8081 | `run --project C:\Users\sdl2\Projects\mt-xpr-balance-server --link-mode copy --extra xpr mt-xpr-balance-serve --config <dir>\config.toml` — STATUS_SPEC v1.2 control service for one Mettler XPR balance over its SOAP web service (**port 81**, not 8002). Service env: `XPR_PASSWORD` (the lab-standard XPR web-service password — kept only in service environments, never in a repo), `XPR_CONTROL_USER` + `XPR_EDGE_SHARED_SECRET` (owner-only control behind the trusted-edge headers; the registry entry carries `edge_secret_env: XPR_EDGE_SHARED_SECRET`), `UV_LINK_MODE=copy`. **§5 exception:** `LocalSystem` — no COM port, no vendor `HKCU` profile. The env can be assembled with `nssm set <svc> AppEnvironmentExtra +KEY=VALUE` (this build supports `+`/`-`), so the password goes in last without retyping the rest. | `sdl2-pc-04.<tailnet>` (Gibbie's balance at 192.168.254.83, `gibbie_balance`; a tree copy until 2026-09-10, now on its own read-only deploy key per §2.5); `sdl2-pc-00-lle.<tailnet>` (Process Chemistry XPR at 192.168.254.13, `lle_xpr_balance`; deployed + verified 2026-09-10 over a read-only deploy key per §2.5, firewall rule `mt-xpr-balance 8081`, whitelisted + restartable in that PC's host-ops) |
 | `sdl2-gibbie-server`      | `process-chem-monitor` | 8070 | same code as `gibbie-server`, second instance: `run --project C:\Users\sdl2\Projects\sdl2-gibbie-server --link-mode copy gibbie-server --config <dir>\config.toml`, from `config.process-chemistry.example.toml`. Read-only gateway for the Process Chemistry bench (UR5-CB3, XPR balance, EasyMax reactor service, ChemStation data service, pH Pi). **§5 exception:** `LocalSystem`, like the Gibbie instance — it opens no COM port and touches no vendor `HKCU` profile, and the `windows_service` probe needs only `sc query`. Firewall rule `process-chem-monitor 8070`. | `sdl2-pc-00-lle.<tailnet>` (deployed + verified 2026-09-06) |
 | `agilent-chemstation-server` | `agilent-chemstation` | 8083 | Dedicated read-only HPLC monitor, launched directly with the repo's `.venv\Scripts\python.exe -m agilent_chemstation_server --config <dir>\config.toml --host 0.0.0.0 --port 8083 --log-level warning`. Install with `scripts/install-service.ps1 -TailnetAddress <tailnet-address> -Apply`; automatic startup, crash restart, online 10 MiB log rotation, no service dependency. **§5 exception:** `LocalSystem` for cross-session process metadata and local public-file/SCM reads; no vendor profile, COM, commands, or hardware connection. Firewall rule `agilent-chemstation-8083` allows only tailnet IPv4 clients on the PC's tailnet address. `GET /status`, `/health`, `/control/queue`, `/docs`; missing native readiness/queue stays unknown, never inferred from the acquisition process. | Process Chemistry PC (installed and verified; dashboard ID `lle_hplc`) |
-| `dobot-MG400-server`      | `dobot-mg400`  | 8050 | `run --extra api dobot-mg400-serve` (serves `/status`, `/control/*`, `/graph`, `/ws`, and the operator panel at both `/ui/` and `/web/`) | `sdl2-pc-05.<tailnet>` (`100.64.254.18`, formerly `sdl2-pc-05-dobot`) — Prototyping PC |
+| `dobot-MG400-server`      | `dobot-mg400`  | 8050 | **Uninstalled 2026-10-06** (service, checkout, logs and firewall rule removed; `equipment.yaml` entry commented out). Was `run --extra api dobot-mg400-serve` (`/status`, `/control/*`, `/graph`, `/ws`, operator panel at `/ui/` and `/web/`); `C:\SDL_Logs\install-dobot-mg400-nssm.ps1` is the surviving install script if it ever comes back. | was `sdl2-pc-05.<tailnet>` (`100.64.254.18`, formerly `sdl2-pc-05-dobot`) — Prototyping PC |
 | `robot-motion` prerelease | `robot-motion-prototype` | 8075 | Separate checkout/environment, bundled `/web/` UI, read-only UR Dashboard observation every 15 seconds and offline graph preview. No physical control endpoints. Selected extra `ur`; existing xArm compatibility application unchanged, MG400 driver planned. Checkout `C:\Users\sdl2\Projects\robot-motion` (branch `ur-robot` of `xarm-translocation`, editable install); an isolated 64-bit managed Python 3.12 runtime lives under the checkout's ignored `.state/python` (`UV_PYTHON_INSTALL_DIR`), with the uv cache under `.state/uv-cache` — nothing else on the PC is touched. Service binds the Tailnet address only (`--host 100.64.254.18`); config in `.state\robot-motion.local.json` (`robot_host` 192.168.254.49, `ur_transport` rtde, `control_enabled` false). Install scripts are kept in `.state\install-stage*.ps1`. Automatic startup, crash restart, online 10 MiB log rotation under `.state/logs` (isolated prototype exception to the shared log directory). **§5 exception:** LocalSystem for read-only network observation only; future control requires a separate reviewed deployment. Bind and firewall permit only Tailnet access; no public edge route. | `sdl2-pc-05.<tailnet>` (Prototyping PC, `100.64.254.18`) — migrated from the UPLC PC 2026-10-06 and verified (RTDE telemetry valid); dashboard ID `ligand_ur5e`. The UPLC copy is stopped + disabled, checkout retained for rollback. |
 | `fume_hood_actuator`      | `fume-hood`    | 5000 | —                                         | `fume-hood-pc.<tailnet>` |
 | `filter_every_well`       | `press`        | 8000 | —                                         | `press-pc.<tailnet>` |
@@ -476,7 +480,7 @@ Planned, not yet deployed (placeholder names/ports — confirm at install time):
 > the unexpected `SERVICE_PAUSED` state. This is an NSSM quirk; the service otherwise works correctly.
 > (`sc resume` is not a real `sc` verb — it errors with "Unrecognized command"; `continue` is the resume verb.)
 
-When multiple services share one PC, every service gets a distinct port; when each service has its own PC, the same port is fine across PCs (Tailscale's hostname is what disambiguates). Port **8050** is used by two hosts (`biostack4` on `sdl2-pc-03-cytation` and `dobot-mg400` on `sdl2-pc-05`) — no collision, but easy to confuse, same class of trap as 8010 (UPLC-MS vs PlateLoc).
+When multiple services share one PC, every service gets a distinct port; when each service has its own PC, the same port is fine across PCs (Tailscale's hostname is what disambiguates). Port **8050** was used by two hosts (`biostack4` on `sdl2-pc-03-cytation` and `dobot-mg400` on `sdl2-pc-05`, until the latter was uninstalled on 2026-10-06) — no collision, but easy to confuse, same class of trap as 8010 (UPLC-MS vs PlateLoc).
 
 After install + smoke, register the service in the monorepo's `equipment.yaml` with the matching `id`, `base_url`, and `protocol` fields. See [`docs/STATUS_SPEC.md`](STATUS_SPEC.md) for the registry shape (v1.0 and v1.1).
 

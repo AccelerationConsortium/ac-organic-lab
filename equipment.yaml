@@ -182,10 +182,11 @@ equipment:
       link_label: "Open"
       link_href: /xarm5/web/
 
-  # Dobot MG400 -- commented out 2026-10-06 (per operator request): the
-  # dashboard no longer polls it or shows its tile. The dobot-mg400 NSSM
-  # service still runs on sdl2-pc-05:8050; restore by uncommenting this
-  # block and the platforms.yaml line, then restart ac-organic-lab-api.
+  # Dobot MG400 -- retired 2026-10-06 (per operator request): the dashboard
+  # no longer polls it or shows its tile, and the dobot-mg400 NSSM service was
+  # uninstalled from sdl2-pc-05 the same day. To bring it back, reinstall the
+  # service (C:\SDL_Logs\install-dobot-mg400-nssm.ps1 on that PC), uncomment
+  # this block and the platforms.yaml line, then restart ac-organic-lab-api.
   # - id: dobot_mg400
   #   name: Dobot MG400
   #   kind: robot_arm

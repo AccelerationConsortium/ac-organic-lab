@@ -294,9 +294,9 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         target="dobot-pc",
         shell="cmd.exe (Windows OpenSSH)",
         note=(
-            "Prototyping PC (renamed from sdl2-pc-05-dobot). Hosts the Dobot "
-            "MG400 gateway (dobot-mg400-server) on :8050 and, since 2026-10-06, "
-            "the isolated read-only UR5e Robot Motion prototype on :8075. "
+            "Prototyping PC (renamed from sdl2-pc-05-dobot). Hosts the isolated "
+            "read-only UR5e Robot Motion prototype on :8075 (since 2026-10-06); "
+            "the Dobot MG400 gateway was uninstalled the same day. "
             "Service control is `C:\\SDL_Tools\\nssm.exe` — prefer "
             "the whitelisted host-ops surface for routine restarts."
         ),
