@@ -761,7 +761,7 @@ routine-control exception (that document's §2) is still not enabled.
 
 ### 5.1 The commitment: the assistant proposes, the browser executes
 
-In Step 1 no model-driven code path POSTs to a device. The model's most
+In Step 1 no model-driven code path makes a device *act* — the one exception, since 2026-10-05, is creating a *draft* on a device that runs its own human-approved plans (AGENTIC_LAB_DESIGN Part I rule 3, device-run step approvals); the model can never approve, run or modify an approved plan. The model's most
 privileged act is producing a **validated proposal object**; actuation happens
 when the operator clicks *Authorize*, over the existing
 `/api/equipment/{id}/control/{action}` passthrough.
@@ -1178,7 +1178,9 @@ actuating path**:
   The approval is a **review record** (`assistant_plan_approved`: who agreed
   to which steps), not a permission grant.
 - **Run: the browser executes, step by step.** §5.1's commitment holds
-  verbatim: no model-driven code path POSTs to a device. The browser sends
+  verbatim: no model-driven code path POSTs to a device *to act* (the device
+  panel's chat creates a *draft* on a gateway that runs its own
+  human-approved plans — the exception §5.1 names). The browser sends
   each step through the same `/api/equipment/{id}/control/{action}`
   passthrough a tile click uses — per-equipment authz, the per-request
   claim dance, the device's own 412/423, and the `control_action` audit row
