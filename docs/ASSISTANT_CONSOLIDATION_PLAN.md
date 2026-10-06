@@ -184,6 +184,10 @@ weight.
    of this device's run results and the inventory from the device chat,
    without giving the model a tool surface; design below. Tests in
    `api/tests/test_assistant_device.py` (step 7 section).
+8. **Unformatted runs into the notebook** — proposed 2026-10-06:
+   [`UNFORMATTED_RUNS_PLAN.md`](UNFORMATTED_RUNS_PLAN.md) (as-run protocol
+   and design skeleton at filing, per-well measurements, an *Unformatted
+   runs* section in Bitácora with attach-to-design by PR).
 
 ## Rules — decided 2026-10-05
 
