@@ -693,6 +693,10 @@ def test_opentrons_http_action_catalog_matches_gateway_paths() -> None:
         "gripper_close_jaw": "/control/gripper-close-jaw",
         "home_gripper": "/control/home-gripper",
         "load_trash_bin": "/control/load-trash-bin",
+        # opentrons-server 2bf32f5: the gateway-local plate balance.
+        "platebalance.read": "/control/platebalance/read",
+        "platebalance.tare": "/control/platebalance/tare",
+        "platebalance.zero": "/control/platebalance/zero",
     }
     actual = {s.name: s.endpoint for s in SKILL_REGISTRY["liquid_handler"]}
     assert {name: actual[name] for name in expected} == expected
@@ -730,6 +734,24 @@ def test_opentrons_new_schemas_enforce_gateway_ranges() -> None:
         ShakeSpeedArgs(module="hs", rpm=199)
     with pytest.raises(ValidationError):
         HeaterShakerTemperatureArgs(module="hs", celsius=96)
+
+    # Plate balance: the gateway's PlateBalanceRequest bounds, per action.
+    from lab_skills.skill_catalog.liquid_handler import (
+        PlateBalanceReadArgs,
+        PlateBalanceTareArgs,
+        PlateBalanceZeroArgs,
+    )
+
+    assert PlateBalanceReadArgs().model_dump() == {"wait_until_stable": False, "timeout_s": 10.0}
+    assert PlateBalanceTareArgs(attempts=3).timeout_s == 30.0
+    with pytest.raises(ValidationError):
+        PlateBalanceReadArgs(timeout_s=31)
+    with pytest.raises(ValidationError):
+        PlateBalanceTareArgs(attempts=4)
+    with pytest.raises(ValidationError):
+        PlateBalanceReadArgs(attempts=1)  # tare only
+    with pytest.raises(ValidationError):
+        PlateBalanceZeroArgs(wait_until_stable=True)  # the gateway refuses it for zero
 
 
 def test_opentrons_direct_motion_and_zero_offsets_round_trip() -> None:
