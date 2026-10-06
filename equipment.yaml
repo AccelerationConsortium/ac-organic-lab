@@ -182,51 +182,57 @@ equipment:
       link_label: "Open"
       link_href: /xarm5/web/
 
-  - id: dobot_mg400
-    name: Dobot MG400
-    kind: robot_arm
-    adapter: http
-    protocol: "1.2"                 # models.PROTOCOL_VERSION on the device is "1.2"
-    edge_secret_env: MG400_EDGE_SHARED_SECRET
-    base_url: http://sdl2-pc-05-dobot.tail6a1dd7.ts.net:8050
-    tailscale_ip: 100.64.254.18     # read off the box via `tailscale status`
-    status_path: /status
-    # Same reach profile as the xArm (Wi-Fi to a device PC on this tailnet);
-    # keep the aggregator hard-cap so a slow poll doesn't get truncated.
-    poll_timeout_seconds: 8.0
-    # A claim is only issuable while the controller is connected, and STARTUP
-    # energises the servos -- the SDK must never auto-connect a robot arm, so
-    # do_not_call_connect stays, exactly as on the xArm.
-    do_not_call_connect: true
-    tiles:
-      ligand_development: { w: 2, h: 1 }
-    # Root-relative, edge-gated panel URL (Caddy: forward_auth @mg400_ui ->
-    # ac_auth), same shape as the xArm. Never the device's :8050/web side-door
-    # -- the edge is the audited path. The device panel mounts at both /ui and
-    # /web; /mg400/web/ is the canonical one the edge normalises to.
-    pills:
-      link_label: "Open"
-      link_href: /mg400/web/
-    extras:
-      # This arm serves its lifecycle + safety floor under /control/* with
-      # MG400 verb names (startup/disable/stop/clear_error), unlike the xArm's
-      # root-level connect/disconnect/move-stop/clear-errors. The dashboard's
-      # device-action proxy reads this to route the tile's generic INIT / OFF /
-      # STOP / CLEAR to the right path (api/app/control.py). Declared here
-      # rather than sniffed from allowed_actions because those verbs disappear
-      # mid-motion, when STOP most needs to reach the arm.
-      control_dialect: control
+  # Dobot MG400 -- commented out 2026-10-06 (per operator request): the
+  # dashboard no longer polls it or shows its tile. The dobot-mg400 NSSM
+  # service still runs on sdl2-pc-05:8050; restore by uncommenting this
+  # block and the platforms.yaml line, then restart ac-organic-lab-api.
+  # - id: dobot_mg400
+  #   name: Dobot MG400
+  #   kind: robot_arm
+  #   adapter: http
+  #   protocol: "1.2"                 # models.PROTOCOL_VERSION on the device is "1.2"
+  #   edge_secret_env: MG400_EDGE_SHARED_SECRET
+  #   base_url: http://sdl2-pc-05.tail6a1dd7.ts.net:8050
+  #   tailscale_ip: 100.64.254.18     # read off the box via `tailscale status`
+  #   status_path: /status
+  #   # Same reach profile as the xArm (Wi-Fi to a device PC on this tailnet);
+  #   # keep the aggregator hard-cap so a slow poll doesn't get truncated.
+  #   poll_timeout_seconds: 8.0
+  #   # A claim is only issuable while the controller is connected, and STARTUP
+  #   # energises the servos -- the SDK must never auto-connect a robot arm, so
+  #   # do_not_call_connect stays, exactly as on the xArm.
+  #   do_not_call_connect: true
+  #   tiles:
+  #     ligand_development: { w: 2, h: 1 }
+  #   # Root-relative, edge-gated panel URL (Caddy: forward_auth @mg400_ui ->
+  #   # ac_auth), same shape as the xArm. Never the device's :8050/web side-door
+  #   # -- the edge is the audited path. The device panel mounts at both /ui and
+  #   # /web; /mg400/web/ is the canonical one the edge normalises to.
+  #   pills:
+  #     link_label: "Open"
+  #     link_href: /mg400/web/
+  #   extras:
+  #     # This arm serves its lifecycle + safety floor under /control/* with
+  #     # MG400 verb names (startup/disable/stop/clear_error), unlike the xArm's
+  #     # root-level connect/disconnect/move-stop/clear-errors. The dashboard's
+  #     # device-action proxy reads this to route the tile's generic INIT / OFF /
+  #     # STOP / CLEAR to the right path (api/app/control.py). Declared here
+  #     # rather than sniffed from allowed_actions because those verbs disappear
+  #     # mid-motion, when STOP most needs to reach the arm.
+  #     control_dialect: control
 
-  # Isolated robot-motion prerelease on the UPLC PC's wired lab network.
-  # UR Dashboard observation only; physical control is not implemented.
+  # Isolated robot-motion prerelease on the Prototyping PC (sdl2-pc-05, wired
+  # lab network to the UR5e at 192.168.254.49). Migrated from the UPLC PC on
+  # 2026-10-06; the UPLC copy is stopped and disabled, not removed.
+  # Read-only RTDE observation only; physical control is not implemented.
   - id: ligand_ur5e
     name: UR5e Arm
     kind: robot_arm
     adapter: http
     protocol: "1.2"
     gateway_fronted: false
-    base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8075
-    tailscale_ip: 100.64.254.19
+    base_url: http://sdl2-pc-05.tail6a1dd7.ts.net:8075
+    tailscale_ip: 100.64.254.18
     status_path: /status
     poll_timeout_seconds: 5.0
     poll_interval_seconds: 15.0
@@ -1057,7 +1063,7 @@ equipment:
     protocol: "1.2"
     # Read-only host-ops: service status/logs and local Dobot status probe.
     # No services are restartable through this instance.
-    base_url: http://sdl2-pc-05-dobot.tail6a1dd7.ts.net:8060
+    base_url: http://sdl2-pc-05.tail6a1dd7.ts.net:8060
     tailscale_ip: 100.64.254.18
     status_path: /status
     poll_timeout_seconds: 8.0

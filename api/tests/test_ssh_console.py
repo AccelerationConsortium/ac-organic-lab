@@ -191,9 +191,11 @@ def test_every_host_is_addressable_by_its_id() -> None:
     assert HOSTS_BY_ID["vial-doser-pi"].group == "device"
 
 
-def test_robot_motion_host_note_points_to_uplc_not_retired_dobot_copy() -> None:
-    assert "Robot Motion" not in HOSTS_BY_ID["dobot-pc"].note
-    assert "UR5e Robot Motion prototype on :8075" in HOSTS_BY_ID["uplc-pc"].note
+def test_robot_motion_host_note_points_to_prototyping_pc_not_retired_uplc_copy() -> None:
+    # Migrated 2026-10-06: the UPLC copy is stopped and disabled.
+    assert "UR5e Robot Motion prototype on :8075" in HOSTS_BY_ID["dobot-pc"].note
+    assert "Robot Motion" not in HOSTS_BY_ID["uplc-pc"].note
+    assert HOSTS_BY_ID["dobot-pc"].hostname == "sdl2-pc-05.tail6a1dd7.ts.net"
 
 
 def test_argv_never_prompts_and_never_learns_a_host_key() -> None:

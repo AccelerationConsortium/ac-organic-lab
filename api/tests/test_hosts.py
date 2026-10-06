@@ -165,7 +165,7 @@ def test_dobot_pc_groups_the_mg400_by_hostname_and_tailnet_ip():
             _entry(
                 "dobot_mg400",
                 "robot_arm",
-                "http://sdl2-pc-05-dobot.tail6a1dd7.ts.net:8050",
+                "http://sdl2-pc-05.tail6a1dd7.ts.net:8050",
                 name="Dobot MG400",
             ),
             _entry("dobot_later", "other", "http://100.64.254.18:8099"),

@@ -289,14 +289,15 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         id="dobot-pc",
         label="Prototyping PC",
         kind="Windows PC",
-        hostname="sdl2-pc-05-dobot.tail6a1dd7.ts.net",
+        hostname="sdl2-pc-05.tail6a1dd7.ts.net",
         user="sdl2",
         target="dobot-pc",
         shell="cmd.exe (Windows OpenSSH)",
         note=(
-            "Prototyping PC. Hosts the Dobot MG400 gateway "
-            "(dobot-mg400-server) on :8050. Service control is "
-            "`C:\\SDL_Tools\\nssm.exe` — prefer "
+            "Prototyping PC (renamed from sdl2-pc-05-dobot). Hosts the Dobot "
+            "MG400 gateway (dobot-mg400-server) on :8050 and, since 2026-10-06, "
+            "the isolated read-only UR5e Robot Motion prototype on :8075. "
+            "Service control is `C:\\SDL_Tools\\nssm.exe` — prefer "
             "the whitelisted host-ops surface for routine restarts."
         ),
         profiles=(
@@ -315,8 +316,7 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         shell="cmd.exe (Windows OpenSSH)",
         note=(
             "Hosts the UPLC-MS sidecar. The sidecar owns the run queue — do "
-            "not restart it mid-campaign. Also hosts the isolated read-only "
-            "UR5e Robot Motion prototype on :8075. Hosts the OT-2 Complexation gateway on :8021, "
+            "not restart it mid-campaign. Hosts the OT-2 Complexation gateway on :8021, "
             "connected directly to the robot over USB, and its platebalanceV1 "
             "Sartorius WZB254-N peripheral on COM3."
         ),
