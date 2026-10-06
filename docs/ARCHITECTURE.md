@@ -232,7 +232,9 @@ Owns:
   The approver's membership of the chosen project is checked against
   `/authz/scope` first; a non-member is held, never filed. No BitacoraDB Plan
   row: a device-local step approval is not a Run Authorization. Status at
-  `GET /api/plan-results`.
+  `GET /api/plan-results`. Getting these runs *into* the notebook (as-run
+  protocol, design skeleton, per-well measurements, attach-to-design) is
+  planned in [`UNFORMATTED_RUNS_PLAN.md`](UNFORMATTED_RUNS_PLAN.md).
 - **Operator control passthrough** (`control.py`): mirrors each device's
   `/control/*` surface for operator-initiated writes, runs the per-request
   claim → action → release dance for v1.1 devices, and writes one
