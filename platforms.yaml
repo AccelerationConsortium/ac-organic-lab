@@ -89,13 +89,13 @@ sections:
 
   - id: ligand_development
     title: Ligand Development Platform
-    description: Ligand-development bench with MG400 and a UR5e prototype
+    description: Ligand-development bench with a UR5e prototype
     href: /platforms/ligand_development
     kind: platform
     equipment:
       # First camera supplies the Overview card's live feed.
       - cam_ligand_tapo_d246
-      - dobot_mg400
+      # - dobot_mg400   # commented out 2026-10-06 with its equipment.yaml entry
       - ligand_ur5e
       - lumastir
       - lle_ph_unit

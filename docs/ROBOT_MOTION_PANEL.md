@@ -66,8 +66,11 @@ the human-only cutover instructions in [deploy/README.md](../deploy/README.md).
 The Robot Motion UI package is deployed independently to its isolated device-PC
 service. Do not restart chromatography, xArm, or unrelated device services.
 
-The UPLC prototype runs an installed wheel in its isolated environment, not an
-editable import from the retained source checkout. The wheel includes the
+The prototype runs on the Prototyping PC (`sdl2-pc-05`, since 2026-10-06; the
+UPLC copy is stopped and disabled). It is an editable install of the
+`ur-robot` branch checkout in its isolated environment, so a reviewed
+`git pull --ff-only` plus a service restart updates it; the wheel route below
+remains the alternative. The wheel includes the
 xArm-style workspace and its allowlisted shared assets. Updating checkout files
 alone will not update the running UI: install the reviewed wheel without changing
 dependencies, validate it offline, and restart only `robot-motion-prototype`.

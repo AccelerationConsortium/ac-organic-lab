@@ -674,7 +674,7 @@ state, track position).
 ### Dobot MG400 (`dobot_mg400`)
 
 A second `kind: robot_arm` on the Ligand Development Platform PC
-(`sdl2-pc-05-dobot.tail6a1dd7.ts.net:8050`, `100.64.254.18`, STATUS_SPEC
+(`sdl2-pc-05.tail6a1dd7.ts.net:8050`, `100.64.254.18`, STATUS_SPEC
 **v1.2**). It inherits the same skill
 catalog, typed client, assistant `move.` / `gripper.` bridging, tile
 routing, and device-action allowlist — all keyed by kind, not id. The
@@ -692,7 +692,7 @@ Differences from the xArm that the dashboard has to know about:
 | End effector | jaw gripper (`gripper_config`, stroke, force) | suction cup; `components.gripper.state` is `empty` / `holding`; `gripper_verified` is *unconfirmed* unless a vacuum sensor is wired |
 | Rail | `components.track` + `details.motion_graph.rail_location_name` | none (`has_rail: false`; that key is deliberately absent) |
 | Panel | `/xarm5/web/` | `/mg400/web/` (device also mounts `/ui`; the edge normalises `/mg400/ui` → `/mg400/web/`) |
-| Host | `sdl2-pc-03-cytation:8000` | Ligand Development Platform (`sdl2-pc-05-dobot:8050`) — its own PC, not the cytation concentration |
+| Host | `sdl2-pc-03-cytation:8000` | Ligand Development Platform (`sdl2-pc-05:8050`) — its own PC, not the cytation concentration |
 
 Graph verbs use the same wire names (`graph.move_to`, `graph.travel_to`,
 `graph.gripper`, `graph.recover_to`, `graph.mode`, plus `move.<node>` /
