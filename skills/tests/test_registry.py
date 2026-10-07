@@ -83,7 +83,8 @@ def test_ur5e_prototype_is_registered_without_auto_connect() -> None:
     assert entry.pills.link_href == "/ur5e/web/"
     assert entry.pills.link_label == "Open"
     assert not entry.pills.internal  # keep SDL2 equipment-role gating
-    hostops = registry.by_id("hostops_uplc_pc")
+    # Hosted on the Prototyping PC since 2026-10-06 (was the UPLC PC).
+    hostops = registry.by_id("hostops_dobot_pc")
     assert hostops is not None
     assert urlsplit(entry.base_url).hostname == urlsplit(hostops.base_url).hostname
     assert urlsplit(entry.base_url).port == 8075

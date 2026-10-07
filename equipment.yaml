@@ -227,6 +227,26 @@ equipment:
   # 2026-10-06; the UPLC copy is stopped and disabled, not removed.
   # Read-only RTDE observation; its control routes exist only when the device's
   # local config enables them (not enabled). Operator panel: edge path /ur5e/web/.
+  #
+  # Cameras (device commit 627e7e6, deployed 2026-10-07) -- the panel's camera
+  # tile carries both, and the device publishes them for agents:
+  #   * Tapo: cam_ligand_tapo_d246 below (the bench's own Tapo, tele lens by
+  #     default). GET /camera/config reads it through this dashboard's
+  #     /api/equipment; POST /camera/ptz and /camera/preset forward to that
+  #     camera's /control/* passthrough with the CALLER's own credential
+  #     (X-Api-Key, else ac_auth_session), so the device holds no camera key and
+  #     this dashboard authorizes and audits the real person. No "Follow arm"
+  #     (no motion graph runner; /camera/follow is 409). Agents can equally use
+  #     the camera's own catalog skills (ptz, preset/goto).
+  #   * RealSense D435i (serial 050222072123, USB 3.2, 1280x720 @ 15 colour +
+  #     aligned depth) on the same PC, owned by sdl-camera-server (NSSM
+  #     `sdl-camera-server`, 127.0.0.1:8070, alias d435i); the device fronts it
+  #     with the xArm's routes under /realsense/d435i/*. Discovery (/cameras,
+  #     /realsense/cameras), status, depth?x=&y= and intrinsics are open reads;
+  #     snapshot.jpg / depth.png / stream.mjpg and start/stop need the edge
+  #     identity, i.e. reach them as /ur5e/realsense/d435i/... through the edge.
+  #     No durable captures here yet, so the catalog carries no realsense.*
+  #     action for this arm (the xArm's realsense.capture has no route here).
   - id: ligand_ur5e
     name: UR5e Arm
     kind: robot_arm
@@ -245,6 +265,9 @@ equipment:
       - { label: Agent guide, path: /agent-docs, kind: markdown }
       - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
       - { label: Agent discovery, path: /llms.txt, kind: text }
+      # Read-only camera discovery: every Tapo / RealSense route the device
+      # serves, with ready-made per-camera URLs (also linked from /llms.txt).
+      - { label: Camera discovery, path: /cameras, kind: json }
     tiles:
       ligand_development: { w: 2, h: 1 }
     pills:
@@ -1279,6 +1302,10 @@ equipment:
   # the same kasa-tapo-services gateway. Dual-lens C245D: wide on /stream1,
   # tele on /stream6 (ONVIF advertises only stream1/2/8, but /stream6
   # carries the tele lens over RTSP — verified on the bench).
+  # Also the Tapo view in the UR5e panel (/ur5e/web/, ligand_ur5e above,
+  # since 2026-10-07): its video uses this entry's /api/camera-streams feeds
+  # and its PTZ pad / presets arrive here through the control passthrough as
+  # the signed-in operator, so they need a role on this camera.
   - id: cam_ligand_tapo_d246
     name: Ligand Development Camera
     kind: camera

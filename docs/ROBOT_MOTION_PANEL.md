@@ -30,6 +30,28 @@ device, the panel still renders read-only; the device simply reports no
 identity and refuses every control route (503), so provisioning the secret is
 what makes the edge identity usable there, never a bypass.
 
+## Cameras
+
+Since 2026-10-07 the panel's camera tile is live, matching the xArm's
+(device commit `627e7e6`):
+
+- **Tapo Camera** — the bench's `cam_ligand_tapo_d246`. Video comes from this
+  dashboard's `/api/camera-streams` broker, which is why it plays only when
+  the panel is opened through the edge and the viewer is signed in. The PTZ
+  pad and preset picker post to the device, which forwards them to the
+  camera's control passthrough as the operator (their `ac_auth_session`
+  cookie or `X-Api-Key`); a viewer with no role on the camera gets this
+  dashboard's 403. The "Follow arm" toggle is hidden: the UR has no motion
+  graph to follow.
+- **Stereo Camera** — the D435i on the Prototyping PC, served by
+  `sdl-camera-server` (127.0.0.1:8070) and proxied by the device at
+  `/realsense/d435i/*`: Start/Stop, Color/Depth, click-to-measure distance.
+
+Agents discover both from the device's `GET /cameras` (declared as
+documentation on `ligand_ur5e`, so it appears in `/api/catalog`) or its
+`/agent-docs` Cameras section. Details and gating: `EQUIP_STATUS.md` §10,
+"UR5e (`ligand_ur5e`) cameras".
+
 ## Physical-control boundary
 
 The device's `/control/*` routes (claim, connect, joint_step, stop) exist only

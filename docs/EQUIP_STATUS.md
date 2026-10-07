@@ -671,6 +671,56 @@ state, track position).
   the static range; the slot lights up automatically once the device
   emits the metric.
 
+### UR5e (`ligand_ur5e`) cameras (2026-10-07)
+
+The Ligand Development UR5e (robot-motion on `sdl2-pc-05:8075`, read-only RTDE
+observation) renders as the compact `UrMonitorTile`; its cameras live in the
+device panel at `/ur5e/web/` (see [`ROBOT_MOTION_PANEL.md`](ROBOT_MOTION_PANEL.md))
+and in the device API, which mirrors the xArm's camera routes (robot-motion
+commit `627e7e6`). Neither camera changes the arm's `equipment_status`: they
+are components, not state inputs, and no camera route is claim-gated.
+
+**Tapo — `cam_ligand_tapo_d246`.** The bench's own C245D (tele lens by
+default; wide is fixed). `GET /camera/config` on the device reads it through
+this dashboard's open `/api/equipment` (availability, lenses with
+`ptz_capable`, saved presets, the go2rtc source name), and the panel plays it
+through the authenticated `/api/camera-streams` broker on the shared origin.
+`POST /camera/ptz` (`{direction, speed, duration_ms}` or stop
+`{pan, tilt, zoom}`) and `POST /camera/preset` (`{preset_id}`) forward to
+`/api/equipment/cam_ligand_tapo_d246/control/{ptz,preset/goto}` carrying the
+caller's own credential — their `X-Api-Key`, else only their
+`ac_auth_session` cookie — so the device stores no camera key and this
+dashboard's authz and audit see the real person. There is no "Follow arm"
+(no motion-graph runner): `/camera/config` reports `follow_supported: false`
+and `POST /camera/follow` answers 409. An agent with its own key can just as
+well call the camera's catalog skills (`ptz`, `preset/goto`) directly.
+
+**RealSense — D435i** (serial `050222072123`, USB 3.2) on the Prototyping PC,
+owned by `sdl-camera-server` (NSSM, loopback `127.0.0.1:8070`, alias
+`d435i`, the same service the Cytation and Gibbie PCs run). Colour and depth
+run at **1280x720 @ 15**, depth aligned to colour so `depth?x=&y=` reads the
+colour pixel; the pipeline starts on demand and idles out after 60 s.
+robot-motion fronts it through the xArm's remote facade with the xArm's
+routes:
+
+- **Discovery** — `GET /cameras` (Tapo + RealSense, with per-camera `urls`)
+  and `GET /realsense/cameras`. `/cameras` is declared documentation on
+  `ligand_ur5e`, so `/api/catalog` and the API reference page list it,
+  proxied read-only at `/api/equipment/ligand_ur5e/documentation/cameras`.
+- **Open reads** — `/realsense/d435i/status`, `/depth?x=&y=&window=`,
+  `/intrinsics`. Status and `/status`'s `components.realsense_d435i` /
+  `details.realsense` come from cached telemetry and never start the camera.
+- **Edge-identity reads and lifecycle** — `snapshot.jpg` (`?stream=depth` for
+  the colourised map), `depth.png` (raw 16-bit, x `depth_scale_m` = metres),
+  `stream.mjpg?stream=color|depth&fps=`, `POST start` / `stop`. Through the
+  edge these are `/ur5e/realsense/d435i/…` (a signed-in session or an
+  `X-Api-Key` passes `forward_auth`); direct `:8075` callers get 401.
+
+Unlike the xArm there are **no durable captures** on this arm yet, so the
+catalog carries no `realsense.*` action for `ligand_ur5e` (the xArm's
+`realsense.capture` has no route here) — `skills_for` still returns only the
+UR joint-step contract.
+
 ### Dobot MG400 (`dobot_mg400`) — retired 2026-10-06
 
 > The registry entry is commented out and the `dobot-mg400` service was

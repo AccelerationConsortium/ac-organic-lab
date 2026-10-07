@@ -143,7 +143,11 @@ hosts:
     note: >-
       Prototyping PC (renamed from sdl2-pc-05-dobot). Hosts the isolated
       read-only UR5e Robot Motion prototype on :8075 (since 2026-10-06); the
-      Dobot MG400 gateway was uninstalled the same day. Service control is
+      Dobot MG400 gateway was uninstalled the same day. Since 2026-10-07 it
+      also runs `sdl-camera-server` (NSSM, loopback 127.0.0.1:8070) owning the
+      UR5e's RealSense D435i, which robot-motion fronts at /realsense/d435i/*;
+      its config, logs and captures are in that checkout's gitignored local/.
+      Service control is
       `C:\SDL_Tools\nssm.exe` — prefer the whitelisted host-ops surface for
       routine restarts.
     networks:
