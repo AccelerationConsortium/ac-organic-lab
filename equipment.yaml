@@ -1437,7 +1437,7 @@ equipment:
       - { label: Agent guide, path: /agent-docs, kind: markdown }
       - { label: llms.txt, path: /llms.txt, kind: text }
     tiles:
-      ligand_development: { w: 2, h: 2 }
+      ligand_development: { w: 2, h: 1 }
     pills: {}
 
   - id: gibbie_hotplate
