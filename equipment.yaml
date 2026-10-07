@@ -1450,8 +1450,9 @@ equipment:
     # weigh-every-plate (github.com/cyrilcaoyang/weigh-every-plate) on the Pi 5
     # sdl2-pi5-cnc-doser (renamed from sdl2-pi5-cnc-doser-sam 2026-10-06).
     # Sartorius balance over USB-serial plus a PCA9685 servo plate lift and
-    # lid for the Flex deck corner on the Ligand Development bench: the
-    # weighing half of the weigher/doser
+    # lid on the Ligand Development bench (no Opentrons Flex here; the name
+    # predates that), beside a head-only Pi Zero 2W doser and a PC-driven
+    # CNC: the weighing half of the weigher/doser
     # split (dose_every_well/docs/WEIGHER_DOSER_SPLIT.md). Hard claim
     # enforcement; `startup` moves the servos, so the dashboard's lifecycle
     # buttons are real motion. Registered 2026-10-06 with the service live
