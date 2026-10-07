@@ -401,7 +401,8 @@ function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
 function PlatformTile({ catalog }: { catalog: PlatformCatalog }) {
   // Folds like the tag groups above, so the whole page is one interaction:
   // platform → instrument → action, each level closing what it contains.
-  const [open, setOpen] = useState(true);
+  // Starts folded, like them: the section reads as a list of platforms.
+  const [open, setOpen] = useState(false);
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
@@ -753,8 +754,10 @@ export default function ApiReferencePage() {
           </h3>
           <p className="mt-1 text-sm text-ink-muted dark:text-slate-300">
             What the <em>instruments</em> expose, from the static skill catalog, grouped by
-            platform. Reach these through the control passthrough above rather than calling a
-            device directly — that is what claims the device and writes the audit row.
+            platform. Platforms fold; open one for its instruments, and an instrument for its
+            actions and documentation. Reach these through the control passthrough above rather
+            than calling a device directly — that is what claims the device and writes the audit
+            row.
           </p>
         </header>
         <DeviceCatalogSection />
@@ -794,13 +797,12 @@ function DeviceCatalogSection() {
   }
 
   return (
-    // Platform tiles open by default and their instrument counts are wildly
-    // uneven (HTE has twelve, monitoring one), so a plain two-cell grid row
-    // padded the short tile out to the tall one's height. Weighing by
-    // instrument count splits them into two stacks of similar length instead,
-    // each tile only as tall as its content.
+    // Platform tiles start folded, and a folded tile costs the same height
+    // whatever its instrument count, so they weigh 1 each like the tag groups
+    // above: the split is even at rest. Stacked columns (not grid rows) keep
+    // an opened tile from padding its neighbour out to its height.
     <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
-      {splitColumns(platforms, ([, catalog]) => catalog.instruments.length || 1).map(
+      {splitColumns(platforms, () => 1).map(
         (column, index) => (
           <div key={index} className="flex flex-col gap-4">
             {column.map(([id, catalog]) => (

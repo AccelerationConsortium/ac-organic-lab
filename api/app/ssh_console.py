@@ -299,8 +299,10 @@ SSH_HOSTS: tuple[SshHost, ...] = (
             "the Dobot MG400 gateway was uninstalled the same day. Since "
             "2026-10-07 it also runs `sdl-camera-server` (NSSM, loopback "
             "127.0.0.1:8070) owning the UR5e's RealSense D435i, which "
-            "robot-motion fronts at /realsense/d435i/*; its config, logs and "
-            "captures are in that checkout's gitignored local/. "
+            "robot-motion fronts at /realsense/d435i/*; its config and "
+            "captures are in that checkout's gitignored local/, logs in "
+            "C:\\SDL_Logs. Both services are host-ops whitelisted (status + "
+            "logs, not restartable). "
             "Service control is `C:\\SDL_Tools\\nssm.exe` — prefer "
             "the whitelisted host-ops surface for routine restarts."
         ),
