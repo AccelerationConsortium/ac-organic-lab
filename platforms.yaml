@@ -97,6 +97,8 @@ sections:
       - cam_ligand_tapo_d246
       # - dobot_mg400   # commented out 2026-10-06 with its equipment.yaml entry
       - ligand_ur5e
+      # Right after the UR5e: the two-column grid then stacks it directly
+      # under the arm (operator decision 2026-10-07).
+      - flex_plate_weigher
       - lumastir
       - lle_ph_unit
-      - flex_plate_weigher
