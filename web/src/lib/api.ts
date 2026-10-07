@@ -609,6 +609,62 @@ export async function postPlateReaderStopTemperature(
   return controlPost(equipmentId, "incubator/stop", {});
 }
 
+// -- Plate weigher (weigh-every-plate: balance + plate lift + lid) ----------
+//
+// Routes mirror the device's `ROUTES` table (service/__init__.py). `read`
+// takes `{stable}`; everything else posts an empty body. The device's
+// `allowed_actions` carry these same verb names, so the tile gates on them
+// directly. The service refuses balance commands while the lift moves and
+// lift moves while the lid is closed (412s) — see its /agent-docs. The
+// passthrough budgets 15 s for a `kind: other` action; a stable read is
+// capped device-side at 10 tries × 1 s, and a servo-lift startup is ~3 s.
+
+export type PlateWeigherAction =
+  | "startup"
+  | "shutdown"
+  | "read"
+  | "tare"
+  | "zero"
+  | "raise"
+  | "lower"
+  | "open_lid"
+  | "close_lid"
+  | "park"
+  | "stop"
+  | "load_plate"
+  | "unload_plate";
+
+const PLATE_WEIGHER_PATHS: Readonly<Record<PlateWeigherAction, string>> = Object.freeze({
+  startup: "startup",
+  shutdown: "shutdown",
+  read: "read",
+  tare: "tare",
+  zero: "zero",
+  raise: "raise",
+  lower: "lower",
+  open_lid: "lid/open",
+  close_lid: "lid/close",
+  park: "park",
+  stop: "stop",
+  load_plate: "plate/load",
+  unload_plate: "plate/unload",
+});
+
+export interface PlateWeigherAck extends ControlAck {
+  mass_g?: number | null;
+  stable?: boolean | null;
+  /** "underload" / "overload" when the balance answered Low / High. */
+  condition?: "underload" | "overload" | null;
+}
+
+export function postPlateWeigherAction(
+  equipmentId: string,
+  action: PlateWeigherAction,
+  body: Record<string, unknown> = {},
+): Promise<PlateWeigherAck> {
+  return controlPost(equipmentId, PLATE_WEIGHER_PATHS[action], body);
+}
+
 // -- Sash (fume hood) control ----------------------------------------------
 //
 // As of STATUS_SPEC v1.1 the actuator exposes `/control/sash/{move,stop}`;

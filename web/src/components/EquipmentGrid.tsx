@@ -1,5 +1,6 @@
 import type { EquipmentSnapshot } from "@/types/api";
 import { isMonitoringOnly, isReadOnlyUrArm } from "@/lib/tile-policy";
+import { isPlateWeigher } from "@/lib/plate-weigher";
 import { CameraTile } from "./CameraTile";
 import { XprBalanceTile } from "./XprBalanceTile";
 import { EasyMaxTile } from "./EasyMaxTile";
@@ -13,6 +14,7 @@ import { LiquidHandlerTile } from "./LiquidHandlerTile";
 import { PlateReaderTile } from "./PlateReaderTile";
 import { PlateSealerTile } from "./PlateSealerTile";
 import { PlateStackerTile } from "./PlateStackerTile";
+import { PlateWeigherTile } from "./PlateWeigherTile";
 import { PowerStripTile } from "./PowerStripTile";
 import { PressTile } from "./PressTile";
 import { RobotArmTile } from "./RobotArmTile";
@@ -95,6 +97,12 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
                     // kind is `other` (the contract has no chiller member),
                     // so this has to be an id branch.
                     <ChillerTile snapshot={snapshot} />
+                  ) : isPlateWeigher(snapshot) ? (
+                    // Also `other` (no plate_weigher kind until the contract's
+                    // v1.3), but selected by envelope shape — balance + lift
+                    // drivers in details — so every weigh-every-plate unit
+                    // gets it, not one id. See lib/plate-weigher.ts.
+                    <PlateWeigherTile snapshot={snapshot} />
                   ) : snapshot.kind === "camera" ? (
                     <CameraTile snapshot={snapshot} />
                   ) : snapshot.kind === "power_strip" || snapshot.kind === "smart_plug" ? (
