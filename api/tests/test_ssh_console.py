@@ -186,7 +186,9 @@ def test_every_host_is_addressable_by_its_id() -> None:
     assert HOSTS_BY_ID["flex-doser-pi"].label == "Flex Solid Doser"
     assert HOSTS_BY_ID["flex-doser-pi"].kind == "Raspberry Pi Zero 2W"
     assert HOSTS_BY_ID["flex-doser-pi"].group == "device"
-    assert HOSTS_BY_ID["vial-doser-pi"].label == "Vial Solid Doser"
+    # Renamed to the plate weigher 2026-10-06; the id stays so the SSH alias
+    # and the /utils/computers route keep working.
+    assert HOSTS_BY_ID["vial-doser-pi"].label == "Flex Plate Weigher Pi"
     assert HOSTS_BY_ID["vial-doser-pi"].kind == "Raspberry Pi 5"
     assert HOSTS_BY_ID["vial-doser-pi"].group == "device"
 
