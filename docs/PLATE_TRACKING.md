@@ -783,11 +783,16 @@ row are untouched.
   requires a location *or* a seat"). `receive` the same, so a vial can be
   registered straight into a rack slot via `received_at_*`. Side effects, same
   transaction:
-  - *seat* (move to a seat): the destination must be in `ADAPTER_TYPES`,
-    top-level and not `retired`; the moved container must be top-level (the
-    *move the root* rule is unchanged); the walk from the destination upward
-    must not reach the moved container (no cycles). Sets `seated_on` /
-    `seated_at_site`, clears `location_id`.
+  - *seat* (move to a seat): the destination must be a top-level,
+    non-`retired` container **whose site manifest names `to_site`**; the
+    moved container must be top-level (the *move the root* rule is
+    unchanged); the walk from the destination upward must not reach the
+    moved container (no cycles). Sets `seated_on` / `seated_at_site`, clears
+    `location_id`. Note the destination is *not* restricted to
+    `ADAPTER_TYPES`: a vessel may expose stack sites too — a collector plate
+    offers `top` for the filter plate seated on it (§11.8), a plate offers
+    `lid`. What `ADAPTER_TYPES` decides is only who may be a material
+    endpoint, below.
   - *unseat* (move or `store` to a location): clears both seating fields,
     sets `location_id` — today's row shape. `store` is in `LOCATION_VERBS`
     and gets the same treatment; `dispose` clears both seating fields too,
@@ -969,9 +974,11 @@ bench is open question 4.
    `adapter` with the kind in `model`? Keeping `rack` costs nothing and reads
    better in a ledger.
 2. **Lids and sealing mats** — they sit *on* a plate and travel with it but
-   provide no sites. Model as a seat with a reserved site name (`lid`) on the
-   plate, or ignore until something needs it? Recommendation: ignore; nothing
-   reads them today.
+   provide no sites. The seat rule as amended (§11.3: any container with a
+   manifest site) already covers them as a seat at site `lid` on the plate,
+   the same mechanism as the filter plate on its collector (§11.8).
+   Recommendation: the model allows it; do not register lids until something
+   reads them.
 3. **Where the site manifest comes from** — resolved in principle (§11.3:
    a manifest on the adapter row, validated by the ledger, definition-free
    record layer); open in detail: who writes it at registration. The
@@ -996,6 +1003,57 @@ bench is open question 4.
 6. **Identity scheme** — vials are where barcodes become unavoidable (open
    question §10.5). Decide the prefix set (`PLT-`, `RK-`, `V-`?) at the
    same time.
+
+### 11.8 Compiled geometry is not custody — the balance plate, risers, filter stacks
+
+The OT-2 gateway has its own way of putting one thing on top of another, and
+it looks nothing like seating: it **compiles a new labware definition**. A
+plate declared on the slot-6 balance of `ot2_complexation` (a local WZB254-N
+peripheral; the gateway's default slot is 9) is loaded into the robot run as
+a custom definition named `ac_balance_<geometry-hash>` whose wells are raised
+by the qualified seating height (102 mm for the Agilent plate) and whose
+envelope is the measured rim (121 mm), so the path planner treats it as one
+tall labware (`PLATEBALANCE_V1.md` → *Plates on the balance*;
+`platebalance.py::BalancePipettingGeometry.compile_definition`). A plate on
+the 5 mm riser and a filter plate seated on a collector get the same
+treatment: one compiled definition containing only the top plate's wells
+(`PLATE_ASSEMBLIES.md`). To Opentrons, "the plate on the balance" *is* a new,
+taller plate. The question is whether the ledger should think so too.
+
+**No. The compiled definition is geometry; the ledger records identity and
+place, and neither changed.** The gateway itself keeps the two apart — the
+declaration for the slot carries the physical facts, `{load_name:
+corning_96_wellplate_360ul_flat, support_module: platebalanceV1, plate_id:
+collection_plate_001}`, and only the run's load name is the compiled one;
+`/status` folds the declared definition and `plate_id` back onto the slot so
+"readers draw the real plate" (`deck.py`, *readback confirms the compiled
+definition name, not the physical stack*). The ledger follows that split:
+
+| | Gateway (geometry, per run) | Ledger (custody, durable) |
+|---|---|---|
+| identity | `plate_id` on the declaration, carried into `/status` | `Container.hid == plate_id` (D4) — **the same row** as before it went on the balance; no new container is ever minted for a compiled definition |
+| what it is | compiled `ac_balance_…` / assembly load name | `Container.model` = the **source** load name (`agilent_96_700ul_square_flat`), never the compiled one. The compiled name and its `definition_sha256` may travel in the move row's `params` as provenance — "this is the geometry the robot used" — not as identity |
+| where it is | slot `6`, `support_module: platebalanceV1` | a `move` to the registry place for that slot. The balance is bolted down, so it is a **place, not an adapter** (§11.6 rule); the registry entry for the balance's slot should say so in its `label`/`equipment`, and `support_module` is device vocabulary — an observation alias like `aliases`, never a custody input |
+| riser (5 mm) | part of the compiled geometry | **not custody by default.** It is removable, so the rule says "container" — but nothing needs to find a riser, and registering it would make every plate-on-riser a seat. Register it as a one-site adapter only if someone has to know where it is; until then it is geometry the gateway owns |
+| filter plate on collector | one definition, top wells only; collector "covered", not addressable | **a seat on a vessel**: `filter_plate seated_on collector_plate @ top`, which is why the seat rule (§11.3) admits any container whose manifest names the site, not only adapters. The collector keeps its wells and its `location_id`; the filter plate's place derives from it; moving the stack is one move of the collector; unstacking is a move of the filter plate. `filter` rows (filter wells → collector wells, D11) are unaffected — the ledger never pretended the collector's wells were gone, only the robot could not reach them |
+
+**Observation.** `observe` reads `labware.plate_id` from the slot, which the
+gateway preserves through the compilation — the balance plate reconciles
+exactly as any plate does. The load-name *category* check proposed for racks
+(§11.4) must therefore read the declaration's **source** `load_name` or the
+`support_module` marker, not the run's load name: `_detect_category` of
+`ac_balance_…` is `None`, and a check that compared the compiled name would
+flag every weighed plate as a contradiction.
+
+**Why this matters beyond the balance.** It fixes the general rule for every
+device that re-describes labware for its own kinematics (a stacked plate on
+the xArm's nests, a plate in a sealer's carrier, a Flex plate on the
+plate-weigher pan): the device may compile whatever geometry it needs for
+the run, and reports the physical `plate_id`; the ledger records that
+`plate_id` at a place or a seat and keeps the source `model`. A compiled
+name is a fact *about a run*, which is where it belongs — in the step's
+args and the move row's `params` — and never a second identity for a plate
+that did not change.
 
 ## See also
 
