@@ -682,7 +682,11 @@ lands; everything after needs all three.
 context is kept (same reason as `DATABASE_DESIGN.md`); the schema change it
 asks for belongs to BitacoraDB and the nominal-layer change to bitácora, and
 neither has been agreed yet. Nothing below is built. Everything shipped in
-§5–§7 keeps working unchanged.
+§5–§7 keeps working unchanged. *Reviewed 2026-10-08 by a second agent (Codex,
+`gpt-6-astra`, read-only over all three repos); it agreed with the core
+decision and disagreed on three mechanics — "exactly one" placement,
+DB-enforced site uniqueness, and free-string sites — and caught five
+factual slips. Each verified against the code and folded in below.*
 
 ### 11.1 The problem
 
@@ -719,13 +723,16 @@ through the ledger like every other custody fact. A rack is therefore an
 **adapter**, not a parent: a container that provides sites and holds no
 material. Vials and tubes are **top-level containers** with their own `hid`,
 own history, own contents; samples point at the vial itself
-(`Sample.meta.container_id`), with no `well`. (Terminology: "adapter" because
-that is the Opentrons word the OT-2 gateway and the labware builder already
-use — `deck.py` classifies `adapter` / `aluminumblock`, the builder offers
-`adapter`, `aluminumBlock`, `tubeRack`; the user's "adaptor (matable)" is the
-same idea. The Opentrons labware model is literally this: a tube rack *is* an
-adapter-category definition with sites, and a plate can be loaded "on" an
-adapter.)
+(`Sample.meta.container_id`), with no `well`. (Terminology: "adapter" is the
+*ledger's* word for every site-providing, material-free object, borrowed from
+Opentrons; the user's "adaptor (matable)" is the same idea. It is **not** the
+Opentrons taxonomy one-to-one: Opentrons keeps `tubeRack`, `adapter` and
+`aluminumBlock` as distinct display categories, and the OT-2 gateway maps
+`aluminumBlock` → `adapter` while keeping `tuberack` separate
+(`deck.py::_detect_category`); the labware builder offers all three. The mapping
+from device category to ledger type is therefore explicit (`tubeRack` →
+`rack`, `adapter`/`aluminumBlock` → `adapter`), never inferred from the
+word.)
 
 | | Containment (today) | Seating (new) |
 |---|---|---|
@@ -749,43 +756,105 @@ row are untouched.
   adapters (they provide no sites) — open question 2 below.
 - **Seating cache on `Container`:** `seated_on_container_id` (self-FK,
   nullable) + `seated_at_site` (string, same shape rules as `position`:
-  ≤ 32 chars, no slash/space), partial unique index on
-  `(seated_on_container_id, seated_at_site)` — one occupant per site. Like
-  `location_id`, it is **service-owned**: absent from Create and Update,
-  written only by the ledger in the same transaction. Exactly one of
-  `location_id` / `seated_on_container_id` is set on a top-level container
-  (the other is null); children have neither (their root's).
+  ≤ 32 chars, no slash/space), both-or-neither. Like `location_id`, it is
+  **service-owned**: absent from Create and Update, written only by the
+  ledger in the same transaction. **At most one** of `location_id` /
+  `seated_on_container_id` is set on a top-level container — *both null is
+  legal and already exists*: a container created without `received_at_*`,
+  or `dispose`d with no waste place, has `location_id = None` today
+  (`repository/container_actions.py` dispose branch;
+  `test_container_patch_cannot_set_location`). "Unlocated" stays a truthful
+  state; nothing backfills a place. Children have neither (their root's).
+  Adapters may not have positional children: `ContainerCreate.positions` is
+  refused for `ADAPTER_TYPES`, or a rack's "wells" would be material
+  endpoints that slip past the adapter refusal below.
+- **Site occupancy is reported, never enforced.** An earlier draft put a
+  unique index on `(seated_on_container_id, seated_at_site)`. That
+  contradicts D2's own rule for `capacity` — *"refusing a truthful record
+  ('I did put it in slot 2; the other row is stale') is worse than a visible
+  double-occupancy"* — and would make the ledger refuse a bench fact because
+  the cache is stale. So: a second occupant at an occupied site is **recorded**,
+  and the service flags the site as `conflict` on every read until a later
+  row resolves it (one of the two moves away). Flagged, never auto-resolved,
+  never silently evicted — the D7 `mismatch` discipline, one level down. The
+  lab map shows it in the same colour as a device contradiction.
 - **`move` gains a second kind of destination:** `to_container_id` +
   `to_site`, mutually exclusive with `to_location_id` (`ACTION_RULES` → "move
   requires a location *or* a seat"). `receive` the same, so a vial can be
   registered straight into a rack slot via `received_at_*`. Side effects, same
   transaction:
-  - *seat* (move to a seat): target must be in `ADAPTER_TYPES`; the moved
-    container must be top-level (the *move the root* rule is unchanged); the
-    site must be free; the walk from the adapter upward must not reach the
-    moved container (no cycles). Sets `seated_on` / `seated_at_site`, clears
-    `location_id`.
-  - *unseat* (move to a location): clears `seated_on`, sets `location_id` —
-    today's row shape, nothing new.
+  - *seat* (move to a seat): the destination must be in `ADAPTER_TYPES`,
+    top-level and not `retired`; the moved container must be top-level (the
+    *move the root* rule is unchanged); the walk from the destination upward
+    must not reach the moved container (no cycles). Sets `seated_on` /
+    `seated_at_site`, clears `location_id`.
+  - *unseat* (move or `store` to a location): clears both seating fields,
+    sets `location_id` — today's row shape. `store` is in `LOCATION_VERBS`
+    and gets the same treatment; `dispose` clears both seating fields too,
+    and **disposing an adapter that still has occupants is refused** until
+    they are moved — a rack cannot leave the system with tubes "in" it and
+    the tubes nowhere.
   - *moving an adapter* is one row; everything seated on it comes along
     because their place is derived, not stored. No fan-out writes.
-  - `expected_location_id` keeps its meaning (stale-state guard); a seated
-    container may instead pass `expected_seated_on_container_id`.
+  - **Cycle check under concurrency.** Two concurrent rows `A → B` and
+    `B → A` each pass a read-only walk against the old state. Today's
+    `_container(..., for_update=…)` locks only the moved container; the seat
+    path must also lock the destination's ancestry (walk up with
+    `FOR UPDATE`), or run `SERIALIZABLE` with a retry. Either is fine;
+    "walk then write" alone is not.
+  - **Stale-state guard, extended.** `expected_location_id` keeps its
+    meaning. For a seated container the caller passes
+    `expected_seated_on_container_id` **and** `expected_seated_at_site`
+    together — the adapter id alone cannot tell `B3 → C3` apart, and a raw
+    `location_id = None` would make every seat look like "unlocated".
+    Omitted-vs-null semantics stay as today (`model_fields_set`). The
+    service stamps `from_seated_on_container_id` / `from_seated_at_site`
+    on the row beside `from_location_id`, and `_replay`'s comparison
+    includes them.
+  - **One write path.** `containers.create` currently writes its own
+    `receive` row and cache effect inline (`repository/containers.py`,
+    `received_at_location_id` branch) instead of calling the action path. A
+    `received_at_seat` variant must not grow a second copy of the seat
+    rules — factor registration through the same validated routine.
 - **Where is X** — `containers.root_of` grows one more hop: climb
   `parent_container_id` to the root, then `seated_on_container_id` until a
   container with a `location_id` (cycle-guarded, as today). `GET
   /containers` / `GET /containers/{id}` return the resolved place beside the
   raw cache (`resolved_location_id`, plus the seating chain) so no client
   re-implements the walk — the same "one copy of the join" rule as D11.
+  **Every existing reader of the raw cache must move to the resolved value
+  in the same change**, or a seated plate reads as unlocated: the GET
+  routes (which do not call `root_of` today), the list filter
+  `location_id=` (should match the resolved place), `custody.py::where_is`
+  (reads `row["location_id"]` directly), bitácora's
+  `/projects/{id}/plates/custody`, and any interlock that asks "plate at L".
+  History has the same hole: `list(container_id=…)` matches rows whose
+  source/target is the container, so a vial's history misses the moves of
+  the rack it was seated in. The history view must union in **ancestor
+  moves during the seating intervals** (an interval join, or at minimum a
+  "moved with `RK-003`" annotation) — otherwise "how did it get there" is
+  answered wrongly for exactly the objects this section adds.
+- **Authorization is unchanged and must not leak through the chain.**
+  Containers are read under `can_read_scoped` (`authz.py`): a lab-scoped
+  row needs a caller with at least one project, a project-private row needs
+  that project. A seating-chain or occupant list is a new way to learn that
+  a private container exists; it must apply the same rule per element
+  (omit or mask what the caller cannot read), not inherit the visibility of
+  the adapter.
 - **Material verbs refuse adapters:** `transfer` / `filter` / `dose` /
   `dilute` / `consume` with a source or target in `ADAPTER_TYPES` is a 422.
   `seal` / `shake` / `read` on an adapter are allowed (you do shake a rack).
-- **Sites are free strings, validated by shape, not by model — for now.**
-  Validating `to_site` against the adapter's `model` (the Opentrons
-  definition's `ordering`, or a labware-builder definition) needs the record
-  layer to read labware definitions it does not have today. Uniqueness and
-  shape are enforced by the ledger; model-driven validation is a later,
-  additive check (open question 3).
+- **Sites come from a manifest on the adapter, not from a definition the
+  record layer fetches.** An earlier draft made `to_site` a free string;
+  the review argued, correctly, that a seat a robot will address must be
+  validated from day one or the first typo (`B03`, `b3`) becomes an
+  un-pipettable ledger fact. The middle path: an adapter row carries a
+  minimal, versioned **site manifest** (`meta.sites = ["A1", …, "D6"]`
+  plus the definition id/version it came from), written at registration
+  from the labware definition this stack already has (builder upload or
+  Opentrons definition); the ledger validates `to_site ∈ manifest` and
+  stays definition-free. An adapter with no manifest accepts shape-valid
+  strings (a bench rack nobody will pipette into) and says so on read.
 
 ### 11.4 What changes in this repo ("G2", "G4")
 
@@ -793,44 +862,63 @@ row are untouched.
   (`{adapter_hid, site}`) beside a location name, resolving the adapter hid
   through the same `GET /containers?hid=` it uses for plates; the human front
   door `POST /api/custody/move` gains the same alternative; a new `POST
-  /api/custody/register` is the missing front door for registering a
-  container *at* a place or seat — today **no UI registers a container**:
-  the dashboard has only the move form, bitácora's agent deliberately exposes
-  `where_is_plate` / `propose_plate_move` and no register tool
-  (`agent.py`, asserted in `test_agent.py`), so `received_at_location_id` is
-  reachable only by a raw record-layer POST.
+  /api/custody/register` is the dashboard's missing front door for
+  registering a container *at* a place or seat. (Correction to an earlier
+  draft: bitácora *does* register — its agent exposes
+  `propose_plate_registration`, a proposal the human confirms from a chat
+  card before the write (`agent.py`, `chat-panel.tsx`; `test_agent.py`
+  requires the tool and requires that no tool is *named* as if it wrote by
+  itself). The dashboard has only the move form, so an operator at the
+  bench without a bitácora session has no way in.)
 - **`observe` / `reconcile`** — a site is **unobservable** by every device we
   have: the OT-2 reports the rack's load name and slot (`deck.py` already
   classifies `tuberack` / `adapter` and walks `labwareId` → `moduleId` →
   `slotName` nesting in `run_slot_for`, collapsing it to the slot), never
   which tube is in which hole. So tube occupancy is **declared, not sensed**:
-  reconciliation can confirm or contradict "rack `RK-003` is in `slot_3`" by
-  load name (a different rack type is a contradiction; the same type is
-  consistent, not proof — one tracked `plate_id` per run, D7), and must treat
-  "vial `V-0107` is at `B3`" as `unobservable`, never a mismatch. The lab map
-  shows seated vials as *recorded*, visibly distinct from device-confirmed
-  plate placements.
+  reconciliation could contradict "rack `RK-003` is in `slot_3`" by load
+  name (a different labware category in that slot is a contradiction; the
+  same category is consistent, not proof of *which* rack — one tracked
+  `plate_id` per run, D7), and must treat "vial `V-0107` is at `B3`" as
+  `unobservable`, never a mismatch. Note `observe` reads only
+  `labware.plate_id` today and compares no load names — the category check
+  is new work, not an existing capability. The lab map shows seated vials as
+  *recorded*, visibly distinct from device-confirmed plate placements.
 - **Lineage (`lineage.py`, `resolve_children`)** — a `transfer` whose
   endpoint is a tube-rack position must resolve to **the vial seated there at
   run time**, not to a child of the rack (there are none). `resolve_children`
-  returns `{}` for a rack today ("genuinely not a plate") — a sibling
-  `resolve_seated(adapter_hid) → {site: container_id}` reads the ledger's
-  current seating. An empty site or an unregistered occupant is a refusal
-  **before** the pipetting step runs, exactly the reader path's "needs exactly
-  one existing sample with an explicit physical identity" posture
-  (`reader_measurements.py::physical_sample`). This is a strict improvement:
-  today a tuberack transfer would silently produce no lineage row.
-- **Reader measurements** — `physical_sample` already accepts
-  `meta.container_id`; for a vial that is the vial itself with no `well`.
-  No change beyond letting `well` be absent when the container is not a
-  child.
+  lists whatever positional children a container has, so for a rack it
+  returns `{}` and `lineage_after_run` records an explicit `skipped` entry
+  for the pair (not silence — the run's `record.transfers` says so). A
+  sibling `resolve_seated(adapter_hid) → {site: container_id}` reads the
+  ledger's current seating. Two things follow from *when* lineage runs
+  today: `lineage_after_run` fires after execution (`workflow.py`, before
+  `done`), and `resolve_children` caches per run. Seating is mutable during
+  a run, so site resolution must happen **before the liquid step**, must
+  check that the occupant **is the authorized vial** (merely "occupied"
+  would let a substituted tube pass), and must freeze the resolved ids in
+  run state for the post-run lineage pass. An empty site, a different
+  occupant, or an unregistered one is a refusal before the step — the
+  reader path's "exactly one existing sample with an explicit physical
+  identity" posture (`reader_measurements.py`).
+- **Reader measurements** — `physical_sample` already tolerates a `None`
+  well, but the acquisition path is plate-shaped end to end: `targets()`
+  requires a preceding `plate.load` on the role, exactly one
+  `plate_bindings` entry for that hid, and an explicit `wells` list, and
+  preparation keys samples as `{hid}:{well}`. Reading a vial (UPLC, a
+  single-cuvette reader) needs a parallel *container-shaped* target spec,
+  not a relaxed well check.
 - **Dashboard `/utils/plates` → a location-first lab map** — places grouped
   by platform; an adapter renders as a grid of sites with its occupants; a
   loose vial at its own place; click-through to history and, for samples the
   viewer can read (`can_read_scoped`, D10), to contents; one search box that
   takes a plate hid, vial hid, sample hid or place name. Project scoping is
-  the one thing the page must get right: everyone may see *where* containers
-  are, only project members see *what is in them*.
+  the one thing the page must get right, and it is **not** "everyone sees
+  where, members see what": containers themselves are scoped
+  (`can_read_scoped` — lab-scoped rows need a caller in at least one
+  project; a project-private container is invisible outside it), and
+  samples are scoped by their project on top. The map renders exactly what
+  the record layer returns for the signed-in caller, per element of a
+  seating chain, and nothing it infers.
 
 ### 11.5 What changes in bitácora ("G3")
 
@@ -839,11 +927,22 @@ Protocols stay nominal (D4). Today the nominal layer has `plates:` and
 down: a nominal **containers** block (a tube rack with named nominal tubes, or
 free vials) and a per-vial binding at authorization — the rack hid *and* which
 nominal tube sits at which site, pinned into the package through the digest
-the way `{<plate>_hid}` is. The compiler's `custody: {plate, to}` annotation
-gains a seat form, `to: {adapter: <nominal>, site: B3}`, on the step that
-completes the hand-off, and refuses (422) a site the bound adapter's
-definition does not have, once definitions are readable. Whether seating is
-authored per protocol or recorded only at the bench is open question 4.
+the way `{<plate>_hid}` is. Note how that works today: `plate_bindings` is
+**not** itself a digest input (§9 Phase C note) — the hids reach the digest
+only because the compiler resolves them *into steps*. Vial/rack bindings and
+site assignments must likewise be compiled into package data (per-step hids,
+or a package-level block like `lineage`), and both digest implementations
+(bitácora's and the runner's `_DIGEST_FIELDS`) updated together; a binding
+that stays outside the package is not authorized. Liquid-command addressing
+needs typed endpoints — *fixed well of a plate* vs *seat of an adapter* vs
+*direct container* — so the executor knows which resolver to run. The
+compiler's `custody: {plate, to}` annotation gains a seat form,
+`to: {adapter: <nominal>, site: B3}`, on the step that completes the
+hand-off, validated against the bound adapter's site manifest (§11.3); the
+manual-step `from` check (`manual_steps.py`, "source does not match the
+current custody ledger") compares the full placement, not the location
+alone. Whether seating is authored per protocol or recorded only at the
+bench is open question 4.
 
 ### 11.6 What this deliberately does not change
 
@@ -873,24 +972,27 @@ authored per protocol or recorded only at the bench is open question 4.
    provide no sites. Model as a seat with a reserved site name (`lid`) on the
    plate, or ignore until something needs it? Recommendation: ignore; nothing
    reads them today.
-3. **Where sites come from** — free string now (this proposal) vs. requiring
-   the adapter's `model` to resolve to a definition with an `ordering`. The
-   labware definitions this stack already has — repo-committed
-   `labware/*.json` and builder uploads under `<data-dir>/labware/` beside
-   `lab.db` (`api/app/labware.py`), plus the OT-2 gateway's Opentrons
-   definitions — live in this stack, not in BitacoraDB; a `GET
-   /api/labware/{model}/sites` here could be what bitácora validates against,
-   keeping the record layer definition-free.
+3. **Where the site manifest comes from** — resolved in principle (§11.3:
+   a manifest on the adapter row, validated by the ledger, definition-free
+   record layer); open in detail: who writes it at registration. The
+   definitions live in this stack — repo-committed `labware/*.json`,
+   builder uploads under `<data-dir>/labware/` beside `lab.db`
+   (`api/app/labware.py`), the OT-2 gateway's Opentrons definitions — so a
+   `GET /api/labware/{model}/sites` here is the natural source for both the
+   register front door and bitácora's validation.
 4. **Authored vs. recorded seating** — does a protocol *declare* which nominal
    tube goes in which rack site (reviewable, digest-covered, like plate maps)
    or is seating a bench fact recorded at authorization/run time? The
    PLATES_AS_OBJECTS argument ("the mapping determines what is in the well —
    it is science") says: declared when it determines contents, recorded when
-   it is pure logistics. A reaction tube's slot is logistics; a stock tube's
-   slot is what the pipette resolves — probably declared.
+   it is pure logistics. The review's sharper rule: **every site a pipette
+   will address is declared and pinned**, reaction tubes included — the
+   executor resolves the occupant against it (§11.4), so an undeclared site
+   is one it cannot verify.
 5. **Nesting depth** — allow rack-on-block-on-slot from day one (the walk
-   is the same code) or cap at one level? Recommendation: no cap; the cycle
-   guard is the only real cost and it is already needed.
+   is the same code) or cap at one level? Recommendation: no cap, but the
+   cost is not only the cycle guard — it is the ancestry lock / serializable
+   write (§11.3) and the interval-joined history. Budget for those.
 6. **Identity scheme** — vials are where barcodes become unavoidable (open
    question §10.5). Decide the prefix set (`PLT-`, `RK-`, `V-`?) at the
    same time.
