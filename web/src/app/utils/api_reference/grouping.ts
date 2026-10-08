@@ -3,10 +3,18 @@
  * A Next.js page module may export only its component, so these live here —
  * which is also what makes them testable. The page renders what these return:
  * tags in a deliberate order, split into sub-modules when a tag is long enough
- * that one flat list stops being readable.
+ * that one flat list stops being readable — and, for Device actions, the
+ * device catalog narrowed to a filter.
  */
 
-import type { Endpoint, OpenApiDoc, SubModule } from "./types";
+import type {
+  ActionDef,
+  Endpoint,
+  InstrumentCatalog,
+  OpenApiDoc,
+  PlatformCatalog,
+  SubModule,
+} from "./types";
 
 // Tags in the order an operator meets them, not alphabetically: what the lab
 // *is* (meta, equipment), what you can do to it (control), what it recorded
@@ -130,6 +138,66 @@ export function endpointMatches(endpoint: Endpoint, query: string): boolean {
     endpoint.method.toLowerCase().includes(q) ||
     (endpoint.op.summary ?? "").toLowerCase().includes(q)
   );
+}
+
+function includesQuery(q: string, ...fields: (string | undefined)[]): boolean {
+  return fields.some((field) => (field ?? "").toLowerCase().includes(q));
+}
+
+/** Free-text match over a device action: name, method, endpoint, description. */
+export function actionMatches(action: ActionDef, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return includesQuery(q, action.name, action.method, action.endpoint, action.description);
+}
+
+/** An instrument matches as a whole on what names it, or on a documentation
+ *  endpoint — "cameras" should find the UR5e's camera discovery doc. */
+function instrumentMatches(instrument: InstrumentCatalog, q: string): boolean {
+  return (
+    includesQuery(q, instrument.name, instrument.id, instrument.kind, instrument.adapter) ||
+    (instrument.documentation ?? []).some((doc) => includesQuery(q, doc.label, doc.source_path))
+  );
+}
+
+/** The device catalog narrowed to a query, order kept. A platform whose label
+ *  matches keeps everything; an instrument that matches as a whole keeps all
+ *  its actions; any other instrument keeps only its matching actions. What is
+ *  left empty is dropped, so every tile the filter opens has something in it. */
+export function filterCatalog(
+  platforms: [string, PlatformCatalog][],
+  query: string,
+): [string, PlatformCatalog][] {
+  const q = query.trim().toLowerCase();
+  if (!q) return platforms;
+  const result: [string, PlatformCatalog][] = [];
+  for (const [id, platform] of platforms) {
+    if (includesQuery(q, platform.label)) {
+      result.push([id, platform]);
+      continue;
+    }
+    const instruments = platform.instruments.flatMap((instrument) => {
+      if (instrumentMatches(instrument, q)) return [instrument];
+      const actions = instrument.actions.filter((action) => actionMatches(action, q));
+      return actions.length > 0 ? [{ ...instrument, actions }] : [];
+    });
+    if (instruments.length > 0) result.push([id, { ...platform, instruments }]);
+  }
+  return result;
+}
+
+/** Instruments and actions across platforms, for "n of m match". */
+export function catalogCounts(platforms: [string, PlatformCatalog][]): {
+  instruments: number;
+  actions: number;
+} {
+  let instruments = 0;
+  let actions = 0;
+  for (const [, platform] of platforms) {
+    instruments += platform.instruments.length;
+    for (const instrument of platform.instruments) actions += instrument.actions.length;
+  }
+  return { instruments, actions };
 }
 
 export function groupByTag(doc: OpenApiDoc): [string, Endpoint[]][] {

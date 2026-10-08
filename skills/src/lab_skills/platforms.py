@@ -2,7 +2,9 @@
 
 The committed ``platforms.yaml`` at the monorepo root defines which sections
 appear on the Overview page, in what order, and which equipment ids belong to
-each section.  This module parses it into a typed ``PlatformsConfig``.
+each section, plus (``catalog_groups``) where the device catalog lists the
+equipment no section shows.  This module parses it into a typed
+``PlatformsConfig``.
 
 Missing file or invalid schema raises immediately (no fallback to defaults).
 """
@@ -35,10 +37,26 @@ class PlatformSection(BaseModel):
     default: bool = False
 
 
+class CatalogGroup(BaseModel):
+    """One ``catalog_groups`` entry: where the device catalog lists equipment
+    that is on no Overview card.
+
+    Read by ``GET /api/catalog`` only — never by the Overview, the nav tabs or
+    a platform page. A group whose ``id`` is a section's adds its equipment to
+    that platform's catalog entry and takes the section's title; any other id
+    is a group of its own and needs a ``title``.
+    """
+
+    id: str
+    title: str | None = None
+    equipment: list[str]
+
+
 class PlatformsConfig(BaseModel):
     """Parsed ``platforms.yaml``."""
 
     sections: list[PlatformSection]
+    catalog_groups: list[CatalogGroup] = []
 
     @model_validator(mode="after")
     def _at_most_one_default(self) -> "PlatformsConfig":
@@ -47,6 +65,33 @@ class PlatformsConfig(BaseModel):
             raise ValueError(
                 f"platforms.yaml: only one section may set default: true, got {defaults}"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _catalog_groups_are_unambiguous(self) -> "PlatformsConfig":
+        section_ids = {s.id for s in self.sections}
+        placed = set(self.equipment_to_section_id())
+        seen_groups: set[str] = set()
+        for group in self.catalog_groups:
+            if group.id in seen_groups:
+                raise ValueError(f"platforms.yaml: catalog group {group.id!r} is listed twice")
+            seen_groups.add(group.id)
+            if group.id in section_ids and group.title is not None:
+                raise ValueError(
+                    f"platforms.yaml: catalog group {group.id!r} extends that section, "
+                    "so it takes the section's title; drop its title"
+                )
+            if group.id not in section_ids and not group.title:
+                raise ValueError(f"platforms.yaml: catalog group {group.id!r} needs a title")
+            for eq_id in group.equipment:
+                # A catalog group places what no section does; listing an id
+                # twice would leave the catalog guessing which place is meant.
+                if eq_id in placed:
+                    raise ValueError(
+                        f"platforms.yaml: {eq_id!r} is already placed by a section or "
+                        "an earlier catalog group"
+                    )
+                placed.add(eq_id)
         return self
 
     def equipment_to_section_id(self) -> dict[str, str]:
@@ -59,6 +104,18 @@ class PlatformsConfig(BaseModel):
             for eq_id in section.equipment:
                 if eq_id not in result:
                     result[eq_id] = section.id
+        return result
+
+    def equipment_to_catalog_group_id(self) -> dict[str, str]:
+        """Return equipment id → device-catalog group id.
+
+        Sections first (as :meth:`equipment_to_section_id`), then
+        ``catalog_groups`` for the equipment no section lists.
+        """
+        result = self.equipment_to_section_id()
+        for group in self.catalog_groups:
+            for eq_id in group.equipment:
+                result.setdefault(eq_id, group.id)
         return result
 
     def section_for_equipment(self, equipment_id: str) -> PlatformSection | None:

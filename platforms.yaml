@@ -102,3 +102,43 @@ sections:
       - flex_plate_weigher
       - lumastir
       - lle_ph_unit
+
+# The API Reference's Device actions list (GET /api/catalog) only: where it
+# shows registered equipment that is on no Overview card, so nothing lands in
+# an "Unassigned" group. Never read by the Overview, the nav tabs or a
+# platform page. A group whose id is a section's adds to that platform's
+# entry; any other id is a group of its own and needs a title. An id already
+# placed by a section is refused here.
+catalog_groups:
+  - id: sample_prep
+    # On the Gibbie bench (COM7 on the Gibbie PC) but off its card since
+    # 2026-09-15.
+    equipment: [gibbie_hotplate]
+
+  - id: web_services
+    # Monitored; off the Services card because the notebook link is private
+    # under Admin (see the section's comment above).
+    equipment: [bitacora_eln, bitacora_db]
+
+  - id: computers
+    title: Computers and Servers
+    # The host-ops agents, which render on /utils/computers.
+    equipment:
+      - hostops_cytation_pc
+      - hostops_uplc_pc
+      - hostops_gibbie_pc
+      - hostops_dobot_pc
+      - hostops_lle_pc
+      - hostops_gaia
+      - hostops_orchestration
+
+  - id: printers
+    title: 3D Printers
+    # Rendered together on /utils/printers.
+    equipment: [bambu_p1s_01, bambu_h2d_01, eufymake_connection, elegoo_saturn_ultra_connection]
+
+  - id: bench_prototypes
+    title: Bench prototypes
+    # Commissioned on a bench machine and on no platform yet; move an entry
+    # into its section when it joins one.
+    equipment: [balance_lift]

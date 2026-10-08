@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import {
   TAG_TITLE,
+  actionMatches,
+  catalogCounts,
   endpointMatches,
+  filterCatalog,
   groupByTag,
   sharedDepth,
   splitColumns,
   splitSubModules,
   subModuleOf,
 } from "./grouping";
-import type { Endpoint, OpenApiDoc } from "./types";
+import type { ActionDef, Endpoint, InstrumentCatalog, OpenApiDoc, PlatformCatalog } from "./types";
 
 function endpoint(method: string, path: string, summary = ""): Endpoint {
   return { method, path, op: { summary } };
@@ -127,6 +130,86 @@ describe("filtering", () => {
   it("treats an empty or blank query as no filter", () => {
     expect(endpointMatches(ep, "")).toBe(true);
     expect(endpointMatches(ep, "   ")).toBe(true);
+  });
+});
+
+function action(name: string, endpoint: string, description = ""): ActionDef {
+  return {
+    name, description, method: "POST", endpoint,
+    args_schema: {}, requires_states: [], estimated_duration_s: null,
+  };
+}
+
+function instrument(
+  id: string, name: string, actions: ActionDef[], docs: [string, string][] = [],
+): InstrumentCatalog {
+  return {
+    id, name, kind: "other", adapter: "http", base_url: "", protocol: "1.2", actions,
+    documentation: docs.map(([label, source_path]) => ({
+      label, source_path, kind: "json", url: `/api/equipment/${id}/documentation${source_path}`,
+    })),
+  };
+}
+
+describe("device catalog filter", () => {
+  const ur5e = instrument(
+    "ligand_ur5e", "UR5e Arm",
+    [action("joint.step", "/control/joint/step", "One commissioned UR5e joint step")],
+    [["Camera discovery", "/cameras"]],
+  );
+  const camera = instrument("cam_ligand_tapo_d246", "Ligand Development Camera", [
+    action("ptz", "/control/ptz", "Nudge pan/tilt"),
+    action("preset/goto", "/control/preset/goto", "Go to a saved preset"),
+  ]);
+  const hostops = instrument("hostops_gaia", "Gaia Data Server", []);
+  const catalog: [string, PlatformCatalog][] = [
+    ["ligand_development", { label: "Ligand Development Platform", instruments: [ur5e, camera] }],
+    ["computers", { label: "Computers and Servers", instruments: [hostops] }],
+  ];
+
+  it("matches an action on name, method, endpoint and description", () => {
+    const ptz = camera.actions[0];
+    expect(actionMatches(ptz, "PTZ")).toBe(true);
+    expect(actionMatches(ptz, "post")).toBe(true);
+    expect(actionMatches(ptz, "/control/ptz")).toBe(true);
+    expect(actionMatches(ptz, "pan/tilt")).toBe(true);
+    expect(actionMatches(ptz, "preset")).toBe(false);
+  });
+
+  it("keeps only the matching actions of an instrument that does not match itself", () => {
+    expect(filterCatalog(catalog, "preset")).toEqual([
+      ["ligand_development", {
+        label: "Ligand Development Platform",
+        instruments: [{ ...camera, actions: [camera.actions[1]] }],
+      }],
+    ]);
+  });
+
+  it("keeps a whole instrument that matches by name, id or a documentation endpoint", () => {
+    for (const q of ["ur5e", "ligand_ur5e", "camera discovery", "/cameras"]) {
+      const [[, platform]] = filterCatalog(catalog, q);
+      expect(platform.instruments[0]).toBe(ur5e);
+    }
+  });
+
+  it("keeps an instrument with no actions when it matches itself", () => {
+    expect(filterCatalog(catalog, "gaia")).toEqual([
+      ["computers", { label: "Computers and Servers", instruments: [hostops] }],
+    ]);
+  });
+
+  it("keeps a whole platform whose label matches", () => {
+    expect(filterCatalog(catalog, "computers and")).toEqual([catalog[1]]);
+  });
+
+  it("drops what is left empty, and passes a blank query through", () => {
+    expect(filterCatalog(catalog, "no such thing")).toEqual([]);
+    expect(filterCatalog(catalog, "  ")).toBe(catalog);
+  });
+
+  it("counts instruments and actions for the match line", () => {
+    expect(catalogCounts(catalog)).toEqual({ instruments: 3, actions: 3 });
+    expect(catalogCounts(filterCatalog(catalog, "preset"))).toEqual({ instruments: 1, actions: 1 });
   });
 });
 

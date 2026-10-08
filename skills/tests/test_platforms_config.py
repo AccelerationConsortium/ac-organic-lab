@@ -54,3 +54,57 @@ def test_more_than_one_default_is_rejected():
                 ]
             }
         )
+
+
+def _sections():
+    return [
+        {"id": "a", "title": "A", "kind": "platform", "href": "/platforms/a", "equipment": ["x"]},
+    ]
+
+
+def test_catalog_groups_extend_a_section_or_stand_alone():
+    cfg = PlatformsConfig.model_validate(
+        {
+            "sections": _sections(),
+            "catalog_groups": [
+                {"id": "a", "equipment": ["y"]},
+                {"id": "pcs", "title": "Computers", "equipment": ["z"]},
+            ],
+        }
+    )
+    assert cfg.equipment_to_catalog_group_id() == {"x": "a", "y": "a", "z": "pcs"}
+    # The Overview's mapping is untouched: catalog groups are catalog-only.
+    assert cfg.equipment_to_section_id() == {"x": "a"}
+
+
+def test_catalog_groups_are_optional():
+    cfg = PlatformsConfig.model_validate({"sections": _sections()})
+    assert cfg.catalog_groups == []
+    assert cfg.equipment_to_catalog_group_id() == {"x": "a"}
+
+
+@pytest.mark.parametrize(
+    "groups,match",
+    [
+        ([{"id": "pcs", "equipment": ["z"]}], "needs a title"),
+        ([{"id": "a", "title": "Other", "equipment": ["z"]}], "drop its title"),
+        ([{"id": "pcs", "title": "PCs", "equipment": ["x"]}], "'x' is already placed"),
+        (
+            [
+                {"id": "pcs", "title": "PCs", "equipment": ["z"]},
+                {"id": "printers", "title": "Printers", "equipment": ["z"]},
+            ],
+            "'z' is already placed",
+        ),
+        (
+            [
+                {"id": "pcs", "title": "PCs", "equipment": ["y"]},
+                {"id": "pcs", "title": "PCs", "equipment": ["z"]},
+            ],
+            "listed twice",
+        ),
+    ],
+)
+def test_ambiguous_catalog_groups_are_rejected(groups, match):
+    with pytest.raises(ValidationError, match=match):
+        PlatformsConfig.model_validate({"sections": _sections(), "catalog_groups": groups})

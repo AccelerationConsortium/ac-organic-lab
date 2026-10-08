@@ -761,15 +761,28 @@ async def openapi_document() -> dict:
 async def skill_catalog() -> dict:
     """Return the static skill catalog grouped by platform.
 
-    Each platform contains its instruments; each instrument lists its
-    available actions with JSON Schema descriptions of the request body.
+    Groups follow ``platforms.yaml``: its sections, then its
+    ``catalog_groups`` for equipment that is on no Overview card (host-ops
+    agents, 3D printers, …). Each platform contains its instruments; each
+    instrument lists its available actions with JSON Schema descriptions of
+    the request body.
     This endpoint is read-only and does not contact any device.
     """
     registry: Registry = app.state.registry
     platforms_config: "PlatformsConfig" = app.state.platforms_config  # type: ignore[name-defined]
 
-    eq_to_section = platforms_config.equipment_to_section_id()
-    section_titles = {s.id: s.title for s in platforms_config.sections}
+    eq_to_group = platforms_config.equipment_to_catalog_group_id()
+    # Platforms with a page lead, in nav-tab order; then the sections without
+    # one (Services), monitoring, and the catalog-only groups in file order.
+    # "unknown" collects equipment platforms.yaml places nowhere — a slip the
+    # catalog tests catch — and, like any group, is dropped while empty.
+    labels = {
+        s.id: s.title
+        for s in sorted(platforms_config.sections, key=lambda s: s.href is None)
+    }
+    labels["monitoring"] = "Environmental monitoring"
+    labels.update({g.id: g.title for g in platforms_config.catalog_groups if g.title})
+    labels["unknown"] = "Unassigned"
 
     def _serialize_actions(kind: str, equipment_id: str) -> list[dict]:
         defs = skills_for(kind, equipment_id)
@@ -792,20 +805,15 @@ async def skill_catalog() -> dict:
 
     # Include monitoring devices when they publish documentation, even though
     # they have no control skills. Undocumented sensors/cameras stay off this catalog.
-    platforms: dict[str, dict] = {}
+    platforms: dict[str, dict] = {
+        group_id: {"label": label, "instruments": []} for group_id, label in labels.items()
+    }
     for entry in registry.equipment:
         monitoring = entry.kind in ("environmental_sensor", "camera")
         if monitoring and not entry.documentation:
             continue
-        section_id = eq_to_section.get(entry.id, "monitoring" if monitoring else "unknown")
-        if section_id not in platforms:
-            platforms[section_id] = {
-                "label": section_titles.get(
-                    section_id, "Environmental monitoring" if section_id == "monitoring" else section_id.upper()
-                ),
-                "instruments": [],
-            }
-        platforms[section_id]["instruments"].append({
+        group_id = eq_to_group.get(entry.id, "monitoring" if monitoring else "unknown")
+        platforms[group_id]["instruments"].append({
             "id": entry.id,
             "name": entry.name,
             "kind": entry.kind,
@@ -827,7 +835,7 @@ async def skill_catalog() -> dict:
             "actions": _serialize_actions(entry.kind, entry.id),
         })
 
-    return {"platforms": platforms}
+    return {"platforms": {k: v for k, v in platforms.items() if v["instruments"]}}
 
 
 @app.get(

@@ -6,69 +6,26 @@ import { useQuery } from "@tanstack/react-query";
 import {
   TAG_BLURB,
   TAG_TITLE,
+  catalogCounts,
   endpointMatches,
+  filterCatalog,
   groupByTag,
   splitColumns,
   splitSubModules,
 } from "./grouping";
 import type {
+  ActionDef,
+  CatalogResponse,
   Endpoint,
+  InstrumentCatalog,
   JsonSchema,
   JsonSchemaProperty,
   OpenApiDoc,
   OpenApiOperation,
   OpenApiParameter,
+  PlatformCatalog,
   SubModule,
 } from "./types";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-
-
-interface ActionDef {
-  name: string;
-  description: string;
-  method: string;
-  endpoint: string;
-  args_schema: JsonSchema;
-  requires_states: string[];
-  estimated_duration_s: number | null;
-}
-
-interface DocumentationEndpoint {
-  label: string;
-  kind: "swagger" | "openapi" | "json" | "markdown" | "text";
-  source_path: string;
-  url: string;
-}
-
-interface InstrumentCatalog {
-  id: string;
-  name: string;
-  kind: string;
-  adapter: string;
-  base_url: string;
-  protocol: string;
-  documentation?: DocumentationEndpoint[];
-  actions: ActionDef[];
-}
-
-interface PlatformCatalog {
-  label: string;
-  instruments: InstrumentCatalog[];
-}
-
-interface CatalogResponse {
-  platforms: Record<string, PlatformCatalog>;
-}
-
-// --- the dashboard's own HTTP surface, read from its OpenAPI document ---
-
-
-
-
 
 // ---------------------------------------------------------------------------
 // Data fetching
@@ -278,8 +235,16 @@ function ActionRow({ action }: { action: ActionDef }) {
 // Instrument tile (card with collapsible action list)
 // ---------------------------------------------------------------------------
 
-function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
+function InstrumentCard({
+  instrument,
+  forceOpen,
+}: {
+  instrument: InstrumentCatalog;
+  /** Opened by the filter or Expand all, like the platform tile around it. */
+  forceOpen: boolean;
+}) {
   const [open, setOpen] = useState(false);
+  const isOpen = forceOpen || open;
   const documentation = instrument.documentation ?? [];
 
   return (
@@ -287,6 +252,7 @@ function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
       {/* Instrument header — acts as the toggle */}
       <button
         onClick={() => setOpen((p) => !p)}
+        aria-expanded={isOpen}
         className="flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-3 text-left transition-colors hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-800/80"
       >
         <div className="min-w-0">
@@ -319,12 +285,12 @@ function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
             {instrument.actions.length} action{instrument.actions.length !== 1 ? "s" : ""}
           </span>
           <span className="text-xs text-ink-subtle dark:text-slate-400">
-            {open ? "▲" : "▼"}
+            {isOpen ? "▲" : "▼"}
           </span>
         </div>
       </button>
 
-      {open && (
+      {isOpen && (
         <>
           {documentation.length > 0 && (
             <div className="border-b border-slate-100 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950/20">
@@ -398,21 +364,30 @@ function InstrumentCard({ instrument }: { instrument: InstrumentCatalog }) {
 // Platform tile — matches History page PlatformGroup card style
 // ---------------------------------------------------------------------------
 
-function PlatformTile({ catalog }: { catalog: PlatformCatalog }) {
+function PlatformTile({
+  catalog,
+  forceOpen,
+}: {
+  catalog: PlatformCatalog;
+  /** A live filter opens every platform that still has matches, as it does
+   *  the tag groups above, so no fold hides what was searched for. */
+  forceOpen: boolean;
+}) {
   // Folds like the tag groups above, so the whole page is one interaction:
   // platform → instrument → action, each level closing what it contains.
   // Starts folded, like them: the section reads as a list of platforms.
   const [open, setOpen] = useState(false);
+  const isOpen = forceOpen || open;
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
       <button
         onClick={() => setOpen((p) => !p)}
-        aria-expanded={open}
+        aria-expanded={isOpen}
         className="flex w-full items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-left transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900/60 dark:hover:bg-slate-800/80"
       >
         <span className="w-3 shrink-0 text-xs text-ink-subtle dark:text-slate-400">
-          {open ? "−" : "+"}
+          {isOpen ? "−" : "+"}
         </span>
         <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted dark:text-slate-300">
           {catalog.label}
@@ -422,10 +397,10 @@ function PlatformTile({ catalog }: { catalog: PlatformCatalog }) {
         </span>
       </button>
 
-      {open && (
+      {isOpen && (
         <div className="flex flex-col gap-3 bg-white p-4 dark:bg-slate-950/20">
           {catalog.instruments.map((inst) => (
-            <InstrumentCard key={inst.id} instrument={inst} />
+            <InstrumentCard key={inst.id} instrument={inst} forceOpen={forceOpen} />
           ))}
         </div>
       )}
@@ -768,6 +743,8 @@ export default function ApiReferencePage() {
 
 function DeviceCatalogSection() {
   const { data, isPending, error } = useCatalog();
+  const [query, setQuery] = useState("");
+  const [expandAll, setExpandAll] = useState(false);
 
   if (isPending) {
     return <p className="text-sm text-ink-muted dark:text-slate-300">Loading catalog…</p>;
@@ -781,9 +758,9 @@ function DeviceCatalogSection() {
     );
   }
 
-  const platforms = Object.entries(data?.platforms ?? {});
+  const all = Object.entries(data?.platforms ?? {});
 
-  if (platforms.length === 0) {
+  if (all.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center dark:border-slate-700">
         <p className="text-sm font-medium text-ink-muted dark:text-slate-300">
@@ -796,20 +773,59 @@ function DeviceCatalogSection() {
     );
   }
 
+  const filtering = query.trim().length > 0;
+  const platforms = filterCatalog(all, query);
+  const total = catalogCounts(all);
+  const shown = catalogCounts(platforms);
+  const forceOpen = expandAll || filtering;
+
   return (
-    // Platform tiles start folded, and a folded tile costs the same height
-    // whatever its instrument count, so they weigh 1 each like the tag groups
-    // above: the split is even at rest. Stacked columns (not grid rows) keep
-    // an opened tile from padding its neighbour out to its height.
-    <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
-      {splitColumns(platforms, () => 1).map(
-        (column, index) => (
-          <div key={index} className="flex flex-col gap-4">
-            {column.map(([id, catalog]) => (
-              <PlatformTile key={id} catalog={catalog} />
-            ))}
-          </div>
-        ),
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter by action, endpoint, instrument or platform…"
+          aria-label="Filter device actions"
+          className="min-w-0 flex-1 rounded-md border border-slate-300 bg-surface-raised px-3 py-1.5 text-sm text-ink placeholder:text-ink-subtle focus:border-slate-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+        />
+        <button
+          onClick={() => setExpandAll((p) => !p)}
+          className="shrink-0 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-ink transition-colors hover:border-slate-400 hover:bg-surface-subtle dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-500 dark:hover:bg-slate-800"
+        >
+          {expandAll ? "Collapse all" : "Expand all"}
+        </button>
+      </div>
+      {filtering && (
+        <p className="text-xs text-ink-subtle dark:text-slate-400">
+          {shown.instruments} of {total.instruments} instruments and {shown.actions} of{" "}
+          {total.actions} actions match.
+        </p>
+      )}
+      {platforms.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-ink-subtle dark:border-slate-700 dark:text-slate-400">
+          Nothing matches “{query}”.
+        </p>
+      ) : (
+        // Folded, a tile costs the same height whatever its instrument count,
+        // so tiles weigh 1 each and the split is even at rest. Opened by the
+        // filter or Expand all, a tile shows a row per instrument and action,
+        // so it weighs those instead. Stacked columns (not grid rows) keep an
+        // opened tile from padding its neighbour out to its height.
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+          {splitColumns(platforms, ([, catalog]) =>
+            forceOpen
+              ? catalog.instruments.reduce((rows, inst) => rows + 1 + inst.actions.length, 0)
+              : 1,
+          ).map((column, index) => (
+            <div key={index} className="flex flex-col gap-4">
+              {column.map(([id, catalog]) => (
+                <PlatformTile key={id} catalog={catalog} forceOpen={forceOpen} />
+              ))}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
