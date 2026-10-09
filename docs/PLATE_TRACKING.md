@@ -11,8 +11,12 @@ rehearsal on a restored copy (`bitacora_stagging`, same Postgres) preceded
 the production migration; the copy was left in place. What is *not* in
 production yet is any plate — register the first one and authorize with
 `plate_bindings`. **2026-10-08:** §11 designs the next slice — removable
-containers (vials, tubes) seated on *adapters* (racks, blocks) — as a
-proposal; nothing in it is built or agreed with the other repos yet.
+containers (vials, tubes) seated on *adapters* (racks, blocks). **2026-10-09:**
+its record-layer half (G1) is implemented on BitacoraDB branch
+`feat/g1-adapters-seating` (contract 0.16.0), not merged or deployed; the
+dashboard, bitácora and executor halves (G2–G4) are not started, and no seat
+may be recorded in production before G2 moves the raw-cache readers to the
+resolved place (§9 Phase G).
 
 This document is the cross-repo authority for **location and custody
 tracking of plates and the samples in them**, across `ac-organic-lab`
@@ -551,7 +555,7 @@ without a second migration.
 | D2 | ac-organic-lab | Plan-at-start (`open_run_record` / `close_run_record`) | D1 | **shipped 2026-08-23** |
 | E | bitácora + dashboard | agent tools (`register_plate`, `record_plate_move`, `where_is_plate`, `list_locations`), "Plates" views | A, D | **shipped 2026-08-23** (see note below) |
 | F | all | `transfer` lineage rows, `ContainerContents` flag, Substance/Lot; device asks (§8) | E | **first slice built 2026-08-30** (lineage rows, no amounts — see the D11 note; `ContainerContents` / Substance/Lot / device asks still open) |
-| G | BitacoraDB → ac-organic-lab → bitácora | removable containers on adapters — seating as custody (§11: G1 ledger, G2 custody + lab map, G3 nominal containers + bindings, G4 run-time site resolution) | A, D1, E | **design 2026-10-08**, not started; G1 blocks the rest |
+| G | BitacoraDB → ac-organic-lab → bitácora | removable containers on adapters — seating as custody (§11: G1 ledger, G2 custody + lab map, G3 nominal containers + bindings, G4 run-time site resolution) | A, D1, E | **G1 implemented 2026-10-09** on BitacoraDB branch `feat/g1-adapters-seating` (contract 0.16.0, migration `b7c8d9e0f1a2`; record-layer note `BitacoraDB/docs/ADAPTERS_AND_SEATING.md`), not merged or deployed; G2–G4 not started. **Rollout rule:** no seat is recorded in production before G2 moves `custody.py::where_is` and bitácora's custody reader to `resolved_location_id` |
 
 A and B are independent; C can start on B's yaml with a fixture before A
 lands; everything after needs all three.
@@ -796,7 +800,10 @@ row are untouched.
   - *unseat* (move or `store` to a location): clears both seating fields,
     sets `location_id` — today's row shape. `store` is in `LOCATION_VERBS`
     and gets the same treatment; `dispose` clears both seating fields too,
-    and **disposing an adapter that still has occupants is refused** until
+    and **disposing any container that still has occupants is refused** (an
+    adapter, or a collector plate with a filter plate on it — the rule is on
+    occupancy, not type; the refusal counts occupants without naming them,
+    since one may be private) until
     they are moved — a rack cannot leave the system with tubes "in" it and
     the tubes nowhere.
   - *moving an adapter* is one row; everything seated on it comes along
@@ -807,15 +814,21 @@ row are untouched.
     path must also lock the destination's ancestry (walk up with
     `FOR UPDATE`), or run `SERIALIZABLE` with a retry. Either is fine;
     "walk then write" alone is not.
-  - **Stale-state guard, extended.** `expected_location_id` keeps its
-    meaning. For a seated container the caller passes
-    `expected_seated_on_container_id` **and** `expected_seated_at_site`
-    together — the adapter id alone cannot tell `B3 → C3` apart, and a raw
-    `location_id = None` would make every seat look like "unlocated".
-    Omitted-vs-null semantics stay as today (`model_fields_set`). The
-    service stamps `from_seated_on_container_id` / `from_seated_at_site`
-    on the row beside `from_location_id`, and `_replay`'s comparison
-    includes them.
+  - **Stale-state guard, extended.** The guard names the **whole
+    placement**: naming *any* of `expected_location_id` /
+    `expected_seated_on_container_id` / `expected_seated_at_site` compares
+    place *and* seat, so `expected_location_id = L` means "at L, not
+    seated", the seat pair means "at that seat, no place" (the adapter id
+    alone cannot tell `B3 → C3` apart, so the pair is both-or-neither), and
+    an **explicit `expected_location_id: null` means "unlocated *and*
+    unseated"** — a seated vial never passes as unlocated. Omitted-vs-null
+    semantics stay as today (`model_fields_set`); a client that omits the
+    guard is unaffected. The 409 carries `current_*` / `expected_*` for both
+    forms. The service stamps `from_seated_on_container_id` /
+    `from_seated_at_site` on the row beside `from_location_id`, and
+    `_replay`'s comparison includes all three. *(As built in G1; an earlier
+    draft said "`expected_location_id` keeps its meaning", which understated
+    the explicit-null case.)*
   - **One write path.** `containers.create` currently writes its own
     `receive` row and cache effect inline (`repository/containers.py`,
     `received_at_location_id` branch) instead of calling the action path. A
@@ -836,7 +849,10 @@ row are untouched.
   History has the same hole: `list(container_id=…)` matches rows whose
   source/target is the container, so a vial's history misses the moves of
   the rack it was seated in. The history view must union in **ancestor
-  moves during the seating intervals** (an interval join, or at minimum a
+  moves during the seating intervals** (as built: opt-in,
+  `GET /container-actions?container_id=&carried=true`, an interval join on
+  ledger write order that recurses up the chain, expanded only for a
+  subject the caller may read — an interval join, or at minimum a
   "moved with `RK-003`" annotation) — otherwise "how did it get there" is
   answered wrongly for exactly the objects this section adds.
 - **Authorization is unchanged and must not leak through the chain.**
@@ -858,8 +874,12 @@ row are untouched.
   plus the definition id/version it came from), written at registration
   from the labware definition this stack already has (builder upload or
   Opentrons definition); the ledger validates `to_site ∈ manifest` and
-  stays definition-free. An adapter with no manifest accepts shape-valid
-  strings (a bench rack nobody will pipette into) and says so on read.
+  stays definition-free. A container with no manifest — adapter or vessel —
+  accepts shape-valid strings (a bench rack nobody will pipette into) and
+  says so on read (`manifest: null`); the definition provenance beside the
+  list (`meta.sites_definition`) is the registering client's, optional to
+  the ledger. The manifest is also patchable (`meta` is), shape-checked on
+  the way in.
 
 ### 11.4 What changes in this repo ("G2", "G4")
 
