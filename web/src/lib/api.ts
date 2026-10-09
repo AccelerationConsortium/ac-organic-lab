@@ -1283,6 +1283,46 @@ export interface CustodyMoveResponse {
   to_site?: string;
 }
 
+/** `POST /api/custody/register` — one new container, optionally received at a
+ * place (`at`) or in a seat (`seat`). What it is comes from `positions` /
+ * `sites`, the `wells` shorthand, or the labware definition for `model`. */
+export interface CustodyRegisterRequest {
+  hid: string;
+  container_type?: string;
+  model?: string;
+  wells?: number;
+  positions?: string[];
+  sites?: string[];
+  at?: string;
+  seat?: CustodySeatRequest;
+  status?: "empty" | "in_use" | "dirty";
+  project?: string;
+  note?: string;
+}
+
+export interface CustodyRegisterResponse {
+  registered: boolean;
+  hid: string;
+  container_id: string;
+  container_type: string;
+  /** Wells minted with the container. */
+  positions: number;
+  sites: string[] | null;
+  model: string | null;
+  at: string | null;
+  seat: CustodySeatRequest | null;
+  /** The destination as text, or null when registered unplaced. */
+  destination: string | null;
+}
+
+export async function postCustodyRegister(body: CustodyRegisterRequest): Promise<CustodyRegisterResponse> {
+  return fetchJson<CustodyRegisterResponse>("/api/custody/register", {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 export async function getCustodyPlates(): Promise<{ plates: CustodyPlate[] }> {
   return fetchJson<{ plates: CustodyPlate[] }>("/api/custody/plates");
 }

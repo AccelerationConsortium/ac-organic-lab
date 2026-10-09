@@ -7,8 +7,10 @@ import {
   ApiError,
   getCustodyMap,
   getCustodyPlate,
+  getLabwareList,
   getLocations,
   postCustodyMove,
+  postCustodyRegister,
   type CustodyAction,
   type CustodyMap,
   type CustodyNode,
@@ -36,6 +38,10 @@ import { useUserAuth } from "@/lib/user-auth";
  * ledger. A move may also go into a *seat* — a carrier (rack, block) and one
  * of its sites — picked from the carriers the map shows, or by clicking an
  * empty site in a rack's grid; the container's place is then the carrier's.
+ * Registering a new container (the dashboard's front door beside bitácora's
+ * `propose_plate_registration`) posts `POST /api/custody/register`: a plate is
+ * minted with its wells and a rack with its site manifest, derived from the
+ * labware definition for its model unless given explicitly.
  * An unreachable record layer is shown as unreachable — never as an
  * empty lab. What the map shows is exactly what the record layer returned
  * for the signed-in viewer: a carrier the viewer may not read is masked,
@@ -210,6 +216,17 @@ export function PlatesPanel() {
         defaultHid={selected ?? ""}
         defaultSeat={pickedSeat}
         onMoved={() => {
+          queryClient.invalidateQueries({ queryKey: ["custody"] });
+        }}
+      />
+
+      <RegisterForm
+        places={places}
+        carriers={carriers}
+        authenticated={authenticated}
+        requestLogin={requestLogin}
+        onRegistered={(hid) => {
+          setSelected(hid);
           queryClient.invalidateQueries({ queryKey: ["custody"] });
         }}
       />
@@ -423,6 +440,147 @@ function PlateHistory({ hid }: { hid: string }) {
   );
 }
 
+// ── destinations: a place or a seat, shared by the move and register forms ──
+
+type DestMode = "none" | "place" | "seat";
+
+interface Destination {
+  mode: DestMode;
+  to: string;
+  carrierHid: string;
+  site: string;
+}
+
+const NO_DESTINATION: Destination = { mode: "none", to: "", carrierHid: "", site: "" };
+
+function destinationReady(d: Destination, hid: string): boolean {
+  if (d.mode === "none") return true;
+  if (d.mode === "place") return d.to.length > 0;
+  return d.carrierHid.length > 0 && d.site.trim().length > 0 && d.carrierHid !== hid.trim();
+}
+
+function seatOf(d: Destination): CustodySeatRequest | undefined {
+  return d.mode === "seat" ? { adapter_hid: d.carrierHid, site: d.site.trim() } : undefined;
+}
+
+/** The radio group and the fields for one destination. `labels` keeps the two
+ * forms' controls distinct for assistive tech (and the tests). */
+function DestinationFields({
+  value,
+  onChange,
+  places,
+  carriers,
+  hid,
+  name,
+  labels,
+  allowNone = false,
+}: {
+  value: Destination;
+  onChange: (d: Destination) => void;
+  places: LocationEntry[];
+  carriers: CarrierOption[];
+  hid: string;
+  name: string;
+  labels: { place: string; carrier: string; site: string };
+  allowNone?: boolean;
+}) {
+  const carrier = carriers.find((c) => c.hid === value.carrierHid) ?? null;
+  const occupiedBy = carrier?.occupants[value.site.trim()] ?? [];
+  const selfSeat = value.mode === "seat" && value.carrierHid.length > 0 && value.carrierHid === hid.trim();
+  const set = (patch: Partial<Destination>) => onChange({ ...value, ...patch });
+  return (
+    <>
+      <fieldset className="mt-3 flex flex-wrap items-center gap-3 text-xs text-ink-muted dark:text-slate-300">
+        <legend className="sr-only">Destination kind</legend>
+        {allowNone && (
+          <label className="flex items-center gap-1">
+            <input type="radio" name={name} checked={value.mode === "none"} onChange={() => set({ mode: "none" })} />
+            nowhere yet
+          </label>
+        )}
+        <label className="flex items-center gap-1">
+          <input type="radio" name={name} checked={value.mode === "place"} onChange={() => set({ mode: "place" })} />
+          {allowNone ? "at a place" : "to a place"}
+        </label>
+        <label className="flex items-center gap-1">
+          <input type="radio" name={name} checked={value.mode === "seat"} onChange={() => set({ mode: "seat" })} />
+          {allowNone ? "in a seat" : "into a seat"} (a rack or block and one of its sites)
+        </label>
+      </fieldset>
+      <div className="mt-2 flex flex-wrap items-end gap-3">
+        {value.mode === "place" && (
+          <label className="flex flex-col gap-0.5 text-xs">
+            <span className="text-ink-subtle dark:text-slate-300">{allowNone ? "At" : "Now at"}</span>
+            <select className={`${inputCls} w-64`} value={value.to} onChange={(e) => set({ to: e.target.value })} aria-label={labels.place}>
+              <option value="">— choose a place —</option>
+              {places.map((l) => (
+                <option key={l.name} value={l.name}>
+                  {l.name}
+                  {l.label ? ` — ${l.label}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {value.mode === "seat" && (
+          <>
+            <label className="flex flex-col gap-0.5 text-xs">
+              <span className="text-ink-subtle dark:text-slate-300">{allowNone ? "In" : "Now in"}</span>
+              <select
+                className={`${inputCls} w-64 font-mono`}
+                value={value.carrierHid}
+                onChange={(e) => set({ carrierHid: e.target.value, site: "" })}
+                aria-label={labels.carrier}
+              >
+                <option value="">— choose a carrier —</option>
+                {carriers.map((c) => (
+                  <option key={c.hid} value={c.hid}>
+                    {c.hid}
+                    {c.location ? ` — at ${c.location}` : " — never placed"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-0.5 text-xs">
+              <span className="text-ink-subtle dark:text-slate-300">Site</span>
+              {carrier?.sites ? (
+                <select className={`${inputCls} w-40 font-mono`} value={value.site} onChange={(e) => set({ site: e.target.value })} aria-label={labels.site}>
+                  <option value="">— site —</option>
+                  {carrier.sites.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                      {carrier.occupants[s]?.length ? ` — holds ${carrier.occupants[s].join(", ")}` : ""}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className={`${inputCls} w-40 font-mono`}
+                  value={value.site}
+                  onChange={(e) => set({ site: e.target.value })}
+                  placeholder={carrier ? "B3 (no manifest)" : "B3"}
+                  disabled={!carrier}
+                  aria-label={labels.site}
+                />
+              )}
+            </label>
+          </>
+        )}
+      </div>
+      {value.mode === "seat" && carriers.length === 0 && (
+        <p className="mt-2 text-xs text-ink-muted dark:text-slate-300">No registered carrier offers seats yet — register a rack or block first.</p>
+      )}
+      {selfSeat && <p className="mt-2 text-xs text-rose-700 dark:text-rose-300">A container cannot be seated in itself.</p>}
+      {value.mode === "seat" && occupiedBy.length > 0 && (
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+          {value.site.trim()} already holds {occupiedBy.join(", ")} — recording this flags a double occupancy on the map; it does not
+          replace the record. Move the other container out first if it has left.
+        </p>
+      )}
+    </>
+  );
+}
+
 export function MoveForm({
   places,
   carriers = [],
@@ -444,16 +602,13 @@ export function MoveForm({
   onMoved: () => void;
 }) {
   const [hid, setHid] = useState(defaultHid);
-  const [mode, setMode] = useState<"place" | "seat">("place");
-  const [to, setTo] = useState("");
-  const [carrierHid, setCarrierHid] = useState("");
-  const [site, setSite] = useState("");
+  const [dest, setDest] = useState<Destination>({ ...NO_DESTINATION, mode: "place" });
   const [note, setNote] = useState("");
   const move = useMutation({
     mutationFn: () =>
       postCustodyMove({
         hid: hid.trim(),
-        ...(mode === "seat" ? { seat: { adapter_hid: carrierHid, site: site.trim() } } : { to }),
+        ...(dest.mode === "seat" ? { seat: seatOf(dest) } : { to: dest.to }),
         note: note.trim() || undefined,
       }),
     onSuccess: () => {
@@ -470,18 +625,9 @@ export function MoveForm({
   const [lastSeat, setLastSeat] = useState(defaultSeat);
   if (defaultSeat !== lastSeat) {
     setLastSeat(defaultSeat);
-    if (defaultSeat) {
-      setMode("seat");
-      setCarrierHid(defaultSeat.adapter_hid);
-      setSite(defaultSeat.site);
-    }
+    if (defaultSeat) setDest({ mode: "seat", to: "", carrierHid: defaultSeat.adapter_hid, site: defaultSeat.site });
   }
-  const carrier = carriers.find((c) => c.hid === carrierHid) ?? null;
-  const occupiedBy = carrier?.occupants[site.trim()] ?? [];
-  const selfSeat = mode === "seat" && carrierHid.length > 0 && carrierHid === hid.trim();
-  const ready =
-    hid.trim().length > 0 &&
-    (mode === "place" ? to.length > 0 : carrierHid.length > 0 && site.trim().length > 0 && !selfSeat);
+  const ready = hid.trim().length > 0 && destinationReady(dest, hid);
 
   return (
     <section className={cardCls}>
@@ -494,19 +640,7 @@ export function MoveForm({
         Moving a vial out of a rack to a place unseats it. A seat that already holds something is recorded and
         flagged on the map, not refused.
       </p>
-      <fieldset className="mt-3 flex flex-wrap items-center gap-3 text-xs text-ink-muted dark:text-slate-300">
-        <legend className="sr-only">Destination kind</legend>
-        <label className="flex items-center gap-1">
-          <input type="radio" name="custody-destination" checked={mode === "place"} onChange={() => setMode("place")} />
-          to a place
-        </label>
-        <label className="flex items-center gap-1">
-          <input type="radio" name="custody-destination" checked={mode === "seat"} onChange={() => setMode("seat")} />
-          into a seat (a rack or block and one of its sites)
-        </label>
-      </fieldset>
       <form
-        className="mt-2 flex flex-wrap items-end gap-3"
         onSubmit={(e) => {
           e.preventDefault();
           if (!authenticated) {
@@ -516,100 +650,41 @@ export function MoveForm({
           move.mutate();
         }}
       >
-        <label className="flex flex-col gap-0.5 text-xs">
-          <span className="text-ink-subtle dark:text-slate-300">Container (hid)</span>
-          <input
-            className={`${inputCls} w-44 font-mono`}
-            list="custody-hids"
-            value={hid}
-            onChange={(e) => setHid(e.target.value)}
-            placeholder="PLT-0042"
-            aria-label="Plate hid"
-          />
-          <datalist id="custody-hids">
-            {knownHids.map((h) => (
-              <option key={h} value={h} />
-            ))}
-          </datalist>
-        </label>
-        {mode === "place" ? (
+        <div className="mt-3 flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-0.5 text-xs">
-            <span className="text-ink-subtle dark:text-slate-300">Now at</span>
-            <select className={`${inputCls} w-64`} value={to} onChange={(e) => setTo(e.target.value)} aria-label="Destination place">
-              <option value="">— choose a place —</option>
-              {places.map((l) => (
-                <option key={l.name} value={l.name}>
-                  {l.name}
-                  {l.label ? ` — ${l.label}` : ""}
-                </option>
+            <span className="text-ink-subtle dark:text-slate-300">Container (hid)</span>
+            <input
+              className={`${inputCls} w-44 font-mono`}
+              list="custody-hids"
+              value={hid}
+              onChange={(e) => setHid(e.target.value)}
+              placeholder="PLT-0042"
+              aria-label="Plate hid"
+            />
+            <datalist id="custody-hids">
+              {knownHids.map((h) => (
+                <option key={h} value={h} />
               ))}
-            </select>
+            </datalist>
           </label>
-        ) : (
-          <>
-            <label className="flex flex-col gap-0.5 text-xs">
-              <span className="text-ink-subtle dark:text-slate-300">Now in</span>
-              <select
-                className={`${inputCls} w-64 font-mono`}
-                value={carrierHid}
-                onChange={(e) => {
-                  setCarrierHid(e.target.value);
-                  setSite("");
-                }}
-                aria-label="Destination carrier"
-              >
-                <option value="">— choose a carrier —</option>
-                {carriers.map((c) => (
-                  <option key={c.hid} value={c.hid}>
-                    {c.hid}
-                    {c.location ? ` — at ${c.location}` : " — never placed"}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-0.5 text-xs">
-              <span className="text-ink-subtle dark:text-slate-300">Site</span>
-              {carrier?.sites ? (
-                <select className={`${inputCls} w-40 font-mono`} value={site} onChange={(e) => setSite(e.target.value)} aria-label="Destination site">
-                  <option value="">— site —</option>
-                  {carrier.sites.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                      {carrier.occupants[s]?.length ? ` — holds ${carrier.occupants[s].join(", ")}` : ""}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  className={`${inputCls} w-40 font-mono`}
-                  value={site}
-                  onChange={(e) => setSite(e.target.value)}
-                  placeholder={carrier ? "B3 (no manifest)" : "B3"}
-                  disabled={!carrier}
-                  aria-label="Destination site"
-                />
-              )}
-            </label>
-          </>
-        )}
-        <label className="flex flex-col gap-0.5 text-xs">
-          <span className="text-ink-subtle dark:text-slate-300">Note (optional)</span>
-          <input className={`${inputCls} w-56`} value={note} onChange={(e) => setNote(e.target.value)} aria-label="Note" />
-        </label>
-        <button type="submit" className={btnCls} disabled={!ready || move.isPending}>
+          <label className="flex flex-col gap-0.5 text-xs">
+            <span className="text-ink-subtle dark:text-slate-300">Note (optional)</span>
+            <input className={`${inputCls} w-56`} value={note} onChange={(e) => setNote(e.target.value)} aria-label="Note" />
+          </label>
+        </div>
+        <DestinationFields
+          value={dest}
+          onChange={setDest}
+          places={places}
+          carriers={carriers}
+          hid={hid}
+          name="custody-destination"
+          labels={{ place: "Destination place", carrier: "Destination carrier", site: "Destination site" }}
+        />
+        <button type="submit" className={`${btnCls} mt-3`} disabled={!ready || move.isPending}>
           {move.isPending ? "Recording…" : authenticated ? "Record move" : "Sign in to record"}
         </button>
       </form>
-      {mode === "seat" && carriers.length === 0 && (
-        <p className="mt-2 text-xs text-ink-muted dark:text-slate-300">No registered carrier offers seats yet — register a rack or block first.</p>
-      )}
-      {selfSeat && <p className="mt-2 text-xs text-rose-700 dark:text-rose-300">A container cannot be seated in itself.</p>}
-      {mode === "seat" && occupiedBy.length > 0 && (
-        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
-          {site.trim()} already holds {occupiedBy.join(", ")} — recording this flags a double occupancy on the map; it does not
-          replace the record. Move the other container out first if it has left.
-        </p>
-      )}
       {move.error && (
         <p className="mt-2 text-sm text-rose-700 dark:text-rose-300">Not recorded: {errorText(move.error)}</p>
       )}
@@ -619,5 +694,194 @@ export function MoveForm({
         </p>
       )}
     </section>
+  );
+}
+
+// ── registration ──
+
+/** The ledger's container types a person registers (wells are minted, never registered). */
+const CONTAINER_TYPES = ["plate", "filter_plate", "reservoir", "vial", "bottle", "flask", "rack", "adapter", "tiprack", "other"] as const;
+const WELL_BEARING = new Set(["plate", "filter_plate", "reservoir"]);
+const ADAPTERS = new Set(["rack", "adapter"]);
+const WELL_GRIDS = [6, 12, 24, 48, 96, 384];
+
+export function RegisterForm({
+  places,
+  carriers = [],
+  authenticated,
+  requestLogin,
+  onRegistered,
+}: {
+  places: LocationEntry[];
+  carriers?: CarrierOption[];
+  authenticated: boolean;
+  requestLogin: () => void;
+  onRegistered: (hid: string) => void;
+}) {
+  const labware = useQuery({ queryKey: ["labware", "list"], queryFn: getLabwareList, staleTime: 60_000 });
+  const [hid, setHid] = useState("");
+  const [type, setType] = useState("");
+  const [model, setModel] = useState("");
+  const [wells, setWells] = useState("");
+  const [sites, setSites] = useState("");
+  const [project, setProject] = useState("");
+  const [note, setNote] = useState("");
+  const [dest, setDest] = useState<Destination>(NO_DESTINATION);
+  const known = labware.data?.definitions ?? [];
+  const knownModel = known.find((d) => d.load_name === model.trim()) ?? null;
+  const effectiveType = type || (knownModel ? categoryType(knownModel.display_category) : "");
+  const wellBearing = effectiveType === "" || WELL_BEARING.has(effectiveType);
+  const adapter = ADAPTERS.has(effectiveType);
+  const siteList = sites
+    .split(/[\s,;]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const register = useMutation({
+    mutationFn: () =>
+      postCustodyRegister({
+        hid: hid.trim(),
+        ...(type ? { container_type: type } : {}),
+        ...(model.trim() ? { model: model.trim() } : {}),
+        ...(wellBearing && wells ? { wells: Number(wells) } : {}),
+        ...(adapter && siteList.length ? { sites: siteList } : {}),
+        ...(dest.mode === "place" ? { at: dest.to } : {}),
+        ...(dest.mode === "seat" ? { seat: seatOf(dest) } : {}),
+        ...(project.trim() ? { project: project.trim() } : {}),
+        ...(note.trim() ? { note: note.trim() } : {}),
+      }),
+    onSuccess: (data) => {
+      setHid("");
+      setNote("");
+      onRegistered(data.hid);
+    },
+  });
+  // The server needs a type or a model it knows; wells come from positions, the shorthand or the model.
+  const describesItself = type.length > 0 || model.trim().length > 0;
+  const ready = hid.trim().length > 0 && describesItself && destinationReady(dest, hid);
+
+  return (
+    <section className={cardCls}>
+      <h3 className="text-sm font-semibold text-ink dark:text-slate-100">Register a new container</h3>
+      <p className="mt-1 text-xs text-ink-muted dark:text-slate-300">
+        A barcode the ledger has never seen. A plate is registered <em>with its wells</em> and a rack or block with
+        its <em>site manifest</em>; both come from the labware definition for the model when this stack has one
+        (the labware store or the Opentrons standard set), or from the wells shorthand / a typed site list.
+        It may be received at a place or in a seat in the same transaction. Lab-scoped unless you name an owning
+        project. Hids are never reused: a taken hid is refused. (bitácora&apos;s <code>propose_plate_registration</code>{" "}
+        writes the same row.)
+      </p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!authenticated) {
+            requestLogin();
+            return;
+          }
+          register.mutate();
+        }}
+      >
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-0.5 text-xs">
+            <span className="text-ink-subtle dark:text-slate-300">New hid</span>
+            <input className={`${inputCls} w-44 font-mono`} value={hid} onChange={(e) => setHid(e.target.value)} placeholder="PLT-0043" aria-label="New hid" />
+          </label>
+          <label className="flex flex-col gap-0.5 text-xs">
+            <span className="text-ink-subtle dark:text-slate-300">What it is</span>
+            <select className={`${inputCls} w-44`} value={type} onChange={(e) => setType(e.target.value)} aria-label="Container type">
+              <option value="">{knownModel ? `from the model (${categoryType(knownModel.display_category)})` : "— from the model —"}</option>
+              {CONTAINER_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-0.5 text-xs">
+            <span className="text-ink-subtle dark:text-slate-300">Model (labware load name)</span>
+            <input
+              className={`${inputCls} w-72 font-mono`}
+              list="custody-models"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="corning_96_wellplate_360ul_flat"
+              aria-label="Labware model"
+            />
+            <datalist id="custody-models">
+              {known.map((d) => (
+                <option key={d.load_name} value={d.load_name}>
+                  {d.display_name}
+                </option>
+              ))}
+            </datalist>
+          </label>
+          {wellBearing && (
+            <label className="flex flex-col gap-0.5 text-xs">
+              <span className="text-ink-subtle dark:text-slate-300">Wells (if the model is unknown)</span>
+              <select className={`${inputCls} w-28`} value={wells} onChange={(e) => setWells(e.target.value)} aria-label="Wells">
+                <option value="">— from model —</option>
+                {WELL_GRIDS.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {adapter && (
+            <label className="flex flex-col gap-0.5 text-xs">
+              <span className="text-ink-subtle dark:text-slate-300">Sites (if the model is unknown)</span>
+              <input className={`${inputCls} w-72 font-mono`} value={sites} onChange={(e) => setSites(e.target.value)} placeholder="A1 A2 A3 … D6" aria-label="Sites" />
+            </label>
+          )}
+          <label className="flex flex-col gap-0.5 text-xs">
+            <span className="text-ink-subtle dark:text-slate-300">Owning project (optional)</span>
+            <input className={`${inputCls} w-40`} value={project} onChange={(e) => setProject(e.target.value)} aria-label="Owning project" />
+          </label>
+          <label className="flex flex-col gap-0.5 text-xs">
+            <span className="text-ink-subtle dark:text-slate-300">Note (optional)</span>
+            <input className={`${inputCls} w-56`} value={note} onChange={(e) => setNote(e.target.value)} aria-label="Registration note" />
+          </label>
+        </div>
+        <DestinationFields
+          value={dest}
+          onChange={setDest}
+          places={places}
+          carriers={carriers}
+          hid={hid}
+          name="custody-registration-destination"
+          labels={{ place: "Register at place", carrier: "Register in carrier", site: "Register at site" }}
+          allowNone
+        />
+        <button type="submit" className={`${btnCls} mt-3`} disabled={!ready || register.isPending}>
+          {register.isPending ? "Registering…" : authenticated ? "Register" : "Sign in to register"}
+        </button>
+      </form>
+      {register.error && (
+        <p className="mt-2 text-sm text-rose-700 dark:text-rose-300">Not registered: {errorText(register.error)}</p>
+      )}
+      {register.data && (
+        <p className="mt-2 text-sm text-emerald-700 dark:text-emerald-300">
+          Registered <span className="font-mono">{register.data.hid}</span> ({register.data.container_type}
+          {register.data.positions ? `, ${register.data.positions} wells` : ""}
+          {register.data.sites?.length ? `, ${register.data.sites.length} sites` : ""})
+          {register.data.destination ? (
+            <>
+              {" "}
+              at <span className="font-mono">{register.data.destination}</span>
+            </>
+          ) : (
+            " — not placed yet"
+          )}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** Opentrons displayCategory → ledger container type (mirrors custody.py CATEGORY_TYPES). */
+function categoryType(category: string): string {
+  return (
+    { wellPlate: "plate", reservoir: "reservoir", tipRack: "tiprack", tubeRack: "rack", adapter: "adapter", aluminumBlock: "adapter" }[category] ??
+    "other"
   );
 }

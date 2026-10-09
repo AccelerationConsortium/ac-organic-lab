@@ -40,6 +40,7 @@ import asyncio
 import functools
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -280,6 +281,69 @@ class Seat:
         return f"{self.adapter_hid} @ {self.site}"
 
 
+# ── registration: what a container is, from the labware definition ────────
+#
+# The ledger is definition-free (§11.3): a plate's wells are minted from the
+# `positions` the registering client sends, and an adapter's site manifest is
+# whatever `meta.sites` it sends. This stack owns the definitions
+# (`api/app/labware.py`: repo-committed, builder uploads, the Opentrons
+# standard set), so the register front door derives both from the `model`.
+
+#: ``bitacoradb.models.enums.ContainerType`` — mirrored so a typo is a 422
+#: here. ``well`` is minted by the ledger, never registered by a client.
+CONTAINER_TYPES = frozenset({
+    "plate", "vial", "bottle", "flask", "filter_plate", "reservoir", "tiprack",
+    "rack", "adapter", "other",
+})
+#: Site-providing, material-free carriers: a manifest, never positional children.
+ADAPTER_TYPES = frozenset({"rack", "adapter"})
+#: Types whose addresses are positional children (wells), minted at registration.
+WELL_BEARING_TYPES = frozenset({"plate", "filter_plate", "reservoir"})
+#: Opentrons ``metadata.displayCategory`` → ledger ``container_type`` (the
+#: mapping ``ContainerType``'s docstring states; ``aluminumBlock`` is an adapter).
+CATEGORY_TYPES = {
+    "wellPlate": "plate", "reservoir": "reservoir", "tipRack": "tiprack",
+    "tubeRack": "rack", "adapter": "adapter", "aluminumBlock": "adapter",
+}
+#: The standard grids the ``wells`` shorthand accepts (the same table bitácora's
+#: ``propose_plate_registration`` uses), for a plate whose definition is not in the store.
+WELL_LAYOUTS = {6: (2, 3), 12: (3, 4), 24: (4, 6), 48: (6, 8), 96: (8, 12), 384: (16, 24)}
+
+_ADDRESS_RE = re.compile(r"^([A-Za-z]+)(\d+)$")
+
+
+def _address_key(name: str) -> tuple:
+    m = _ADDRESS_RE.match(name)
+    return (len(m.group(1)), m.group(1).upper(), int(m.group(2))) if m else (99, name, 0)
+
+
+def grid_positions(wells: int) -> list[str]:
+    """``A1 … H12`` row-major for a standard grid (``WELL_LAYOUTS``)."""
+    rows, cols = WELL_LAYOUTS[wells]
+    return [f"{chr(ord('A') + r)}{c + 1}" for r in range(rows) for c in range(cols)]
+
+
+def labware_layout(definition: dict, *, source: str | None = None) -> dict[str, Any]:
+    """What a schema-2 labware definition says a container is:
+    ``{"container_type", "category", "addresses", "definition": {load_name,
+    namespace, version, source}}``. ``addresses`` is every well/site name in
+    ``ordering`` (Opentrons stores it column-major), sorted row-major so it
+    reads like a plate map. A definition with no wells (a tiprack adapter)
+    has ``addresses == []``."""
+    meta = definition.get("metadata") or {}
+    params = definition.get("parameters") or {}
+    ordering = definition.get("ordering") or []
+    addresses = sorted({str(w) for col in ordering if isinstance(col, list) for w in col}, key=_address_key)
+    category = str(meta.get("displayCategory") or "wellPlate")
+    return {
+        "container_type": CATEGORY_TYPES.get(category, "other"),
+        "category": category,
+        "addresses": addresses,
+        "definition": {"load_name": params.get("loadName"), "namespace": definition.get("namespace"),
+                       "version": definition.get("version"), "source": source},
+    }
+
+
 def _parse_version(text: Any) -> tuple[int, ...]:
     try:
         return tuple(int(part) for part in str(text).split("."))
@@ -470,6 +534,99 @@ class CustodyRecorder:
                            source_hid, source_well, dest_hid, dest_well, exc)
             return {"recorded": False, "reason": "unreachable", "detail": str(exc)[:300]}
 
+    async def _seat_target(self, client: httpx.AsyncClient, seat: Seat, *, hid: str,
+                           user: str, project: str | None) -> dict[str, Any]:
+        """Resolve a seat to ``{"container_id", "site"}`` of the carrier, or
+        ``{"reason": …}`` when it must not reach the ledger: the container
+        would sit in itself, the site is malformed, the live record layer
+        predates seating (contract < 0.16.0 rejects the fields), the carrier
+        is unknown, or the site is not in the carrier's manifest. Occupancy
+        is not checked (D2)."""
+        if seat.adapter_hid == hid:
+            return {"reason": "self_seat", "hid": hid}
+        if not valid_site(seat.site):
+            return {"reason": "invalid_site", "site": seat.site}
+        contract = await record_layer_contract(client, self.base_url)
+        if contract < SEATING_CONTRACT:
+            return {"reason": "seating_unsupported", "contract": ".".join(map(str, contract)) or None}
+        carrier = await self.resolve_container(client, seat.adapter_hid, user=user, project=project)
+        if carrier is None:
+            return {"reason": "unknown_adapter", "adapter_hid": seat.adapter_hid}
+        manifest = site_manifest(carrier)
+        if manifest is not None and seat.site not in manifest:
+            return {"reason": "unknown_site", "adapter_hid": seat.adapter_hid,
+                    "site": seat.site, "sites": manifest}
+        return {"container_id": carrier["container_id"], "site": seat.site}
+
+    async def register_container(
+        self, *, hid: str, container_type: str, recorder: str, project: str | None = None,
+        owner_project: str | None = None, model: str | None = None, status: str = "empty",
+        positions: list[str] | None = None, sites: list[str] | None = None,
+        meta: dict[str, Any] | None = None, at: str | None = None, seat: Seat | None = None,
+    ) -> dict[str, Any]:
+        """``POST /containers``: one new container (a plate with its wells via
+        ``positions``; an adapter with its manifest via ``sites``), optionally
+        received *at* place ``at`` or *in* ``seat`` in the same transaction —
+        the only way a new container gets a placement.
+
+        ``project`` is the caller's scope (header); ``owner_project`` makes the
+        row project-private (``None`` = lab-scoped, the normal case for
+        labware). Returns ``{"registered": True, container_id, hid, …}`` or
+        ``{"registered": False, "reason": …}``; never raises. A hid is unique
+        for all time, so a taken hid is refused here before the write; a lost
+        response is reported ``uncertain`` — the next attempt sees the hid
+        taken and the map shows the row, which is the truthful recovery.
+        """
+        if at is not None and seat is not None:
+            raise ValueError("register_container receives at a place (at=) or in a seat (seat=), not both")
+        write_started = False
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                existing = await self.resolve_container(client, hid, user=recorder, project=project, refresh=True)
+                if existing is not None:
+                    return {"registered": False, "reason": "hid_taken", "hid": hid,
+                            "container_id": existing["container_id"]}
+                body: dict[str, Any] = {
+                    "hid": hid, "container_type": container_type, "model": model, "status": status,
+                    "creator": recorder,
+                    "meta": {**(meta or {}), **({"sites": list(sites)} if sites is not None else {})},
+                }
+                if positions:
+                    body["positions"] = list(positions)
+                if owner_project:
+                    body["project"] = owner_project
+                if at is not None:
+                    location_id = await self.resolve_location(client, at, user=recorder, project=project)
+                    if location_id is None:
+                        return {"registered": False, "reason": "unknown_location", "to": at}
+                    body["received_at_location_id"] = location_id
+                elif seat is not None:
+                    target = await self._seat_target(client, seat, hid=hid, user=recorder, project=project)
+                    if "reason" in target:
+                        return {"registered": False, **target}
+                    body["received_at_container_id"] = target["container_id"]
+                    body["received_at_site"] = target["site"]
+                write_started = True
+                r = await client.post(f"{self.base_url}/containers",
+                                      headers=self._headers(recorder, project), json=body)
+                if r.status_code >= 400:
+                    return {"registered": False, "reason": f"http_{r.status_code}",
+                            "detail": r.text[:300], "uncertain": r.status_code >= 500}
+                out = r.json()
+                if not out.get("container_id"):
+                    raise ValueError("record layer returned no container_id")
+                self._containers.pop(hid, None)
+                return {"registered": True, "container_id": out["container_id"], "hid": hid,
+                        "container_type": container_type, "positions": len(body.get("positions") or []),
+                        "sites": sites, "resolved_location_id": out.get("resolved_location_id"),
+                        "received_at_location_id": body.get("received_at_location_id"),
+                        "received_at_container_id": body.get("received_at_container_id"),
+                        "received_at_site": body.get("received_at_site")}
+        except Exception as exc:  # noqa: BLE001 — property 1
+            logger.warning("custody registration not recorded (%s): %s", hid, exc)
+            return {"registered": False, "reason": "unreachable", "detail": str(exc)[:300],
+                    "uncertain": write_started}
+
     async def record_move(
         self, *, hid: str, to: str | None = None, seat: Seat | None = None,
         performed_by: str, recorder: str,
@@ -506,24 +663,10 @@ class CustodyRecorder:
                     return {"recorded": False, "reason": "unknown_container", "hid": hid}
                 dest: dict[str, Any]
                 if seat is not None:
-                    if seat.adapter_hid == hid:
-                        return {"recorded": False, "reason": "self_seat", "hid": hid}
-                    if not valid_site(seat.site):
-                        return {"recorded": False, "reason": "invalid_site", "site": seat.site}
-                    contract = await record_layer_contract(client, self.base_url)
-                    if contract < SEATING_CONTRACT:
-                        return {"recorded": False, "reason": "seating_unsupported",
-                                "contract": ".".join(map(str, contract)) or None}
-                    carrier = await self.resolve_container(client, seat.adapter_hid,
-                                                           user=recorder, project=project)
-                    if carrier is None:
-                        return {"recorded": False, "reason": "unknown_adapter",
-                                "adapter_hid": seat.adapter_hid}
-                    manifest = site_manifest(carrier)
-                    if manifest is not None and seat.site not in manifest:
-                        return {"recorded": False, "reason": "unknown_site",
-                                "adapter_hid": seat.adapter_hid, "site": seat.site, "sites": manifest}
-                    dest = {"to_container_id": carrier["container_id"], "to_site": seat.site}
+                    target = await self._seat_target(client, seat, hid=hid, user=recorder, project=project)
+                    if "reason" in target:
+                        return {"recorded": False, **target}
+                    dest = {"to_container_id": target["container_id"], "to_site": target["site"]}
                 else:
                     location_id = await self.resolve_location(client, to, user=recorder, project=project)  # type: ignore[arg-type]
                     if location_id is None:
@@ -835,6 +978,93 @@ class MoveRequest(BaseModel):
         return self.to if self.to is not None else f"{self.seat.adapter_hid} @ {self.seat.site}"  # type: ignore[union-attr]
 
 
+def _one_placement(at: str | None, seat: Any) -> None:
+    if at is not None and seat is not None:
+        raise ValueError("a container is received at a place (`at`) OR in a seat (`seat`), not both")
+
+
+def _addresses(values: list[str] | None, what: str) -> list[str] | None:
+    if values is None:
+        return None
+    names = [str(v).strip() for v in values]
+    bad = [n for n in names if not valid_site(n)]
+    if bad:
+        raise ValueError(f"invalid {what}: {bad!r} (short, no spaces, no slash)")
+    if len(set(names)) != len(names):
+        raise ValueError(f"{what} carry duplicate names")
+    return names
+
+
+class RegisterRequest(BaseModel):
+    """Register one new container, optionally at a place or in a seat.
+
+    What it *is* comes from, in order of precedence: the explicit fields
+    (``positions`` for a plate's wells, ``sites`` for an adapter's manifest),
+    the ``wells`` shorthand (a standard grid), or the labware definition this
+    stack holds for ``model`` (repo, builder upload or Opentrons standard
+    set), which also supplies ``container_type`` when it is omitted.
+    """
+
+    hid: str = Field(min_length=1, max_length=256, description="The barcode / label; unique for all time")
+    container_type: str | None = Field(
+        default=None, description=f"One of {sorted(CONTAINER_TYPES)}; omitted = from the model's definition")
+    model: str | None = Field(default=None, max_length=256, description="Labware load name, e.g. corning_96_wellplate_360ul_flat")
+    wells: int | None = Field(default=None, description=f"Standard grid shorthand: one of {sorted(WELL_LAYOUTS)}")
+    positions: list[str] | None = Field(default=None, description="Explicit well list (plates); overrides wells/model")
+    sites: list[str] | None = Field(default=None, description="Explicit site manifest (racks, blocks, any seat-offering container)")
+    at: str | None = Field(default=None, min_length=1, description="Registry place name to receive it at")
+    seat: SeatRequest | None = Field(default=None, description="Carrier and site to receive it in")
+    status: Literal["empty", "in_use", "dirty"] = "empty"
+    project: str | None = Field(default=None, min_length=1,
+                                description="Owning project title; omitted = lab-scoped (the normal case for labware)")
+    note: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _shape(self):
+        if self.container_type is not None and self.container_type not in CONTAINER_TYPES:
+            raise ValueError(f"container_type must be one of {sorted(CONTAINER_TYPES)} (wells are minted, not registered)")
+        if self.wells is not None and self.wells not in WELL_LAYOUTS:
+            raise ValueError(f"wells must be one of {sorted(WELL_LAYOUTS)}")
+        self.positions = _addresses(self.positions, "positions")
+        self.sites = _addresses(self.sites, "sites")
+        if self.container_type in ADAPTER_TYPES and (self.positions or self.wells):
+            raise ValueError(f"a {self.container_type} is an adapter: it has sites (a manifest), not wells")
+        _one_placement(self.at, self.seat)
+        return self
+
+    @property
+    def destination(self) -> str | None:
+        if self.at is not None:
+            return self.at
+        return f"{self.seat.adapter_hid} @ {self.seat.site}" if self.seat else None
+
+
+def _refusal(result: dict[str, Any], *, hid: str, place: str | None) -> HTTPException:
+    """The HTTP status a recorder refusal deserves: the ledger's own 409/422
+    pass through; a local pre-check names what was wrong; anything else is a 502."""
+    reason = result.get("reason")
+    if reason == "unknown_container":
+        return HTTPException(status_code=404, detail=f"no container with hid {hid!r} is registered")
+    if reason == "unknown_adapter":
+        return HTTPException(status_code=404, detail=f"no container with hid {result.get('adapter_hid')!r} is registered to seat into")
+    if reason == "hid_taken":
+        return HTTPException(status_code=409, detail=f"hid {hid!r} is already registered — hids are never reused")
+    if reason == "unknown_location":
+        return HTTPException(status_code=422, detail=f"{place!r} is not seeded in the record layer — run scripts/seed_locations.py")
+    if reason == "unknown_site":
+        return HTTPException(status_code=422, detail=f"{result.get('adapter_hid')} has no site {result.get('site')!r}; its sites are {result.get('sites')}")
+    if reason in ("invalid_site", "self_seat"):
+        return HTTPException(status_code=422, detail=f"not a valid seat: {result}")
+    if reason == "seating_unsupported":
+        return HTTPException(status_code=503, detail="the record layer does not record seats yet "
+                             f"(contract {result.get('contract') or 'unknown'} < 0.16.0)")
+    if reason == "http_409":
+        return HTTPException(status_code=409, detail=f"the ledger refused: {result.get('detail')}")
+    if reason == "http_422":
+        return HTTPException(status_code=422, detail=f"the ledger rejected the row: {result.get('detail')}")
+    return HTTPException(status_code=502, detail=f"record layer refused the write: {result}")
+
+
 def _signed_in(request: Request) -> str:
     """Same gate as labware.py: a verified identity, or the generic dashboard
     owner when the deployment runs open (CONTROL_AUTHZ_ENFORCE=false / dev)."""
@@ -896,25 +1126,79 @@ def build_custody_router() -> APIRouter:
                          "action_id": result.get("action_id")},
             )
             return {"recorded": True, "hid": body.hid, "to": body.destination, "seat": seat_dict, **result}
-        reason = result.get("reason")
-        if reason == "unknown_container":
-            raise HTTPException(status_code=404, detail=f"no container with hid {body.hid!r} is registered")
-        if reason == "unknown_adapter":
-            raise HTTPException(status_code=404, detail=f"no container with hid {result.get('adapter_hid')!r} is registered to seat into")
-        if reason == "unknown_location":
-            raise HTTPException(status_code=422, detail=f"{body.to!r} is not seeded in the record layer — run scripts/seed_locations.py")
-        if reason == "unknown_site":
-            raise HTTPException(status_code=422, detail=f"{result.get('adapter_hid')} has no site {result.get('site')!r}; its sites are {result.get('sites')}")
-        if reason in ("invalid_site", "self_seat"):
-            raise HTTPException(status_code=422, detail=f"not a valid seat: {result}")
-        if reason == "seating_unsupported":
-            raise HTTPException(status_code=503, detail="the record layer does not record seats yet "
-                                f"(contract {result.get('contract') or 'unknown'} < 0.16.0)")
-        if reason == "http_409":
+        if result.get("reason") == "http_409":
             raise HTTPException(status_code=409, detail=f"the ledger says {body.hid!r} is not where it was last seen — re-read the map and decide again: {result.get('detail')}")
-        if reason == "http_422":
-            raise HTTPException(status_code=422, detail=f"the ledger rejected the move: {result.get('detail')}")
-        raise HTTPException(status_code=502, detail=f"record layer refused the move: {result}")
+        raise _refusal(result, hid=body.hid, place=body.to)
+
+    @router.post("/register")
+    async def register(body: RegisterRequest, request: Request) -> dict:
+        """Register a new container — the dashboard's front door for the bench
+        (bitácora's is ``propose_plate_registration``). A plate is minted with
+        its wells, an adapter with its site manifest, both from the labware
+        definition this stack holds for ``model`` unless given explicitly; it
+        may be received at a place or in a seat in the same ledger
+        transaction. Lab-scoped unless ``project`` is named. A taken hid is a
+        409 — hids are never reused.
+        """
+        from .labware import find_definition
+
+        user = _signed_in(request)
+        recorder = custody_recorder()
+        if recorder is None:
+            raise HTTPException(status_code=503, detail="record layer not configured — custody cannot be recorded")
+        cfg = getattr(request.app.state, "locations_config", None)
+        if body.at is not None and cfg is not None:
+            entry = cfg.by_name(body.at)
+            if entry is None or not entry.active:
+                raise HTTPException(status_code=422, detail=f"{body.at!r} is not an active place in locations.yaml")
+        found = find_definition(body.model) if body.model else None
+        layout = labware_layout(found["definition"], source=found["source"]) if found else None
+        container_type = body.container_type or (layout["container_type"] if layout else None)
+        if container_type is None:
+            raise HTTPException(status_code=422, detail=(
+                f"say what {body.hid!r} is: container_type, or a model the labware store knows"
+                + (f" ({body.model!r} is not one)" if body.model else "")))
+        if container_type in ADAPTER_TYPES and (body.positions or body.wells):
+            raise HTTPException(status_code=422, detail=f"a {container_type} is an adapter: it has sites, not wells")
+        meta: dict[str, Any] = {"registered_via": "dashboard"}
+        if body.note:
+            meta["note"] = body.note
+        if layout:
+            meta["definition"] = layout["definition"]
+        positions: list[str] | None = None
+        sites: list[str] | None = body.sites
+        if container_type in WELL_BEARING_TYPES:
+            positions = body.positions or (grid_positions(body.wells) if body.wells else None) \
+                or (layout["addresses"] if layout and layout["addresses"] else None)
+            if not positions:
+                raise HTTPException(status_code=422, detail=(
+                    f"a {container_type} is registered with its wells: give positions, "
+                    f"wells ({sorted(WELL_LAYOUTS)}) or a model the labware store knows"))
+        elif container_type in ADAPTER_TYPES and sites is None and layout and layout["addresses"]:
+            sites = layout["addresses"]
+            meta["sites_definition"] = layout["definition"]
+        seat = Seat(body.seat.adapter_hid, body.seat.site) if body.seat else None
+        projects = request.headers.get("x-auth-projects", "")
+        result = await recorder.register_container(
+            hid=body.hid, container_type=container_type, recorder=user,
+            project=projects.split(",")[0].strip() or None, owner_project=body.project,
+            model=body.model, status=body.status, positions=positions, sites=sites, meta=meta,
+            at=body.at, seat=seat,
+        )
+        outcome = "ok" if result.get("registered") else result.get("reason", "failed")
+        await record_custody_event(
+            request, "control_action", device_id=CUSTODY_DEVICE_ID,
+            message=f"{user} register {body.hid} ({container_type}) → {body.destination or 'unplaced'} → {outcome}",
+            payload={"action": "custody.register", "method": "POST", "owner": user, "outcome": outcome,
+                     "detail": {"hid": body.hid, "container_type": container_type, "model": body.model,
+                                "positions": len(positions or []), "sites": sites, "at": body.at,
+                                "seat": body.seat.model_dump() if body.seat else None}},
+        )
+        if result.get("registered"):
+            return {**result, "model": body.model, "at": body.at,
+                    "seat": body.seat.model_dump() if body.seat else None,
+                    "destination": body.destination}
+        raise _refusal(result, hid=body.hid, place=body.at)
 
     @router.get("/plates")
     async def plates(request: Request, hid: str | None = None) -> dict:

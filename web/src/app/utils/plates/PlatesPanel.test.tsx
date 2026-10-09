@@ -12,8 +12,10 @@ vi.mock("@/lib/user-auth", () => ({
 const api = vi.hoisted(() => ({
   getCustodyMap: vi.fn(),
   getCustodyPlate: vi.fn(),
+  getLabwareList: vi.fn(),
   getLocations: vi.fn(),
   postCustodyMove: vi.fn(),
+  postCustodyRegister: vi.fn(),
 }));
 vi.mock("@/lib/api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/api")>();
@@ -65,6 +67,7 @@ const MAP: CustodyMap = {
 };
 
 function renderPanel() {
+  api.getLabwareList.mockResolvedValue({ definitions: [] });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
@@ -185,5 +188,54 @@ describe("PlatesPanel (lab map)", () => {
       expect(api.postCustodyMove).toHaveBeenCalledWith({ hid: "V-0109", seat: { adapter_hid: "RK-003", site: "A1" }, note: undefined }),
     );
     await waitFor(() => expect(screen.getByText("RK-003 @ A1")).toBeTruthy());
+  });
+
+  it("registers a new container with its wells at a place, and a vial straight into a seat", async () => {
+    api.getCustodyMap.mockResolvedValue(MAP);
+    api.getLocations.mockResolvedValue({
+      locations: [{ name: "bench/hte_staging", type: "storage", equipment: null, capacity: 10, label: "HTE bench", active: true, aliases: {}, notes: null }],
+    });
+    api.postCustodyRegister.mockResolvedValue({
+      registered: true, hid: "PLT-9", container_id: "c9", container_type: "plate", positions: 96, sites: null,
+      model: null, at: "bench/hte_staging", seat: null, destination: "bench/hte_staging",
+    });
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId("adapter-RK-003")).toBeTruthy());
+    const button = () => screen.getByText("Register") as HTMLButtonElement;
+    // a hid alone is not enough: the server needs a type or a known model
+    fireEvent.change(screen.getByLabelText("New hid"), { target: { value: "PLT-9" } });
+    expect(button().disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Container type"), { target: { value: "plate" } });
+    expect(button().disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText("Wells"), { target: { value: "96" } });
+    fireEvent.click(screen.getByLabelText("at a place"));
+    const place = screen.getByLabelText("Register at place") as HTMLSelectElement;
+    await waitFor(() => expect(place.options.length).toBe(2));
+    expect(button().disabled).toBe(true);
+    fireEvent.change(place, { target: { value: "bench/hte_staging" } });
+    expect(button().disabled).toBe(false);
+    fireEvent.click(button());
+    await waitFor(() =>
+      expect(api.postCustodyRegister).toHaveBeenCalledWith({ hid: "PLT-9", container_type: "plate", wells: 96, at: "bench/hte_staging" }),
+    );
+    await waitFor(() => expect(screen.getByText(/96 wells/)).toBeTruthy());
+    // a vial into a seat: the wells field goes away, the carrier picker is the map's
+    api.postCustodyRegister.mockResolvedValue({
+      registered: true, hid: "V-0200", container_id: "v200", container_type: "vial", positions: 0, sites: null,
+      model: null, at: null, seat: { adapter_hid: "RK-003", site: "A2" }, destination: "RK-003 @ A2",
+    });
+    fireEvent.change(screen.getByLabelText("New hid"), { target: { value: "V-0200" } });
+    fireEvent.change(screen.getByLabelText("Container type"), { target: { value: "vial" } });
+    expect(screen.queryByLabelText("Wells")).toBeNull();
+    fireEvent.click(screen.getByLabelText(/^in a seat/));
+    fireEvent.change(screen.getByLabelText("Register in carrier"), { target: { value: "RK-003" } });
+    fireEvent.change(screen.getByLabelText("Register at site"), { target: { value: "A2" } });
+    fireEvent.click(button());
+    await waitFor(() =>
+      expect(api.postCustodyRegister).toHaveBeenLastCalledWith({ hid: "V-0200", container_type: "vial", seat: { adapter_hid: "RK-003", site: "A2" } }),
+    );
+    await waitFor(() => expect(screen.getByText("RK-003 @ A2")).toBeTruthy());
+    // the move form's own destination controls are untouched by the register form
+    expect(screen.getByLabelText("Destination place")).toBeTruthy();
   });
 });

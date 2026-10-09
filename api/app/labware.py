@@ -402,6 +402,19 @@ def _load_all() -> dict[str, dict[str, Any]]:
     return merged
 
 
+def find_definition(load_name: str) -> dict[str, Any] | None:
+    """``{"definition", "source"}`` for ``load_name`` — the merged store first
+    (repo wins over upload), then the installed Opentrons standard set — or
+    ``None``. The custody register front door derives a plate's wells and an
+    adapter's site manifest from this (PLATE_TRACKING.md §11.7 q3)."""
+    with _LOCK:
+        item = _load_all().get(load_name)
+    if item is not None:
+        return {"definition": item["definition"], "source": item["source"]}
+    std = _load_standard(load_name)
+    return {"definition": std, "source": "standard"} if std else None
+
+
 def _grid(defn: dict[str, Any]) -> tuple[int, int]:
     ordering = defn.get("ordering")
     if isinstance(ordering, list) and ordering and isinstance(ordering[0], list):

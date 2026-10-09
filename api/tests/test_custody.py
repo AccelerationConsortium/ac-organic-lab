@@ -580,3 +580,163 @@ def test_the_front_door_takes_a_seat_and_keeps_the_ledger_s_verdicts(monkeypatch
         with TestClient(_app(monkeypatch, _FakeRecorder(result))) as client:
             r = client.post("/api/custody/move", json=seat_body, headers={"X-Auth-User": "u"})
             assert r.status_code == status, (result["reason"], r.text)
+
+
+# ── registration (G2 writes): the dashboard's register front door ─────────
+
+from app import labware as lw  # noqa: E402
+from app.custody import grid_positions, labware_layout  # noqa: E402
+
+PLATE_DEF = {"parameters": {"loadName": "corning_96_wellplate_360ul_flat"}, "namespace": "opentrons", "version": 5,
+             "metadata": {"displayCategory": "wellPlate"},
+             "ordering": [[f"{r}{c}" for r in "ABCDEFGH"] for c in range(1, 13)]}
+RACK_DEF = {"parameters": {"loadName": "opentrons_24_tuberack_nest_1.5ml_snapcap"}, "namespace": "opentrons", "version": 2,
+            "metadata": {"displayCategory": "tubeRack"},
+            "ordering": [[f"{r}{c}" for r in "ABCD"] for c in range(1, 7)]}
+DEFS = {"corning_96_wellplate_360ul_flat": {"definition": PLATE_DEF, "source": "standard"},
+        "opentrons_24_tuberack_nest_1.5ml_snapcap": {"definition": RACK_DEF, "source": "standard"}}
+
+
+def test_a_labware_definition_says_what_a_container_is():
+    plate = labware_layout(PLATE_DEF, source="standard")
+    assert plate["container_type"] == "plate" and len(plate["addresses"]) == 96
+    assert plate["addresses"][:3] == ["A1", "A2", "A3"] and plate["addresses"][-1] == "H12"  # row-major, like a plate map
+    assert plate["definition"] == {"load_name": "corning_96_wellplate_360ul_flat", "namespace": "opentrons", "version": 5, "source": "standard"}
+    rack = labware_layout(RACK_DEF)
+    assert rack["container_type"] == "rack" and rack["addresses"] == [f"{r}{c}" for r in "ABCD" for c in range(1, 7)]
+    assert labware_layout({"metadata": {"displayCategory": "aluminumBlock"}, "ordering": [["A1"]]})["container_type"] == "adapter"
+    assert labware_layout({"metadata": {"displayCategory": "adapter"}, "ordering": []})["addresses"] == []
+    assert grid_positions(6) == ["A1", "A2", "A3", "B1", "B2", "B3"] and len(grid_positions(384)) == 384
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_register_container_posts_one_create_and_refuses_a_taken_hid_first():
+    import json
+    respx.get(f"{BASE}/containers").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{BASE}/locations").mock(return_value=httpx.Response(200, json=[{"location_id": "lb", "name": "bench/hte_staging"}]))
+    post = respx.post(f"{BASE}/containers").mock(return_value=httpx.Response(201, json={"container_id": "c9", "hid": "PLT-9", "resolved_location_id": "lb"}))
+    rec = CustodyRecorder(BASE, "s")
+    out = await rec.register_container(hid="PLT-9", container_type="plate", recorder="me@lab", project="chanlam",
+                                       model="corning_96_wellplate_360ul_flat", positions=grid_positions(96),
+                                       meta={"registered_via": "dashboard"}, at="bench/hte_staging")
+    assert out["registered"] is True and out["container_id"] == "c9" and out["positions"] == 96
+    assert out["received_at_location_id"] == "lb" and out["resolved_location_id"] == "lb"
+    sent = json.loads(post.calls.last.request.content)
+    assert sent["hid"] == "PLT-9" and sent["container_type"] == "plate" and sent["creator"] == "me@lab"
+    assert len(sent["positions"]) == 96 and sent["received_at_location_id"] == "lb" and sent["status"] == "empty"
+    assert "project" not in sent, "labware is lab-scoped unless an owner is named"
+    assert post.calls.last.request.headers["X-Auth-Projects"] == "chanlam"
+    # a hid is unique for all time: refused before the write
+    respx.get(f"{BASE}/containers").mock(return_value=httpx.Response(200, json=[{"container_id": "old", "hid": "PLT-9"}]))
+    out = await rec.register_container(hid="PLT-9", container_type="plate", recorder="me@lab")
+    assert out == {"registered": False, "reason": "hid_taken", "hid": "PLT-9", "container_id": "old"}
+    assert post.call_count == 1
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_register_a_rack_with_its_manifest_and_a_vial_straight_into_its_seat():
+    import json
+    cu._CONTRACT_CACHE.clear()
+    respx.get(f"{BASE}/status").mock(return_value=_status("0.16.0"))
+    respx.get(f"{BASE}/containers").mock(side_effect=_containers_by_hid(RACK))
+    post = respx.post(f"{BASE}/containers").mock(return_value=httpx.Response(201, json={"container_id": "new"}))
+    rec = CustodyRecorder(BASE, "s")
+    out = await rec.register_container(hid="RK-010", container_type="rack", recorder="me", sites=["A1", "A2"],
+                                       owner_project="chanlam", project="chanlam")
+    assert out["registered"] is True and out["sites"] == ["A1", "A2"]
+    sent = json.loads(post.calls.last.request.content)
+    assert sent["meta"]["sites"] == ["A1", "A2"] and "positions" not in sent and sent["project"] == "chanlam"
+    out = await rec.register_container(hid="V-0200", container_type="vial", recorder="me", seat=Seat("RK-003", "A2"))
+    assert out["registered"] is True and out["received_at_container_id"] == "r1" and out["received_at_site"] == "A2"
+    sent = json.loads(post.calls.last.request.content)
+    assert sent["received_at_container_id"] == "r1" and sent["received_at_site"] == "A2" and "received_at_location_id" not in sent
+    out = await rec.register_container(hid="V-0201", container_type="vial", recorder="me", seat=Seat("RK-003", "Z9"))
+    assert out["reason"] == "unknown_site" and post.call_count == 2
+    # the ledger's own verdicts and outages are reported, never raised
+    post.mock(return_value=httpx.Response(409, json={"detail": "resource already exists"}))
+    out = await rec.register_container(hid="V-0202", container_type="vial", recorder="me")
+    assert out["reason"] == "http_409" and out["uncertain"] is False
+    post.mock(side_effect=httpx.ConnectError("gone"))
+    out = await rec.register_container(hid="V-0203", container_type="vial", recorder="me")
+    assert out["reason"] == "unreachable" and out["uncertain"] is True
+
+
+class _FakeRegistrar(_FakeRecorder):
+    async def register_container(self, **kw):
+        self.calls.append(kw)
+        return self.result
+
+
+def test_the_register_front_door_derives_wells_and_manifests_from_the_labware_store(monkeypatch):
+    monkeypatch.setattr(lw, "find_definition", lambda name: DEFS.get(name))
+    rec = _FakeRegistrar({"registered": True, "container_id": "c1", "hid": "x", "positions": 96})
+    with TestClient(_app(monkeypatch, rec)) as client:
+        # a plate by model: type and 96 wells from the definition, received at a registry place
+        r = client.post("/api/custody/register", json={"hid": "PLT-9", "model": "corning_96_wellplate_360ul_flat", "at": "bench/hte_staging"},
+                        headers={"X-Auth-User": "chemist@lab", "X-Auth-Projects": "chanlam"})
+        assert r.status_code == 200, r.text
+        call = rec.calls[-1]
+        assert call["container_type"] == "plate" and len(call["positions"]) == 96 and call["sites"] is None
+        assert call["at"] == "bench/hte_staging" and call["seat"] is None and call["owner_project"] is None
+        assert call["recorder"] == "chemist@lab" and call["project"] == "chanlam"
+        assert call["meta"]["registered_via"] == "dashboard" and call["meta"]["definition"]["load_name"] == "corning_96_wellplate_360ul_flat"
+        assert r.json()["destination"] == "bench/hte_staging"
+        # a rack by model: a site manifest with its provenance, no wells
+        r = client.post("/api/custody/register", json={"hid": "RK-010", "model": "opentrons_24_tuberack_nest_1.5ml_snapcap"},
+                        headers={"X-Auth-User": "u"})
+        assert r.status_code == 200, r.text
+        call = rec.calls[-1]
+        assert call["container_type"] == "rack" and call["positions"] is None and len(call["sites"]) == 24
+        assert call["meta"]["sites_definition"]["version"] == 2
+        # the wells shorthand for a plate the store does not know; explicit sites win over the model
+        r = client.post("/api/custody/register", json={"hid": "PLT-10", "container_type": "plate", "wells": 24, "model": "mystery_24"},
+                        headers={"X-Auth-User": "u"})
+        assert r.status_code == 200 and len(rec.calls[-1]["positions"]) == 24
+        r = client.post("/api/custody/register", json={"hid": "RK-011", "model": "opentrons_24_tuberack_nest_1.5ml_snapcap", "sites": ["A1"]},
+                        headers={"X-Auth-User": "u"})
+        assert r.status_code == 200 and rec.calls[-1]["sites"] == ["A1"]
+        # a vial into a seat, project-private
+        r = client.post("/api/custody/register", json={"hid": "V-0200", "container_type": "vial", "project": "chanlam",
+                                                       "seat": {"adapter_hid": "RK-003", "site": "A2"}},
+                        headers={"X-Auth-User": "u"})
+        assert r.status_code == 200 and rec.calls[-1]["seat"] == Seat("RK-003", "A2") and rec.calls[-1]["owner_project"] == "chanlam"
+        assert r.json()["destination"] == "RK-003 @ A2"
+        n = len(rec.calls)
+        # refused before the recorder is asked
+        bad = [
+            {"hid": "PLT-11", "container_type": "plate"},                                   # a plate without its wells
+            {"hid": "X-1", "model": "mystery"},                                             # nothing says what it is
+            {"hid": "RK-1", "container_type": "rack", "wells": 24},                         # an adapter has no wells
+            {"hid": "W-1", "container_type": "well"},                                       # wells are minted, not registered
+            {"hid": "PLT-12", "container_type": "plate", "positions": ["A1", "A1"]},        # duplicate positions
+            {"hid": "PLT-13", "container_type": "plate", "wells": 7},                       # not a standard grid
+            {"hid": "PLT-14", "container_type": "plate", "wells": 96, "at": "shaker/nest"},  # unknown registry place
+            {"hid": "PLT-15", "container_type": "plate", "wells": 96, "at": "bench/hte_staging",
+             "seat": {"adapter_hid": "RK-003", "site": "A1"}},                              # place and seat
+        ]
+        for body in bad:
+            assert client.post("/api/custody/register", json=body, headers={"X-Auth-User": "u"}).status_code == 422, body
+        assert len(rec.calls) == n
+    for result, status in [
+        ({"registered": False, "reason": "hid_taken", "hid": "PLT-9", "container_id": "old"}, 409),
+        ({"registered": False, "reason": "unknown_location", "to": "bench/hte_staging"}, 422),
+        ({"registered": False, "reason": "unknown_adapter", "adapter_hid": "RK-003"}, 404),
+        ({"registered": False, "reason": "seating_unsupported", "contract": "0.15.1"}, 503),
+        ({"registered": False, "reason": "http_409", "detail": "exists"}, 409),
+        ({"registered": False, "reason": "unreachable", "detail": "gone", "uncertain": True}, 502),
+    ]:
+        with TestClient(_app(monkeypatch, _FakeRegistrar(result))) as client:
+            r = client.post("/api/custody/register", json={"hid": "PLT-9", "container_type": "plate", "wells": 96, "at": "bench/hte_staging"},
+                            headers={"X-Auth-User": "u"})
+            assert r.status_code == status, (result["reason"], r.text)
+    with TestClient(_app(monkeypatch, None)) as client:
+        assert client.post("/api/custody/register", json={"hid": "PLT-9", "container_type": "vial"}, headers={"X-Auth-User": "u"}).status_code == 503
+
+
+def test_find_definition_reads_the_store_then_the_standard_set():
+    found = lw.find_definition("corning_96_wellplate_360ul_flat")
+    assert found is not None and found["source"] == "standard"
+    assert labware_layout(found["definition"])["container_type"] == "plate"
+    assert lw.find_definition("no_such_labware_anywhere") is None
