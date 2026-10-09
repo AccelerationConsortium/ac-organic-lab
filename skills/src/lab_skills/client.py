@@ -168,8 +168,12 @@ class EquipmentClient:
         response_schema: type[BaseModel] | None = None,
         claim_token: str | None = None,
         timeout: float | None = None,
+        method: str = "POST",
     ) -> Any:
         """POST ``body`` to ``path`` on this device and return the response.
+
+        ``method`` may also be ``GET`` (no body is sent) or ``DELETE``, for
+        skills whose :attr:`~lab_skills.skill_catalog.SkillDef.method` says so.
 
         ``body`` may be a Pydantic model (preferred; serialised via
         ``model_dump()``), a plain mapping, or ``None``. If
@@ -203,9 +207,10 @@ class EquipmentClient:
         headers = {"X-Claim-Token": claim_token} if claim_token else None
 
         try:
-            response = await self._http.post(
+            response = await self._http.request(
+                method.upper(),
                 url,
-                json=payload,
+                json=None if method.upper() == "GET" else payload,
                 headers=headers,
                 timeout=(self._entry.command_timeout_seconds if timeout is None else timeout),
             )

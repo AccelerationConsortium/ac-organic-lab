@@ -340,9 +340,8 @@ REALSENSE_SKILLS = [
 # Client guide: xarm-translocation src/docs/TRAJECTORY_API.md. Upload a whole
 # time-stamped joint trajectory, then start it; the device plays it at 100 Hz
 # on its own clock. Same gates as the freehand moves (claim, OFF/ADVISORY).
-# Only validate and create are skills: upload, start, status and cancel carry
-# the session id in the URL, and the skill runner neither fills {placeholders}
-# nor sends GET. Until it does, clients use the device API for those steps.
+# Path arguments ({session_id}, {seq}) are filled into the URL by
+# SkillDef.resolve_path; status is a GET.
 
 
 class TrajectoryPoint(BaseModel):
@@ -367,6 +366,21 @@ class TrajectoryCreateArgs(BaseModel):
     rate_hz: float | None = Field(default=None, description="Command rate; device default (100 Hz) when omitted.")
 
 
+class TrajectoryChunkArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    session_id: str = Field(description="From trajectory.create.")
+    seq: int = Field(ge=0, description="Chunk number: 0, 1, 2, ...")
+    points: list[TrajectoryPoint] = Field(min_length=1, max_length=5000)
+    final: bool = Field(default=False, description="True on the last chunk; start needs it.")
+
+
+class TrajectorySessionArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(description="From trajectory.create.")
+
+
 _TRAJ = "/control/freehand/trajectory"
 _TRAJ_NOTE = (" Joint trajectories on the xArm5: requires graph mode OFF or ADVISORY and an "
               "active claim; validation is not a collision check.")
@@ -380,6 +394,20 @@ TRAJECTORY_SKILLS = [
     SkillDef(name="trajectory.create", kind="robot_arm", endpoint=_TRAJ,
              description="Open a trajectory session (one per arm); returns session_id." + _TRAJ_NOTE,
              args_schema=TrajectoryCreateArgs, requires_states=["ready", "dry_run"], estimated_duration_s=1.0),
+    SkillDef(name="trajectory.upload_chunk", kind="robot_arm", endpoint=f"{_TRAJ}/{{session_id}}/chunks/{{seq}}",
+             description="Upload chunk seq of the session's trajectory; the last carries final=true. "
+                         "Identical re-sends are harmless." + _TRAJ_NOTE,
+             args_schema=TrajectoryChunkArgs, requires_states=["ready", "dry_run"], estimated_duration_s=2.0),
+    SkillDef(name="trajectory.start", kind="robot_arm", endpoint=f"{_TRAJ}/{{session_id}}/start",
+             description="Start the complete trajectory. Accepted, not completed: poll trajectory.status."
+                         + _TRAJ_NOTE,
+             args_schema=TrajectorySessionArgs, requires_states=["ready", "dry_run"], estimated_duration_s=60.0),
+    SkillDef(name="trajectory.status", kind="robot_arm", endpoint=f"{_TRAJ}/{{session_id}}", method="GET",
+             description="Session state, progress (executed.t_exec), started_at_utc and measured joints.",
+             args_schema=TrajectorySessionArgs, estimated_duration_s=0.5),
+    SkillDef(name="trajectory.cancel", kind="robot_arm", endpoint=f"{_TRAJ}/{{session_id}}/cancel",
+             description="Slow the running trajectory to a stop along its path, then return to mode 0.",
+             args_schema=TrajectorySessionArgs, estimated_duration_s=3.0),
 ]
 
 

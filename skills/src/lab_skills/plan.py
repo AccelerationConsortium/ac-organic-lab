@@ -607,13 +607,24 @@ async def execute_plan(
             await _notify(on_step, steps_out[-1])
             aborted = True
             continue
+        if sd is not None:
+            # Path arguments (``/control/queue/{queue_id}``) go into the URL,
+            # not the body.
+            try:
+                endpoint, args = sd.resolve_path(args)
+            except ValueError as exc:
+                steps_out.append(StepRunReport(status="failed", error=str(exc), **base))
+                await _notify(on_step, steps_out[-1])
+                aborted = True
+                continue
         try:
             async with ClaimManager(client, owner=owner, ttl_s=ttl_s) as claim:
                 claimed = not claim.degraded
                 if claimed:
                     claims_acquired.append(client.equipment_id)
                 response = await client.command(
-                    endpoint, args, claim_token=claim.token
+                    endpoint, args, claim_token=claim.token,
+                    method=sd.method if sd is not None else "POST",
                 )
                 claim.assert_alive()
         except CommandOutcomeUnknown as exc:
