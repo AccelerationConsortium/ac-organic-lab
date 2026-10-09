@@ -1170,23 +1170,47 @@ export async function deleteLabware(loadName: string): Promise<void> {
 // (the dashboard keeps no copy), and the human front door for a bench-top move,
 // which writes the same `move` row the run executor writes.
 
+/** What a container sits in (BitacoraDB 0.16.0 seating): the carrier and its
+ * site. A carrier the viewer may not read arrives masked (`readable: false`,
+ * ids null) — it is still a seat. */
+export interface CustodySeat {
+  container_id: string | null;
+  hid: string | null;
+  site: string | null;
+  readable: boolean;
+}
+
 export interface CustodyPlate {
   hid: string;
   container_id: string;
   container_type: string | null;
   model: string | null;
   status: string | null;
+  /** The RESOLVED place — for a vial in a rack on a deck slot, that slot. */
   location_id: string | null;
+  /** The ledger's own cache (null for a seated container); diagnostics only. */
+  raw_location_id?: string | null;
   /** Registry name (e.g. `ot2_hte/slot_2`), or null when never placed. */
   location: string | null;
   equipment_id: string | null;
   project_id: string | null;
+  seat?: CustodySeat | null;
+  /** Another container is recorded at the same seat (D2: flagged, never refused). */
+  seat_conflict?: boolean;
+  /** The site manifest when this container offers seats (a rack, a block, a plate with a `lid`). */
+  sites?: string[] | null;
 }
 
 export interface CustodyAction {
   action_id: string;
   action_type: string;
   to_location_id: string | null;
+  /** Seat destination (0.16.0): the carrier and site a move put the target in. */
+  to_container_id?: string | null;
+  to_site?: string | null;
+  from_location_id?: string | null;
+  from_seated_on_container_id?: string | null;
+  from_seated_at_site?: string | null;
   source_container_id: string | null;
   target_container_id: string | null;
   performed_by: string;
@@ -1194,6 +1218,42 @@ export interface CustodyAction {
   step_id: string | null;
   plan_id: string | null;
   params: Record<string, unknown>;
+}
+
+/** One container on the lab map, with whatever is seated in it nested. */
+export interface CustodyNode extends CustodyPlate {
+  occupants: CustodyNode[];
+  /** Seated on a carrier the viewer may not read: filed at the place, inside something unseen. */
+  chain_masked: boolean;
+}
+
+export interface CustodyPlace {
+  name: string;
+  label: string | null;
+  type: string | null;
+  equipment_id: string | null;
+  capacity: number | null;
+  /** False for a place the ledger knows but `locations.yaml` no longer lists. */
+  registered: boolean;
+  containers: CustodyNode[];
+}
+
+export interface CustodySection {
+  id: string;
+  title: string;
+  places: CustodyPlace[];
+}
+
+/** `GET /api/custody/map` — every registry place grouped by platform, with the
+ * containers resolved to it (PLATE_TRACKING.md §11.4). A read-through. */
+export interface CustodyMap {
+  sections: CustodySection[];
+  unplaced: CustodyNode[];
+  counts: { containers: number; placed: number };
+}
+
+export async function getCustodyMap(): Promise<CustodyMap> {
+  return fetchJson<CustodyMap>("/api/custody/map");
 }
 
 export interface CustodyMoveRequest {

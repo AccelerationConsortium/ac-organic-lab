@@ -293,3 +293,178 @@ def test_cytation_drawer_position_does_not_observe_plate_presence(drawer):
     assert reconcile("PLT-1", observation) == "unobservable"
     status.details["loaded_plate"] = {"plate_id": "OTHER-PLATE"}
     assert reconcile("PLT-1", observe(_Snap(status), carrier, LOCS)) == "mismatch"
+
+
+# ── seating (BitacoraDB contract 0.16.0; PLATE_TRACKING.md §11, G2 reads) ─────────
+#
+# The record layer may now seat a container on another container's site; its
+# place is the *resolved* one. Every reader here must see through seating and
+# fall back to the raw cache only against an older record layer.
+
+from app.custody import (  # noqa: E402
+    build_lab_map,
+    container_view,
+    expected_placement_guard,
+    resolved_location_id,
+    seat_of,
+)
+from lab_skills import load_platforms  # noqa: E402
+
+PLATFORMS = load_platforms(REPO_ROOT / "platforms.yaml")
+
+SEATED_VIAL = {
+    "hid": "V-0107", "container_id": "v1", "container_type": "vial", "status": "in_use",
+    "location_id": None, "seated_on_container_id": "r1", "seated_at_site": "B3",
+    "resolved_location_id": "l3", "seat_conflict": False,
+    "seating_chain": [{"container_id": "r1", "hid": "RK-003", "site": "B3", "readable": True}],
+}
+
+
+def test_resolved_place_wins_and_the_raw_cache_is_only_a_fallback():
+    assert resolved_location_id(SEATED_VIAL) == "l3"                      # 0.16.0: derived place
+    assert resolved_location_id({"location_id": "l1"}) == "l1"            # 0.15.1 row: raw cache
+    assert resolved_location_id({"location_id": "l1", "resolved_location_id": None}) is None
+    assert seat_of(SEATED_VIAL) == {"container_id": "r1", "hid": "RK-003", "site": "B3", "readable": True}
+    assert seat_of({"location_id": "l1"}) is None
+    # a carrier the caller may not read arrives masked — still a seat, unreadable
+    masked = {**SEATED_VIAL, "seated_on_container_id": None,
+              "seating_chain": [{"container_id": None, "hid": None, "site": "B3", "readable": False}]}
+    assert seat_of(masked) == {"container_id": None, "hid": None, "site": "B3", "readable": False}
+
+
+def test_the_move_guard_names_the_seat_when_seated_and_the_place_otherwise():
+    assert expected_placement_guard(SEATED_VIAL) == {
+        "expected_seated_on_container_id": "r1", "expected_seated_at_site": "B3"}
+    assert expected_placement_guard({"location_id": "l1"}) == {"expected_location_id": "l1"}
+    assert expected_placement_guard({"location_id": None}) == {"expected_location_id": None}
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_current_location_of_a_seated_vial_is_the_rack_s_slot():
+    respx.get(f"{BASE}/containers").mock(return_value=httpx.Response(200, json=[SEATED_VIAL]))
+    respx.get(f"{BASE}/locations/l3").mock(return_value=httpx.Response(200, json={"name": "ot2_complexation/slot_3"}))
+    cur = await CustodyRecorder(BASE, "s").current_location("V-0107", user="u")
+    assert cur["found"] is True
+    assert cur["location_id"] == "l3" and cur["location_name"] == "ot2_complexation/slot_3"
+    assert cur["raw_location_id"] is None and cur["seat"]["hid"] == "RK-003"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_moving_a_seated_vial_guards_on_its_seat_not_a_null_place():
+    import json
+    respx.get(f"{BASE}/containers").mock(return_value=httpx.Response(200, json=[SEATED_VIAL]))
+    respx.get(f"{BASE}/locations").mock(return_value=httpx.Response(200, json=[{"location_id": "l9", "name": "bench/hte_staging"}]))
+    post = respx.post(f"{BASE}/container-actions").mock(return_value=httpx.Response(200, json={"action_id": "a1"}))
+    out = await CustodyRecorder(BASE, "s").record_move(hid="V-0107", to="bench/hte_staging", performed_by="me", recorder="me")
+    assert out["recorded"] is True
+    sent = json.loads(post.calls.last.request.content)
+    assert sent["expected_seated_on_container_id"] == "r1" and sent["expected_seated_at_site"] == "B3"
+    assert "expected_location_id" not in sent
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_history_asks_for_carried_moves_only_from_a_record_layer_that_answers_them():
+    cu._CONTRACT_CACHE.clear()
+    actions = respx.get(f"{BASE}/container-actions").mock(return_value=httpx.Response(200, json=[]))
+    status = respx.get(f"{BASE}/status").mock(return_value=httpx.Response(200, json={"details": {"schema_version": "0.15.1"}}))
+    await CustodyRecorder(BASE, "s").history("c1", user="u")
+    assert "carried" not in actions.calls.last.request.url.params
+    cu._CONTRACT_CACHE.clear()
+    status.mock(return_value=httpx.Response(200, json={"details": {"schema_version": "0.16.0"}}))
+    await CustodyRecorder(BASE, "s").history("c1", user="u")
+    assert actions.calls.last.request.url.params["carried"] == "true"
+    # the probe is cached: a second history read does not ask /status again
+    n = status.call_count
+    await CustodyRecorder(BASE, "s").history("c1", user="u")
+    assert status.call_count == n
+    cu._CONTRACT_CACHE.clear()
+
+
+def _ledger_places():
+    return {
+        "l3": {"location_id": "l3", "name": "ot2_complexation/slot_3", "equipment_id": "ot2_complexation"},
+        "lb": {"location_id": "lb", "name": "bench/hte_staging", "equipment_id": None},
+        "lg": {"location_id": "lg", "name": "ghost/shelf", "equipment_id": None, "location_type": "storage"},
+    }
+
+
+def test_lab_map_files_containers_at_their_resolved_place_and_nests_occupants():
+    rack = {"hid": "RK-003", "container_id": "r1", "container_type": "rack", "status": "in_use",
+            "location_id": "l3", "resolved_location_id": "l3", "meta": {"sites": ["A1", "B3"]},
+            "seating_chain": [], "seat_conflict": False}
+    vial2 = {**SEATED_VIAL, "hid": "V-0108", "container_id": "v2", "seat_conflict": True}
+    conflicting = {**SEATED_VIAL, "seat_conflict": True}
+    loose = {"hid": "PLT-1", "container_id": "p1", "container_type": "plate", "status": "empty",
+             "location_id": "lb", "resolved_location_id": "lb", "seating_chain": []}
+    well = {"hid": "PLT-1:A1", "container_id": "w1", "parent_container_id": "p1", "location_id": None}
+    lost = {"hid": "PLT-9", "container_id": "p9", "container_type": "plate", "location_id": None,
+            "resolved_location_id": None, "seating_chain": []}
+    ghost = {"hid": "PLT-G", "container_id": "pg", "container_type": "plate", "location_id": "lg",
+             "resolved_location_id": "lg", "seating_chain": []}
+    masked = {"hid": "V-0200", "container_id": "v3", "container_type": "vial", "location_id": None,
+              "seated_on_container_id": None, "seated_at_site": "C1", "resolved_location_id": "l3",
+              "seating_chain": [{"container_id": None, "hid": None, "site": "C1", "readable": False}]}
+
+    out = build_lab_map([rack, conflicting, vial2, loose, well, lost, ghost, masked], _ledger_places(),
+                        registry=LOCS, platforms=PLATFORMS)
+
+    sections = {s["id"]: s for s in out["sections"]}
+    assert "complexation" in sections and sections["complexation"]["title"] == "Complexation Platform"
+    slot3 = next(p for p in sections["complexation"]["places"] if p["name"] == "ot2_complexation/slot_3")
+    assert slot3["registered"] is True
+    # the rack is at the slot, with both vials nested under it at B3 — flagged
+    hids = {c["hid"]: c for c in slot3["containers"]}
+    assert set(hids) == {"RK-003", "V-0200"}
+    rack_node = hids["RK-003"]
+    assert rack_node["sites"] == ["A1", "B3"]
+    assert [(o["hid"], o["seat"]["site"], o["seat_conflict"]) for o in rack_node["occupants"]] == [
+        ("V-0107", "B3", True), ("V-0108", "B3", True)]
+    # a vial on a carrier the caller cannot see is at the slot, inside something unseen
+    assert hids["V-0200"]["chain_masked"] is True and hids["V-0200"]["occupants"] == []
+    # a loose plate at a bench place; wells are never nodes
+    other = sections["other"]
+    bench = next(p for p in other["places"] if p["name"] == "bench/hte_staging")
+    assert [c["hid"] for c in bench["containers"]] == ["PLT-1"]
+    assert all(c["hid"] != "PLT-1:A1" for p in other["places"] for c in p["containers"])
+    # every active registry place appears, with or without containers
+    assert any(p["name"] == "ot2_hte/slot_1" and p["containers"] == [] for s in out["sections"] for p in s["places"])
+    assert all(p["name"] != "retired/place" for s in out["sections"] for p in s["places"])
+    # a ledger place the registry no longer lists is still shown, marked
+    ghost_place = next(p for p in other["places"] if p["name"] == "ghost/shelf")
+    assert ghost_place["registered"] is False and [c["hid"] for c in ghost_place["containers"]] == ["PLT-G"]
+    # never placed
+    assert [c["hid"] for c in out["unplaced"]] == ["PLT-9"]
+    assert out["counts"] == {"containers": 7, "placed": 6}
+    # the platform order is platforms.yaml's; the catch-all is last
+    assert out["sections"][-1]["id"] == "other"
+
+
+def test_lab_map_against_a_pre_seating_record_layer_reads_the_raw_cache():
+    plate = {"hid": "PLT-1", "container_id": "p1", "container_type": "plate", "location_id": "l3"}
+    out = build_lab_map([plate], _ledger_places(), registry=LOCS, platforms=PLATFORMS)
+    slot3 = next(p for s in out["sections"] for p in s["places"] if p["name"] == "ot2_complexation/slot_3")
+    assert [c["hid"] for c in slot3["containers"]] == ["PLT-1"]
+    view = container_view(plate, _ledger_places())
+    assert view["location"] == "ot2_complexation/slot_3" and view["seat"] is None and view["sites"] is None
+
+
+def test_map_route_reads_through_and_reports_an_unreachable_ledger(monkeypatch):
+    class _MapRecorder:
+        async def lab_map(self, **kw):
+            assert kw["registry"] is LOCS and kw["platforms"] is PLATFORMS
+            return {"sections": [], "unplaced": [], "counts": {"containers": 0, "placed": 0}}
+    app = _app(monkeypatch, _MapRecorder())
+    app.state.platforms_config = PLATFORMS
+    with TestClient(app) as client:
+        assert client.get("/api/custody/map", headers={"X-Auth-User": "u"}).json()["counts"]["containers"] == 0
+
+    class _Down:
+        async def lab_map(self, **kw):
+            raise httpx.ConnectError("refused")
+    with TestClient(_app(monkeypatch, _Down())) as client:
+        assert client.get("/api/custody/map", headers={"X-Auth-User": "u"}).status_code == 502
+    with TestClient(_app(monkeypatch, None)) as client:
+        assert client.get("/api/custody/map", headers={"X-Auth-User": "u"}).status_code == 503

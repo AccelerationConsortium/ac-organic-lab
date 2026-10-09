@@ -555,7 +555,7 @@ without a second migration.
 | D2 | ac-organic-lab | Plan-at-start (`open_run_record` / `close_run_record`) | D1 | **shipped 2026-08-23** |
 | E | bitácora + dashboard | agent tools (`register_plate`, `record_plate_move`, `where_is_plate`, `list_locations`), "Plates" views | A, D | **shipped 2026-08-23** (see note below) |
 | F | all | `transfer` lineage rows, `ContainerContents` flag, Substance/Lot; device asks (§8) | E | **first slice built 2026-08-30** (lineage rows, no amounts — see the D11 note; `ContainerContents` / Substance/Lot / device asks still open) |
-| G | BitacoraDB → ac-organic-lab → bitácora | removable containers on adapters — seating as custody (§11: G1 ledger, G2 custody + lab map, G3 nominal containers + bindings, G4 run-time site resolution) | A, D1, E | **G1 implemented 2026-10-09** on BitacoraDB branch `feat/g1-adapters-seating` (contract 0.16.0, migration `b7c8d9e0f1a2`; record-layer note `BitacoraDB/docs/ADAPTERS_AND_SEATING.md`), not merged or deployed; G2–G4 not started. **Rollout rule:** no seat is recorded in production before G2 moves `custody.py::where_is` and bitácora's custody reader to `resolved_location_id` |
+| G | BitacoraDB → ac-organic-lab → bitácora | removable containers on adapters — seating as custody (§11: G1 ledger, G2 custody + lab map, G3 nominal containers + bindings, G4 run-time site resolution) | A, D1, E | **G1 implemented 2026-10-09** on BitacoraDB branch `feat/g1-adapters-seating` (contract 0.16.0, migration `b7c8d9e0f1a2`; record-layer note `BitacoraDB/docs/ADAPTERS_AND_SEATING.md`), PR #3, not merged or deployed. **G2 reads 2026-10-09:** `custody.py` reads the resolved place (`resolved_location_id`, raw cache only as the pre-0.16.0 fallback), guards a move on the seat when seated, asks for `carried` history when the live contract answers it, and `/utils/plates` is the location-first lab map (`GET /api/custody/map`). Still open in G2: seat destinations on `record_move` / the move form, the `register` front door, bitácora's custody reader. G3–G4 not started. **Rollout rule:** no seat is recorded in production before bitácora's reader also moves to the resolved place |
 
 A and B are independent; C can start on B's yaml with a fixture before A
 lands; everything after needs all three.
@@ -936,7 +936,15 @@ row are untouched.
   by platform; an adapter renders as a grid of sites with its occupants; a
   loose vial at its own place; click-through to history and, for samples the
   viewer can read (`can_read_scoped`, D10), to contents; one search box that
-  takes a plate hid, vial hid, sample hid or place name. Project scoping is
+  takes a plate hid, vial hid, sample hid or place name. *(Built 2026-10-09:
+  `GET /api/custody/map` — `custody.py::build_lab_map`, pure over the ledger's
+  containers + places and the two static configs — files every active
+  registry place under its `platforms.yaml` section, nests occupants under
+  their carrier, files a container whose carrier is masked at the place with
+  `chain_masked`, lists ledger places the registry no longer names as
+  `registered: false`, and never lists wells. The page searches hids, models
+  and place names; the sample-hid search and the contents click-through wait
+  for a samples lookup. Double occupancy is drawn in the D7 mismatch colour.)* Project scoping is
   the one thing the page must get right, and it is **not** "everyone sees
   where, members see what": containers themselves are scoped
   (`can_read_scoped` — lab-scoped rows need a caller in at least one

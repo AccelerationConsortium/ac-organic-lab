@@ -47,9 +47,9 @@ const UTILS: { slug: string; label: string; description: string; href?: string }
   },
   {
     slug: "plates",
-    label: "Plates",
+    label: "Lab map",
     description:
-      "Where every plate is — the record layer's custody ledger — and record a bench-top move.",
+      "Where every container is — every place, grouped by platform, per the record layer's custody ledger — and record a bench-top move.",
   },
 ];
 

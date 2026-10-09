@@ -40,6 +40,7 @@ import asyncio
 import functools
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -192,6 +193,90 @@ def reconcile(expected_hid: str, observation: Observation) -> Verdict:
 
 
 _UNSET_LOCATION = object()
+
+
+# ── placement: the resolved place, not the raw cache ─────────────────────
+#
+# Since BitacoraDB contract 0.16.0 a container may be *seated* on another
+# container (a vial in rack slot B3, a filter plate on its collector) instead
+# of being at a place, and its place is derived by the record layer
+# (`resolved_location_id`, the walk up the seating chain). Every reader here
+# asks for that resolved value and falls back to the raw `location_id` only
+# when the row predates 0.16.0 — a seated plate must never read as unlocated.
+# PLATE_TRACKING.md §11.3 "Where is X" / BitacoraDB docs/ADAPTERS_AND_SEATING.md.
+
+SEATING_CONTRACT = (0, 16, 0)
+
+
+def resolved_location_id(row: dict) -> str | None:
+    """The place a container is actually at, per the record layer."""
+    if "resolved_location_id" in row:
+        value = row["resolved_location_id"]
+        return str(value) if value else None
+    value = row.get("location_id")
+    return str(value) if value else None
+
+
+def seat_of(row: dict) -> dict | None:
+    """``{container_id, hid, site, readable}`` when the row is seated, else None.
+
+    A carrier the caller may not read arrives masked (`container_id` null,
+    `readable: false` on the chain's first hop); the seat is still a seat.
+    """
+    chain = row.get("seating_chain") or []
+    site = row.get("seated_at_site")
+    carrier = row.get("seated_on_container_id")
+    if not chain and carrier is None:
+        return None
+    first = chain[0] if chain else {}
+    return {
+        "container_id": str(carrier) if carrier else (first.get("container_id") or None),
+        "hid": first.get("hid"),
+        "site": site or first.get("site"),
+        "readable": bool(first.get("readable", carrier is not None)),
+    }
+
+
+def expected_placement_guard(row: dict) -> dict[str, Any]:
+    """The stale-state guard for moving ``row`` from where the ledger last
+    said it was: the seat when it is seated, the place otherwise. Sending the
+    raw ``location_id`` (null) for a seated container would assert "unlocated
+    and unseated" and be refused — correctly, but for the wrong reason."""
+    seat = seat_of(row)
+    if seat is not None:
+        return {"expected_seated_on_container_id": seat["container_id"],
+                "expected_seated_at_site": seat["site"]}
+    return {"expected_location_id": row.get("location_id")}
+
+
+def _parse_version(text: Any) -> tuple[int, ...]:
+    try:
+        return tuple(int(part) for part in str(text).split("."))
+    except ValueError:
+        return ()
+
+
+_CONTRACT_CACHE: dict[str, tuple[tuple[int, ...], float]] = {}
+_CONTRACT_TTL_S = 60.0
+
+
+async def record_layer_contract(client: httpx.AsyncClient, base_url: str) -> tuple[int, ...]:
+    """The record layer's live contract version (``/status`` →
+    ``details.schema_version``), cached briefly. ``()`` when unknown — the
+    caller then asks only for what every version answers."""
+    now = time.monotonic()
+    hit = _CONTRACT_CACHE.get(base_url)
+    if hit and now - hit[1] < _CONTRACT_TTL_S:
+        return hit[0]
+    version: tuple[int, ...] = ()
+    try:
+        r = await client.get(f"{base_url}/status")
+        if r.status_code == 200:
+            version = _parse_version((r.json().get("details") or {}).get("schema_version"))
+    except httpx.HTTPError:
+        version = ()
+    _CONTRACT_CACHE[base_url] = (version, now)
+    return version
 
 @dataclass
 class CustodyRecorder:
@@ -378,18 +463,20 @@ class CustodyRecorder:
                 if location_id is None:
                     return {"recorded": False, "reason": "unknown_location", "to": to}
                 if expected_from is _UNSET_LOCATION:
-                    expected_id = row.get("location_id")
+                    # Where the ledger last said it was — a seat when seated.
+                    guard = expected_placement_guard(row)
                 elif expected_from is None:
-                    expected_id = None
+                    guard = {"expected_location_id": None}
                 else:
                     expected_id = await self.resolve_location(client, expected_from,
                                                               user=recorder, project=project)
                     if expected_id is None:
                         return {"recorded": False, "reason": "unknown_expected_location"}
+                    guard = {"expected_location_id": expected_id}
                 from uuid import uuid4
                 body: dict[str, Any] = {
                     "client_action_id": client_action_id or f"dashboard:bench:{uuid4().hex}",
-                    "expected_location_id": expected_id,
+                    **guard,
                     "action_type": "move",
                     "target_container_id": row["container_id"],
                     "to_location_id": location_id,
@@ -435,8 +522,14 @@ class CustodyRecorder:
     async def current_location(self, hid: str, *, user: str,
                                project: str | None = None,
                                refresh: bool = False) -> dict[str, Any]:
-        """``{"found": bool, "hid", "container_id", "location_id", "location_name"}``;
-        never raises (``found: None`` when the store could not answer).
+        """``{"found": bool, "hid", "container_id", "location_id", "location_name",
+        "seat", "seat_conflict"}``; never raises (``found: None`` when the
+        store could not answer).
+
+        ``location_id`` / ``location_name`` are the **resolved** place — for a
+        container seated in a rack on a deck slot, that slot — so every reader
+        that asks "is the plate at L" (the run preflight, the manual-step
+        source check) sees through seating. ``seat`` says what it sits in.
 
         Pass ``refresh=True`` for a *fresh* answer — a recorder that has already
         written a move for this plate holds the pre-move row (see
@@ -449,22 +542,31 @@ class CustodyRecorder:
                                                    project=project, refresh=refresh)
                 if row is None:
                     return {"found": False, "hid": hid}
+                place = resolved_location_id(row)
                 name = None
-                if row.get("location_id"):
-                    r = await client.get(f"{self.base_url}/locations/{row['location_id']}",
+                if place:
+                    r = await client.get(f"{self.base_url}/locations/{place}",
                                          headers=self._headers(user, project))
                     if r.status_code == 200:
                         name = r.json().get("name")
                 return {"found": True, "hid": hid, "container_id": row["container_id"],
-                        "location_id": row.get("location_id"), "location_name": name,
+                        "location_id": place, "location_name": name,
+                        "raw_location_id": row.get("location_id"),
+                        "seat": seat_of(row), "seat_conflict": bool(row.get("seat_conflict")),
                         "status": row.get("status")}
         except Exception as exc:  # noqa: BLE001
             return {"found": None, "hid": hid, "error": str(exc)[:200]}
 
     async def plates(self, *, user: str, projects: str = "", hid: str | None = None) -> list[dict]:
-        """Top-level containers (no parent) joined with their location name.
-        Raises on transport failure — a read endpoint should say so, not
-        render an empty lab."""
+        """Top-level containers (no parent) joined with their **resolved** place
+        name — a vial in a rack on a deck slot is at that slot — plus what they
+        are seated in. Raises on transport failure — a read endpoint should
+        say so, not render an empty lab."""
+        rows, places = await self._containers_and_places(user=user, projects=projects, hid=hid)
+        return [container_view(c, places) for c in rows if not c.get("parent_container_id")]
+
+    async def _containers_and_places(self, *, user: str, projects: str = "",
+                                     hid: str | None = None) -> tuple[list[dict], dict[str, dict]]:
         headers = {"X-Edge-Secret": self.secret, "X-Auth-User": user}
         if projects:
             headers["X-Auth-Projects"] = projects
@@ -474,31 +576,139 @@ class CustodyRecorder:
             rc.raise_for_status()
             rl = await client.get(f"{self.base_url}/locations", headers=headers)
             rl.raise_for_status()
-        names = {l["location_id"]: l for l in rl.json()}
-        out = []
-        for c in rc.json():
-            if c.get("parent_container_id"):
-                continue
-            loc = names.get(c.get("location_id") or "")
-            out.append({
-                "hid": c["hid"], "container_id": c["container_id"],
-                "container_type": c.get("container_type"), "model": c.get("model"),
-                "status": c.get("status"), "location_id": c.get("location_id"),
-                "location": loc["name"] if loc else None,
-                "equipment_id": loc.get("equipment_id") if loc else None,
-                "project_id": c.get("project_id"),
-            })
-        return out
+        return rc.json(), {str(l["location_id"]): l for l in rl.json()}
+
+    async def lab_map(self, *, user: str, projects: str = "", registry: Any, platforms: Any) -> dict:
+        """The location-first lab map: every registry place grouped by platform
+        section, with the containers resolved to it and their occupants nested
+        (PLATE_TRACKING.md §11.4). Raises on transport failure."""
+        rows, places = await self._containers_and_places(user=user, projects=projects)
+        return build_lab_map(rows, places, registry=registry, platforms=platforms)
 
     async def history(self, container_id: str, *, user: str, projects: str = "") -> list[dict]:
+        """A container's ledger rows, oldest first. Against a 0.16.0 record
+        layer the moves of the carriers it was seated in are unioned in
+        (``carried=true``), so "how did it get here" includes the rack's
+        journey; an older record layer refuses unknown filters, so the flag
+        is sent only when the live contract answers it."""
         headers = {"X-Edge-Secret": self.secret, "X-Auth-User": user}
         if projects:
             headers["X-Auth-Projects"] = projects
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            r = await client.get(f"{self.base_url}/container-actions", headers=headers,
-                                 params={"container_id": container_id})
+            params: dict[str, str] = {"container_id": container_id}
+            if await record_layer_contract(client, self.base_url) >= SEATING_CONTRACT:
+                params["carried"] = "true"
+            r = await client.get(f"{self.base_url}/container-actions", headers=headers, params=params)
             r.raise_for_status()
             return r.json()
+
+
+def container_view(c: dict, places: dict[str, dict]) -> dict:
+    """One dashboard row for a container: identity, status, the resolved place
+    (name + equipment), the seat, the site manifest and the conflict flag."""
+    place_id = resolved_location_id(c)
+    loc = places.get(place_id or "")
+    meta = c.get("meta") or {}
+    sites = meta.get("sites") if isinstance(meta.get("sites"), list) else None
+    return {
+        "hid": c["hid"], "container_id": str(c["container_id"]),
+        "container_type": c.get("container_type"), "model": c.get("model"),
+        "status": c.get("status"),
+        "location_id": place_id,
+        "raw_location_id": str(c["location_id"]) if c.get("location_id") else None,
+        "location": loc["name"] if loc else None,
+        "equipment_id": loc.get("equipment_id") if loc else None,
+        "project_id": c.get("project_id"),
+        "seat": seat_of(c),
+        "seat_conflict": bool(c.get("seat_conflict")),
+        "sites": sites,
+    }
+
+
+#: Section the map files registry places under when `platforms.yaml` names no
+#: platform for their equipment (benches, fridges, waste — or a device that is
+#: not on any platform card).
+OTHER_SECTION = {"id": "other", "title": "Benches, storage and waste"}
+
+
+def build_lab_map(rows: list[dict], places: dict[str, dict], *, registry: Any, platforms: Any) -> dict:
+    """Pure: ledger rows + ledger places + the two static configs → the map.
+
+    - Every *active* registry place appears, with or without containers, under
+      the platform section its equipment belongs to (``platforms.yaml``), else
+      under :data:`OTHER_SECTION`. A ledger place the registry no longer lists
+      is still shown (it holds containers) and marked ``registered: false``.
+    - A container is filed at its **resolved** place. One seated on a carrier
+      the caller may read is nested under that carrier (``occupants``); one
+      seated on a carrier the caller may *not* read is filed at the place
+      directly with ``chain_masked: true`` — it is there, inside something
+      the caller cannot see.
+    - Containers with no resolved place are ``unplaced``.
+    Children (wells) are never listed: a plate is one node.
+    """
+    tops = [c for c in rows if not c.get("parent_container_id")]
+    nodes: dict[str, dict] = {}
+    for c in tops:
+        view = container_view(c, places)
+        nodes[view["container_id"]] = {**view, "occupants": [], "chain_masked": False}
+    roots: list[dict] = []
+    for node in nodes.values():
+        seat = node["seat"]
+        carrier = nodes.get(seat["container_id"]) if seat and seat.get("container_id") else None
+        if carrier is not None:
+            carrier["occupants"].append(node)
+        else:
+            if seat is not None:
+                node["chain_masked"] = True
+            roots.append(node)
+    for node in nodes.values():
+        node["occupants"].sort(key=lambda n: ((n["seat"] or {}).get("site") or "", n["hid"]))
+
+    by_place: dict[str | None, list[dict]] = {}
+    for node in roots:
+        by_place.setdefault(node["location"], []).append(node)
+    for bucket in by_place.values():
+        bucket.sort(key=lambda n: n["hid"])
+
+    section_of = platforms.equipment_to_section_id() if platforms is not None else {}
+    titles = {s.id: s.title for s in platforms.sections} if platforms is not None else {}
+    order = [s.id for s in platforms.sections] if platforms is not None else []
+    sections: dict[str, dict] = {}
+
+    def section_for(equipment: str | None) -> dict:
+        sid = section_of.get(equipment or "", OTHER_SECTION["id"])
+        if sid not in sections:
+            sections[sid] = {"id": sid, "title": titles.get(sid, OTHER_SECTION["title"]), "places": []}
+        return sections[sid]
+
+    seen_names: set[str] = set()
+    for entry in (registry.locations if registry is not None else []):
+        if not entry.active:
+            continue
+        seen_names.add(entry.name)
+        section_for(entry.equipment)["places"].append({
+            "name": entry.name, "label": entry.label, "type": entry.type,
+            "equipment_id": entry.equipment, "capacity": entry.capacity,
+            "registered": True, "containers": by_place.pop(entry.name, []),
+        })
+    # Places the ledger knows (containers are there) but the registry no longer lists.
+    for name, bucket in sorted(by_place.items(), key=lambda kv: kv[0] or ""):
+        if name is None:
+            continue
+        ledger = next((l for l in places.values() if l.get("name") == name), {})
+        section_for(ledger.get("equipment_id"))["places"].append({
+            "name": name, "label": ledger.get("label"), "type": ledger.get("location_type"),
+            "equipment_id": ledger.get("equipment_id"), "capacity": ledger.get("capacity"),
+            "registered": False, "containers": bucket,
+        })
+    ordered = [sections[sid] for sid in order if sid in sections]
+    if OTHER_SECTION["id"] in sections:
+        ordered.append(sections[OTHER_SECTION["id"]])
+    return {
+        "sections": ordered,
+        "unplaced": by_place.get(None, []),
+        "counts": {"containers": len(nodes), "placed": len(nodes) - len(by_place.get(None, []))},
+    }
 
 
 def custody_recorder() -> CustodyRecorder | None:
@@ -610,6 +820,24 @@ def build_custody_router() -> APIRouter:
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"record layer unreachable: {exc}") from exc
         return {"plates": rows}
+
+    @router.get("/map")
+    async def lab_map(request: Request) -> dict:
+        """The location-first lab map: registry places grouped by platform,
+        each with the containers resolved to it (seated ones nested under
+        their carrier). A read-through; the dashboard keeps no copy."""
+        recorder = custody_recorder()
+        if recorder is None:
+            raise HTTPException(status_code=503, detail="record layer not configured")
+        user = _signed_in(request)
+        try:
+            return await recorder.lab_map(
+                user=user, projects=request.headers.get("x-auth-projects", ""),
+                registry=getattr(request.app.state, "locations_config", None),
+                platforms=getattr(request.app.state, "platforms_config", None),
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"record layer unreachable: {exc}") from exc
 
     @router.get("/plates/{hid}")
     async def plate(hid: str, request: Request) -> dict:
