@@ -1,4 +1,34 @@
-# Private Bitácora beta
+# Private Bitácora beta (retired 2026-10-09)
+
+**Status: retired.** The `/bitacora-beta` prefix, its `forward_auth` gate
+(`/api/admin/bitacora-beta`), the admin-page link and the
+`BITACORA_BETA_TESTER_EMAIL` setting were removed on 2026-10-09. The beta
+existed to trial Bitácora on local Git projects instead of GitHub. That work
+landed on Bitácora's `main` (AccelerationConsortium/bitacora PR #89) and
+production cut over to it on 2026-10-01, so the beta had nothing left to
+prove: one tester, no writes to its stores after September 2026.
+
+Removed from this repo: the Caddy block in `deploy/Caddyfile.single-edge`,
+the Next route and its tests, and the admin page's tester-only query. The
+production notebook link on Admin, previously visible only to the tester, now
+shows to any admin. `/bitacora/` itself keeps its sign-in gate at the edge
+and stays out of the tab row (below).
+
+On the host, retirement is operator work with sudo, in this order: a final
+`python -m bitacora.backup create` of `/data/bitacora-beta` (the Bitácora
+repo's `docs/BACKUP_RESTORE.md`, with a beta config), `verify` it; remove the
+beta block from `/etc/dashboard-staging/Caddyfile`, `caddy validate`, reload
+`dashboard-edge`; stop and disable `bitacora-beta`, `bitacora-beta-frontend`,
+`bitacoradb-beta`, `bitacoradb-beta-preview` and stop the
+`bitacoradb-beta-staging-postgres` container; drop the tester `Environment=`
+line from the installed `ac-organic-lab-web.service` and restart it. The data
+under `/data/bitacora-beta/`, the checkout `~/caoyang/bitacora-beta` (branch
+`feat/standalone-foundation`, pushed), and the env files under
+`/etc/dashboard-integrations/bitacora-beta-*.env`,
+`/etc/bitacoradb-beta-staging/` and `/data/shared/final-sync/*beta*` stay
+until the final backup has been verified and the operator deletes them.
+
+## How it worked (historical, 2026-09-08 to 2026-10-09)
 
 The admin page offers `/bitacora-beta` only when the server authorizes the
 current browser session for the private beta. The server setting
@@ -21,8 +51,8 @@ The existing `/bitacora` route retains its sign-in gate.
 Since 2026-09-11 the production notebook (`/bitacora/`) is also **hidden from
 the dashboard's tab row** while it is under test: the Nav's Notebooks tab and
 the platform placeholder's "Open the notebook" button are gone, and the one
-dashboard entry point is a private-tester-only link on the same admin page,
-above the beta link. The notebook service tile is also omitted from
+dashboard entry point is a link on the Admin page (tester-only until
+2026-10-09, now shown to any admin). The notebook service tile is also omitted from
 `platforms.yaml`; the service remains registered for monitoring. The stale `/notebooks` bookmark redirect follows suit (admins reach
 `/bitacora/`, everyone else the Overview). This is **visibility only** — unlike
 the beta prefix, `/bitacora/` stays gated at the edge by sign-in, not by role,

@@ -288,20 +288,6 @@ http://:8080 {
 			}
 		}
 
-		@bitacora_beta path /bitacora-beta /bitacora-beta/*
-		handle @bitacora_beta {
-			route {
-				forward_auth 127.0.0.1:8000 {
-					uri /api/admin/bitacora-beta
-					copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
-				}
-				header Cache-Control "private, no-store"
-				reverse_proxy 127.0.0.1:13001 {
-					header_down Cache-Control "private, no-store"
-				}
-			}
-		}
-
 		
         handle /streams/* {
             respond "Legacy camera stream closed. Refresh the dashboard and sign in." 410
