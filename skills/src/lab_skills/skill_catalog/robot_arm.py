@@ -335,9 +335,58 @@ REALSENSE_SKILLS = [
 ]
 
 
+
+# ── Joint trajectories (xArm5, ServoJ) ────────────────────────────────
+# Client guide: xarm-translocation src/docs/TRAJECTORY_API.md. Upload a whole
+# time-stamped joint trajectory, then start it; the device plays it at 100 Hz
+# on its own clock. Same gates as the freehand moves (claim, OFF/ADVISORY).
+# Only validate and create are skills: upload, start, status and cancel carry
+# the session id in the URL, and the skill runner neither fills {placeholders}
+# nor sends GET. Until it does, clients use the device API for those steps.
+
+
+class TrajectoryPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    t: float = Field(ge=0, description="Seconds from the trajectory start; strictly increasing, >= 10 ms apart.")
+    joints_deg: list[float] = Field(min_length=1, max_length=7, description="J1..J5 in degrees, base to wrist.")
+    velocities_deg_s: list[float] | None = Field(default=None, description="Optional; on every point or none.")
+    accelerations_deg_s2: list[float] | None = Field(default=None, description="Optional; with velocities.")
+
+
+class TrajectoryValidateArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    points: list[TrajectoryPoint] = Field(min_length=2, max_length=60000)
+    rate_hz: float | None = Field(default=None, description="Command rate; device default (100 Hz) when omitted.")
+
+
+class TrajectoryCreateArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    rate_hz: float | None = Field(default=None, description="Command rate; device default (100 Hz) when omitted.")
+
+
+_TRAJ = "/control/freehand/trajectory"
+_TRAJ_NOTE = (" Joint trajectories on the xArm5: requires graph mode OFF or ADVISORY and an "
+              "active claim; validation is not a collision check.")
+
+TRAJECTORY_SKILLS = [
+    SkillDef(name="trajectory.validate", kind="robot_arm", endpoint=f"{_TRAJ}/validate",
+             description="Check a whole joint trajectory against the arm and its measured pose; moves nothing."
+                         + _TRAJ_NOTE,
+             args_schema=TrajectoryValidateArgs, requires_states=["ready", "degraded", "dry_run"],
+             estimated_duration_s=2.0),
+    SkillDef(name="trajectory.create", kind="robot_arm", endpoint=_TRAJ,
+             description="Open a trajectory session (one per arm); returns session_id." + _TRAJ_NOTE,
+             args_schema=TrajectoryCreateArgs, requires_states=["ready", "dry_run"], estimated_duration_s=1.0),
+]
+
+
 __all__ = [
     "REALSENSE_SKILLS",
     "FREEHAND_SKILLS",
+    "TRAJECTORY_SKILLS",
     "FreehandPositionArgs",
     "FreehandRelativeArgs",
     "FreehandJointsArgs",
