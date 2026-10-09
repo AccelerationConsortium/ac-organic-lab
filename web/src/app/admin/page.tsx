@@ -278,7 +278,6 @@ function HealthRow({
 export default function AdminPage() {
   const { loading, authenticated, identity } = useUserAuth();
   const isAdmin = authenticated && identity?.role === "admin";
-  const beta = useAdminQuery<{ href: string; label: string; user: string }>("/api/admin/bitacora-beta", 60_000, isAdmin);
 
   const [eventEmail, setEventEmail] = useState("");
   const [actionOwner, setActionOwner] = useState("");
@@ -371,17 +370,11 @@ export default function AdminPage() {
     // height like the Overview's masonry cards, with pairs preserved.
     <>
     <p className="pt-3 text-sm"><a href="/admin/camera-streams" className="text-sky-700 underline dark:text-sky-300">Camera viewers and monitoring approvals</a></p>
-    {/* Both links are visible only to the server-authorized private tester.
-        The production notebook still has its existing sign-in gate. */}
-    {beta.data?.href === "/bitacora-beta" && beta.data.user === identity?.email?.trim().toLowerCase() && <div className="space-y-2 pt-3 text-sm">
-      <p>
-        <a href="/bitacora/" target="_blank" rel="noopener noreferrer" className="font-medium text-sky-700 underline dark:text-sky-300">Open the notebook (Bitácora)</a>
-      </p>
-      <p>
-        <a href="/bitacora-beta" target="_blank" rel="noopener noreferrer" className="font-medium text-sky-700 underline dark:text-sky-300">Open Bitácora Beta</a>
-        <span className="ml-2 text-ink-subtle">Standalone private beta · separate data</span>
-      </p>
-    </div>}
+    {/* The notebook is hidden from the dashboard's tab row (docs/BITACORA_PRIVATE_BETA.md);
+        this is its one dashboard entry point. /bitacora/ keeps its own sign-in gate at the edge. */}
+    <p className="pt-3 text-sm">
+      <a href="/bitacora/" target="_blank" rel="noopener noreferrer" className="font-medium text-sky-700 underline dark:text-sky-300">Open the notebook (Bitácora)</a>
+    </p>
     <div className="grid items-start gap-4 pt-3 lg:grid-cols-2">
       {/* ================================================================== */}
       {/* Row 1 — Accounts & Activities | Roster health                        */}

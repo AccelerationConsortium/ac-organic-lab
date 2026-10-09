@@ -115,9 +115,9 @@ then `--apply`; expect 10-30 s of downtime across the renamed services.
 | `ac-auth-staging` | `ac-organic-lab-auth` | email-code login, 127.0.0.1:8009 |
 | `dashboard-staging-edge` | `dashboard-edge` | Caddy SSO edge on 100.64.254.6 (:80, :8005, :8009) |
 | `bitacora-staging-api` / `-web` | `bitacora` / `bitacora-frontend` | :8050 / :3001 |
-| `bitacora-beta-staging-api` / `-web` | `bitacora-beta` / `bitacora-beta-frontend` | :18050 / :13001 |
+| `bitacora-beta-staging-api` / `-web` | `bitacora-beta` / `bitacora-beta-frontend` | :18050 / :13001 — retired 2026-10-09 |
 | `bitacoradb-staging-api` / `-preview` | `bitacoradb` / `bitacoradb-preview` | :8013 / :8014 |
-| `bitacoradb-beta-staging-api` / `-preview` | `bitacoradb-beta` / `bitacoradb-beta-preview` | :18013 / :18014 |
+| `bitacoradb-beta-staging-api` / `-preview` | `bitacoradb-beta` / `bitacoradb-beta-preview` | :18013 / :18014 — retired 2026-10-09 |
 | `go2rtc-staging` | `ac-go2rtc` | camera bridge, :1984 |
 | `kasa-tapo-staging` | `kasa-tapo-services` | plug + camera gateway, :8002 |
 | `bambu-staging` | `bambu-server` | printer gateway, :8012 |

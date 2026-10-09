@@ -193,7 +193,6 @@ function renderPage() {
 }
 
 beforeEach(() => {
-  delete bodies["/api/admin/bitacora-beta"];
   stubFetch();
   auth.loading = false;
   auth.authenticated = true;
@@ -206,31 +205,11 @@ afterEach(() => {
 });
 
 describe("AdminPage", () => {
-  it("links the authorized tester to the notebook hidden from the dashboard", async () => {
-    bodies["/api/admin/bitacora-beta"] = { href: "/bitacora-beta", label: "Bitácora Beta", user: "yang@lab.ca" };
+  it("links admins to the notebook hidden from the dashboard tab row", async () => {
     renderPage();
     const link = await screen.findByRole("link", { name: "Open the notebook (Bitácora)" });
     expect(link.getAttribute("href")).toBe("/bitacora/");
     expect(link.getAttribute("target")).toBe("_blank");
-  });
-  it("shows the private beta link only after the server permits access", async () => {
-    bodies["/api/admin/bitacora-beta"] = { href: "/bitacora-beta", label: "Bitácora Beta", user: "yang@lab.ca" };
-    renderPage();
-    const link = await screen.findByRole("link", { name: "Open Bitácora Beta" });
-    expect(link.getAttribute("href")).toBe("/bitacora-beta");
-  });
-  it("does not advertise beta to an admin without beta access", async () => {
-    renderPage();
-    await screen.findByText("Accounts & Activities");
-    expect(screen.queryByRole("link", { name: "Open Bitácora Beta" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Open the notebook (Bitácora)" })).toBeNull();
-  });
-  it("does not reuse another account's cached beta grant", async () => {
-    bodies["/api/admin/bitacora-beta"] = { href: "/bitacora-beta", label: "Bitácora Beta", user: "someone-else@lab.ca" };
-    renderPage();
-    await screen.findByText("Accounts & Activities");
-    expect(screen.queryByRole("link", { name: "Open Bitácora Beta" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Open the notebook (Bitácora)" })).toBeNull();
   });
   it("gates on an admin session client-side", async () => {
     auth.identity = { role: "operator", email: "op@lab.ca" };
