@@ -46,7 +46,7 @@ from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .record import BITACORADB_URL, edge_secret
 
@@ -249,6 +249,37 @@ def expected_placement_guard(row: dict) -> dict[str, Any]:
     return {"expected_location_id": row.get("location_id")}
 
 
+#: The ledger's shape rule for a site name (``bitacoradb.schemas.containers.
+#: valid_site``), mirrored so a malformed site is refused here, before a write.
+_SITE_MAX = 32
+
+
+def valid_site(value: str) -> bool:
+    return bool(value) and len(value) <= _SITE_MAX and "/" not in value and " " not in value
+
+
+def site_manifest(row: dict) -> list[str] | None:
+    """A container's declared sites (``meta.sites``), or ``None`` when it has
+    no manifest — then the ledger accepts any shape-valid site and says so."""
+    meta = row.get("meta") or {}
+    sites = meta.get("sites")
+    return [str(x) for x in sites] if isinstance(sites, list) else None
+
+
+@dataclass(frozen=True)
+class Seat:
+    """The other kind of destination (contract 0.16.0): a carrier, by hid,
+    and which of its sites — ``RK-003 @ B3``. The container's place is then
+    the carrier's, wherever that goes."""
+
+    adapter_hid: str
+    site: str
+
+    @property
+    def text(self) -> str:
+        return f"{self.adapter_hid} @ {self.site}"
+
+
 def _parse_version(text: Any) -> tuple[int, ...]:
     try:
         return tuple(int(part) for part in str(text).split("."))
@@ -440,18 +471,32 @@ class CustodyRecorder:
             return {"recorded": False, "reason": "unreachable", "detail": str(exc)[:300]}
 
     async def record_move(
-        self, *, hid: str, to: str, performed_by: str, recorder: str,
+        self, *, hid: str, to: str | None = None, seat: Seat | None = None,
+        performed_by: str, recorder: str,
         project: str | None = None, plan_id: str | None = None,
         step_id: str | None = None, observed: Observation | None = None,
         params: dict[str, Any] | None = None,
         client_action_id: str | None = None, expected_from: str | None | object = _UNSET_LOCATION,
     ) -> dict[str, Any]:
-        """One ``move`` row: container ``hid`` is now at place ``to``.
+        """One ``move`` row: container ``hid`` is now at place ``to``, or in
+        ``seat`` (a carrier's site) — exactly one of the two.
 
         Returns ``{"recorded": True, action_id, container_id, to_location_id}``
-        or ``{"recorded": False, "reason": …}``; never raises. ``step_id`` is
-        only sent with a ``plan_id`` (the ledger refuses a dangling step).
+        (or ``to_container_id`` + ``to_site`` for a seat) or
+        ``{"recorded": False, "reason": …}``; never raises once the call is
+        well-formed. ``step_id`` is only sent with a ``plan_id`` (the ledger
+        refuses a dangling step).
+
+        A seat is checked here before anything reaches the ledger: the carrier
+        must be registered, the site must be in its manifest when it has one,
+        and the live record layer must speak contract 0.16.0 (an older one
+        rejects the unknown fields). Occupancy is NOT checked — the ledger
+        records a double booking and flags it (D2); refusing would make the
+        ledger lie about where a hand put a vial.
         """
+        if (to is None) == (seat is None):
+            raise ValueError("record_move takes a place (to=) or a seat (seat=), exactly one")
+        destination = to if to is not None else seat.text  # type: ignore[union-attr]
         write_started = False
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -459,9 +504,31 @@ class CustodyRecorder:
                                                    refresh=expected_from is _UNSET_LOCATION)
                 if row is None:
                     return {"recorded": False, "reason": "unknown_container", "hid": hid}
-                location_id = await self.resolve_location(client, to, user=recorder, project=project)
-                if location_id is None:
-                    return {"recorded": False, "reason": "unknown_location", "to": to}
+                dest: dict[str, Any]
+                if seat is not None:
+                    if seat.adapter_hid == hid:
+                        return {"recorded": False, "reason": "self_seat", "hid": hid}
+                    if not valid_site(seat.site):
+                        return {"recorded": False, "reason": "invalid_site", "site": seat.site}
+                    contract = await record_layer_contract(client, self.base_url)
+                    if contract < SEATING_CONTRACT:
+                        return {"recorded": False, "reason": "seating_unsupported",
+                                "contract": ".".join(map(str, contract)) or None}
+                    carrier = await self.resolve_container(client, seat.adapter_hid,
+                                                           user=recorder, project=project)
+                    if carrier is None:
+                        return {"recorded": False, "reason": "unknown_adapter",
+                                "adapter_hid": seat.adapter_hid}
+                    manifest = site_manifest(carrier)
+                    if manifest is not None and seat.site not in manifest:
+                        return {"recorded": False, "reason": "unknown_site",
+                                "adapter_hid": seat.adapter_hid, "site": seat.site, "sites": manifest}
+                    dest = {"to_container_id": carrier["container_id"], "to_site": seat.site}
+                else:
+                    location_id = await self.resolve_location(client, to, user=recorder, project=project)  # type: ignore[arg-type]
+                    if location_id is None:
+                        return {"recorded": False, "reason": "unknown_location", "to": to}
+                    dest = {"to_location_id": location_id}
                 if expected_from is _UNSET_LOCATION:
                     # Where the ledger last said it was — a seat when seated.
                     guard = expected_placement_guard(row)
@@ -479,7 +546,7 @@ class CustodyRecorder:
                     **guard,
                     "action_type": "move",
                     "target_container_id": row["container_id"],
-                    "to_location_id": location_id,
+                    **dest,
                     "performed_by": performed_by,
                     "creator": recorder,
                     "params": {**(params or {}),
@@ -513,9 +580,9 @@ class CustodyRecorder:
                 if not out.get("action_id"):
                     raise ValueError("record layer returned no action_id")
                 return {"recorded": True, "action_id": out.get("action_id"),
-                        "container_id": row["container_id"], "to_location_id": location_id}
+                        "container_id": row["container_id"], **dest}
         except Exception as exc:  # noqa: BLE001 — property 1
-            logger.warning("custody move not recorded (%s → %s): %s", hid, to, exc)
+            logger.warning("custody move not recorded (%s → %s): %s", hid, destination, exc)
             return {"recorded": False, "reason": "unreachable", "detail": str(exc)[:300],
                     "uncertain": write_started}
 
@@ -576,7 +643,7 @@ class CustodyRecorder:
             rc.raise_for_status()
             rl = await client.get(f"{self.base_url}/locations", headers=headers)
             rl.raise_for_status()
-        return rc.json(), {str(l["location_id"]): l for l in rl.json()}
+        return rc.json(), {str(loc["location_id"]): loc for loc in rl.json()}
 
     async def lab_map(self, *, user: str, projects: str = "", registry: Any, platforms: Any) -> dict:
         """The location-first lab map: every registry place grouped by platform
@@ -695,7 +762,7 @@ def build_lab_map(rows: list[dict], places: dict[str, dict], *, registry: Any, p
     for name, bucket in sorted(by_place.items(), key=lambda kv: kv[0] or ""):
         if name is None:
             continue
-        ledger = next((l for l in places.values() if l.get("name") == name), {})
+        ledger = next((loc for loc in places.values() if loc.get("name") == name), {})
         section_for(ledger.get("equipment_id"))["places"].append({
             "name": name, "label": ledger.get("label"), "type": ledger.get("location_type"),
             "equipment_id": ledger.get("equipment_id"), "capacity": ledger.get("capacity"),
@@ -740,12 +807,32 @@ async def record_custody_event(request: Request, event_type: str, *, device_id: 
 # ── the human front door ─────────────────────────────────────────────────
 
 
+class SeatRequest(BaseModel):
+    adapter_hid: str = Field(min_length=1, description="The carrier's hid — a rack, block or other adapter")
+    site: str = Field(min_length=1, max_length=_SITE_MAX, description="Which of its sites, e.g. B3")
+
+
 class MoveRequest(BaseModel):
-    hid: str = Field(min_length=1, description="The plate's barcode / Container.hid")
-    to: str = Field(min_length=1, description="Registry location name, e.g. bench/hte_staging")
+    hid: str = Field(min_length=1, description="The container's barcode / Container.hid")
+    to: str | None = Field(default=None, min_length=1,
+                           description="Registry location name, e.g. bench/hte_staging (a place)")
+    seat: SeatRequest | None = Field(
+        default=None,
+        description="Instead of a place: the carrier and site the container now sits in. "
+                    "Its place becomes the carrier's.")
     note: str | None = Field(default=None, max_length=500)
     #: Who physically did it, when not the signed-in user (default: the user).
     performed_by: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def _one_destination(self):
+        if (self.to is None) == (self.seat is None):
+            raise ValueError("name one destination: `to` (a place) or `seat` (a carrier and its site)")
+        return self
+
+    @property
+    def destination(self) -> str:
+        return self.to if self.to is not None else f"{self.seat.adapter_hid} @ {self.seat.site}"  # type: ignore[union-attr]
 
 
 def _signed_in(request: Request) -> str:
@@ -764,48 +851,69 @@ def build_custody_router() -> APIRouter:
 
     @router.post("/move")
     async def move(body: MoveRequest, request: Request) -> dict:
-        """Record a bench-top move: container ``hid`` is now at ``to``.
+        """Record a bench-top move: container ``hid`` is now at place ``to``,
+        or in ``seat`` (a carrier's site — its place is then the carrier's).
 
         The same ledger row the executor writes for a robot move, with the
-        human as ``performed_by``. The registry name is checked locally first
-        (a typo must not reach the ledger), then resolved in the record layer.
+        human as ``performed_by``. A place is checked against the registry
+        first (a typo must not reach the ledger), then resolved in the record
+        layer; a seat is checked against the carrier's registered site
+        manifest. Occupancy is recorded and flagged, never refused (D2). A
+        ledger refusal keeps its status: 409 when the container is not where
+        the ledger last saw it, 422 when the ledger rejects the row itself.
         """
         user = _signed_in(request)
         recorder = custody_recorder()
         if recorder is None:
             raise HTTPException(status_code=503, detail="record layer not configured — custody cannot be recorded")
         cfg = getattr(request.app.state, "locations_config", None)
-        if cfg is not None:
+        if body.to is not None and cfg is not None:
             entry = cfg.by_name(body.to)
             if entry is None or not entry.active:
                 raise HTTPException(status_code=422, detail=f"{body.to!r} is not an active place in locations.yaml")
+        seat = Seat(body.seat.adapter_hid, body.seat.site) if body.seat else None
+        seat_dict = body.seat.model_dump() if body.seat else None
         projects = request.headers.get("x-auth-projects", "")
         result = await recorder.record_move(
-            hid=body.hid, to=body.to, performed_by=body.performed_by or user,
+            hid=body.hid, to=body.to, seat=seat, performed_by=body.performed_by or user,
             recorder=user, project=projects.split(",")[0].strip() or None,
             params={"reason": "bench", "note": body.note, "via": "dashboard"},
         )
         outcome = "ok" if result.get("recorded") else result.get("reason", "failed")
         await record_custody_event(
             request, "control_action", device_id=CUSTODY_DEVICE_ID,
-            message=f"{user} move {body.hid} → {body.to} → {outcome}",
+            message=f"{user} move {body.hid} → {body.destination} → {outcome}",
             payload={"action": "custody.move", "method": "POST", "owner": user,
-                     "outcome": outcome, "detail": {"hid": body.hid, "to": body.to}},
+                     "outcome": outcome, "detail": {"hid": body.hid, "to": body.to, "seat": seat_dict}},
         )
         if result.get("recorded"):
             await record_custody_event(
                 request, PLATE_MOVED, device_id=CUSTODY_DEVICE_ID,
-                message=f"{body.hid} → {body.to} (by {body.performed_by or user})",
-                payload={"hid": body.hid, "to": body.to, "performed_by": body.performed_by or user,
+                message=f"{body.hid} → {body.destination} (by {body.performed_by or user})",
+                payload={"hid": body.hid, "to": body.to, "seat": seat_dict,
+                         "performed_by": body.performed_by or user,
                          "recorded_by": user, "source": "bench",
                          "action_id": result.get("action_id")},
             )
-            return {"recorded": True, "hid": body.hid, "to": body.to, **result}
+            return {"recorded": True, "hid": body.hid, "to": body.destination, "seat": seat_dict, **result}
         reason = result.get("reason")
         if reason == "unknown_container":
             raise HTTPException(status_code=404, detail=f"no container with hid {body.hid!r} is registered")
+        if reason == "unknown_adapter":
+            raise HTTPException(status_code=404, detail=f"no container with hid {result.get('adapter_hid')!r} is registered to seat into")
         if reason == "unknown_location":
             raise HTTPException(status_code=422, detail=f"{body.to!r} is not seeded in the record layer — run scripts/seed_locations.py")
+        if reason == "unknown_site":
+            raise HTTPException(status_code=422, detail=f"{result.get('adapter_hid')} has no site {result.get('site')!r}; its sites are {result.get('sites')}")
+        if reason in ("invalid_site", "self_seat"):
+            raise HTTPException(status_code=422, detail=f"not a valid seat: {result}")
+        if reason == "seating_unsupported":
+            raise HTTPException(status_code=503, detail="the record layer does not record seats yet "
+                                f"(contract {result.get('contract') or 'unknown'} < 0.16.0)")
+        if reason == "http_409":
+            raise HTTPException(status_code=409, detail=f"the ledger says {body.hid!r} is not where it was last seen — re-read the map and decide again: {result.get('detail')}")
+        if reason == "http_422":
+            raise HTTPException(status_code=422, detail=f"the ledger rejected the move: {result.get('detail')}")
         raise HTTPException(status_code=502, detail=f"record layer refused the move: {result}")
 
     @router.get("/plates")

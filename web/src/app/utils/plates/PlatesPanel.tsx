@@ -13,6 +13,7 @@ import {
   type CustodyMap,
   type CustodyNode,
   type CustodyPlace,
+  type CustodySeatRequest,
   type CustodySection,
   type LocationEntry,
 } from "@/lib/api";
@@ -32,7 +33,10 @@ import { useUserAuth } from "@/lib/user-auth";
  * (`GET /api/custody/map`), the move form posts the SAME `move` row the run
  * executor writes (`POST /api/custody/move`) with the signed-in user as the
  * mover, and the place picker is the registry, so a typo can never reach the
- * ledger. An unreachable record layer is shown as unreachable — never as an
+ * ledger. A move may also go into a *seat* — a carrier (rack, block) and one
+ * of its sites — picked from the carriers the map shows, or by clicking an
+ * empty site in a rack's grid; the container's place is then the carrier's.
+ * An unreachable record layer is shown as unreachable — never as an
  * empty lab. What the map shows is exactly what the record layer returned
  * for the signed-in viewer: a carrier the viewer may not read is masked,
  * and its occupant is filed at the place "inside something unseen".
@@ -75,6 +79,36 @@ function placeMatches(p: CustodyPlace, q: string): boolean {
   return [p.name, p.label ?? "", p.equipment_id ?? ""].some((v) => v.toLowerCase().includes(q)) || p.containers.some((c) => nodeMatches(c, q));
 }
 
+/** A carrier the move form can seat into: what the map knows about its sites. */
+export interface CarrierOption {
+  hid: string;
+  location: string | null;
+  /** The site manifest, or null when the carrier declares none (then any site name is accepted). */
+  sites: string[] | null;
+  /** site → hids recorded there (so the form can warn about a double booking). */
+  occupants: Record<string, string[]>;
+}
+
+function walkMap(map: CustodyMap): { hids: string[]; carriers: CarrierOption[] } {
+  const hids: string[] = [];
+  const carriers: CarrierOption[] = [];
+  const walk = (n: CustodyNode) => {
+    hids.push(n.hid);
+    if (offersSeats(n)) {
+      const occupants: Record<string, string[]> = {};
+      for (const o of n.occupants) {
+        const k = o.seat?.site ?? "?";
+        occupants[k] = [...(occupants[k] ?? []), o.hid];
+      }
+      carriers.push({ hid: n.hid, location: n.location, sites: n.sites?.length ? n.sites : null, occupants });
+    }
+    n.occupants.forEach(walk);
+  };
+  map.sections.forEach((s) => s.places.forEach((p) => p.containers.forEach(walk)));
+  map.unplaced.forEach(walk);
+  return { hids, carriers };
+}
+
 function filterMap(map: CustodyMap, q: string): { sections: CustodySection[]; unplaced: CustodyNode[] } {
   if (!q) return { sections: map.sections, unplaced: map.unplaced };
   const sections = map.sections
@@ -91,6 +125,7 @@ export function PlatesPanel() {
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
+  const [pickedSeat, setPickedSeat] = useState<CustodySeatRequest | null>(null);
 
   const places: LocationEntry[] = useMemo(
     () => (locations.data?.locations ?? []).filter((l) => l.active),
@@ -98,16 +133,10 @@ export function PlatesPanel() {
   );
   const q = filter.trim().toLowerCase();
   const view = useMemo(() => (map.data ? filterMap(map.data, q) : null), [map.data, q]);
-  const knownHids = useMemo(() => {
-    const out: string[] = [];
-    const walk = (n: CustodyNode) => {
-      out.push(n.hid);
-      n.occupants.forEach(walk);
-    };
-    map.data?.sections.forEach((s) => s.places.forEach((p) => p.containers.forEach(walk)));
-    map.data?.unplaced.forEach(walk);
-    return out;
-  }, [map.data]);
+  const { hids: knownHids, carriers } = useMemo(
+    () => (map.data ? walkMap(map.data) : { hids: [], carriers: [] }),
+    [map.data],
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -153,7 +182,7 @@ export function PlatesPanel() {
         {view && (
           <div className="mt-4 flex flex-col gap-5">
             {view.sections.map((s) => (
-              <SectionView key={s.id} section={s} showEmpty={showEmpty || q.length > 0} selected={selected} onSelect={setSelected} />
+              <SectionView key={s.id} section={s} showEmpty={showEmpty || q.length > 0} selected={selected} onSelect={setSelected} onPickSeat={setPickedSeat} />
             ))}
             {view.unplaced.length > 0 && (
               <div>
@@ -161,7 +190,7 @@ export function PlatesPanel() {
                 <p className="text-xs text-ink-muted dark:text-slate-300">Registered, but no ledger row says where they are.</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {view.unplaced.map((n) => (
-                    <NodeView key={n.container_id} node={n} selected={selected} onSelect={setSelected} />
+                    <NodeView key={n.container_id} node={n} selected={selected} onSelect={setSelected} onPickSeat={setPickedSeat} />
                   ))}
                 </div>
               </div>
@@ -174,10 +203,12 @@ export function PlatesPanel() {
 
       <MoveForm
         places={places}
+        carriers={carriers}
         knownHids={knownHids}
         authenticated={authenticated}
         requestLogin={requestLogin}
         defaultHid={selected ?? ""}
+        defaultSeat={pickedSeat}
         onMoved={() => {
           queryClient.invalidateQueries({ queryKey: ["custody"] });
         }}
@@ -191,11 +222,13 @@ function SectionView({
   showEmpty,
   selected,
   onSelect,
+  onPickSeat,
 }: {
   section: CustodySection;
   showEmpty: boolean;
   selected: string | null;
   onSelect: (hid: string | null) => void;
+  onPickSeat?: (seat: CustodySeatRequest) => void;
 }) {
   const places = showEmpty ? section.places : section.places.filter((p) => p.containers.length > 0);
   const hidden = section.places.length - places.length;
@@ -209,7 +242,7 @@ function SectionView({
       )}
       <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {places.map((p) => (
-          <PlaceView key={p.name} place={p} selected={selected} onSelect={onSelect} />
+          <PlaceView key={p.name} place={p} selected={selected} onSelect={onSelect} onPickSeat={onPickSeat} />
         ))}
       </div>
       {hidden > 0 && places.length > 0 && (
@@ -219,7 +252,17 @@ function SectionView({
   );
 }
 
-function PlaceView({ place, selected, onSelect }: { place: CustodyPlace; selected: string | null; onSelect: (hid: string | null) => void }) {
+function PlaceView({
+  place,
+  selected,
+  onSelect,
+  onPickSeat,
+}: {
+  place: CustodyPlace;
+  selected: string | null;
+  onSelect: (hid: string | null) => void;
+  onPickSeat?: (seat: CustodySeatRequest) => void;
+}) {
   const over = place.capacity != null && place.containers.length > place.capacity;
   return (
     <div
@@ -241,7 +284,7 @@ function PlaceView({ place, selected, onSelect }: { place: CustodyPlace; selecte
       <div className="mt-1 flex flex-wrap gap-1.5">
         {place.containers.length === 0 && <span className="text-xs text-ink-subtle dark:text-slate-400">empty</span>}
         {place.containers.map((n) => (
-          <NodeView key={n.container_id} node={n} selected={selected} onSelect={onSelect} />
+          <NodeView key={n.container_id} node={n} selected={selected} onSelect={onSelect} onPickSeat={onPickSeat} />
         ))}
       </div>
     </div>
@@ -267,8 +310,19 @@ function Chip({ node, selected, onSelect, extra }: { node: CustodyNode; selected
   );
 }
 
-/** A container at a place: a chip, or — for anything that offers seats — a grid of its sites. */
-function NodeView({ node, selected, onSelect }: { node: CustodyNode; selected: string | null; onSelect: (hid: string | null) => void }) {
+/** A container at a place: a chip, or — for anything that offers seats — a grid
+ * of its sites. An empty site is a button that pre-fills the move form with that seat. */
+function NodeView({
+  node,
+  selected,
+  onSelect,
+  onPickSeat,
+}: {
+  node: CustodyNode;
+  selected: string | null;
+  onSelect: (hid: string | null) => void;
+  onPickSeat?: (seat: CustodySeatRequest) => void;
+}) {
   if (!offersSeats(node)) return <Chip node={node} selected={selected} onSelect={onSelect} />;
   const bySite = new Map<string, CustodyNode[]>();
   for (const o of node.occupants) {
@@ -290,6 +344,21 @@ function NodeView({ node, selected, onSelect }: { node: CustodyNode; selected: s
         {sites.map((site) => {
           const occ = bySite.get(site) ?? [];
           const conflict = occ.length > 1;
+          if (occ.length === 0 && onPickSeat) {
+            return (
+              <button
+                key={site}
+                type="button"
+                className="min-h-[2rem] rounded border border-dashed border-slate-200 px-1 py-0.5 text-left text-[10px] text-ink-subtle hover:border-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+                title={`${node.hid} ${site} — empty; click to seat a container here`}
+                aria-label={`Seat a container at ${node.hid} ${site}`}
+                data-testid={`site-${node.hid}-${site}`}
+                onClick={() => onPickSeat({ adapter_hid: node.hid, site })}
+              >
+                {site}
+              </button>
+            );
+          }
           return (
             <div
               key={site}
@@ -356,36 +425,63 @@ function PlateHistory({ hid }: { hid: string }) {
 
 export function MoveForm({
   places,
+  carriers = [],
   knownHids,
   authenticated,
   requestLogin,
   defaultHid = "",
+  defaultSeat = null,
   onMoved,
 }: {
   places: LocationEntry[];
+  carriers?: CarrierOption[];
   knownHids: string[];
   authenticated: boolean;
   requestLogin: () => void;
   defaultHid?: string;
+  /** A seat picked on the map (an empty site in a rack's grid): switches the form to seat mode. */
+  defaultSeat?: CustodySeatRequest | null;
   onMoved: () => void;
 }) {
   const [hid, setHid] = useState(defaultHid);
+  const [mode, setMode] = useState<"place" | "seat">("place");
   const [to, setTo] = useState("");
+  const [carrierHid, setCarrierHid] = useState("");
+  const [site, setSite] = useState("");
   const [note, setNote] = useState("");
   const move = useMutation({
-    mutationFn: () => postCustodyMove({ hid: hid.trim(), to, note: note.trim() || undefined }),
+    mutationFn: () =>
+      postCustodyMove({
+        hid: hid.trim(),
+        ...(mode === "seat" ? { seat: { adapter_hid: carrierHid, site: site.trim() } } : { to }),
+        note: note.trim() || undefined,
+      }),
     onSuccess: () => {
       setNote("");
       onMoved();
     },
   });
-  // Keep the form following the selected row, but let the user retype.
+  // Keep the form following the selected row / picked seat, but let the user retype.
   const [lastDefault, setLastDefault] = useState(defaultHid);
   if (defaultHid !== lastDefault) {
     setLastDefault(defaultHid);
     setHid(defaultHid);
   }
-  const ready = hid.trim().length > 0 && to.length > 0;
+  const [lastSeat, setLastSeat] = useState(defaultSeat);
+  if (defaultSeat !== lastSeat) {
+    setLastSeat(defaultSeat);
+    if (defaultSeat) {
+      setMode("seat");
+      setCarrierHid(defaultSeat.adapter_hid);
+      setSite(defaultSeat.site);
+    }
+  }
+  const carrier = carriers.find((c) => c.hid === carrierHid) ?? null;
+  const occupiedBy = carrier?.occupants[site.trim()] ?? [];
+  const selfSeat = mode === "seat" && carrierHid.length > 0 && carrierHid === hid.trim();
+  const ready =
+    hid.trim().length > 0 &&
+    (mode === "place" ? to.length > 0 : carrierHid.length > 0 && site.trim().length > 0 && !selfSeat);
 
   return (
     <section className={cardCls}>
@@ -393,11 +489,24 @@ export function MoveForm({
       <p className="mt-1 text-xs text-ink-muted dark:text-slate-300">
         You moved a container by hand — say where it is now. This writes one append-only <code>move</code> row in
         the custody ledger, attributed to you; the robot&apos;s moves are recorded by the run executor the
-        same way. Only registered places (the lab&apos;s <code>locations.yaml</code>) are offered; moving a vial
-        out of a rack to a place unseats it. (Seating a container <em>into</em> a rack slot from here is the next step.)
+        same way. A destination is a registered place (the lab&apos;s <code>locations.yaml</code>) or a <em>seat</em>:
+        a carrier on the map and one of its sites — the container&apos;s place is then wherever the carrier is.
+        Moving a vial out of a rack to a place unseats it. A seat that already holds something is recorded and
+        flagged on the map, not refused.
       </p>
+      <fieldset className="mt-3 flex flex-wrap items-center gap-3 text-xs text-ink-muted dark:text-slate-300">
+        <legend className="sr-only">Destination kind</legend>
+        <label className="flex items-center gap-1">
+          <input type="radio" name="custody-destination" checked={mode === "place"} onChange={() => setMode("place")} />
+          to a place
+        </label>
+        <label className="flex items-center gap-1">
+          <input type="radio" name="custody-destination" checked={mode === "seat"} onChange={() => setMode("seat")} />
+          into a seat (a rack or block and one of its sites)
+        </label>
+      </fieldset>
       <form
-        className="mt-3 flex flex-wrap items-end gap-3"
+        className="mt-2 flex flex-wrap items-end gap-3"
         onSubmit={(e) => {
           e.preventDefault();
           if (!authenticated) {
@@ -423,18 +532,66 @@ export function MoveForm({
             ))}
           </datalist>
         </label>
-        <label className="flex flex-col gap-0.5 text-xs">
-          <span className="text-ink-subtle dark:text-slate-300">Now at</span>
-          <select className={`${inputCls} w-64`} value={to} onChange={(e) => setTo(e.target.value)} aria-label="Destination place">
-            <option value="">— choose a place —</option>
-            {places.map((l) => (
-              <option key={l.name} value={l.name}>
-                {l.name}
-                {l.label ? ` — ${l.label}` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
+        {mode === "place" ? (
+          <label className="flex flex-col gap-0.5 text-xs">
+            <span className="text-ink-subtle dark:text-slate-300">Now at</span>
+            <select className={`${inputCls} w-64`} value={to} onChange={(e) => setTo(e.target.value)} aria-label="Destination place">
+              <option value="">— choose a place —</option>
+              {places.map((l) => (
+                <option key={l.name} value={l.name}>
+                  {l.name}
+                  {l.label ? ` — ${l.label}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <>
+            <label className="flex flex-col gap-0.5 text-xs">
+              <span className="text-ink-subtle dark:text-slate-300">Now in</span>
+              <select
+                className={`${inputCls} w-64 font-mono`}
+                value={carrierHid}
+                onChange={(e) => {
+                  setCarrierHid(e.target.value);
+                  setSite("");
+                }}
+                aria-label="Destination carrier"
+              >
+                <option value="">— choose a carrier —</option>
+                {carriers.map((c) => (
+                  <option key={c.hid} value={c.hid}>
+                    {c.hid}
+                    {c.location ? ` — at ${c.location}` : " — never placed"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-0.5 text-xs">
+              <span className="text-ink-subtle dark:text-slate-300">Site</span>
+              {carrier?.sites ? (
+                <select className={`${inputCls} w-40 font-mono`} value={site} onChange={(e) => setSite(e.target.value)} aria-label="Destination site">
+                  <option value="">— site —</option>
+                  {carrier.sites.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                      {carrier.occupants[s]?.length ? ` — holds ${carrier.occupants[s].join(", ")}` : ""}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className={`${inputCls} w-40 font-mono`}
+                  value={site}
+                  onChange={(e) => setSite(e.target.value)}
+                  placeholder={carrier ? "B3 (no manifest)" : "B3"}
+                  disabled={!carrier}
+                  aria-label="Destination site"
+                />
+              )}
+            </label>
+          </>
+        )}
         <label className="flex flex-col gap-0.5 text-xs">
           <span className="text-ink-subtle dark:text-slate-300">Note (optional)</span>
           <input className={`${inputCls} w-56`} value={note} onChange={(e) => setNote(e.target.value)} aria-label="Note" />
@@ -443,6 +600,16 @@ export function MoveForm({
           {move.isPending ? "Recording…" : authenticated ? "Record move" : "Sign in to record"}
         </button>
       </form>
+      {mode === "seat" && carriers.length === 0 && (
+        <p className="mt-2 text-xs text-ink-muted dark:text-slate-300">No registered carrier offers seats yet — register a rack or block first.</p>
+      )}
+      {selfSeat && <p className="mt-2 text-xs text-rose-700 dark:text-rose-300">A container cannot be seated in itself.</p>}
+      {mode === "seat" && occupiedBy.length > 0 && (
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+          {site.trim()} already holds {occupiedBy.join(", ")} — recording this flags a double occupancy on the map; it does not
+          replace the record. Move the other container out first if it has left.
+        </p>
+      )}
       {move.error && (
         <p className="mt-2 text-sm text-rose-700 dark:text-rose-300">Not recorded: {errorText(move.error)}</p>
       )}

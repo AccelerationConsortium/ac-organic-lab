@@ -555,7 +555,7 @@ without a second migration.
 | D2 | ac-organic-lab | Plan-at-start (`open_run_record` / `close_run_record`) | D1 | **shipped 2026-08-23** |
 | E | bitácora + dashboard | agent tools (`register_plate`, `record_plate_move`, `where_is_plate`, `list_locations`), "Plates" views | A, D | **shipped 2026-08-23** (see note below) |
 | F | all | `transfer` lineage rows, `ContainerContents` flag, Substance/Lot; device asks (§8) | E | **first slice built 2026-08-30** (lineage rows, no amounts — see the D11 note; `ContainerContents` / Substance/Lot / device asks still open) |
-| G | BitacoraDB → ac-organic-lab → bitácora | removable containers on adapters — seating as custody (§11: G1 ledger, G2 custody + lab map, G3 nominal containers + bindings, G4 run-time site resolution) | A, D1, E | **G1 implemented 2026-10-09** on BitacoraDB branch `feat/g1-adapters-seating` (contract 0.16.0, migration `b7c8d9e0f1a2`; record-layer note `BitacoraDB/docs/ADAPTERS_AND_SEATING.md`), PR #3, not merged or deployed. **G2 reads 2026-10-09:** `custody.py` reads the resolved place (`resolved_location_id`, raw cache only as the pre-0.16.0 fallback), guards a move on the seat when seated, asks for `carried` history when the live contract answers it, and `/utils/plates` is the location-first lab map (`GET /api/custody/map`). Still open in G2: seat destinations on `record_move` / the move form, the `register` front door, bitácora's custody reader. G3–G4 not started. **Rollout rule:** no seat is recorded in production before bitácora's reader also moves to the resolved place |
+| G | BitacoraDB → ac-organic-lab → bitácora | removable containers on adapters — seating as custody (§11: G1 ledger, G2 custody + lab map, G3 nominal containers + bindings, G4 run-time site resolution) | A, D1, E | **G1 implemented 2026-10-09** on BitacoraDB branch `feat/g1-adapters-seating` (contract 0.16.0, migration `b7c8d9e0f1a2`; record-layer note `BitacoraDB/docs/ADAPTERS_AND_SEATING.md`), PR #3, not merged or deployed. **G2 reads 2026-10-09:** `custody.py` reads the resolved place (`resolved_location_id`, raw cache only as the pre-0.16.0 fallback), guards a move on the seat when seated, asks for `carried` history when the live contract answers it, and `/utils/plates` is the location-first lab map (`GET /api/custody/map`). **G2 seat writes 2026-10-09:** `record_move(seat=Seat(adapter_hid, site))` and `POST /api/custody/move` `{"seat": {adapter_hid, site}}` record a seat destination (carrier resolved by hid, site checked against its manifest, refused locally against a pre-0.16.0 record layer; occupancy recorded and flagged, never refused), and the lab-map move form offers a place or a seat, pre-filled by clicking an empty site. Still open in G2: the `register` front door, bitácora's custody reader. G3–G4 not started. **Rollout rule:** no seat is recorded in production before bitácora's reader also moves to the resolved place |
 
 A and B are independent; C can start on B's yaml with a fixture before A
 lands; everything after needs all three.
@@ -886,7 +886,15 @@ row are untouched.
 - **`custody.py`** — `CustodyRecorder.record_move` accepts a seat destination
   (`{adapter_hid, site}`) beside a location name, resolving the adapter hid
   through the same `GET /containers?hid=` it uses for plates; the human front
-  door `POST /api/custody/move` gains the same alternative; a new `POST
+  door `POST /api/custody/move` gains the same alternative *(both built
+  2026-10-09: `record_move(seat=Seat(...))` sends `to_container_id` +
+  `to_site`, checks the site against the carrier's `meta.sites` when it has a
+  manifest, and refuses locally with `seating_unsupported` when the live
+  `/status` contract is older than 0.16.0; the front door passes the ledger's
+  409 and 422 through instead of folding them into 502; the move form has a
+  place/seat toggle, a carrier picker fed from the map, the manifest's sites
+  with their current occupants, and an empty site in a rack's grid pre-fills
+  the seat. Occupancy is never checked before the write — D2)*; a new `POST
   /api/custody/register` is the dashboard's missing front door for
   registering a container *at* a place or seat. (Correction to an earlier
   draft: bitácora *does* register — its agent exposes

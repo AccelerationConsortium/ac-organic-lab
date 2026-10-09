@@ -1256,9 +1256,17 @@ export async function getCustodyMap(): Promise<CustodyMap> {
   return fetchJson<CustodyMap>("/api/custody/map");
 }
 
+/** A seat as a move destination (0.16.0): the carrier's hid and one of its sites. */
+export interface CustodySeatRequest {
+  adapter_hid: string;
+  site: string;
+}
+
+/** `POST /api/custody/move` — exactly one of `to` (a registry place) or `seat`. */
 export interface CustodyMoveRequest {
   hid: string;
-  to: string;
+  to?: string;
+  seat?: CustodySeatRequest;
   note?: string;
   performed_by?: string;
 }
@@ -1266,8 +1274,13 @@ export interface CustodyMoveRequest {
 export interface CustodyMoveResponse {
   recorded: boolean;
   hid: string;
+  /** The destination as text: the place name, or `RK-003 @ B3` for a seat. */
   to: string;
+  seat?: CustodySeatRequest | null;
   action_id?: string;
+  to_location_id?: string;
+  to_container_id?: string;
+  to_site?: string;
 }
 
 export async function getCustodyPlates(): Promise<{ plates: CustodyPlate[] }> {

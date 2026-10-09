@@ -468,3 +468,115 @@ def test_map_route_reads_through_and_reports_an_unreachable_ledger(monkeypatch):
         assert client.get("/api/custody/map", headers={"X-Auth-User": "u"}).status_code == 502
     with TestClient(_app(monkeypatch, None)) as client:
         assert client.get("/api/custody/map", headers={"X-Auth-User": "u"}).status_code == 503
+
+
+# ── seating (G2 writes): a seat as a move destination ─────────────────────
+
+from app.custody import Seat  # noqa: E402
+
+RACK = {"hid": "RK-003", "container_id": "r1", "container_type": "rack", "status": "in_use",
+        "location_id": "l3", "resolved_location_id": "l3", "meta": {"sites": ["A1", "A2", "B3"]}}
+LOOSE_VIAL = {"hid": "V-0109", "container_id": "v9", "container_type": "vial", "status": "in_use",
+              "location_id": "l9", "resolved_location_id": "l9", "seat_conflict": False, "seating_chain": []}
+
+
+def _containers_by_hid(*rows):
+    by_hid = {r["hid"]: r for r in rows}
+    return lambda request: httpx.Response(200, json=[by_hid[request.url.params["hid"]]] if request.url.params["hid"] in by_hid else [])
+
+
+def _status(version):
+    return httpx.Response(200, json={"details": {"schema_version": version}})
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_seat_destination_posts_the_carrier_and_site_instead_of_a_place():
+    import json
+    cu._CONTRACT_CACHE.clear()
+    respx.get(f"{BASE}/containers").mock(side_effect=_containers_by_hid(LOOSE_VIAL, RACK))
+    respx.get(f"{BASE}/status").mock(return_value=_status("0.16.0"))
+    locations = respx.get(f"{BASE}/locations")
+    post = respx.post(f"{BASE}/container-actions").mock(return_value=httpx.Response(200, json={"action_id": "a1"}))
+    out = await CustodyRecorder(BASE, "s").record_move(
+        hid="V-0109", seat=Seat("RK-003", "A1"), performed_by="me", recorder="me", project="chanlam")
+    assert out == {"recorded": True, "action_id": "a1", "container_id": "v9", "to_container_id": "r1", "to_site": "A1"}
+    sent = json.loads(post.calls.last.request.content)
+    assert sent["action_type"] == "move" and sent["target_container_id"] == "v9"
+    assert sent["to_container_id"] == "r1" and sent["to_site"] == "A1" and "to_location_id" not in sent
+    assert sent["expected_location_id"] == "l9", "guards on the vial's current place, as any move does"
+    assert not locations.called, "a seat never resolves a registry place"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_seat_is_checked_against_the_carrier_before_anything_reaches_the_ledger():
+    cu._CONTRACT_CACHE.clear()
+    respx.get(f"{BASE}/containers").mock(side_effect=_containers_by_hid(LOOSE_VIAL, RACK))
+    respx.get(f"{BASE}/status").mock(return_value=_status("0.16.0"))
+    post = respx.post(f"{BASE}/container-actions")
+    rec = CustodyRecorder(BASE, "s")
+    out = await rec.record_move(hid="V-0109", seat=Seat("RK-003", "Z9"), performed_by="me", recorder="me")
+    assert out["reason"] == "unknown_site" and out["sites"] == ["A1", "A2", "B3"]
+    out = await rec.record_move(hid="V-0109", seat=Seat("RK-404", "A1"), performed_by="me", recorder="me")
+    assert out["reason"] == "unknown_adapter" and out["adapter_hid"] == "RK-404"
+    out = await rec.record_move(hid="V-0109", seat=Seat("V-0109", "A1"), performed_by="me", recorder="me")
+    assert out["reason"] == "self_seat"
+    out = await rec.record_move(hid="V-0109", seat=Seat("RK-003", "B 3"), performed_by="me", recorder="me")
+    assert out["reason"] == "invalid_site"
+    assert not post.called
+    # a carrier without a manifest takes any shape-valid site (the ledger's rule)
+    bare = {**RACK, "hid": "RK-BARE", "container_id": "r2", "meta": {}}
+    respx.get(f"{BASE}/containers").mock(side_effect=_containers_by_hid(LOOSE_VIAL, bare))
+    post.mock(return_value=httpx.Response(200, json={"action_id": "a2"}))
+    out = await rec.record_move(hid="V-0109", seat=Seat("RK-BARE", "X7"), performed_by="me", recorder="me")
+    assert out["recorded"] is True and out["to_site"] == "X7"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_seat_is_refused_locally_against_a_record_layer_that_predates_seating():
+    cu._CONTRACT_CACHE.clear()
+    respx.get(f"{BASE}/containers").mock(side_effect=_containers_by_hid(LOOSE_VIAL, RACK))
+    respx.get(f"{BASE}/status").mock(return_value=_status("0.15.1"))
+    post = respx.post(f"{BASE}/container-actions")
+    out = await CustodyRecorder(BASE, "s").record_move(hid="V-0109", seat=Seat("RK-003", "A1"), performed_by="me", recorder="me")
+    assert out == {"recorded": False, "reason": "seating_unsupported", "contract": "0.15.1"}
+    assert not post.called
+
+
+@pytest.mark.anyio
+async def test_record_move_takes_exactly_one_destination():
+    rec = CustodyRecorder(BASE, "s")
+    with pytest.raises(ValueError):
+        await rec.record_move(hid="h", performed_by="x", recorder="u")
+    with pytest.raises(ValueError):
+        await rec.record_move(hid="h", to="t", seat=Seat("r", "A1"), performed_by="x", recorder="u")
+
+
+def test_the_front_door_takes_a_seat_and_keeps_the_ledger_s_verdicts(monkeypatch):
+    rec = _FakeRecorder({"recorded": True, "action_id": "a1", "container_id": "v9", "to_container_id": "r1", "to_site": "A1"})
+    with TestClient(_app(monkeypatch, rec)) as client:
+        r = client.post("/api/custody/move", json={"hid": "V-0109", "seat": {"adapter_hid": "RK-003", "site": "A1"}},
+                        headers={"X-Auth-User": "chemist@lab"})
+        assert r.status_code == 200, r.text
+        assert r.json()["to"] == "RK-003 @ A1" and r.json()["seat"] == {"adapter_hid": "RK-003", "site": "A1"}
+        assert rec.calls[0]["seat"] == Seat("RK-003", "A1") and rec.calls[0]["to"] is None
+        # exactly one destination, validated before the recorder is asked
+        assert client.post("/api/custody/move", json={"hid": "V-0109"}, headers={"X-Auth-User": "u"}).status_code == 422
+        assert client.post("/api/custody/move", json={"hid": "V-0109", "to": "bench/hte_staging",
+                                                      "seat": {"adapter_hid": "RK-003", "site": "A1"}},
+                           headers={"X-Auth-User": "u"}).status_code == 422
+        assert len(rec.calls) == 1
+    seat_body = {"hid": "V-0109", "seat": {"adapter_hid": "RK-003", "site": "Z9"}}
+    for result, status in [
+        ({"recorded": False, "reason": "unknown_site", "adapter_hid": "RK-003", "site": "Z9", "sites": ["A1"]}, 422),
+        ({"recorded": False, "reason": "unknown_adapter", "adapter_hid": "RK-003"}, 404),
+        ({"recorded": False, "reason": "seating_unsupported", "contract": "0.15.1"}, 503),
+        ({"recorded": False, "reason": "http_409", "detail": "moved since"}, 409),
+        ({"recorded": False, "reason": "http_422", "detail": "retired carrier"}, 422),
+        ({"recorded": False, "reason": "http_500", "detail": "boom", "uncertain": True}, 502),
+    ]:
+        with TestClient(_app(monkeypatch, _FakeRecorder(result))) as client:
+            r = client.post("/api/custody/move", json=seat_body, headers={"X-Auth-User": "u"})
+            assert r.status_code == status, (result["reason"], r.text)

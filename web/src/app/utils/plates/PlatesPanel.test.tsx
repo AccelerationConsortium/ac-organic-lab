@@ -151,4 +151,39 @@ describe("PlatesPanel (lab map)", () => {
     expect(screen.getByText(/receive → seat B3 of/)).toBeTruthy();
     expect(screen.getByText(/Seated at B3 of/)).toBeTruthy();
   });
+
+  it("records a seat picked from the rack grid, and warns about an occupied site instead of refusing it", async () => {
+    api.getCustodyMap.mockResolvedValue(MAP);
+    api.getLocations.mockResolvedValue({ locations: [] });
+    api.postCustodyMove.mockResolvedValue({ recorded: true, hid: "V-0109", to: "RK-003 @ A1", seat: { adapter_hid: "RK-003", site: "A1" } });
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId("adapter-RK-003")).toBeTruthy());
+    // the form starts in place mode; an empty site in the grid is a button that switches it to that seat
+    expect(screen.getByLabelText("Destination place")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Seat a container at RK-003 A1"));
+    const carrier = screen.getByLabelText("Destination carrier") as HTMLSelectElement;
+    const site = screen.getByLabelText("Destination site") as HTMLSelectElement;
+    expect(carrier.value).toBe("RK-003");
+    expect(site.value).toBe("A1");
+    expect(screen.queryByLabelText("Destination place")).toBeNull();
+    // only the carriers the map shows are offered, with the manifest's sites
+    expect(Array.from(carrier.options).map((o) => o.value)).toEqual(["", "RK-003"]);
+    expect(Array.from(site.options).map((o) => o.value)).toEqual(["", "A1", "A2", "B3"]);
+    // an occupied site warns (D2: recorded and flagged, never refused) — the button stays enabled
+    fireEvent.change(site, { target: { value: "B3" } });
+    expect(screen.getByText(/B3 already holds V-0107, V-0108/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Plate hid"), { target: { value: "V-0109" } });
+    expect((screen.getByText("Record move") as HTMLButtonElement).disabled).toBe(false);
+    // a container cannot be seated in itself
+    fireEvent.change(screen.getByLabelText("Plate hid"), { target: { value: "RK-003" } });
+    expect(screen.getByText(/cannot be seated in itself/)).toBeTruthy();
+    expect((screen.getByText("Record move") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Plate hid"), { target: { value: "V-0109" } });
+    fireEvent.change(site, { target: { value: "A1" } });
+    fireEvent.click(screen.getByText("Record move"));
+    await waitFor(() =>
+      expect(api.postCustodyMove).toHaveBeenCalledWith({ hid: "V-0109", seat: { adapter_hid: "RK-003", site: "A1" }, note: undefined }),
+    );
+    await waitFor(() => expect(screen.getByText("RK-003 @ A1")).toBeTruthy());
+  });
 });
