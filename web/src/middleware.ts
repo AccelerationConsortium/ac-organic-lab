@@ -1,3 +1,4 @@
+import { dashboardPreviewAccess } from "@/lib/dashboard-preview-access";
 import { NextRequest, NextResponse } from "next/server";
 
 // -- /api/equipment/*/{control,sash}/* gate (view-only until signed in) -----
@@ -164,6 +165,19 @@ async function verifySession(
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Preview is always cookie-only, including when CONTROL_OPEN is enabled.
+  if (pathname === "/preview/dashboard" || pathname.startsWith("/preview/dashboard/")) {
+    const status = await dashboardPreviewAccess(request.cookies.get("ac_auth_session")?.value);
+    if (status !== 200) {
+      return new NextResponse(status === 404 ? "Not found" : "A verified admin browser session is required. Sign in at / first.", {
+        status, headers: { "Cache-Control": "private, no-store" },
+      });
+    }
+    const response = NextResponse.next();
+    response.headers.set("Cache-Control", "private, no-store");
+    return response;
+  }
 
   // ---- Stale /notebooks → Bitácora (or Overview) --------------------------
   if (STALE_ELN_REDIRECT_RE.test(pathname)) {
@@ -339,6 +353,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/preview/dashboard/:path*",
     "/api/equipment/:path*",
     "/api/assistant/:path*",
     "/api/labware/:path*",

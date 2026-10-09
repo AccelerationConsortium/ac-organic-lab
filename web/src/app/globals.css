@@ -90,3 +90,22 @@ html.chrome-collapsed .chrome-heading {
     display: flex;
   }
 }
+
+/* The preview sidebar reduces the available tile width. Keep the existing
+   production breakpoints; in the preview, measure the content instead. */
+.workspace-content {
+  container: workspace / inline-size;
+}
+.workspace-content .overview-columns,
+.workspace-content .equipment-columns {
+  grid-template-columns: minmax(0, 1fr);
+}
+@container workspace (min-width: 1024px) {
+  .workspace-content .overview-columns,
+  .workspace-content .equipment-columns.lg\:grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media print {
+  .workspace-content { container-type: normal; }
+}

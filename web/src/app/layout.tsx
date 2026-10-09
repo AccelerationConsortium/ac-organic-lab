@@ -7,7 +7,7 @@ import { AssistantBubble } from "@/components/AssistantBubble";
 import { Nav } from "@/components/Nav";
 import { StateReferencePanel } from "@/components/StateReferencePanel";
 import { Logo } from "@/components/Logo";
-import { DashboardChrome, DashboardContent } from "@/components/DashboardShell";
+import { DashboardChrome, DashboardContent, DashboardTools } from "@/components/DashboardShell";
 
 // Sets the `dark` class before first paint (localStorage, else OS
 // preference) so there's no flash of the wrong theme on load. The same pass
@@ -106,9 +106,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               Live dashboard · sign in to control · v2
             </div>
           </footer>
+          </DashboardChrome>
+          <DashboardTools>
           <AssistantBubble />
           <StateReferencePanel />
-          </DashboardChrome>
+          </DashboardTools>
          </UserAuthProvider>
         </QueryProvider>
       </body>

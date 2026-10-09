@@ -1,10 +1,52 @@
 # Dashboard sidebar, Home, and private entry: implementation and server handoff
 
-Date: 2026-10-09. Status: implementation plan for review and continuation.
-This commit contains documentation only. It does not implement, deploy, change
-access, or operate equipment. The requested next development step is a protected
-preview of the existing Overview inside a shared left sidebar, before production
-navigation or entry routes change.
+Date: 2026-10-09. Status: Stage A implemented for review; not deployed.
+The default-off preview reuses the existing Overview inside a shared sidebar.
+Production `/` and navigation remain unchanged. Stages B onward remain proposals.
+
+### Stage A preview review
+
+- Home: `/preview/dashboard`; real Overview: `/preview/dashboard/overview`.
+- Other preview screens: `/platforms`, `/inventory`, `/bookings`, and
+  `/contact-admin` beneath `/preview/dashboard`. Bookings and Contact admin are
+  explicitly labeled mock screens; their interactions are in memory only.
+- Enable **only on a separate review instance** with the server environment
+  `DASHBOARD_SIDEBAR_PREVIEW=true`. Unset or any other value returns 404.
+  This is a runtime server setting, not a `NEXT_PUBLIC_*` build-time flag.
+- The review instance needs the existing `AUTH_SERVICE_BASE` and a valid
+  `ac_auth_session` browser cookie verified by that service as an admin.
+  Use the existing sign-in flow. API keys, identity headers, and
+  `DASHBOARD_CONTROL_OPEN` cannot enable preview access. Auth failures return
+  401/403 before preview render; the page independently checks access on RSC
+  navigations. Preview responses are private/no-store.
+- Reuse the existing auth banner, providers, assistant and themes. The preview
+  header opens the same assistant instance. The sidebar labels History, Tools,
+  and Admin as leaving the preview; ELN opens separately. Existing device/detail
+  links keep their original destinations, including framed panels.
+- Inventory reuses the authoritative embed with preview-specific sizing. Tile
+  columns respond to available content width within the preview; production
+  layout breakpoints are unchanged. Mobile navigation is a nonmodal disclosure
+  with Escape/focus return, active-page indication and a skip link.
+- Rollback for the review instance: unset the preview flag. Do not change or
+  restart the production service to review this work.
+
+Validation uses mocked authentication/data and no live equipment controls.
+The production build is run in a temporary copy, preserving the current build.
+
+Validated 2026-10-09:
+
+- Full web suite: 65 files, 529 tests passed; TypeScript check passed.
+- Lint passed with six pre-existing hook-dependency warnings; production build
+  passed. The equivalent package scripts ran with `npm run` because pnpm was
+  unavailable offline; no package manifests or lockfiles changed.
+- Chromium smoke checks against an isolated production build and mocked services:
+  360/768/1024/1440px in light/dark themes, all five preview subpages, runtime
+  enable/disable, anonymous and forged RSC denial, mobile Escape/focus return,
+  Overview filter persistence, one assistant, mock interactions, framed device
+  panel and unchanged root navigation. No API writes or camera connections.
+- Remaining review: actual Inventory integration and live-service visual review
+  on an authorized separate instance; Bookings/Contact admin are intentionally
+  mocks. No production deployment, configuration change or service restart.
 
 ## 1. Agreed direction
 
