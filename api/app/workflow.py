@@ -185,8 +185,10 @@ _DIGEST_FIELDS = frozenset(
 #: `app.lineage` files as `transfer` rows), added with the field rather than
 #: after the first false tamper report. Every optional field bitácora starts
 #: hashing has to be added here, and the failure mode when it is not is a false
-#: tamper report.
-_OPTIONAL_DIGEST_FIELDS = frozenset({"plates", "substances", "lineage"})
+#: tamper report. `containers` since compiler 0.8.0 / template 1.16.0 (the
+#: protocol's nominal vials and racks with the hids bound at authorization and
+#: their declared seats — PLATE_TRACKING.md §11.5), added with the field.
+_OPTIONAL_DIGEST_FIELDS = frozenset({"plates", "substances", "lineage", "containers"})
 
 
 def digest_payload_of(package: dict) -> dict:
@@ -336,6 +338,26 @@ def verify_package_digest(auth: Authorization) -> None:
             f"package digest mismatch for {auth.authorization_id}: authorized "
             f"{auth.package_digest}, computed {recomputed}. The package is not "
             "what was authorized; nothing was run."
+        )
+
+
+def refuse_unexecutable_custody(auth: Authorization) -> None:
+    """Refuse a package whose custody annotations this runner cannot yet act on.
+
+    Bitácora's compiler (0.8.0) can resolve a `custody` destination to a
+    **seat** — ``to: {adapter, adapter_hid, site}`` — for a vial going into a
+    rack (PLATE_TRACKING.md §11.5). Recording that is the executor's G4
+    (§11.4: resolve the occupant before the liquid step, write a seat
+    ``move``), which is not built. Until it is, such a package is refused at
+    run start with a reason, rather than run with its seat handoffs silently
+    unrecorded or mis-recorded as a place.
+    """
+    seated = [s["step_id"] for s in auth.steps
+              if isinstance(s.get("custody"), dict) and isinstance(s["custody"].get("to"), dict)]
+    if seated:
+        raise RunRefused(
+            f"step(s) {seated} declare custody into a seat (a rack site), which this "
+            "runner does not record yet (PLATE_TRACKING.md §11.4, G4) — nothing was run"
         )
 
 
@@ -1181,6 +1203,7 @@ def build_workflow_router() -> APIRouter:
                 )
                 assert_executable(auth)
                 verify_package_digest(auth)
+                refuse_unexecutable_custody(auth)
                 plan = plan_from(auth)
                 connection = lab_session(request, auth)
             except RunRefused as exc:

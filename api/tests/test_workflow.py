@@ -317,6 +317,41 @@ def test_a_package_without_lineage_digests_exactly_as_before() -> None:
     verify_package_digest(_auth(package=_package()))   # not a "missing digest input"
 
 
+def test_a_package_with_a_containers_block_verifies_and_without_one_hashes_as_before() -> None:
+    """Compiler 0.8.0 (template 1.16.0): the protocol's nominal vials and racks,
+    with the hids bound at authorization and their declared seats, ride in a
+    `containers` block that bitácora digests optional-when-truthy. The same
+    drift `plates`, `substances` and `lineage` each had, pinned before the first
+    false tamper report this time."""
+    containers = {"acid_rack": {"kind": "rack", "sites": ["A1", "A2"], "hid": "RK-003"},
+                  "acid_1": {"kind": "vial", "seat": {"in": "acid_rack", "site": "A1"}, "hid": "V-0107"}}
+    pkg = _package(containers=containers)
+    assert digest_payload_of(pkg)["containers"] == containers
+    verify_package_digest(_auth(package=pkg))
+    # a rebinding or a re-seated protocol is a different package
+    reseated = _package(containers={**containers, "acid_1": {**containers["acid_1"], "seat": {"in": "acid_rack", "site": "A2"}}})
+    with pytest.raises(RunRefused, match="digest mismatch"):
+        verify_package_digest(_auth(package=reseated, package_digest=_digest(pkg)))
+    # optional-when-truthy: absent, null and empty hash identically
+    assert "containers" not in digest_payload_of(_package())
+    assert digest_payload_of(_package(containers={})) == digest_payload_of(_package())
+    assert digest_payload_of(_package(containers=None)) == digest_payload_of(_package())
+
+
+def test_seat_form_custody_is_refused_at_run_start_until_the_executor_records_it() -> None:
+    """Bitácora can now compile `custody: {container, to: {adapter, site}}`.
+    This runner records place moves only (G4 is not built), so such a package
+    is refused with a reason rather than run with its seat handoff dropped."""
+    from app.workflow import refuse_unexecutable_custody
+
+    place = {**STEPS[0], "custody": {"container": "acid_rack", "hid": "RK-003", "to": "ot2_hte/slot_2"}}
+    refuse_unexecutable_custody(_auth(package=_package(steps=[place, STEPS[1]])))   # a place: fine
+    seat = {**STEPS[1], "custody": {"container": "acid_1", "hid": "V-0107",
+                                    "to": {"adapter": "acid_rack", "adapter_hid": "RK-003", "site": "A1"}}}
+    with pytest.raises(RunRefused, match="into a seat"):
+        refuse_unexecutable_custody(_auth(package=_package(steps=[place, seat])))
+
+
 # ── the one translation ────────────────────────────────────────────────
 
 
