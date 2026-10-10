@@ -57,7 +57,8 @@ async def test_client_command_sends_the_skill_method(method):
 
 def test_xarm_trajectory_skills_resolve():
     skills = {s.name: s for s in skills_for("robot_arm", "xarm_translocation")}
-    assert {"trajectory.validate", "trajectory.create", "trajectory.upload_chunk", "trajectory.start",
+    assert skills["trajectory.limits"].method == "GET"
+    assert {"trajectory.limits", "trajectory.validate", "trajectory.create", "trajectory.upload_chunk", "trajectory.start",
             "trajectory.status", "trajectory.cancel"} <= set(skills)
     path, body = skills["trajectory.upload_chunk"].resolve_path(
         {"session_id": "abc", "seq": 0, "points": [], "final": True})

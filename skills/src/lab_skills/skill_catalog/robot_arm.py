@@ -385,7 +385,16 @@ _TRAJ = "/control/freehand/trajectory"
 _TRAJ_NOTE = (" Joint trajectories on the xArm5: requires graph mode OFF or ADVISORY and an "
               "active claim; validation is not a collision check.")
 
+class TrajectoryLimitsArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
 TRAJECTORY_SKILLS = [
+    SkillDef(name="trajectory.limits", kind="robot_arm", endpoint=f"{_TRAJ}/limits", method="GET",
+             description="Read first: the limits a joint trajectory must meet right now (joint ranges, "
+                         "joint speed at the current safety level, acceleration, duration, points, "
+                         "rate, start tolerance, rules). Moves nothing.",
+             args_schema=TrajectoryLimitsArgs, estimated_duration_s=0.5),
     SkillDef(name="trajectory.validate", kind="robot_arm", endpoint=f"{_TRAJ}/validate",
              description="Check a whole joint trajectory against the arm and its measured pose; moves nothing."
                          + _TRAJ_NOTE,
