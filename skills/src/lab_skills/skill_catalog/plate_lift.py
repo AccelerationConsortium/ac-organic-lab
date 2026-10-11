@@ -1,4 +1,4 @@
-"""Balance lift (flex-balance-lift) capabilities, selected only for ``balance_lift``.
+"""Balance lift capabilities, selected only for ``balance_lift`` and ``balance_lift_complexation``.
 
 The device is a P8 linear stepper on a Tic T825 that raises a microplate
 holder off a balance pan and back. Its service (``balance_lift.motion`` in
@@ -7,7 +7,9 @@ and one precondition function behind ``allowed_actions`` and its 412
 refusals, so ``Skill.name`` here equals the device's action names exactly.
 
 Never registered under the generic ``other`` kind: ``registry.skills_for``
-returns this list for ``equipment_id == "balance_lift"`` only. The device
+returns this list only for the two weigh-every-plate balance lifts
+(``balance_lift``, the bench tester; ``balance_lift_complexation``, the
+Complexation OT-2 unit, which also serves that OT-2's balance). The device
 keeps its own reference model (a caliper-verified retract stop) and travel
 ceiling; this catalog adds no limits and relaxes none. Only a human-approved,
 main-merged, registered and validated plan may execute on hardware.

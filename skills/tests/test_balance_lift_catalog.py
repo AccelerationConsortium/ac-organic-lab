@@ -18,6 +18,15 @@ def test_balance_lift_skills_do_not_leak_to_other_equipment():
     assert _find_skill_def("other", "move_pose", "lumastir") is None
 
 
+def test_complexation_balance_lift_shares_the_lift_catalog():
+    defs = {d.name for d in skills_for("other", "balance_lift_complexation")}
+    assert defs == LIFT_ACTIONS
+    assert _find_skill_def("other", "jog", "balance_lift_complexation") is not None
+    entry = next(e for e in load_registry(Path(__file__).resolve().parents[2] / "equipment.yaml").equipment
+                 if e.id == "balance_lift_complexation")
+    assert entry.kind == "other" and entry.protocol == "1.2" and entry.base_url.endswith(":8078")
+
+
 def test_balance_lift_args_fail_closed():
     import pytest
     from pydantic import ValidationError

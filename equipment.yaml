@@ -615,6 +615,33 @@ equipment:
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
       - { label: Agent guide, path: /agent-docs, kind: markdown }
 
+  # Complexation balance lift: weigh-every-plate on the UPLC PC
+  # (sdl2-pc-06-uplc, NSSM service weigh-every-plate-lift, config
+  # ot2_complexation). P8 on Tic T825 #00506257 under the Sartorius WZB254-N
+  # in the Complexation OT-2 (slot 9). Since 2026-10-11 this service owns the
+  # balance's serial port and ot2_complexation's platebalance reads, tares and
+  # zeroes through it (transport weigh_every_plate), claiming it per action.
+  # STATUS_SPEC v1.2 with hard claims; reference needs an operator caliper
+  # reading. Binds the Tailscale address only (that PC's LAN firewall is
+  # off). Poses set by eye; plate heights at `weighing` not yet measured.
+  # Catalog: skill_catalog/plate_lift.py, shared with balance_lift.
+  - id: balance_lift_complexation
+    name: Balance lift (Complexation)
+    kind: other
+    adapter: http
+    protocol: "1.2"
+    base_url: http://sdl2-pc-06-uplc.tail6a1dd7.ts.net:8078
+    tailscale_ip: 100.64.254.19
+    status_path: /status
+    # 8 s: Wi-Fi path to this PC, as for its other services.
+    poll_timeout_seconds: 8.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+    tiles:
+      complexation: { w: 2, h: 3 }
+
   - id: lumastir
     name: Lumastir
     kind: other

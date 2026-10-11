@@ -54,6 +54,7 @@ sections:
     equipment:
       - cam_echem_tapo_c100
       - ot2_complexation
+      - balance_lift_complexation
 
   - id: sample_prep
     title: Gibbie Platform

@@ -66,7 +66,7 @@ def skills_for(kind: EquipmentKind, equipment_id: str | None = None) -> list[Ski
         from .lumastir import LUMASTIR_SKILLS
 
         return list(LUMASTIR_SKILLS)
-    if kind == "other" and equipment_id == "balance_lift":
+    if kind == "other" and equipment_id in ("balance_lift", "balance_lift_complexation"):
         from .plate_lift import BALANCE_LIFT_SKILLS
 
         return list(BALANCE_LIFT_SKILLS)
