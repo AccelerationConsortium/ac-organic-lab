@@ -677,7 +677,7 @@ host. Spec is what the device's live `/status` envelope reports.
 | `plug_hte_strip_right` / `_left` | `http` | 1.0 | ✅ `ready` | HS300 power strips; `on`/`off`/`toggle`; per-outlet safety decided client-side (`outletIsSafe()`). |
 | `fume_hood_actuator` | `http` | 1.1 | ✅ `ready` | `sash.move`/`sash.stop`; deployed on the Pi at `100.64.254.100:5000`; round-trip verified from `FumeHoodTile`. |
 | `xarm_translocation` | `http` | **1.2** | ✅ `requires_init` | v1.2 native (device repo commit c91dd05, verified live 2026-07-30): controller-observed `activity` / `activity_since`, `allowed_actions` gated on activity, concurrent-move refusal (409 `motion_in_progress`, §6.1). Claim protocol + `/control/graph/*` deployed 2026-05-31; claims gated behind `POST /connect`. Open items in the sub-tasks below. |
-| `ot2_hte` | `http` | **1.2** | ✅ `ready` | Now v1.2 native (gateway 8.7.0): `activity` + `cycles_total`. Protocol actions + `lights.set` advertised; deck snapshot pulled over SSH. A second OT-2, `ot2_complexation` (same gateway version, also v1.2), is registered and currently `error` — `POST /runs` read-timeout to `sdl2-ot2-complexation`, `last_error.code: startup_failed`. |
+| `ot2_hte`, `ot2_complexation` | `http` | **1.2** | ✅ integrated | Both gateways expose `activity`, `cycles_total`, and robot reachability over direct Ethernet. See [OT-2 gateways](#ot-2-gateways) for current connections; read live status for readiness. |
 | `dose_every_well` | `http` | 1.1 | ✅ `requires_init` | Full v1.1 verified live 2026-05-31: hard `X-Claim-Token` (423), `/control/*` consolidation (breaking), state-driven `allowed_actions`. |
 | `torry_pines_shaker` | `http` | **1.2** | ✅ `degraded` (motor healthy) | First native v1.2 device (2026-07-25): motor-observed `activity`, `cycles_total`, per-subsystem `allowed_actions`. Poll timeout restored to 10 s (read-off-lock fix deployed). The heater RTD `cal` fault recurs intermittently — now reported honestly as `degraded` without blocking shakes. 2026-08-02: recovered from a 2026-07-31 USB-serial drop (same COM6 after re-enumeration, no config change) and motor verified with a live 20 s test cycle (`degraded` + `running`, `cycles_total` 0→1); the RTD `cal` fault is active again — temperature control blocked pending recalibration at the instrument. |
 | `filter_every_well` | `http` | **1.2** | ✅ `requires_init` | v1.2 **deployed and verified live 2026-08-09** (repo v1.1.0, PR #1): move-lock `activity` (the exact hardware-motion span), `cycles_total` counting platen strokes — a stroke lasts seconds, so the 60 s poll misses it and the counter is the only utilization record. First test suite in that repo (10 tests). `requires_init` after the deploy is normal: `_system_state` boots `stopped`, so a service restart always needs one `POST /control/startup`. PressTile per-direction `hold_time` inputs verified (EQUIP_STATUS.md §8). |
@@ -1016,56 +1016,33 @@ catalog (`run.submit`, `run.abort`, `queue.cancel`, `instrument.standby`,
   `poll_timeout_seconds` (OpenLab WMI introspection is the cost). Raise
   to 8 s if it ever errors.
 
-#### `ot2_hte`
+#### OT-2 gateways
 
 - [x] **2026-08-14: the fleet's first real authorized run** executed on
   `ot2_complexation` — `ra_67f32cb0920b4a41`, the 14-step
   `ot2-transfer-smoke` protocol, Slack-triggered by the boxed `lab-runner`
   agent, per-step claims, all steps ok in 146 s, record filed in
   BitacoraDB (AGENTIC_ELN_PLAN D-23; the two record-write fixes it
-  surfaced are commits `5d064c4` and `e5bb24c`). Both robots' network
-  paths were moved off campus Wi-Fi the same night — see *Operational
-  regressions*.
-- [x] **USB bridge retired as the gateway's path (2026-09-12) — because the
-  USB link died, not by choice; the decision that night was wireless +
-  Tailscale.** `ot2-gateway-complexation` was repointed at
-  the robot's own address — `OT2_HTTP_BASE_URL=http://100.64.254.91:31950`,
-  `OT2_HOST_ALIAS=100.64.254.91` (the PC's `known_hosts` already trusted it) —
-  via `tools/ot2-set-robot-url.ps1 -Run` over SSH: 15 env variables preserved,
-  service restarted, robot re-probed (`ot2training`, API 8.7.0); from gaia
-  `ready`, robot reachable, readback 0.7 s. The `31951` bridge rule on the UPLC
-  PC is now unused; remove it when convenient. The wired-adapter item below
-  stays open as the path that would not depend on the robot's Wi-Fi radio.
-  **"Reliably on the tailnet" was wrong (2026-09-13).** The next morning PyPoe
-  posted a down/recovered pair every 30–50 min (38 posts, 36 gateway
-  `robot_unreachable` events, ~3.2 h unreachable in 12.6 h). Cause, from the
-  robot's own kernel log: the Pi 3B+'s Broadcom `brcmfmac` firmware hangs
-  **23–43 times a day on each OT-2** and has since the 09-08 reboot; the
-  robot-side `wifi-watchdog` reloads the driver, but its 2-min cycle,
-  two-failure rule and 10-min lockout made each hang a 2–17 min outage. The
-  USB path had simply hidden it (zero gateway outages 09-06 → 09-12), and HTE's
-  wired path still hides the same fault there. Fix applied the same day on
-  the Complexation robot: watchdog tightened to a 1-min cycle, 15 s confirm,
-  2-min lockout, with a local hang detector (`-110` in dmesg / `iw link`) so an
-  internet blip never reloads a healthy radio — see `opentrons-server`
-  `docs/OT2_TAILSCALE.md` *Wi-Fi watchdog*. **Verified on the first hang after
-  the deploy (18:15 UTC): gateway outage 21 s** (was 2–17 min), reload 8 s
-  after the robot was lost, invisible to the 60 s uptime sweep, no PyPoe
-  alert. Not power, heat, AP or scans
-  (all checked). Only bypassing that radio — the wired adapter below, or a USB
-  Wi-Fi dongle — stops the hangs themselves.
-- [ ] **Wire `ot2_complexation` directly to the lab switch** (USB-to-Ethernet
-  adapter in one of the robot's USB-A ports; the OT-2 has no spare RJ45, its
-  `eth0` *is* the USB-B cable). The robot's Wi-Fi radio wedges on its own
-  (2026-08-30, 2026-09-04: `wlan0` disconnected, empty scan, only a hard
-  reboot restores it), so since 2026-09-05 control rides the UPLC PC's
-  `netsh` bridge (`100.64.254.19:31951`). That works but puts a second PC in
-  the control path (the `iphlpsvc` bind-order quirk itself was removed
-  2026-09-06 by binding both bridge rules to `0.0.0.0`). Once wired, give the
-  adapter a DHCP reservation, repoint `ot2-gateway-complexation` at the lab
-  address (`tools/ot2-set-robot-url.ps1`), retire the bridge, and update
-  DEVICE_BRINGUP.md *Network paths* in the device repo. Same shape as HTE's
-  `192.168.254.50`.
+  surfaced are commits `5d064c4` and `e5bb24c`).
+- [x] **Opentrons control uses direct lab-switch Ethernet.**
+
+  | Robot | Host integration | Control transport |
+  |---|---|---|
+  | HTE OT-2 | Cytation PC, `ot2-gateway-hte` | Robot-server HTTP over Ethernet |
+  | Complexation OT-2 | UPLC PC, `ot2-gateway-complexation` | Robot-server HTTP over Ethernet |
+  | Gibbie Flex | Gibbie workflow; read-only dashboard monitor | SSH REPL over Ethernet |
+
+  Robot addresses belong in machine-local configuration. For each OT-2
+  gateway, keep `OT2_HTTP_BASE_URL` and `OT2_HOST_ALIAS` aligned with the
+  robot's wired address. The dashboard polls the gateway, not the robot.
+
+  Complexation uses a separate persistent NetworkManager profile with
+  `connection.autoconnect-priority >= 2`; the factory `wired` and
+  `wired-linklocal` profiles are regenerated at boot. HTE uses ifupdown.
+  Verify the active address and route after a restart. The lab-switch
+  connection has no default gateway; Complexation's Wi-Fi still supplies
+  internet and Tailscale management access.
+
 - [x] **Device repo: self-heal the stale-run 409 + stop lying about
   reachability** (opentrons-server, 2026-09-06). A 409 `not the current run`
   now drops the session and the existing `requires_init` self-heal rebuilds
@@ -1486,67 +1463,6 @@ next instance is a minutes-long diagnosis. This incident class — a service
 left dead by an external event, discovered hours later — is what the
 `sdl-lab-hostops` fleet (AGENTIC_LAB_DESIGN.md) now exists to catch and, where
 whitelisted, remediate remotely. Residual watch item below.
-
-**Campus Wi-Fi (`compsci`) outage, 2026-08-14 → both OT-2 control paths
-moved off Wi-Fi.** *(Updated 2026-09-05 — the complexation half changed twice since; see
-the bridge note below the list.)* The `172.31/16` campus Wi-Fi the robots and
-several Pis ride lost its uplink ~14:45 EDT and flapped for the rest of the
-day: both OT-2s, `sdl2-pi0-fumehood3-actuator`, and `sdl2-pi5-cnc-01`
-dropped off the tailnet simultaneously (two APs on different bands; LAN-local
-traffic kept working, so the signature is tailscale `tx … rx 0` while SSH
-over wired paths still answers). The first authorized-run attempt failed
-mid-`home` on exactly this (`command_transport_failed`); the successful run
-landed inside a brief up-window. Same-night workaround, now the **standing
-configuration — the gateways no longer reach the robots over Wi-Fi at all**:
-
-- `ot2-gateway-hte` → the robot's wired Pi Ethernet at `192.168.254.50`
-  (lab switch subnet).
-- `ot2-gateway-complexation` → a `netsh` port-forward bridge on the UPLC PC
-  (then `100.64.254.19:31950`, now `:31951` → the robot's USB link-local
-  `169.254.40.81:31950`).
-
-**The complexation bridge was retired 2026-08-27 and re-armed 2026-09-05.**
-After the outage the gateway had been repointed at the robot's own tailnet IP
-(`OT2_HTTP_BASE_URL=http://100.64.254.91:31950`), so nothing routed through
-the bridge, and the bridge itself was found **dead**: the `netsh` rule survived
-a reboot but `iphlpsvc` never rebound the listener (it binds only if the
-listen address exists when the service starts, and Tailscale's interface
-comes up later — config present, no socket, connections refused). The rule
-was deleted rather than left as a fallback that silently wasn't one, which
-left complexation control riding the robot's campus Wi-Fi (`172.31.60.9`).
-
-That Wi-Fi turned out to fail on its own, not only in campus outages: the
-robot rejoins the tailnet within ~10 min of a hard reboot and then drops
-again — 2026-08-30 19:07 EDT (125 s connect timeout mid-`pick_up_tip`) and
-2026-09-04 ~21:00 EDT, 15 min after a reboot, while the fume hood Pi, the
-UPLC PC and gaia on the same campus network stayed up. Queried over USB, the
-robot reported `wlan0: disconnected`, no address, and an **empty Wi-Fi scan
-even with `rescan=true`** — the radio sees nothing at all, which on a
-Pi 3B+ points at the Broadcom driver wedging rather than DHCP or the AP. On
-2026-09-05 the bridge was re-created on the UPLC PC listening on
-**`100.64.254.19:31951`** → `169.254.40.81:31950` and
-`ot2-gateway-complexation` repointed at it (`OT2_HOST_ALIAS=169.254.40.81`,
-via `tools/ot2-set-robot-url.ps1`); the robot answered in ~70 ms and the
-session came up. **This was the standing path until 2026-09-12**, when the
-gateway was repointed at the robot's tailnet address (`100.64.254.91:31950`)
-and the bridge retired as its path; while it stood, its dependency was the
-UPLC PC staying up. The bind-order failure that killed the first bridge is
-gone: since 2026-09-06 both rules (`31951` → Complexation USB, `31952` →
-HTE's wired `192.168.254.50`) listen on `0.0.0.0`, so they come back on
-their own after a reboot. If `31951` stops answering anyway,
-`Restart-Service iphlpsvc` there before blaming the robot. (`ot2-gateway-hte` remains on the wired Pi Ethernet path exactly as
-listed.) Durable fix unchanged: lab-owned wired Ethernet to the robot.
-
-**All of this is config, not code.** Robot addresses live in each gateway
-service's NSSM env on the Cytation PC — change with
-`C:\SDL_Tools\nssm.exe set ot2-gateway-<x> AppEnvironmentExtra …` (edit
-`OT2_HTTP_BASE_URL`, hte also `OT2_HOST_ALIAS`) then `nssm restart`; revert =
-restore `http://172.31.60.10:31950` (hte) / the tailnet name (complexation).
-Open hardening: a DHCP reservation for hte's wired MAC
-(`b8:27:eb:33:af:b6`); report the outage to campus IT. The durable conclusion is the same one the `env_hte` DHCP item already
-reached: **lab devices belong on lab-owned network**, and this outage is the
-strongest argument yet. As of 2026-09-05 both gateways are Wi-Fi-independent, complexation by
-way of the UPLC PC bridge (see the note above).
 
 **gaia memory thrash → self-heal monitors killed the healthy dashboard API,
 2026-08-27 → mitigated 2026-08-30.** The central server ran out of memory

@@ -317,15 +317,9 @@ equipment:
           stream_path: /cameras/overhead/stream.mjpg?fps=5
           ptz_capable: false
     status_path: /status
-    # Robot transport (changed 2026-09-04): the OT-2 (HTE) robot
-    # (`ot2cytation`, board rev A)is reachable over **instrument-LAN Ethernet** at
-    # **192.168.254.50:31950** — the gateway on sdl2-pc-03 reaches it directly
-    # over that wired path (OT2_HTTP_BASE_URL=http://192.168.254.50:31950), NOT
-    # via Tailscale. The old tailnet node `100.64.254.90` (`sdl2-ot2-hte`)
-    # is offline/legacy (the robot no longer runs Tailscale); if the robot ever
-    # drops off the LAN, NO fallback exists — the dashboard tile shows the robot's
-    # own reachability flag (`details.robot.reachable`), which the gateway reports
-    # truthfully even when it answers HTTP 200 itself.
+    # HTE robot `ot2cytation` uses direct lab-switch Ethernet. Its address is
+    # configured in the gateway's machine-local environment. The dashboard
+    # uses details.robot.reachable even when the gateway itself answers HTTP 200.
     # The OT-2 gateway builds /status from an SSH snapshot, so it is slower than
     # other devices — but 8s is plenty and keeps one slow/dead device from
     # stalling the dashboard. The aggregator also hard-caps every fetch at
@@ -645,12 +639,8 @@ equipment:
       internal: true
       admin_only: true
 
-  # Second Opentrons OT-2 (robot `sdl2-ot2-complexation`, Tailscale
-  # 100.64.254.91) on the Echem bench for complexation work. Fronted by the
-  # second `opentrons-server` gateway instance on sdl2-pc-06-uplc port 8021
-  # (service `ot2-gateway-complexation`; deployed 2026-07-10). The gateway is
-  # multi-instance by design — one process per robot, own port, own state
-  # files; see the opentrons-server README "Running multiple OT-2 gateways".
+  # Complexation OT-2 on the Echem bench. Its dedicated gateway runs on the
+  # UPLC PC (:8021), with independent state, and reaches the robot over Ethernet.
   - id: ot2_complexation
     name: Opentrons OT-2 (Complexation)
     kind: liquid_handler
@@ -676,7 +666,8 @@ equipment:
       - { label: Agent discovery, path: /llms.txt, kind: text }
       - { label: Typed plan actions, path: /plans/actions, kind: json }
     # Gateway on UPLC; robot ot2training (serial weathered-dream, board rev 2.1)
-    # reached directly over its USB network at http://169.254.40.81:31950.
+    # reached directly over lab-switch Ethernet. The robot address lives in
+    # the gateway's machine-local OT2_HTTP_BASE_URL / OT2_HOST_ALIAS settings.
     # platebalanceV1 is a local WZB254-N peripheral on COM3 in deck slot 6.
     # The robot's own Tailscale identity above remains distinct from its gateway.
     tiles:
