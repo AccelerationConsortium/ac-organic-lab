@@ -141,10 +141,21 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   must use `web/src/lib/random-id.ts`: `crypto.randomUUID()` requires a secure
   context and can fail before a chat request is sent. The helper falls back
   to `crypto.getRandomValues()`, which is available on HTTP.
-- **Single-PC concentration:** xArm (8000), PlateLoc (8010), both OT-2
-  gateways (8020/8021), shaker (8030), Cytation 5 (8040), BioStack (8050),
+- **Single-PC concentration:** xArm (8000), PlateLoc (8010), the HTE OT-2
+  gateway (8020), shaker (8030), Cytation 5 (8040), BioStack (8050),
   and hostops (8060) all live on `sdl2-pc-03-cytation`. One reboot takes out
   most workflow-critical services (see DEVICE_PC_SETUP §7 for the full table).
+  The Complexation gateway (8021) runs separately on the UPLC PC. Both OT-2s
+  connect directly through the lab switch. Robot Wi-Fi/Tailscale can still
+  carry management traffic:
+  a wired control path does not establish a wired internet route.
+- **OT-2 NetworkManager factory profiles are regenerated at boot.** On
+  robots using NetworkManager, do not store custom Ethernet settings in
+  `wired` or `wired-linklocal`. The factory `wired` file explicitly requires
+  a separate persistent profile with `connection.autoconnect-priority >= 2`.
+  Verify the custom profile on disk and after reload; a successful live
+  connection alone does not prove reboot persistence. HTE's ifupdown-based
+  network configuration is a different setup.
 - **Port 8010 is used by two different hosts** (UPLC-MS on `sdl2-pc-06-uplc`,
   PlateLoc on `sdl2-pc-03-cytation`). No collision, but easy to confuse.
 - **A WebSocket route under `/api/*` must be excluded from the Next
