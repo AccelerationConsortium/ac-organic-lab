@@ -933,8 +933,17 @@ async def _proxy(
     # read-only control endpoints (e.g. `read-balance`) are exposed without
     # `Depends(require_claim)`, and taking a claim to read would serialise them
     # against real operations.
+    # A caller that holds its own claim sends its X-Claim-Token: forward it
+    # on this hop and skip the per-request claim. Streaming clients need
+    # this: a joint-trajectory session belongs to the claim that created
+    # it (create, upload and start must share one), and the release after a
+    # per-request start would stop the run. The device still verifies the
+    # token; the dashboard adds no authority. The claim protocol's own
+    # heartbeat and release need the token forwarded too.
+    caller_token = (request.headers.get("x-claim-token") or "").strip() or None
     needs_claim = (
-        getattr(entry, "protocol", None) not in (None, "1.0")
+        caller_token is None
+        and getattr(entry, "protocol", None) not in (None, "1.0")
         and method in ("POST", "DELETE")
         and action not in _CLAIM_PROTOCOL_ACTIONS
     )
@@ -1018,6 +1027,16 @@ async def _proxy(
         try:
             if token is not None:
                 response = await _send({**edge_headers, "X-Claim-Token": token})
+            elif caller_token is not None:
+                # The caller's own claim: forward it with each credential.
+                async def _send_with_caller_claim(
+                    headers: dict[str, str] | None,
+                ) -> httpx.Response:
+                    return await _send({**(headers or {}), "X-Claim-Token": caller_token})
+
+                response, edge_headers = await _send_with_auth_fallback(
+                    _send_with_caller_claim, auth_candidates
+                )
             else:
                 # No claim on this device, so the action itself is the first
                 # hop and carries the fallback.
