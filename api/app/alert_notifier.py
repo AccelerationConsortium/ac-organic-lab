@@ -27,6 +27,16 @@ failed POST is logged and dropped, never raised, and never blocks the
 poll loop. Each emitted alert writes an ``alert_emitted`` audit row to
 ``equipment_events``.
 
+Restart safety: the debounce state used to live only in memory, so every
+restart of the API re-fired an alert for each device still in a fault state
+("a cold start straight into error still alerts") and forgot which devices
+were alerting, so their eventual recovery was never sent (2026-10-10
+19:51/19:57 and 2026-10-11 05:01/05:39 each duplicated the whole standing
+set in Slack). ``seed_from_history()`` now rebuilds ``_active_alert`` and the
+cooldown clock from the ``alert_emitted`` audit rows at startup, and
+``observe()`` never queues an alert whose event already stands for that
+device — only a *different* event (unreachable → error) or a recovery.
+
 Enabled by setting ``PYPOE_ALERT_URL`` to the full webhook endpoint
 (e.g. ``http://100.64.254.6:8006/alerts/device``); unset = disabled.
 """
@@ -43,6 +53,21 @@ import httpx
 from .events import ALERT_EMITTED
 
 logger = logging.getLogger("alert_notifier")
+
+
+def _age_seconds(ts: Any, wall_now: float) -> Optional[float]:
+    """Seconds between an ISO-8601 audit timestamp and ``wall_now``; None if unparsable."""
+    if not isinstance(ts, str):
+        return None
+    try:
+        from datetime import datetime, timezone
+
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0.0, wall_now - dt.timestamp())
+    except ValueError:
+        return None
 
 ALERT_STATES = {"error", "e_stop"}
 DEFAULT_SUSTAINED_SWEEPS = 2
@@ -83,6 +108,52 @@ class AlertNotifier:
     def enabled(self) -> bool:
         return bool(self.url)
 
+    # -- called once at startup ------------------------------------------------
+
+    def seed_from_history(self, *, days: int = 7) -> int:
+        """Rebuild the standing-alert set from the ``alert_emitted`` audit rows.
+
+        For each device whose most recent audit row is a non-recovery event,
+        mark that event as active (so the same fault is not re-alerted after a
+        restart but its recovery *is* sent) and back-date the cooldown clock to
+        the row's timestamp. A storm row (``payload.devices``) covers every
+        device it collapsed. Returns the number of devices seeded. Never
+        raises; a DB without the helper (tests, old schema) seeds nothing.
+        """
+        if not self.enabled or self._db is None:
+            return 0
+        getter = getattr(self._db, "get_latest_alerts", None)
+        if getter is None:
+            return 0
+        try:
+            rows = getter(days=days)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Alert history seed failed: %s", exc)
+            return 0
+        wall_now = time.time()
+        mono_now = self._now()
+        seeded = 0
+        for row in rows:
+            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+            event = payload.get("event")
+            if not event or event == "recovered":
+                continue
+            devices = [row.get("device_id"), *(payload.get("devices") or [])]
+            age_s = _age_seconds(row.get("ts"), wall_now)
+            for device_id in devices:
+                if not device_id or device_id in self._active_alert:
+                    continue
+                self._active_alert[device_id] = event
+                if age_s is not None:
+                    self._last_sent_at[device_id] = mono_now - age_s
+                seeded += 1
+        if seeded:
+            logger.info(
+                "Alert notifier seeded %d standing alert(s) from history: %s",
+                seeded, ", ".join(f"{d}={e}" for d, e in sorted(self._active_alert.items())),
+            )
+        return seeded
+
     # -- called once per device per sweep -----------------------------------
 
     def observe(
@@ -101,10 +172,14 @@ class AlertNotifier:
         prev_state = self._prev_state.get(device_id)
         self._prev_state[device_id] = state
 
+        standing = self._active_alert.get(device_id)
+
         if not reachable:
             streak = self._down_streak.get(device_id, 0) + 1
             self._down_streak[device_id] = streak
-            if streak == self._sustained_sweeps:
+            # An "unreachable" alert that already stands (seeded from history
+            # across a restart, or sent earlier this process) is not re-sent.
+            if streak == self._sustained_sweeps and standing != "unreachable":
                 self._queue(
                     device_id,
                     "unreachable",
@@ -113,36 +188,34 @@ class AlertNotifier:
                 )
             return
 
-        # Reachable again.
-        if self._down_streak.get(device_id, 0) > 0:
-            self._down_streak[device_id] = 0
-            if device_id in self._active_alert:
+        # Reachable.
+        self._down_streak[device_id] = 0
+
+        if state in ALERT_STATES:
+            event = "e_stop" if state == "e_stop" else "error"
+            # Alert on the transition INTO the fault state — a cold start
+            # straight into error counts (prev_state None) — unless this very
+            # event already stands for the device. A standing *unreachable*
+            # alert followed by a device-reported fault is new information.
+            if prev_state not in ALERT_STATES and standing != event:
                 self._queue(
                     device_id,
-                    "recovered",
+                    event,
                     state=state,
-                    message=message or f"back to {state}",
+                    message=message,
+                    last_error=last_error,
                 )
-                return
+            return
 
-        # Fault-state edge (only on the transition INTO the state; a cold
-        # start straight into error still alerts — prev_state None counts).
-        if state in ALERT_STATES and prev_state not in ALERT_STATES:
+        # Healthy and reachable: close whatever alert stands, whether it was
+        # raised in this process or seeded from history after a restart.
+        if standing is not None:
             self._queue(
                 device_id,
-                "e_stop" if state == "e_stop" else "error",
+                "recovered",
                 state=state,
-                message=message,
-                last_error=last_error,
+                message=message or f"back to {state}",
             )
-        elif state not in ALERT_STATES and prev_state in ALERT_STATES:
-            if device_id in self._active_alert:
-                self._queue(
-                    device_id,
-                    "recovered",
-                    state=state,
-                    message=message or f"back to {state}",
-                )
 
     # -- called once at the end of each sweep --------------------------------
 

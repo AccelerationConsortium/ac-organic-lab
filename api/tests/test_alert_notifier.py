@@ -240,3 +240,133 @@ def test_successful_delivery_writes_audit_row():
     assert event_type == "alert_emitted"
     assert kw["payload"]["outcome"] == "http_202"
     assert kw["payload"]["event"] == "unreachable"
+
+
+# ---------------------------------------------------------------------------
+# Restart safety: seed the standing-alert set from the audit rows
+# ---------------------------------------------------------------------------
+# Every restart of the API used to re-fire an alert for each device still in
+# a fault state and forget the rest, so recoveries were lost. The journal
+# restarts at 2026-10-10 19:51/19:57 and 2026-10-11 05:01/05:39 each produced
+# a verbatim duplicate alert set in Slack.
+
+import json as _json
+from datetime import datetime, timedelta, timezone
+
+
+class HistoryDb(FakeDb):
+    def __init__(self, rows):
+        super().__init__()
+        self.rows = rows
+
+    def get_latest_alerts(self, *, days=7):
+        return self.rows
+
+
+def _row(device, event, *, age_s=600, devices=None):
+    ts = (datetime.now(timezone.utc) - timedelta(seconds=age_s)).isoformat()
+    return {"ts": ts, "device_id": device, "to_state": None, "message": "m",
+            "payload": {"event": event, "devices": devices, "outcome": "http_202"}}
+
+
+def _events(route):
+    return [(_json.loads(c.request.content)["device_id"], _json.loads(c.request.content)["event"])
+            for c in route.calls]
+
+
+@respx.mock
+def test_cold_start_into_standing_error_does_not_refire_but_recovers():
+    route = respx.post(URL).mock(return_value=httpx.Response(202))
+    clock = FakeClock()
+    n = AlertNotifier(URL, db=HistoryDb([_row("lle_ur5_arm", "error")]), now=clock)
+    assert n.seed_from_history() == 1
+
+    async def main():
+        # Still in error after the restart: nothing is sent.
+        for _ in range(3):
+            n.observe("lle_ur5_arm", reachable=True, state="error", message="Safety stop")
+            await n.flush()
+        assert route.call_count == 0
+        # ...but the eventual recovery IS sent (it used to be lost).
+        n.observe("lle_ur5_arm", reachable=True, state="ready", message="program stopped")
+        await n.flush()
+        assert _events(route) == [("lle_ur5_arm", "recovered")]
+        # And a fresh fault afterwards alerts normally again — once the
+        # per-device cooldown (back-dated from the audit row) has passed.
+        clock.t += 1800
+        n.observe("lle_ur5_arm", reachable=True, state="error")
+        await n.flush()
+        assert _events(route)[-1] == ("lle_ur5_arm", "error")
+
+    _run(main())
+
+
+@respx.mock
+def test_cold_start_into_standing_unreachable_does_not_refire():
+    route = respx.post(URL).mock(return_value=httpx.Response(202))
+    n = AlertNotifier(URL, db=HistoryDb([_row("flex_plate_weigher", "unreachable")]), now=FakeClock())
+    n.seed_from_history()
+
+    async def main():
+        for _ in range(4):
+            n.observe("flex_plate_weigher", reachable=False, state="unknown")
+            await n.flush()
+        assert route.call_count == 0
+        n.observe("flex_plate_weigher", reachable=True, state="ready")
+        await n.flush()
+        assert _events(route) == [("flex_plate_weigher", "recovered")]
+
+    _run(main())
+
+
+@respx.mock
+def test_standing_unreachable_then_device_reported_error_is_new_information():
+    route = respx.post(URL).mock(return_value=httpx.Response(202))
+    n = AlertNotifier(URL, db=HistoryDb([_row("plateloc", "unreachable", age_s=7200)]), now=FakeClock())
+    n.seed_from_history()
+
+    async def main():
+        n.observe("plateloc", reachable=True, state="error", message="vacuum")
+        await n.flush()
+        assert _events(route) == [("plateloc", "error")]
+
+    _run(main())
+
+
+@respx.mock
+def test_storm_row_seeds_every_collapsed_device_and_recovery_row_seeds_nothing():
+    route = respx.post(URL).mock(return_value=httpx.Response(202))
+    rows = [
+        _row("balance_lift", "unreachable", devices=["eufymake_connection", "gibbie_hotplate"]),
+        _row("cytation_5", "recovered"),
+    ]
+    n = AlertNotifier(URL, db=HistoryDb(rows), now=FakeClock())
+    assert n.seed_from_history() == 3
+    assert set(n._active_alert) == {"balance_lift", "eufymake_connection", "gibbie_hotplate"}
+
+    async def main():
+        for _ in range(2):
+            for d in ("balance_lift", "eufymake_connection", "gibbie_hotplate"):
+                n.observe(d, reachable=False, state="unknown")
+            await n.flush()
+        assert route.call_count == 0
+        # cytation_5 was recovered: a fresh fault alerts normally.
+        n.observe("cytation_5", reachable=True, state="error")
+        await n.flush()
+        assert _events(route) == [("cytation_5", "error")]
+
+    _run(main())
+
+
+def test_seed_backdates_cooldown_clock():
+    clock = FakeClock()
+    clock.t = 10_000.0
+    n = AlertNotifier(URL, db=HistoryDb([_row("plateloc", "error", age_s=600)]), now=clock, cooldown_s=1800)
+    n.seed_from_history()
+    assert n._last_sent_at["plateloc"] == pytest.approx(10_000.0 - 600, abs=5)
+
+
+def test_seed_is_a_noop_without_url_or_helper(monkeypatch):
+    monkeypatch.delenv("PYPOE_ALERT_URL", raising=False)
+    assert AlertNotifier(db=HistoryDb([_row("x", "error")])).seed_from_history() == 0
+    assert AlertNotifier(URL, db=FakeDb()).seed_from_history() == 0  # FakeDb has no helper

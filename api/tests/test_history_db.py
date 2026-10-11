@@ -574,3 +574,36 @@ def test_default_db_path_sits_inside_this_repo(monkeypatch):
     assert (repo_root / "api" / "app" / "db.py").is_file(), (
         f"default {p} does not live in the repo that owns app/db.py"
     )
+
+
+def test_get_latest_alerts_returns_last_audit_row_per_device(tmp_path):
+    """The alert notifier seeds its standing-alert set from this at startup."""
+    from app.events import ALERT_EMITTED
+
+    db = _db(tmp_path)
+    now = datetime.now(timezone.utc)
+    t = lambda s: (now - timedelta(seconds=s)).isoformat()  # noqa: E731
+    # plateloc: error then recovered → latest is the recovery
+    db.record_equipment_event("plateloc", ALERT_EMITTED, ts=t(900), to_state="error",
+                              payload={"event": "error", "outcome": "http_202"})
+    db.record_equipment_event("plateloc", ALERT_EMITTED, ts=t(600), to_state="ready",
+                              payload={"event": "recovered", "outcome": "http_202"})
+    # lle_ur5_arm: standing error
+    db.record_equipment_event("lle_ur5_arm", ALERT_EMITTED, ts=t(300), to_state="error",
+                              payload={"event": "error", "outcome": "http_202"})
+    # storm row carries the collapsed devices
+    db.record_equipment_event("balance_lift", ALERT_EMITTED, ts=t(120), to_state="unreachable",
+                              payload={"event": "unreachable", "devices": ["gibbie_hotplate"]})
+    # too old to matter
+    db.record_equipment_event("cytation_5", ALERT_EMITTED, ts=t(30 * 86400), to_state="unreachable",
+                              payload={"event": "unreachable"})
+    # unrelated event types are ignored
+    db.record_equipment_event("lle_ur5_arm", STATE_TRANSITION, ts=t(10), from_state="error", to_state="ready")
+
+    rows = db.get_latest_alerts(days=7)
+    by_dev = {r["device_id"]: r for r in rows}
+    assert set(by_dev) == {"plateloc", "lle_ur5_arm", "balance_lift"}
+    assert by_dev["plateloc"]["payload"]["event"] == "recovered"
+    assert by_dev["lle_ur5_arm"]["payload"]["event"] == "error"
+    assert by_dev["balance_lift"]["payload"]["devices"] == ["gibbie_hotplate"]
+    assert [r["device_id"] for r in rows] == ["balance_lift", "lle_ur5_arm", "plateloc"]  # newest first
