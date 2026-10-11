@@ -18,6 +18,7 @@ import { PlateWeigherTile } from "./PlateWeigherTile";
 import { PowerStripTile } from "./PowerStripTile";
 import { PressTile } from "./PressTile";
 import { RobotArmTile } from "./RobotArmTile";
+import { UrArmTile } from "./UrArmTile";
 import { UrMonitorTile } from "./UrMonitorTile";
 import { ShakerTile } from "./ShakerTile";
 import { SolidDoserTile } from "./SolidDoserTile";
@@ -83,6 +84,11 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
                   {snapshot.id === "lle_hplc" ? (
                     // Remain read-only even when a failed poll omits details.
                     <HplcMonitorTile snapshot={snapshot} />
+                  ) : snapshot.id === "ligand_ur5e" ? (
+                    // robot-motion's UR5e: session connect + STOP, like the
+                    // xArm's tile, but keyed on its arm session rather than
+                    // equipment_status (observation keeps that `ready`).
+                    <UrArmTile snapshot={snapshot} />
                   ) : isReadOnlyUrArm(snapshot.id) ? (
                     <UrMonitorTile snapshot={snapshot} />
                   ) : isMonitoringOnly(snapshot) ? (

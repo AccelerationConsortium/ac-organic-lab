@@ -62,7 +62,7 @@ export function isMonitoringOnly(snapshot: {
   status?: { details?: Record<string, unknown> | null } | null;
 }): boolean {
   // A failed poll may omit details. These arms must never fall through
-  // to the xArm control surface, including the uncommissioned UR5e prototype.
+  // to the xArm control surface.
   return isReadOnlyUrArm(snapshot.id) || snapshot.status?.details?.["monitoring_only"] === true;
 }
 

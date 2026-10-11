@@ -252,6 +252,20 @@ equipment:
     kind: robot_arm
     adapter: http
     protocol: "1.2"
+    # The dashboard tile's Connect / Disconnect / STOP go through the control
+    # passthrough, which must present the signed-in operator as the device's
+    # trusted-edge identity (the device accepts no cookie or api key of its
+    # own). Same secret as the edge's /ur5e block; it must also be in the
+    # dashboard API's env (deploy/README.md, "the secret goes in two places").
+    edge_secret_env: ROBOT_MOTION_EDGE_SHARED_SECRET
+    extras:
+      # robot-motion serves the xArm's lifecycle + safety-floor paths at the
+      # device root (/connect, /disconnect, /move/stop) and advertises
+      # "connect" rather than the MG400's startup/disable verbs. Declared so
+      # the resolver never has to sniff allowed_actions, which narrows during
+      # a move. /clear/errors there is holder-only (the stop latch belongs to
+      # the claim), so the tile does not offer it.
+      control_dialect: root
     gateway_fronted: false
     base_url: http://sdl2-pc-05.tail6a1dd7.ts.net:8075
     tailscale_ip: 100.64.254.18

@@ -1,11 +1,13 @@
 # Robot Motion (UR5e) panel
 
-The Ligand Development UR5e keeps a compact status tile with the same orange
-**Open control panel ↗** link used by xArm. Since 2026-10-06 it opens the
-device's own panel at the edge path **`/ur5e/web/`** in a new tab, exactly the
-arrangement the xArm uses at `/xarm5/web/` (`web/src/lib/device-panels.ts`).
-The Process Chemistry UR5-CB3 and Gibbie UR3e remain observation-only tiles
-without this link.
+The Ligand Development UR5e has a control tile of the xArm's shape
+(`web/src/components/UrArmTile.tsx`, since 2026-10-11): an INIT / ON toggle
+for the device's arm session, STOP, the controller / safety / gripper
+readings, and the same orange **Open control panel ↗** link. Since 2026-10-06
+that link opens the device's own panel at the edge path **`/ur5e/web/`** in a
+new tab, exactly the arrangement the xArm uses at `/xarm5/web/`
+(`web/src/lib/device-panels.ts`). The Process Chemistry UR5-CB3 and Gibbie
+UR3e remain observation-only tiles (`UrMonitorTile`) without this link.
 
 The panel itself is the shared xArm web UI served by the `robot-motion`
 service on the Prototyping PC (`sdl2-pc-05`, :8075); the robot-motion repo
@@ -54,13 +56,45 @@ documentation on `ligand_ur5e`, so it appears in `/api/catalog`) or its
 
 ## Physical-control boundary
 
-The device's `/control/*` routes (claim, connect, joint_step, stop) exist only
-when its local config enables them; the deployed `ligand_ur5e` config does
-not, and the UR5e is not commissioned. The panel's Take Control, Connect and
-motion buttons therefore receive 404 today. Enabling control is a device-side
-config change plus a restart in an authorized window, documented in the
-robot-motion repo (`JOINT_STEP_CONTROL.md`); nothing on the dashboard side
-widens it.
+The device's control routes exist only when its local config enables them.
+Since 2026-10-08 the deployed `ligand_ur5e` config does: claim-gated arm
+motion inside the (still placeholder) commissioned limits, the Robotiq
+gripper, manual mode and force zeroing, plus joint trajectories since
+2026-10-11 (robot-motion `ARM_MOTION.md`, `GRIPPER_CONTROL.md`,
+`UR5E_TRAJECTORY_PLAN.md`). Nothing on the dashboard side widens it.
+
+What the tile offers is the device's claim-free lifecycle and safety floor,
+exactly what the xArm tile offers:
+
+- **INIT / ON** — `POST /connect` / `POST /disconnect`, the arm session.
+  Observation (RTDE receive) is always on, so the device's
+  `equipment_status` reads `ready` whether or not a session is open; the
+  toggle therefore follows `details.control_session.open`, not the status.
+  The device advertises `connect` / `disconnect` in `allowed_actions` only
+  when it would accept them (pendant in Remote Control, nobody else holding
+  the claim, arm still), and the toggle follows that too, with the reason in
+  its tooltip.
+- **STOP** — `POST /move/stop` (the device's alias of `/control/stop`;
+  identity-only). It stops the arm, a running trajectory and the gripper.
+  Offered while the session is open or the gripper is moving; before Connect
+  there is nothing to stop and it is greyed, as in the panel.
+- **No CLEAR.** The device's Clear errors (`/control/reset`, alias
+  `/clear/errors`) clears *the claim holder's* stop latch and is claim-gated,
+  so it lives in the panel. The tile shows a `latched` pill instead.
+
+Moves, the gripper, manual mode and Take Control stay in the panel, which
+greys Take Control and STOP until the arm session is open (robot-motion
+`main.js?v=20261011-ur-session-gates`).
+
+These three tile actions reach the device through the control passthrough
+(`/api/equipment/ligand_ur5e/control/{connect,disconnect,move/stop}`), which
+presents the signed-in operator as the device's trusted-edge identity:
+`X-Auth-User` plus `X-Edge-Auth` from `ROBOT_MOTION_EDGE_SHARED_SECRET`
+(`edge_secret_env` on the registry entry). The device accepts no cookie or
+api key of its own, so without that variable in the **dashboard API's**
+environment every tile action answers 401 while the panel keeps working
+(it goes through Caddy, which has the secret). The operator must also be on
+the device's `authorized_operators` list.
 
 ## What was retired
 
@@ -82,7 +116,17 @@ with normal dashboard chrome.
 3. Verify from a tailnet host:
    `curl -s -o /dev/null -w '%{http_code}\n' http://100.64.254.6/ur5e/web/`
    → 401 (gate), not 502; signed in, the panel shows live UR5e readings.
+4. Dashboard API (for the tile's Connect / Disconnect / STOP): add the same
+   `ROBOT_MOTION_EDGE_SHARED_SECRET=…` to the api unit's edge-secrets
+   `EnvironmentFile` (`/etc/dashboard-integrations/ac-organic-lab-api.service.edge-secrets.env`)
+   and restart `ac-organic-lab-api`; `journalctl -u ac-organic-lab-api | grep
+   edge_secret_env` must stop reporting the variable as empty. Then, signed
+   in with a role on `ligand_ur5e` and with the pendant in Remote Control,
+   INIT opens the session (the panel's connection line turns on) and STOP
+   answers `stop_requested`.
 
-Offline regression coverage: `web/src/components/UrMonitorTile.test.tsx`
-(link target) and the robot-motion repo's `tests_robot_motion` suite (panel
-serving, title substitution, profile list, control gating).
+Offline regression coverage: `web/src/components/UrArmTile.test.tsx` (session
+toggle, STOP gating, link target), `UrMonitorTile.test.tsx` (the two
+observation-only arms), `skills/tests/test_registry.py` (edge secret and
+dialect on the entry) and the robot-motion repo's `tests_robot_motion` suite
+(panel serving, title substitution, profile list, control gating).
