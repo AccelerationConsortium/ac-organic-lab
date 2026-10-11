@@ -539,6 +539,37 @@ class LabDatabase:
             result.append(d)
         return result
 
+    def get_latest_alerts(self, *, days: int = 7) -> list[dict]:
+        """Most recent ``alert_emitted`` audit row per device within ``days``.
+
+        Read once at startup by the alert notifier to rebuild which devices
+        currently have a standing alert (``payload.event != "recovered"``) so
+        a process restart neither re-fires every standing fault nor loses the
+        eventual recovery. Rows are returned newest first; ``payload`` is
+        decoded. The subquery is per device over the ``(device_id, ts)``
+        index, cheap at the few thousand audit rows this table holds.
+        """
+        rows = self._fetchall(
+            "SELECT e.ts, e.device_id, e.to_state, e.message, e.payload"
+            " FROM equipment_events e"
+            " WHERE e.event_type = 'alert_emitted' AND e.ts >= ?"
+            "   AND e.ts = (SELECT MAX(ts) FROM equipment_events"
+            "               WHERE device_id = e.device_id"
+            "                 AND event_type = 'alert_emitted')"
+            " ORDER BY e.ts DESC",
+            (_iso_ago(days=days),),
+        )
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d["payload"]:
+                try:
+                    d["payload"] = json.loads(d["payload"])
+                except (TypeError, ValueError):
+                    d["payload"] = None
+            result.append(d)
+        return result
+
     def get_control_actions(
         self, *, limit: int = 100, device_id: Optional[str] = None
     ) -> list[dict]:

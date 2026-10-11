@@ -588,6 +588,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         notifier = AlertNotifier(db=db, client=app.state.control_client)
         if notifier.enabled:
             logger.info("Device-alert notifier enabled → %s", notifier.url)
+            # Rebuild the standing-alert set so this restart neither re-fires
+            # every device still in a fault state nor loses their recovery.
+            notifier.seed_from_history()
         poll_task = asyncio.create_task(
             _uptime_poll_loop(aggregator, db, registry, notifier=notifier)
         )
