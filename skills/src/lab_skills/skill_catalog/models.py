@@ -8,11 +8,19 @@ arguments before any HTTP round-trip.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
+from typing import Any
+from urllib.parse import quote
+
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..models import EquipmentKind, EquipmentState
+
+
+_PLACEHOLDER = re.compile(r"{([A-Za-z_][A-Za-z0-9_]*)}")
 
 
 class SkillDef(BaseModel):
@@ -75,6 +83,26 @@ class SkillDef(BaseModel):
 
     estimated_duration_s: float | None = None
     """Rough cost hint for planners. ``None`` means "unknown / not estimable"."""
+
+    def resolve_path(self, args: Mapping[str, Any] | None) -> tuple[str, dict[str, Any]]:
+        """Fill ``{name}`` placeholders in :attr:`endpoint` from ``args``.
+
+        Each placeholder's value is URL-quoted and removed from the body, so
+        ``/control/queue/{queue_id}`` with ``{"queue_id": "a b"}`` becomes
+        ``/control/queue/a%20b`` with an empty body. A placeholder with no
+        value raises ``ValueError``: sending the literal ``{name}`` would hit
+        the wrong URL.
+        """
+        body = dict(args or {})
+        names = _PLACEHOLDER.findall(self.endpoint)
+        missing = [n for n in names if body.get(n) is None]
+        if missing:
+            raise ValueError(f"{self.name}: missing value for path argument(s) {', '.join(missing)}")
+        path = self.endpoint
+        for name in names:
+            path = path.replace("{" + name + "}", quote(str(body.pop(name)), safe=""))
+        return path, body
+
 
 
 class Skill(BaseModel):

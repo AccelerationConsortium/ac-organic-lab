@@ -68,7 +68,7 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
       {tileStacks(snapshots).map((columns) => (
         <div
           key={columns[0][0].id}
-          className={`grid grid-cols-1 items-start gap-3 ${columns.length === 2 ? "lg:grid-cols-2" : ""}`}
+          className={`equipment-columns grid grid-cols-1 items-start gap-3 ${columns.length === 2 ? "lg:grid-cols-2" : ""}`}
         >
           {columns.map((column, columnIndex) => (
             <div key={columnIndex} className="flex min-w-0 flex-col gap-3">

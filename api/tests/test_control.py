@@ -1422,3 +1422,69 @@ def test_force_torque_config_is_read_only() -> None:
         assert client.post("/api/equipment/xarm_translocation/force-torque/config").status_code == 405
         assert client.get("/api/equipment/xarm_translocation/force-torque/data?revision=old").status_code == 422
     assert not respx.calls
+
+
+@respx.mock
+def test_caller_claim_token_is_forwarded_without_a_claim_dance() -> None:
+    """A caller holding its own claim (a joint-trajectory client: create,
+    upload and start must share one claim) sends X-Claim-Token. The proxy
+    forwards it and takes no claim of its own, so it never releases the
+    caller's claim mid-run."""
+
+    entry = _v11_entry()
+    app = _make_app(entry)
+    claim_route = respx.post("http://127.0.0.1:9999/control/claim")
+    release_route = respx.post("http://127.0.0.1:9999/control/release")
+    start_route = respx.post(
+        "http://127.0.0.1:9999/control/freehand/trajectory/s1/start"
+    ).mock(return_value=httpx.Response(200, json={"state": "running"}))
+    status_route = respx.get(
+        "http://127.0.0.1:9999/control/freehand/trajectory/s1"
+    ).mock(return_value=httpx.Response(200, json={"state": "running"}))
+    heartbeat_route = respx.post("http://127.0.0.1:9999/control/heartbeat").mock(
+        return_value=httpx.Response(204)
+    )
+
+    with TestClient(app) as client:
+        headers = {"X-Claim-Token": "caller-tok"}
+        r = client.post(
+            "/api/equipment/plateloc/control/freehand/trajectory/s1/start",
+            json={}, headers=headers,
+        )
+        g = client.get(
+            "/api/equipment/plateloc/control/freehand/trajectory/s1", headers=headers
+        )
+        h = client.post("/api/equipment/plateloc/control/heartbeat", headers=headers)
+
+    assert r.status_code == 200 and g.status_code == 200
+    assert h.status_code in (200, 204)
+    assert not claim_route.called
+    assert not release_route.called
+    for route in (start_route, status_route, heartbeat_route):
+        assert route.calls.last.request.headers["x-claim-token"] == "caller-tok"
+
+
+@respx.mock
+def test_without_a_caller_token_the_claim_dance_is_unchanged() -> None:
+    entry = _v11_entry()
+    app = _make_app(entry)
+    respx.post("http://127.0.0.1:9999/control/claim").mock(
+        return_value=httpx.Response(200, json={
+            "claim_token": "tok-dash", "heartbeat_interval_s": 10.0,
+            "expires_at": "2026-05-23T16:00:00Z",
+        })
+    )
+    action = respx.post("http://127.0.0.1:9999/control/seal/temperature").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    release = respx.post("http://127.0.0.1:9999/control/release").mock(
+        return_value=httpx.Response(204)
+    )
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/equipment/plateloc/control/seal/temperature",
+            json={"temperature_c": 50}, headers={"X-Claim-Token": "  "},
+        )
+    assert r.status_code == 200
+    assert action.calls.last.request.headers["x-claim-token"] == "tok-dash"
+    assert release.called

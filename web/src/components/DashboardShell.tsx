@@ -1,5 +1,6 @@
 "use client";
 
+import { useUserAuth } from "@/lib/user-auth";
 import { usePathname } from "next/navigation";
 
 /** Routes that frame a device panel full-height without dashboard chrome. The
@@ -9,13 +10,29 @@ export function isFramedWorkspace(pathname: string | null) {
   return pathname === "/equipment/lle_hplc/control" || pathname === "/equipment/lle_hplc/control/";
 }
 
+export function isDashboardPreview(pathname: string | null) {
+  return pathname === "/preview/dashboard" || !!pathname?.startsWith("/preview/dashboard/");
+}
+
 /** Presentation only: the root auth banner/providers and API gate stay intact. */
 export function DashboardChrome({ children }: { children: React.ReactNode }) {
-  return isFramedWorkspace(usePathname()) ? null : <>{children}</>;
+  const pathname = usePathname();
+  return isFramedWorkspace(pathname) || isDashboardPreview(pathname) ? null : <>{children}</>;
+}
+
+/** Keep the existing assistant mounted once across ordinary/preview navigation. */
+export function DashboardTools({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const { loading, authenticated, identity } = useUserAuth();
+  if (isFramedWorkspace(pathname)) return null;
+  if (isDashboardPreview(pathname) && (loading || !authenticated || identity?.role !== "admin")) return null;
+  return <>{children}</>;
 }
 
 export function DashboardContent({ children }: { children: React.ReactNode }) {
-  const standalone = isFramedWorkspace(usePathname());
+  const pathname = usePathname();
+  if (isDashboardPreview(pathname)) return <>{children}</>;
+  const standalone = isFramedWorkspace(pathname);
   return (
     <main className={standalone
       ? "flex min-h-0 flex-1 flex-col overflow-hidden"

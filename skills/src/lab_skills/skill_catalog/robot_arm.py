@@ -335,9 +335,95 @@ REALSENSE_SKILLS = [
 ]
 
 
+
+# ── Joint trajectories (xArm5, ServoJ) ────────────────────────────────
+# Client guide: xarm-translocation src/docs/TRAJECTORY_API.md. Upload a whole
+# time-stamped joint trajectory, then start it; the device plays it at 100 Hz
+# on its own clock. Same gates as the freehand moves (claim, OFF/ADVISORY).
+# Path arguments ({session_id}, {seq}) are filled into the URL by
+# SkillDef.resolve_path; status is a GET.
+
+
+class TrajectoryPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    t: float = Field(ge=0, description="Seconds from the trajectory start; strictly increasing, >= 10 ms apart.")
+    joints_deg: list[float] = Field(min_length=1, max_length=7, description="J1..J5 in degrees, base to wrist.")
+    velocities_deg_s: list[float] | None = Field(default=None, description="Optional; on every point or none.")
+    accelerations_deg_s2: list[float] | None = Field(default=None, description="Optional; with velocities.")
+
+
+class TrajectoryValidateArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    points: list[TrajectoryPoint] = Field(min_length=2, max_length=60000)
+    rate_hz: float | None = Field(default=None, description="Command rate; device default (100 Hz) when omitted.")
+
+
+class TrajectoryCreateArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    rate_hz: float | None = Field(default=None, description="Command rate; device default (100 Hz) when omitted.")
+
+
+class TrajectoryChunkArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    session_id: str = Field(description="From trajectory.create.")
+    seq: int = Field(ge=0, description="Chunk number: 0, 1, 2, ...")
+    points: list[TrajectoryPoint] = Field(min_length=1, max_length=5000)
+    final: bool = Field(default=False, description="True on the last chunk; start needs it.")
+
+
+class TrajectorySessionArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(description="From trajectory.create.")
+
+
+_TRAJ = "/control/freehand/trajectory"
+_TRAJ_NOTE = (" Joint trajectories on the xArm5: requires graph mode OFF or ADVISORY and an "
+              "active claim; validation is not a collision check.")
+
+class TrajectoryLimitsArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+TRAJECTORY_SKILLS = [
+    SkillDef(name="trajectory.limits", kind="robot_arm", endpoint=f"{_TRAJ}/limits", method="GET",
+             description="Read first: the limits a joint trajectory must meet right now (joint ranges, "
+                         "joint speed at the current safety level, acceleration, duration, points, "
+                         "rate, start tolerance, rules). Moves nothing.",
+             args_schema=TrajectoryLimitsArgs, estimated_duration_s=0.5),
+    SkillDef(name="trajectory.validate", kind="robot_arm", endpoint=f"{_TRAJ}/validate",
+             description="Check a whole joint trajectory against the arm and its measured pose; moves nothing."
+                         + _TRAJ_NOTE,
+             args_schema=TrajectoryValidateArgs, requires_states=["ready", "degraded", "dry_run"],
+             estimated_duration_s=2.0),
+    SkillDef(name="trajectory.create", kind="robot_arm", endpoint=_TRAJ,
+             description="Open a trajectory session (one per arm); returns session_id." + _TRAJ_NOTE,
+             args_schema=TrajectoryCreateArgs, requires_states=["ready", "dry_run"], estimated_duration_s=1.0),
+    SkillDef(name="trajectory.upload_chunk", kind="robot_arm", endpoint=f"{_TRAJ}/{{session_id}}/chunks/{{seq}}",
+             description="Upload chunk seq of the session's trajectory; the last carries final=true. "
+                         "Identical re-sends are harmless." + _TRAJ_NOTE,
+             args_schema=TrajectoryChunkArgs, requires_states=["ready", "dry_run"], estimated_duration_s=2.0),
+    SkillDef(name="trajectory.start", kind="robot_arm", endpoint=f"{_TRAJ}/{{session_id}}/start",
+             description="Start the complete trajectory. Accepted, not completed: poll trajectory.status."
+                         + _TRAJ_NOTE,
+             args_schema=TrajectorySessionArgs, requires_states=["ready", "dry_run"], estimated_duration_s=60.0),
+    SkillDef(name="trajectory.status", kind="robot_arm", endpoint=f"{_TRAJ}/{{session_id}}", method="GET",
+             description="Session state, progress (executed.t_exec), started_at_utc and measured joints.",
+             args_schema=TrajectorySessionArgs, estimated_duration_s=0.5),
+    SkillDef(name="trajectory.cancel", kind="robot_arm", endpoint=f"{_TRAJ}/{{session_id}}/cancel",
+             description="Slow the running trajectory to a stop along its path, then return to mode 0.",
+             args_schema=TrajectorySessionArgs, estimated_duration_s=3.0),
+]
+
+
 __all__ = [
     "REALSENSE_SKILLS",
     "FREEHAND_SKILLS",
+    "TRAJECTORY_SKILLS",
     "FreehandPositionArgs",
     "FreehandRelativeArgs",
     "FreehandJointsArgs",

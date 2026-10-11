@@ -1292,3 +1292,11 @@ describe("AssistantBubble plan mode (saved sessions)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
   });
 });
+
+it("opens the existing assistant from the workspace header event", async () => {
+  installFetch([]);
+  render(<AssistantBubble />);
+  act(() => { window.dispatchEvent(new Event("dashboard:open-assistant")); });
+  expect(await screen.findByRole("dialog", { name: "SDL Assistant" })).toBeTruthy();
+  expect(screen.getAllByRole("dialog", { name: "SDL Assistant" })).toHaveLength(1);
+});

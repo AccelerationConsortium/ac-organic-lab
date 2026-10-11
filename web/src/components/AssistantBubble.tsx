@@ -415,6 +415,11 @@ export function AssistantBubble() {
 function AssistantBubbleInner({ owner }: { owner: string | null }) {
   const { authenticated, identity } = useUserAuth();
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener("dashboard:open-assistant", show);
+    return () => window.removeEventListener("dashboard:open-assistant", show);
+  }, []);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [cacheReady, setCacheReady] = useState(false);
   const activeTurnIdRef = useRef<string>();
