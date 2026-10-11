@@ -673,8 +673,9 @@ state, track position).
 
 ### UR5e (`ligand_ur5e`) cameras (2026-10-07)
 
-The Ligand Development UR5e (robot-motion on `sdl2-pc-05:8075`, read-only RTDE
-observation) renders as the compact `UrMonitorTile`; its cameras live in the
+The Ligand Development UR5e (robot-motion on `sdl2-pc-05:8075`, RTDE
+observation plus claim-gated control) renders as `UrArmTile` (session
+INIT / ON, STOP; `UrMonitorTile` until 2026-10-11); its cameras live in the
 device panel at `/ur5e/web/` (see [`ROBOT_MOTION_PANEL.md`](ROBOT_MOTION_PANEL.md))
 and in the device API, which mirrors the xArm's camera routes (robot-motion
 commit `627e7e6`). Neither camera changes the arm's `equipment_status`: they

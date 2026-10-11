@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EquipmentSnapshot } from "@/types/api";
 import { isMonitoringOnly } from "@/lib/tile-policy";
@@ -26,22 +26,12 @@ function snapshot(): EquipmentSnapshot {
 afterEach(() => { cleanup(); auth.authenticated = true; auth.requestLogin.mockClear(); });
 
 describe("read-only UR arms", () => {
-  it("links only the Ligand UR5e to its edge-routed device panel in a new tab", () => {
-    const value = { ...snapshot(), id: "ligand_ur5e" };
-    render(<UrMonitorTile snapshot={value} />);
-    const link = screen.getByRole("link", { name: "Open control panel ↗" });
-    expect(link.getAttribute("href")).toBe("/ur5e/web/");
-    expect(link.getAttribute("target")).toBe("_blank");
-    expect(link.className).toContain("border-orange-300");
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  // The Ligand UR5e moved to UrArmTile on 2026-10-11 (its service has
+  // claim-gated control); its panel link is covered in UrArmTile.test.tsx.
+  it("does not add a workspace link to the Process Chemistry arm", () => {
+    render(<UrMonitorTile snapshot={snapshot()} />);
+    expect(screen.queryAllByRole("link")).toHaveLength(0);
     expect(screen.getByText("Read-only monitoring")).toBeTruthy();
-  });
-
-  it("prompts SDL2 login when the UR5e link is clicked while signed out", () => {
-    auth.authenticated = false;
-    render(<UrMonitorTile snapshot={{ ...snapshot(), id: "ligand_ur5e" }} />);
-    fireEvent.click(screen.getByRole("link", { name: "Open control panel ↗" }));
-    expect(auth.requestLogin).toHaveBeenCalledOnce();
   });
 
   it("does not add a workspace link to the Gibbie arm", () => {

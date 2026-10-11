@@ -81,6 +81,10 @@ def test_ur5e_prototype_is_registered_without_auto_connect() -> None:
     assert entry.gateway_fronted is False  # unknown readiness != offline service
     assert "ligand_development" in entry.tiles
     assert entry.pills.link_href == "/ur5e/web/"
+    # The tile's Connect / Disconnect / STOP go through the control passthrough
+    # as the trusted-edge identity; the device serves them at its root.
+    assert entry.edge_secret_env == "ROBOT_MOTION_EDGE_SHARED_SECRET"
+    assert entry.extras.get("control_dialect") == "root"
     assert entry.pills.link_label == "Open"
     assert not entry.pills.internal  # keep SDL2 equipment-role gating
     # Hosted on the Prototyping PC since 2026-10-06 (was the UPLC PC).

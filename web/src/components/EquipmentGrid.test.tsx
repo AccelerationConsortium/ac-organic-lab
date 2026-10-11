@@ -11,6 +11,7 @@ import { EquipmentStatusCard } from "./EquipmentStatusCard";
 // what the tiles draw.
 vi.mock("./XprBalanceTile", () => ({ XprBalanceTile: () => <div>XPR_TILE</div> }));
 vi.mock("./RobotArmTile", () => ({ RobotArmTile: () => <div>ROBOT_ARM_TILE</div> }));
+vi.mock("./UrArmTile", () => ({ UrArmTile: () => <div>UR_ARM_TILE</div> }));
 vi.mock("./LiquidHandlerTile", () => ({ LiquidHandlerTile: () => <div>LIQUID_HANDLER_TILE</div> }));
 vi.mock("./HplcMonitorTile", () => ({ HplcMonitorTile: () => <div>HPLC_MONITOR_TILE</div> }));
 vi.mock("./HplcTile", () => ({ HplcTile: () => <div>HPLC_CONTROL_TILE</div> }));
@@ -108,13 +109,25 @@ describe("EquipmentGrid dispatch for monitoring-only devices", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
-  it.each(["lle_ur5_arm", "gibbie_ur_arm", "ligand_ur5e"])("never exposes xArm controls for %s after a failed poll", (id) => {
+  it.each(["lle_ur5_arm", "gibbie_ur_arm"])("never exposes xArm controls for %s after a failed poll", (id) => {
     const failed = snap(id, "robot_arm", {});
     failed.fetch_error = { kind: "timeout", message: "timed out" } as EquipmentSnapshot["fetch_error"];
     render(<EquipmentGrid snapshots={[failed]} />);
     expect(screen.queryByText("ROBOT_ARM_TILE")).toBeNull();
     expect(screen.getByText("Read-only monitoring")).toBeTruthy();
     expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("gives the Ligand UR5e its own session tile, never the xArm's, even after a failed poll", () => {
+    render(<EquipmentGrid snapshots={[snap("ligand_ur5e", "robot_arm", {})]} />);
+    expect(screen.getByText("UR_ARM_TILE")).toBeTruthy();
+    expect(screen.queryByText("ROBOT_ARM_TILE")).toBeNull();
+    cleanup();
+    const failed = snap("ligand_ur5e", "robot_arm", {});
+    failed.fetch_error = { kind: "timeout", message: "timed out" } as EquipmentSnapshot["fetch_error"];
+    render(<EquipmentGrid snapshots={[failed]} />);
+    expect(screen.getByText("UR_ARM_TILE")).toBeTruthy();
+    expect(screen.queryByText("ROBOT_ARM_TILE")).toBeNull();
   });
 
   it("gives a monitoring-only liquid handler the generic card instead of the OT-2 tile", () => {
