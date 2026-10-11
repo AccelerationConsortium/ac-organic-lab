@@ -9,6 +9,13 @@ This integration is pinned to `opentrons-server` commit
 schemas; and `GET /openapi.json` proves that the corresponding HTTP routes are
 installed. A source checkout or SDK version does not prove a device deployment.
 
+Both OT-2 gateways (HTE and Complexation) use a deployment blow-out default of
+**90 µL/s**, configured by `OT2_HTTP_BLOWOUT_FLOW_UL_S=90`. Read the effective
+default from `/docs/agent` at `limits.flow_rates_ul_s.defaults.blow_out`.
+It applies when a command omits `flow_rate` and the session has no
+`set_flow_rate` override. Model-specific balance limits still apply; a rate
+above the balance limit is refused before motion, not silently lowered.
+
 `EquipmentClient.discover()` reads the three optional documentation endpoints.
 A 404 or 405 is reported in `EquipmentDiscovery.unavailable`, which identifies
 a reachable older deployment. Transport errors, server errors and malformed
