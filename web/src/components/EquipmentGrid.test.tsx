@@ -109,7 +109,7 @@ describe("EquipmentGrid dispatch for monitoring-only devices", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
-  it.each(["lle_ur5_arm", "gibbie_ur_arm", "gibbie_ur3e"])("never exposes xArm controls for %s after a failed poll", (id) => {
+  it.each(["lle_ur5_arm", "gibbie_ur_arm"])("never exposes xArm controls for %s after a failed poll", (id) => {
     const failed = snap(id, "robot_arm", {});
     failed.fetch_error = { kind: "timeout", message: "timed out" } as EquipmentSnapshot["fetch_error"];
     render(<EquipmentGrid snapshots={[failed]} />);

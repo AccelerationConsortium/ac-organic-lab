@@ -19,15 +19,28 @@ service's RTDE receive stream.
 
 Since 2026-10-12 a second robot-motion instance runs on the Gibbie PC
 (`sdl2-pc-04`, NSSM `robot-motion-ur3e`, Tailnet :8075, branch `debug-ur3e`)
-pointed at that bench's UR3e, as a read-only RTDE observer: `control_enabled`
-false, so no `/control` routes, an empty `allowed_actions` and
-`details.monitoring_only: true`. The dashboard gives it the observation tile
-(`UrMonitorTile`) next to `gibbie_ur_arm`, the monitor's Dashboard-Server
-probe of the same arm, which stays until retired. Its panel is read-only at
-the edge's `/ur3e/web/` (`deploy/Caddyfile.single-edge`, env
-`ROBOT_MOTION_UR3E_EDGE_SHARED_SECRET`, unset for now). The bench workflow
-owns the arm over RTDE during runs, so control comes in stages with an
-interlock against it: robot-motion `src/docs/UR3E_GIBBIE_PLAN.md`.
+pointed at that bench's UR3e. It started the day as a read-only RTDE
+observer and gained claim-gated control the same night, commissioned with
+the user at the arm: the arm session, moves inside an open-placeholder
+motion block, manual mode, force zeroing and the Robotiq 2F-85 (robot-motion
+`src/docs/UR3E_GIBBIE_PLAN.md` has the record). The dashboard therefore
+treats it exactly like `ligand_ur5e`: `UrArmTile` (INIT / ON for the arm
+session, STOP, the same readings and the orange panel link to the edge's
+`/ur3e/web/`), `edge_secret_env: ROBOT_MOTION_UR3E_EDGE_SHARED_SECRET` and
+`control_dialect: root` on the entry. The secret is the UR3e's own and
+follows the same two-places rule as the UR5e's: the edge's env file for the
+`/ur3e` block (`deploy/Caddyfile.single-edge`) and the dashboard API's
+edge-secrets env file for the tile's passthrough calls. Until both hold it,
+the panel serves read-only and the tile's INIT and STOP answer 401. The
+device's own service environment already has it. `gibbie_ur_arm`, the
+monitor's Dashboard-Server probe of the same arm, stays next to it until
+retired.
+
+One difference from the UR5e: the bench workflow (`sdl2_solid_dosing_XG` on
+the same PC) drives this arm over RTDE control during its runs, and a UR
+controller runs one control script at a time, so an arm session here and a
+Gibbie run exclude each other. Do not INIT while `gibbie_workflow` reads
+busy; a device-side interlock is a planned stage.
 
 ## Edge route and identity
 

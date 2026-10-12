@@ -483,10 +483,11 @@ an empty queue. This ID always dispatches to the monitor tile, including
 failed polls without `details`; no UPLC lifecycle controls or lock chip are
 attached. Other HPLC tiles retain their existing behavior.
 
-The Process Chemistry UR5-CB3 (`lle_ur5_arm`) and Gibbie UR3e
-(`gibbie_ur_arm`, and `gibbie_ur3e`, its robot-motion observer since
-2026-10-12) use `UrMonitorTile`: only controller mode, safety, and
-program state, with no lock, startup, motion, or control-panel link. Their
+The Process Chemistry UR5-CB3 (`lle_ur5_arm`) and the Gibbie monitor's UR3e
+probe (`gibbie_ur_arm`) use `UrMonitorTile`: only controller mode, safety,
+and program state, with no lock, startup, motion, or control-panel link.
+The robot-motion UR arms (`ligand_ur5e`, and `gibbie_ur3e` since 2026-10-12)
+use `UrArmTile` instead (`ROBOT_MOTION_PANEL.md`). Their
 identities remain read-only even when an unavailable monitor omits the
 `monitoring_only` flag. This does not apply to separately controlled UR arms.
 
