@@ -192,6 +192,65 @@ describe("PlateWeigherTile", () => {
     }
   });
 
+  // Stepper (Tic) lifts: after INIT the driver is energized but the unit stays
+  // requires_init until the operator's caliper reading at the stop is accepted.
+  const TIC_UNREFERENCED = {
+    equipment_status: "requires_init",
+    allowed_actions: ["startup", "reference", "jog", "stop", "shutdown", "read", "tare", "zero"],
+    message: "Lift: Energized but unreferenced; measure the rod at the stop",
+    components: { lid: undefined, lift: { connected: true, state: "requires_init", message: "Energized but unreferenced" } },
+    details: {
+      lid: undefined,
+      lift: { driver: "tic_stepper", reference_state: "unreferenced", extension_mm: null, energized: true, position_steps: 0 },
+      lift_pose: null,
+    },
+  };
+
+  it("offers Reference on an unreferenced stepper lift and posts the caliper reading", async () => {
+    render(<PlateWeigherTile snapshot={snapshot(TIC_UNREFERENCED)} />);
+    // Energized means ON, not INIT: nothing is off, the reference is what is missing.
+    expect(screen.queryByRole("button", { name: "INIT" })).toBeNull();
+    const reference = button("Reference");
+    expect(reference.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Rod reading at the stop (mm)"), { target: { value: "7.2" } });
+    expect(reference.disabled).toBe(true); // still needs the operator's assertion
+    fireEvent.click(screen.getByLabelText("Rod is at the retract stop"));
+    expect(reference.disabled).toBe(false);
+    fireEvent.click(reference);
+    await waitFor(() =>
+      expect(mocks.send).toHaveBeenLastCalledWith("flex_plate_weigher", "reference", {
+        measured_rod_mm: 7.2,
+        rod_at_retract_stop: true,
+      }),
+    );
+  });
+
+  it("shows no Reference row on a servo lift, which has no reference step", () => {
+    render(<PlateWeigherTile snapshot={snapshot()} />);
+    expect(screen.queryByRole("button", { name: "Reference" })).toBeNull();
+    expect(screen.queryByLabelText("Rod reading at the stop (mm)")).toBeNull();
+  });
+
+  it("hides the Reference row once referenced and shows the rod extension", () => {
+    render(
+      <PlateWeigherTile
+        snapshot={snapshot({
+          ...TIC_UNREFERENCED,
+          equipment_status: "ready",
+          allowed_actions: ["shutdown", "reference", "raise", "lower", "park", "stop", "read", "tare", "zero"],
+          message: "Ready",
+          details: {
+            lid: undefined,
+            lift: { driver: "tic_stepper", reference_state: "referenced", extension_mm: 7.2, energized: true, position_steps: -4000 },
+            lift_pose: "weighing",
+          },
+        })}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Reference" })).toBeNull();
+    expect(screen.getByText("7.20 mm")).toBeTruthy();
+  });
+
   it("explains a lid interlock 412 with the verb that clears it", async () => {
     const { ApiError } = await import("@/lib/api");
     mocks.send.mockRejectedValue(

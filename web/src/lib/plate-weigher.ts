@@ -31,6 +31,14 @@ export interface PlateWeigherState {
   poses: string[];
   lidFitted: boolean;
   lidState: string | null;
+  /** Stepper (Tic) lifts: `details.lift.reference_state` — "unreferenced"
+   *  until the operator's caliper reading at the stop is accepted. Null on
+   *  servo lifts, which have no reference step. */
+  referenceState: string | null;
+  /** Stepper lifts: physical rod extension from the stop, once referenced. */
+  extensionMm: number | null;
+  /** Stepper lifts: driver energized (true after `startup`, before reference). */
+  energized: boolean | null;
 }
 
 type Details = Record<string, unknown>;
@@ -74,6 +82,9 @@ export function parsePlateWeigher(snapshot: EquipmentSnapshot): PlateWeigherStat
     conditionRaw === "underload" || conditionRaw === "overload" ? conditionRaw : null;
   const stableRaw = balance["last_stable"];
   const posesRaw = rec(lift["poses_deg"]) ?? rec(lift["poses_steps"]) ?? rec(lift["poses"]);
+  const referenceRaw = lift["reference_state"];
+  const extensionRaw = lift["extension_mm"];
+  const energizedRaw = lift["energized"];
 
   return {
     massG,
@@ -88,6 +99,9 @@ export function parsePlateWeigher(snapshot: EquipmentSnapshot): PlateWeigherStat
     poses: posesRaw ? Object.keys(posesRaw) : [],
     lidFitted: Boolean(lidComponent) && lidComponent?.state !== "absent",
     lidState: typeof lidComponent?.state === "string" ? lidComponent.state : lid ? "unknown" : null,
+    referenceState: typeof referenceRaw === "string" ? referenceRaw : null,
+    extensionMm: typeof extensionRaw === "number" && Number.isFinite(extensionRaw) ? extensionRaw : null,
+    energized: typeof energizedRaw === "boolean" ? energizedRaw : null,
   };
 }
 

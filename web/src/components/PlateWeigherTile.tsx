@@ -53,6 +53,7 @@ const parseWeigher412: Parse412 = (body) => {
 
 const REQUIRED_LABELS: Readonly<Record<string, string>> = Object.freeze({
   startup: "INIT",
+  reference: "Reference",
   open_lid: "Open lid",
   close_lid: "Close lid",
   lower: "Weighing",
@@ -71,6 +72,8 @@ function pendingCopy(action: PlateWeigherAction, waitStable: boolean): string {
       return "Zeroing…";
     case "startup":
       return "Connecting the balance and syncing the lift…";
+    case "reference":
+      return "Declaring the stop as the lift's zero…";
     case "shutdown":
       return "Releasing the lift and closing the balance port…";
     case "raise":
@@ -104,13 +107,23 @@ export function PlateWeigherTile({ snapshot: polled }: { snapshot: EquipmentSnap
   const [waitStable, setWaitStable] = useState(true);
   const [pending, setPending] = useState<PlateWeigherAction | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Stepper lifts: the operator's caliper reading at the retract stop.
+  const [rodMmInput, setRodMmInput] = useState("");
+  const [rodAtStop, setRodAtStop] = useState(false);
   const inFlight = useRef(false);
 
   const status = snapshot.status.equipment_status;
   const allowed = snapshot.status.allowed_actions ?? [];
   const claim = claimHolder(snapshot.status);
   const requiresInit = status === "requires_init";
-  const isOn = !requiresInit && status !== "unknown";
+  // A stepper lift stays `requires_init` after INIT until it is referenced:
+  // the driver is energized, nothing is "off", so the toggle must read ON
+  // and the reference row below becomes the call to action.
+  const isOn = status !== "unknown" && (!requiresInit || weigher.energized === true);
+  const needsReference =
+    weigher.referenceState !== null && weigher.referenceState !== "referenced";
+  const rodMm = Number(rodMmInput);
+  const rodMmValid = rodMmInput.trim() !== "" && Number.isFinite(rodMm) && rodMm > 0 && rodMm < 50;
 
   // The device is the authority: its allowed_actions and its 412 refusals
   // come from one precondition function, so mirroring the list can never
@@ -228,12 +241,76 @@ export function PlateWeigherTile({ snapshot: polled }: { snapshot: EquipmentSnap
           Weight read: wait until stable · {STABLE_READ_MAX_S} s max
         </label>
 
+        {/* Reference row — stepper (Tic) lifts only. The Tic forgets its
+            position on every power drop, so after INIT the operator calipers
+            the exposed rod at the retract stop and declares it; the device
+            refuses readings outside its tolerance band (412). Servo lifts
+            never expose reference_state and never see this row. */}
+        {needsReference && advertised("reference") && (
+          <form
+            className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 dark:border-amber-700 dark:bg-amber-900/20"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (rodMmValid && rodAtStop) {
+                void send("reference", { measured_rod_mm: rodMm, rod_at_retract_stop: true });
+              }
+            }}
+          >
+            <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+              Reference
+            </span>
+            <label className="flex items-center gap-1">
+              <span className="sr-only">Rod reading at the stop (mm)</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0"
+                max="50"
+                placeholder="rod mm"
+                aria-label="Rod reading at the stop (mm)"
+                className="w-[7ch] rounded border border-slate-300 bg-white px-1 py-0.5 font-mono text-xs tabular-nums dark:border-slate-600 dark:bg-slate-900"
+                value={rodMmInput}
+                disabled={locked || pending !== null}
+                onChange={(event) => setRodMmInput(event.target.value)}
+              />
+              <span>mm</span>
+            </label>
+            <label className="flex items-center gap-1 text-ink-subtle dark:text-slate-400">
+              <input
+                type="checkbox"
+                aria-label="Rod is at the retract stop"
+                checked={rodAtStop}
+                disabled={locked || pending !== null}
+                onChange={(event) => setRodAtStop(event.target.checked)}
+              />
+              at the retract stop
+            </label>
+            <TileButton
+              type="submit"
+              variant="primary"
+              disabled={disabled("reference") || !rodMmValid || !rodAtStop}
+              title="Declare the current pose as the retract stop from your caliper reading. Nothing moves. Refused if the reading is outside the unit's tolerance band."
+            >
+              Reference
+            </TileButton>
+          </form>
+        )}
+
         {/* Lift row — plate pose, lid, park. Not on the OT-2 panel: its
             balance has no lift. */}
         <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800/40">
           <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
             Plate
           </span>
+          {weigher.extensionMm !== null && (
+            <span
+              className="font-mono text-[11px] tabular-nums text-ink-subtle dark:text-slate-400"
+              title="Physical rod extension from the retract stop (stepper lift)."
+            >
+              {weigher.extensionMm.toFixed(2)} mm
+            </span>
+          )}
           <PositionPill
             label="Raised"
             isCurrent={plateAt("raised")}
