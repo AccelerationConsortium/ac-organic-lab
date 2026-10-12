@@ -1107,8 +1107,10 @@ equipment:
     adapter: http
     protocol: "1.2"
     # sdl-lab-hostops on the Gibbie PC (sdl2-pc-04): NSSM `sdl-lab-hostops`,
-    # LocalSystem, whitelist = restartable = [gibbie-server]. Installed and
-    # verified 2026-09-06 (AGENTIC_LAB_DESIGN deployed-instances table).
+    # LocalSystem; whitelist gibbie-server, mt-xpr-balance (both restartable)
+    # and, since 2026-10-12, robot-motion-ur3e (inspect only: it holds the
+    # arm's control session). Installed and verified 2026-09-06
+    # (AGENTIC_LAB_DESIGN deployed-instances table).
     base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8060
     tailscale_ip: 100.64.254.17
     status_path: /status
