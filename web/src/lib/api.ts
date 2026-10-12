@@ -632,7 +632,8 @@ export type PlateWeigherAction =
   | "park"
   | "stop"
   | "load_plate"
-  | "unload_plate";
+  | "unload_plate"
+  | "reference";
 
 const PLATE_WEIGHER_PATHS: Readonly<Record<PlateWeigherAction, string>> = Object.freeze({
   startup: "startup",
@@ -648,6 +649,10 @@ const PLATE_WEIGHER_PATHS: Readonly<Record<PlateWeigherAction, string>> = Object
   stop: "stop",
   load_plate: "plate/load",
   unload_plate: "plate/unload",
+  // Stepper (Tic) lifts only: the operator's caliper reading at the retract
+  // stop declares the current pose as zero. Body `{measured_rod_mm,
+  // rod_at_retract_stop}`; refused outside the unit's tolerance band.
+  reference: "reference",
 });
 
 export interface PlateWeigherAck extends ControlAck {
