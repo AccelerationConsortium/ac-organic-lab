@@ -57,7 +57,7 @@ async def test_catalog_lists_platform_pages_first_then_the_rest() -> None:
 
     assert list(platforms)[: len(with_page)] == with_page
     assert list(platforms)[len(with_page):] == [
-        "web_services", "monitoring", "computers", "printers", "bench_prototypes",
+        "web_services", "monitoring", "computers", "printers",
     ]
     assert platforms["computers"]["label"] == "Computers and Servers"
 
