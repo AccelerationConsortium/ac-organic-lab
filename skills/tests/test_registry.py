@@ -100,7 +100,7 @@ def test_ur5e_prototype_is_registered_without_auto_connect() -> None:
     assert registry.by_id("hostops_dobot_pc").name == "Prototyping PC"
 
 
-def test_gibbie_ur3e_observer_is_registered_read_only() -> None:
+def test_gibbie_ur3e_is_registered_like_the_ur5e() -> None:
     registry = load_registry(REPO_ROOT / "equipment.yaml")
     entry = registry.by_id("gibbie_ur3e")
     assert entry is not None
@@ -108,9 +108,11 @@ def test_gibbie_ur3e_observer_is_registered_read_only() -> None:
     assert entry.base_url == "http://sdl2-pc-04.tail6a1dd7.ts.net:8075" and entry.status_path == "/status"
     assert entry.do_not_call_connect is True
     assert entry.gateway_fronted is False  # the device answers for itself
-    # Observer only: no edge secret and no control dialect until control is commissioned.
-    assert entry.edge_secret_env is None and not entry.extras.get("control_dialect")
-    assert entry.pills.link_href is None
+    # The tile's INIT/ON and STOP go through the passthrough as the trusted-edge
+    # identity, with the UR3e's own secret; the device serves them at its root.
+    assert entry.edge_secret_env == "ROBOT_MOTION_UR3E_EDGE_SHARED_SECRET"
+    assert entry.extras.get("control_dialect") == "root"
+    assert entry.pills.link_href == "/ur3e/web/"
     assert "sample_prep" in entry.tiles
     assert {doc.path for doc in entry.documentation} >= {"/docs", "/openapi.json", "/agent-docs", "/llms.txt"}
     config = yaml.safe_load((REPO_ROOT / "platforms.yaml").read_text(encoding="utf-8"))

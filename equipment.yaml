@@ -1459,12 +1459,19 @@ equipment:
     protocol: "1.2"
     # robot-motion's second instance (xarm-translocation branch debug-ur3e,
     # NSSM `robot-motion-ur3e` on the Gibbie PC, Tailnet :8075): the UR5e's
-    # service pointed at this bench's UR3e. RTDE observation only since
-    # 2026-10-12 (control_enabled false: no /control routes, an empty
-    # allowed_actions, details.monitoring_only true), with the shared panel
-    # read-only behind the edge's /ur3e/web/. gibbie_ur_arm above (the
-    # monitor's Dashboard-Server probe of the same arm) stays until retired.
-    # Control follows in stages: robot-motion src/docs/UR3E_GIBBIE_PLAN.md.
+    # service pointed at this bench's UR3e. Observer from 2026-10-12, with
+    # claim-gated control (arm session, moves inside an open-placeholder
+    # motion block, the Robotiq 2F-85) commissioned the same night with the
+    # user at the arm: robot-motion src/docs/UR3E_GIBBIE_PLAN.md. The tile is
+    # the UR5e's (UrArmTile): INIT/ON and STOP through the control passthrough
+    # as the trusted-edge identity, which needs this secret in the dashboard
+    # API's env as well as the edge's (same two-places rule as ligand_ur5e).
+    # The bench workflow drives the arm over RTDE during its runs, so an arm
+    # session here and a Gibbie run exclude each other. gibbie_ur_arm above
+    # (the monitor's Dashboard-Server probe of the same arm) stays until retired.
+    edge_secret_env: ROBOT_MOTION_UR3E_EDGE_SHARED_SECRET
+    extras:
+      control_dialect: root
     gateway_fronted: false
     base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8075
     tailscale_ip: 100.64.254.17
@@ -1480,7 +1487,10 @@ equipment:
       - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       sample_prep: { w: 2, h: 1 }
-    pills: {}
+    pills:
+      # Edge-routed device panel (forward_auth gated, like /ur5e/web/).
+      link_label: "Open"
+      link_href: /ur3e/web/
 
   - id: gibbie_balance
     name: XPR Balance (Gibbie)
