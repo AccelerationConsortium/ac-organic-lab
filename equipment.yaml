@@ -654,7 +654,7 @@ equipment:
       - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
       - { label: Agent guide, path: /agent-docs, kind: markdown }
     tiles:
-      complexation: { w: 2, h: 3 }
+      complexation: { w: 2, h: 1 }
 
   - id: lumastir
     name: Lumastir
