@@ -105,10 +105,15 @@ def mock_claim():
     return claim, release
 
 
+TRAJECTORY_ORDER = ["trajectory.limits", "trajectory.validate", "trajectory.create", "trajectory.upload_chunk",
+                    "trajectory.start", "trajectory.status", "trajectory.cancel"]
+TRAJECTORY = set(TRAJECTORY_ORDER)
+
+
 def test_ur_catalog_is_equipment_specific_and_does_not_mutate_xarm():
     before = list(SKILL_REGISTRY["robot_arm"])
     ur = skills_for("robot_arm", "ligand_ur5e")
-    assert [definition.name for definition in ur] == [ACTION]
+    assert [definition.name for definition in ur] == [ACTION, *TRAJECTORY_ORDER]
     assert ur[0].endpoint == ENDPOINT
     assert ur[0].method == "POST"
     assert ur[0].requires_components == {"ur_joint_step": "commissioned_idle"}
@@ -118,7 +123,48 @@ def test_ur_catalog_is_equipment_specific_and_does_not_mutate_xarm():
     assert skills_for("other", "ligand_ur5e") == []
     assert SKILL_REGISTRY["robot_arm"] == before
     ur.clear()
-    assert len(skills_for("robot_arm", "ligand_ur5e")) == 1
+    assert len(skills_for("robot_arm", "ligand_ur5e")) == 1 + len(TRAJECTORY)
+
+
+def test_ur_trajectory_skills_are_the_ur_contract():
+    """Six joints, 125 Hz default, the UR's gates in the text; the xArm's own
+    definitions (five joints, 100 Hz, graph mode) stay on xarm_translocation."""
+    ur = {d.name: d for d in skills_for("robot_arm", "ligand_ur5e")}
+    xarm = {d.name: d for d in skills_for("robot_arm", "xarm_translocation")}
+    assert TRAJECTORY <= set(ur) and TRAJECTORY <= set(xarm)
+    for name in TRAJECTORY:
+        assert ur[name].endpoint == xarm[name].endpoint and ur[name].method == xarm[name].method
+        assert ur[name] is not xarm[name]
+    point = ur["trajectory.upload_chunk"].args_schema.model_json_schema()["$defs"]["URTrajectoryPoint"]
+    assert point["properties"]["joints_deg"]["minItems"] == point["properties"]["joints_deg"]["maxItems"] == 6
+    with pytest.raises(ValidationError):
+        ur["trajectory.validate"].args_schema.model_validate(
+            {"points": [{"t": 0, "joints_deg": [0, 0, 0, 0, 0]}, {"t": 1, "joints_deg": [0, 0, 0, 0, 0]}]})
+    with pytest.raises(ValidationError):
+        ur["trajectory.create"].args_schema.model_validate({"rate_hz": 300})
+    path, body = ur["trajectory.upload_chunk"].resolve_path(
+        {"session_id": "s1", "seq": 2, "points": [{"t": 0, "joints_deg": [0] * 6}], "final": True})
+    assert path == "/control/freehand/trajectory/s1/chunks/2" and body["final"] is True
+    assert "125 Hz" in ur["trajectory.create"].args_schema.model_fields["rate_hz"].description
+    assert "Connected the arm" in ur["trajectory.start"].description
+    assert "graph" not in ur["trajectory.start"].description.lower()
+    # Availability follows the device's allowed_actions, where it advertises these names.
+    status = EquipmentStatus(
+        equipment_id="ligand_ur5e", equipment_kind="robot_arm", equipment_status="ready",
+        equipment_name="UR5e Arm", device_time="2026-10-12T00:00:00Z",
+        allowed_actions=["control.stop", "connect", "trajectory.limits", "trajectory.create"],
+        components={"control": {"connected": True, "state": "enabled"}},
+    )
+    assert _availability(ur["trajectory.create"], status, None, None)[0]
+    assert not _availability(ur["trajectory.start"], status, None, None)[0]
+    assert not _availability(ur[ACTION], status, None, None)[0]
+    # A receive-only service (no control component, nothing allowed) offers none of them,
+    # even though the SDK's requires_states fallback would otherwise pass the GETs.
+    observer = EquipmentStatus(
+        equipment_id="ligand_ur5e", equipment_kind="robot_arm", equipment_status="ready",
+        equipment_name="UR5e Arm", device_time="2026-10-12T00:00:00Z", allowed_actions=[],
+    )
+    assert not any(_availability(ur[name], observer, None, None)[0] for name in TRAJECTORY)
 
 
 @pytest.mark.parametrize("joint", range(1, 7))
@@ -221,7 +267,8 @@ async def test_receive_only_service_blocks_before_any_claim_or_command():
     mock_status(status_body(details={"monitoring_only": True, "control_enabled": False}))
     async with session() as lab:
         skills = await lab.skills()
-        assert len(skills) == 1 and not skills[0].available
+        assert {s.name for s in skills} == {ACTION, *TRAJECTORY}
+        assert not any(s.available for s in skills)   # no control component, empty allowed_actions
         report = await execute_plan(plan(), lab, owner="offline-fixture")
     assert not report.ok
     assert report.steps[0].status == "blocked"
