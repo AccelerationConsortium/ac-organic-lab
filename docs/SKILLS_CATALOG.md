@@ -244,3 +244,28 @@ successful motion HTTP response acknowledges acceptance; observe status for
 completion/errors before the next move. Raw moves clear the named pose pin;
 recover to a verified node before resuming graph motion. The linked device
 agent guide and OpenAPI provide the full operating semantics and schemas.
+
+## Joint trajectories (xArm5 and UR5e)
+
+`skills_for("robot_arm", "xarm_translocation")` and
+`skills_for("robot_arm", "ligand_ur5e")` both carry `trajectory.limits`,
+`trajectory.validate`, `trajectory.create`, `trajectory.upload_chunk`,
+`trajectory.start`, `trajectory.status` and `trajectory.cancel`: upload a
+whole time-stamped joint trajectory, then start it, and the device plays it
+on its own clock (ServoJ at 100 Hz on the xArm, servoJ at 125 Hz on the
+UR5e). The two lists are separate definitions on purpose: the xArm's point
+is five joints and its gates are graph mode OFF/ADVISORY plus the claim; the
+UR5e's point is six joints and its gates are an arm session an operator has
+opened plus the claim. Client guide for both: xarm-translocation
+`src/docs/TRAJECTORY_API.md`.
+
+`upload_chunk`, `start`, `status` and `cancel` carry path arguments
+(`{session_id}`, `{seq}`), which `SkillDef.resolve_path` fills into the URL
+and strips from the body; `limits` and `status` are GETs. A session belongs
+to the claim that created it, so a client holds one claim across create,
+upload and start (through the dashboard passthrough, send your own
+`X-Claim-Token`; the proxy forwards it instead of taking a per-request
+claim). The UR5e advertises these names in `allowed_actions` while each call
+would be honoured (since robot-motion's 2026-10-12 build); the xArm does not
+yet, so on a non-empty xArm list `lab.skills()` reports them unavailable
+until that device advertises them too.
