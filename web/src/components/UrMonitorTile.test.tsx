@@ -72,7 +72,7 @@ describe("read-only UR arms", () => {
   });
 
   it("keeps monitoring identities and the uncommissioned prototype read-only when flags are missing or false", () => {
-    for (const id of ["lle_ur5_arm", "gibbie_ur_arm", "gibbie_ur3e", "ligand_ur5e"]) {
+    for (const id of ["lle_ur5_arm", "ur3e_gibbie", "ligand_ur5e"]) {
       expect(isMonitoringOnly({ id })).toBe(true);
       expect(isMonitoringOnly({ id, status: { details: { monitoring_only: false } } })).toBe(true);
     }

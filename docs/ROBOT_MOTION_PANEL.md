@@ -15,7 +15,7 @@ substitutes only the tab title ("UR5e Control") and offers the configured
 robot as the single "Connect to" profile. Joint and TCP readings come from the
 service's RTDE receive stream.
 
-## Gibbie UR3e (`gibbie_ur3e`)
+## Gibbie UR3e (`ur3e_gibbie`)
 
 Since 2026-10-12 a second robot-motion instance runs on the Gibbie PC
 (`sdl2-pc-04`, NSSM `robot-motion-ur3e`, Tailnet :8075, branch `debug-ur3e`)
@@ -33,8 +33,9 @@ follows the same two-places rule as the UR5e's: the edge's env file for the
 edge-secrets env file for the tile's passthrough calls. Until both hold it,
 the panel serves read-only and the tile's INIT and STOP answer 401. The
 device's own service environment already has it. `gibbie_ur_arm`, the
-monitor's Dashboard-Server probe of the same arm, stays next to it until
-retired.
+Gibbie monitor's Dashboard-Server probe of the same arm, was retired from
+the registry on 2026-10-12 so the platform page shows one tile per arm; the
+monitor still serves that envelope at `/devices/gibbie_ur_arm/status`.
 
 One difference from the UR5e: the bench workflow (`sdl2_solid_dosing_XG` on
 the same PC) drives this arm over RTDE control during its runs, and a UR
