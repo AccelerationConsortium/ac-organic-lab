@@ -96,6 +96,49 @@ environment every tile action answers 401 while the panel keeps working
 (it goes through Caddy, which has the secret). The operator must also be on
 the device's `authorized_operators` list.
 
+## Agent skills (joint trajectories)
+
+Since 2026-10-12 `skills_for("robot_arm", "ligand_ur5e")` carries the seven
+`trajectory.*` skills (`skills/src/lab_skills/skill_catalog/ur_arm.py`):
+`limits` and `status` (GET), `validate`, `create`, `upload_chunk`, `start`
+and `cancel`, the xArm's joint-trajectory contract as the UR5e runs it (six
+joints, 125 Hz default, servoJ; client guide: robot-motion
+`src/docs/TRAJECTORY_API.md`, "UR5e"). They are separate definitions, not
+the xArm's list, so each arm's schema states its own joint count and gates.
+`/api/catalog` and the API Reference page list them with their schemas.
+
+Three things make them usable from here rather than only from the edge's
+`/ur5e` route:
+
+- The device advertises the same names in `/status.allowed_actions`
+  exactly while each call would be honoured (validate and start only while
+  a moveJ would run, that is with the arm session open and the arm still;
+  cancel only while a session is open; create withheld while one is open),
+  so `lab.skills()` availability and `execute_plan`'s pre-step checks need
+  no mapping. Every entry also requires the device's `control` component
+  to read `enabled`, which the device sends only with control on, so a
+  receive-only robot-motion (an empty `allowed_actions`) never offers them
+  through the SDK's `requires_states` fallback. Devices before
+  robot-motion's 2026-10-12 build send neither the names nor the component,
+  which reads as "never available".
+- The control passthrough presents the operator as the device's edge
+  identity (`edge_secret_env`, above) and forwards a caller's own
+  `X-Claim-Token` unchanged. A trajectory session belongs to the claim that
+  created it, so a client claims once through
+  `/api/equipment/ligand_ur5e/control/claim`, then sends that token on
+  create, upload, start, status and cancel (the dashboard adds no authority;
+  the device verifies the token). Without a caller token the proxy's
+  per-request claim would be released after `create`, and `start` would be
+  refused as another claim's.
+- Only `start` moves the arm, under the device's own gates: an operator has
+  Connected the arm (the tile's INIT or the panel), Remote Control on, the
+  pendant slider at 100 %, not latched, manual mode off. STOP (the tile or
+  `POST /control/stop`) halts a run at once.
+
+The older `ur.joint_step` entry stays as the joint-step contract; the
+deployed service runs its `motion` mode, which has no such endpoint, so the
+device never advertises it.
+
 ## What was retired
 
 The dashboard-side `/api/robot-motion/*` proxy (`api/app/robot_motion.py`),

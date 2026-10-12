@@ -48,11 +48,13 @@ def skills_for(kind: EquipmentKind, equipment_id: str | None = None) -> list[Ski
     """
 
     if kind == "robot_arm" and equipment_id == "ligand_ur5e":
-        from .ur_arm import UR_ARM_SKILLS
+        from .ur_arm import UR_ARM_SKILLS, UR_TRAJECTORY_SKILLS
 
         # UR must not inherit xArm's graph endpoints, and adding UR support
-        # must not register joint control for every robot_arm device.
-        return list(UR_ARM_SKILLS)
+        # must not register joint control for every robot_arm device. Its
+        # joint trajectories are the xArm's contract but its own definitions
+        # (six joints, 125 Hz, the arm-session gate).
+        return list(UR_ARM_SKILLS) + list(UR_TRAJECTORY_SKILLS)
     if kind == "robot_arm" and equipment_id == "xarm_translocation":
         from .robot_arm import FREEHAND_SKILLS, REALSENSE_SKILLS, TRAJECTORY_SKILLS
 

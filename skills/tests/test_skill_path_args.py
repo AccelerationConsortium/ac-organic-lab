@@ -64,3 +64,13 @@ def test_xarm_trajectory_skills_resolve():
         {"session_id": "abc", "seq": 0, "points": [], "final": True})
     assert path == "/control/freehand/trajectory/abc/chunks/0" and body == {"points": [], "final": True}
     assert skills["trajectory.status"].method == "GET"
+
+
+def test_ur5e_trajectory_skills_resolve_like_the_xarm():
+    skills = {s.name: s for s in skills_for("robot_arm", "ligand_ur5e")}
+    assert {"trajectory.limits", "trajectory.validate", "trajectory.create", "trajectory.upload_chunk",
+            "trajectory.start", "trajectory.status", "trajectory.cancel"} <= set(skills)
+    path, body = skills["trajectory.upload_chunk"].resolve_path(
+        {"session_id": "abc", "seq": 0, "points": [], "final": True})
+    assert path == "/control/freehand/trajectory/abc/chunks/0" and body == {"points": [], "final": True}
+    assert skills["trajectory.limits"].method == skills["trajectory.status"].method == "GET"
