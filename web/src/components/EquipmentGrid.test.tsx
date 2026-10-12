@@ -95,21 +95,21 @@ describe("EquipmentGrid dispatch for monitoring-only devices", () => {
     expect(screen.queryByText("HPLC_MONITOR_TILE")).toBeNull();
   });
 
-  it("gives the Gibbie UR arm a compact read-only card instead of the xArm tile", () => {
+  it("gives the Process Chemistry UR arm a compact read-only card instead of the xArm tile", () => {
     render(
       <EquipmentGrid
-        snapshots={[snap("gibbie_ur_arm", "robot_arm", { monitoring_only: true }, "UR Arm (Gibbie)")]}
+        snapshots={[snap("lle_ur5_arm", "robot_arm", { monitoring_only: true }, "UR5-CB3 Arm")]}
       />,
     );
     expect(screen.queryByText("ROBOT_ARM_TILE")).toBeNull();
-    expect(screen.getByText("UR Arm (Gibbie)")).toBeTruthy();
+    expect(screen.getByText("UR5-CB3 Arm")).toBeTruthy();
     expect(screen.getByText("observed only")).toBeTruthy();
     expect(screen.getByText("Read-only monitoring")).toBeTruthy();
     // Nothing to gate: no lock chip, no controls of any kind.
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
-  it.each(["lle_ur5_arm", "gibbie_ur_arm"])("never exposes xArm controls for %s after a failed poll", (id) => {
+  it.each(["lle_ur5_arm"])("never exposes xArm controls for %s after a failed poll", (id) => {
     const failed = snap(id, "robot_arm", {});
     failed.fetch_error = { kind: "timeout", message: "timed out" } as EquipmentSnapshot["fetch_error"];
     render(<EquipmentGrid snapshots={[failed]} />);
@@ -118,12 +118,12 @@ describe("EquipmentGrid dispatch for monitoring-only devices", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
-  it("gives the Ligand UR5e its own session tile, never the xArm's, even after a failed poll", () => {
-    render(<EquipmentGrid snapshots={[snap("ligand_ur5e", "robot_arm", {})]} />);
+  it.each(["ligand_ur5e", "ur3e_gibbie"])("gives %s its own session tile, never the xArm's, even after a failed poll", (id) => {
+    render(<EquipmentGrid snapshots={[snap(id, "robot_arm", {})]} />);
     expect(screen.getByText("UR_ARM_TILE")).toBeTruthy();
     expect(screen.queryByText("ROBOT_ARM_TILE")).toBeNull();
     cleanup();
-    const failed = snap("ligand_ur5e", "robot_arm", {});
+    const failed = snap(id, "robot_arm", {});
     failed.fetch_error = { kind: "timeout", message: "timed out" } as EquipmentSnapshot["fetch_error"];
     render(<EquipmentGrid snapshots={[failed]} />);
     expect(screen.getByText("UR_ARM_TILE")).toBeTruthy();

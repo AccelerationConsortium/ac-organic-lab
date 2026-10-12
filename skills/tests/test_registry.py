@@ -100,9 +100,9 @@ def test_ur5e_prototype_is_registered_without_auto_connect() -> None:
     assert registry.by_id("hostops_dobot_pc").name == "Prototyping PC"
 
 
-def test_gibbie_ur3e_is_registered_like_the_ur5e() -> None:
+def test_ur3e_gibbie_is_registered_like_the_ur5e() -> None:
     registry = load_registry(REPO_ROOT / "equipment.yaml")
-    entry = registry.by_id("gibbie_ur3e")
+    entry = registry.by_id("ur3e_gibbie")
     assert entry is not None
     assert entry.name == "UR3e Arm (Gibbie)" and entry.kind == "robot_arm" and entry.protocol == "1.2"
     assert entry.base_url == "http://sdl2-pc-04.tail6a1dd7.ts.net:8075" and entry.status_path == "/status"
@@ -117,7 +117,10 @@ def test_gibbie_ur3e_is_registered_like_the_ur5e() -> None:
     assert {doc.path for doc in entry.documentation} >= {"/docs", "/openapi.json", "/agent-docs", "/llms.txt"}
     config = yaml.safe_load((REPO_ROOT / "platforms.yaml").read_text(encoding="utf-8"))
     section = next(s for s in config["sections"] if s["id"] == "sample_prep")
-    assert "gibbie_ur3e" in section["equipment"] and "gibbie_ur_arm" in section["equipment"]
+    assert "ur3e_gibbie" in section["equipment"]
+    # The Gibbie monitor's own probe of this arm was retired on 2026-10-12: one tile per arm.
+    assert registry.by_id("gibbie_ur_arm") is None and "gibbie_ur_arm" not in section["equipment"]
+    assert registry.by_id("gibbie_ur3e") is None
 
 
 def test_bambu_gateway_and_printers_are_registered() -> None:

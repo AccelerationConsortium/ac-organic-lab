@@ -187,7 +187,7 @@ hosts:
       Opentrons Flex, IKA hotplate) and hosts the read-only
       sdl2-gibbie-server monitor (:8070), mt-xpr-balance (:8081) and, since
       2026-10-12, robot-motion-ur3e (:8075, the UR3e's RTDE observer,
-      gibbie_ur3e). On the lab switch at 192.168.254.79, with the UR3e at
+      ur3e_gibbie). On the lab switch at 192.168.254.79, with the UR3e at
       .89 and the XPR at .83. Only cmd is offered until WSL is confirmed
       present.
     networks:

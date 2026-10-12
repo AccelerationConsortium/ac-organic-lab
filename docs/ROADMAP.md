@@ -127,6 +127,12 @@ the Flex's hardware — so robot-server stays stopped during Gibbie sessions
 state: the UR arm and balance read `unknown`; the Flex reads `unknown` until
 the SSH probe's key passphrase is set in the service env.
 
+**UR3e handed to robot-motion, 2026-10-12.** The arm now has its own
+service on the Gibbie PC (`robot-motion-ur3e`, :8075, registry id
+`ur3e_gibbie`, `UrArmTile`, `docs/ROBOT_MOTION_PANEL.md`), so the monitor's
+`gibbie_ur_arm` entry was retired from the registry the same day to keep one
+tile per arm; `sdl2-gibbie-server` still serves its envelope.
+
 **Why the arm and balance are unreachable (traced 2026-09-06).** The Gibbie PC
 is on the lab switch at **192.168.254.79** (wired; the same segment as the Flex
 at .81, the HTE OT-2 at .50 and the Cytation PC at .54 — confirmed from the

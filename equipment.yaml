@@ -1435,24 +1435,7 @@ equipment:
           depth_path: /devices/gibbie_flex/pipette_camera/depth
           ptz_capable: false
 
-  - id: gibbie_ur_arm
-    name: UR3e Arm (Gibbie)
-    kind: robot_arm
-    adapter: http
-    protocol: "1.2"
-    gateway_fronted: true
-    # UR Dashboard Server queries only (robotmode / safetystatus /
-    # programState). busy/running == a program playing (the RTDE control
-    # program the workflow uploads); safety stops -> error, e-stop -> e_stop.
-    base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8070
-    tailscale_ip: 100.64.254.17
-    status_path: /devices/gibbie_ur_arm/status
-    poll_timeout_seconds: 8.0
-    tiles:
-      sample_prep: { w: 2, h: 1 }
-    pills: {}
-
-  - id: gibbie_ur3e
+  - id: ur3e_gibbie
     name: UR3e Arm (Gibbie)
     kind: robot_arm
     adapter: http
@@ -1467,8 +1450,10 @@ equipment:
     # as the trusted-edge identity, which needs this secret in the dashboard
     # API's env as well as the edge's (same two-places rule as ligand_ur5e).
     # The bench workflow drives the arm over RTDE during its runs, so an arm
-    # session here and a Gibbie run exclude each other. gibbie_ur_arm above
-    # (the monitor's Dashboard-Server probe of the same arm) stays until retired.
+    # session here and a Gibbie run exclude each other. The monitor's own
+    # probe of this arm (gibbie_ur_arm, /devices/gibbie_ur_arm/status on
+    # :8070, 2026-09-06) was retired from the registry on 2026-10-12 in favour
+    # of this entry; the monitor still serves that envelope.
     edge_secret_env: ROBOT_MOTION_UR3E_EDGE_SHARED_SECRET
     extras:
       control_dialect: root
