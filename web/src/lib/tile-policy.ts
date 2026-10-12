@@ -52,9 +52,11 @@ const DESTRUCTIVE_KINDS: ReadonlySet<Kind> = new Set<Kind>([
  * convention, not contract.
  */
 export function isReadOnlyUrArm(id: string | undefined): boolean {
-  // The Ligand UR5e is a read-only prototype until its controller is
-  // implemented and commissioned in a separate reviewed deployment.
-  return id === "lle_ur5_arm" || id === "gibbie_ur_arm" || id === "ligand_ur5e";
+  // The Ligand UR5e has its own session tile (EquipmentGrid checks it
+  // first); it stays here so a failed poll never falls through to the xArm
+  // tile. The Gibbie UR3e's robot-motion observer (gibbie_ur3e, since
+  // 2026-10-12) is read-only until its control stages are commissioned.
+  return id === "lle_ur5_arm" || id === "gibbie_ur_arm" || id === "gibbie_ur3e" || id === "ligand_ur5e";
 }
 
 export function isMonitoringOnly(snapshot: {

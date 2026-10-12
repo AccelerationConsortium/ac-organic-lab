@@ -37,6 +37,9 @@ export const DEVICE_PANEL_PATHS: Readonly<Record<string, string>> = Object.freez
   // Robot Motion service on the Prototyping PC (:8075) serving the shared
   // xArm panel; replaced the dashboard-framed /utils/robot_motion 2026-10-06.
   ligand_ur5e: "/ur5e/web/",
+  // robot-motion's second instance on the Gibbie PC (:8075), the UR3e;
+  // read-only panel until its control stages are commissioned.
+  gibbie_ur3e: "/ur3e/web/",
 });
 
 /** The device's own panel path, or `null` when it hosts no panel. */

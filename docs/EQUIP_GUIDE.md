@@ -484,7 +484,8 @@ failed polls without `details`; no UPLC lifecycle controls or lock chip are
 attached. Other HPLC tiles retain their existing behavior.
 
 The Process Chemistry UR5-CB3 (`lle_ur5_arm`) and Gibbie UR3e
-(`gibbie_ur_arm`) use `UrMonitorTile`: only controller mode, safety, and
+(`gibbie_ur_arm`, and `gibbie_ur3e`, its robot-motion observer since
+2026-10-12) use `UrMonitorTile`: only controller mode, safety, and
 program state, with no lock, startup, motion, or control-panel link. Their
 identities remain read-only even when an unavailable monitor omits the
 `monitoring_only` flag. This does not apply to separately controlled UR arms.

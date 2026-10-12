@@ -69,6 +69,7 @@ sections:
       - gibbie_workflow
       - gibbie_balance
       - gibbie_ur_arm
+      - gibbie_ur3e
 
   - id: process_chemistry
     title: Process Chemistry Platform
