@@ -15,6 +15,20 @@ substitutes only the tab title ("UR5e Control") and offers the configured
 robot as the single "Connect to" profile. Joint and TCP readings come from the
 service's RTDE receive stream.
 
+## Gibbie UR3e (`gibbie_ur3e`)
+
+Since 2026-10-12 a second robot-motion instance runs on the Gibbie PC
+(`sdl2-pc-04`, NSSM `robot-motion-ur3e`, Tailnet :8075, branch `debug-ur3e`)
+pointed at that bench's UR3e, as a read-only RTDE observer: `control_enabled`
+false, so no `/control` routes, an empty `allowed_actions` and
+`details.monitoring_only: true`. The dashboard gives it the observation tile
+(`UrMonitorTile`) next to `gibbie_ur_arm`, the monitor's Dashboard-Server
+probe of the same arm, which stays until retired. Its panel is read-only at
+the edge's `/ur3e/web/` (`deploy/Caddyfile.single-edge`, env
+`ROBOT_MOTION_UR3E_EDGE_SHARED_SECRET`, unset for now). The bench workflow
+owns the arm over RTDE during runs, so control comes in stages with an
+interlock against it: robot-motion `src/docs/UR3E_GIBBIE_PLAN.md`.
+
 ## Edge route and identity
 
 `deploy/Caddyfile.single-edge` has a `/ur5e` block of the same shape as

@@ -154,6 +154,26 @@ http://:8080 {
                 header_up X-Edge-Auth {env.ROBOT_MOTION_EDGE_SHARED_SECRET}
             }
         }
+        # Gibbie UR3e panel (gibbie_ur3e): robot-motion's second instance on
+        # the Gibbie PC :8075, same shape as /ur5e. Read-only observer since
+        # 2026-10-12; ROBOT_MOTION_UR3E_EDGE_SHARED_SECRET is its own secret
+        # (unset until control is commissioned, when the device needs it too).
+        @ur3e_ui {
+            path /ur3e /ur3e/*
+            not path /ur3e/ws
+        }
+        redir /ur3e /ur3e/web/ 308
+        redir /ur3e/ /ur3e/web/ 308
+        redir /ur3e/web /ur3e/web/ 308
+        forward_auth @ur3e_ui 127.0.0.1:8009 {
+            uri /auth/verify
+            copy_headers X-Auth-User X-Auth-Role
+        }
+        handle_path /ur3e/* {
+            reverse_proxy sdl2-pc-04.tail6a1dd7.ts.net:8075 {
+                header_up X-Edge-Auth {env.ROBOT_MOTION_UR3E_EDGE_SHARED_SECRET}
+            }
+        }
         @mg400_ui {
             path /mg400 /mg400/*
             not path /mg400/ws
