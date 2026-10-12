@@ -49,6 +49,6 @@ def test_balance_lift_args_fail_closed():
 
 def test_balance_lift_registry_entry():
     r = load_registry(Path(__file__).resolve().parents[2] / "equipment.yaml")
-    e = r.by_id("balance_lift")
+    e = r.by_id("balance_lift_complexation")
     assert e.kind == "other" and e.adapter == "http" and e.protocol == "1.2"
     assert e.base_url.endswith(":8078") and e.status_path == "/status"

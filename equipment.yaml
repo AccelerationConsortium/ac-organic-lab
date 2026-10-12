@@ -605,30 +605,6 @@ equipment:
         - { id: main, label: Main, rtsp_path: stream1, ptz_capable: false }
 
   # Lumastir uses equipment-specific SDK skills and a shared claim across its outputs.
-  - id: balance_lift
-    name: Balance lift
-    kind: other
-    adapter: http
-    # weigh-every-plate (github.com/cyrilcaoyang/weigh-every-plate), the
-    # balance-lift build for OT-2/Flex deck slots: its `tic_stepper` lift
-    # driver, formerly `balance_lift.motion` in flex-balance-lift (absorbed
-    # with full history and archived 2026-10-07; routes unchanged).
-    # STATUS_SPEC v1.2 with hard claim enforcement. Runs on the bench Mac
-    # next to the Tic T825 (config `bench_tic_lift`); the
-    # service must bind its Tailscale address (not loopback) to be polled.
-    # Added 2026-10-01 after decoupled commissioning; a reviewed Plan still
-    # gates every move. Catalog: skill_catalog/plate_lift.py (equipment-
-    # specific, not the generic `other` kind).
-    protocol: "1.2"
-    base_url: http://sdl2-macbook-yang.tail6a1dd7.ts.net:8078
-    tailscale_ip: 100.64.254.7
-    status_path: /status
-    poll_timeout_seconds: 8.0
-    documentation:
-      - { label: Swagger UI, path: /docs, kind: swagger }
-      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
-      - { label: Agent guide, path: /agent-docs, kind: markdown }
-
   # Complexation balance lift: weigh-every-plate on the UPLC PC
   # (sdl2-pc-06-uplc, NSSM service weigh-every-plate-lift, config
   # ot2_complexation). P8 on Tic T825 #00506257 under the Sartorius WZB254-N
@@ -638,7 +614,9 @@ equipment:
   # STATUS_SPEC v1.2 with hard claims; reference needs an operator caliper
   # reading. Binds the Tailscale address only (that PC's LAN firewall is
   # off). Poses set by eye; plate heights at `weighing` not yet measured.
-  # Catalog: skill_catalog/plate_lift.py, shared with balance_lift.
+  # Catalog: skill_catalog/plate_lift.py. (The bench tester `balance_lift`
+  # on the bench Mac was retired from the registry 2026-10-12; it returns
+  # under a new host when the unit moves to the Gibbie Flex.)
   - id: balance_lift_complexation
     name: Balance lift (Complexation)
     kind: other

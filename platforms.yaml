@@ -137,9 +137,3 @@ catalog_groups:
     title: 3D Printers
     # Rendered together on /utils/printers.
     equipment: [bambu_p1s_01, bambu_h2d_01, eufymake_connection, elegoo_saturn_ultra_connection]
-
-  - id: bench_prototypes
-    title: Bench prototypes
-    # Commissioned on a bench machine and on no platform yet; move an entry
-    # into its section when it joins one.
-    equipment: [balance_lift]
