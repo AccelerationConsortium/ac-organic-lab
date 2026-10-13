@@ -121,6 +121,15 @@ web/ (Next.js :8000)  ->  api/ (FastAPI :8001)  ->  skills/ (lab-skills SDK)  ->
   `deploy/README.md`. Don't assume the dev machine (this MacBook) is the
   deploy target.
 
+- **Device authorization is central.** Who may control a device is decided
+  by the auth roster, at the edge (`forward_auth … uri
+  /auth/verify?equipment=<key>` on every device-panel block) and in the
+  dashboard's per-equipment check (`api/app/control.py`). Devices verify only
+  that the edge vouched for the identity (`X-Edge-Auth`) and bind claims to
+  it; they keep no operator list of their own (robot-motion and
+  mt-xpr-balance-server refuse the old keys at load). Grant access in the
+  roster, never on a device PC.
+
 - **Manual workflow steps** use the SDK's `on_manual` provider and the runner's
   durable acknowledgment journal (`api/app/manual_steps.py`). Physical access
   roles stay claimed while the human acts; never replace this with a device

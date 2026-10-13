@@ -452,7 +452,9 @@ def create_app(
     @app.get("/auth/verify")
     async def verify(request: Request) -> Response:
         """Forward-auth: 200 + identity headers when a session cookie (human) or
-        ``X-Api-Key`` (machine principal) is valid, else 401. Caddy copies
+        ``X-Api-Key`` (machine principal) is valid, else 401. With
+        ``?equipment=<key>`` (device panels at the edge) the principal must also
+        hold a role on that equipment, else 403. Caddy copies
         X-Auth-* downstream so control.py stamps the real owner into the claim.
 
         Unauthenticated **browser page navigations** (``Accept: text/html``) get a
@@ -490,6 +492,23 @@ def create_app(
                 raise HTTPException(
                     status_code=403,
                     detail="path not permitted for this principal",
+                )
+
+        # Per-equipment gate for device panels: the edge writes
+        # `uri /auth/verify?equipment=<key>` on a device's forward_auth, so
+        # reaching the panel (and every control route behind it) needs a role on
+        # that equipment, decided here by the same resolver as /authz/check.
+        # Devices behind such a block trust the edge identity and keep no
+        # operator list of their own. More than one value is refused rather
+        # than resolved: whichever one won would be the caller's choice.
+        equipment = request.query_params.getlist("equipment")
+        if equipment:
+            if len(equipment) != 1 or effective_device_role(
+                user, equipment[0], _membership(request)
+            ) is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"no role on equipment {equipment[0]!r} for this principal",
                 )
 
         # Also propagate the project-based data scope so forward_auth-fronted

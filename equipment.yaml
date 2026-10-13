@@ -1464,7 +1464,8 @@ equipment:
     protocol: "1.2"
     gateway_fronted: true
     # mt-xpr-balance fronts the XPR SOAP service on port 81.
-    # Live control requires the trusted dashboard identity and configured owner.
+    # Live control requires the trusted dashboard identity; who may control it
+    # is the dashboard's central per-equipment check (no owner on the device).
     base_url: http://sdl2-pc-04.tail6a1dd7.ts.net:8081
     tailscale_ip: 100.64.254.17
     status_path: /status
@@ -1576,8 +1577,8 @@ equipment:
     # mt-xpr-balance-server on the LLE PC (NSSM `mt-xpr-balance`, deployed and
     # verified 2026-09-10) fronts the Mettler XPR SOAP web service at
     # 192.168.254.13:81 and holds one SOAP session with it. Live control
-    # requires the trusted dashboard identity and the configured owner
-    # (XPR_CONTROL_USER in the device's service env). The process-chem-monitor's
+    # requires the trusted dashboard identity; who may control it is the
+    # dashboard's central per-equipment check. The process-chem-monitor's
     # reachability-only envelope for this balance still exists at
     # :8070/devices/lle_xpr_balance/status but is no longer polled.
     base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8081
