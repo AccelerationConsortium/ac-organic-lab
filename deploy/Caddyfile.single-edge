@@ -113,6 +113,10 @@ http://:8080 {
         # as gaia's edge: forward_auth gates the UI; the /ws path is EXEMPT because
         # the WebSocket upgrade cannot carry the auth round-trip; each device checks
         # a per-device edge secret from EnvironmentFile device-edge-secrets.env.
+        # Authorization is decided HERE, not on the device: each forward_auth
+        # names its equipment (`/auth/verify?equipment=<equipment.yaml key>`), so
+        # the caller needs a role on that device per the central roster, and the
+        # device keeps no operator list of its own (2026-10-12).
         @xarm_ui {
             path /xarm5 /xarm5/*
             not path /xarm5/ws
@@ -121,7 +125,7 @@ http://:8080 {
         redir /xarm5/ /xarm5/web/ 308
         redir /xarm5/web /xarm5/web/ 308
         forward_auth @xarm_ui 127.0.0.1:8009 {
-            uri /auth/verify
+            uri /auth/verify?equipment=xarm_translocation
             copy_headers X-Auth-User X-Auth-Role
         }
         handle_path /xarm5/* {
@@ -146,7 +150,7 @@ http://:8080 {
         redir /ur5e/ /ur5e/web/ 308
         redir /ur5e/web /ur5e/web/ 308
         forward_auth @ur5e_ui 127.0.0.1:8009 {
-            uri /auth/verify
+            uri /auth/verify?equipment=ligand_ur5e
             copy_headers X-Auth-User X-Auth-Role
         }
         handle_path /ur5e/* {
@@ -166,7 +170,7 @@ http://:8080 {
         redir /ur3e/ /ur3e/web/ 308
         redir /ur3e/web /ur3e/web/ 308
         forward_auth @ur3e_ui 127.0.0.1:8009 {
-            uri /auth/verify
+            uri /auth/verify?equipment=ur3e_gibbie
             copy_headers X-Auth-User X-Auth-Role
         }
         handle_path /ur3e/* {
@@ -183,7 +187,7 @@ http://:8080 {
         redir /mg400/web /mg400/web/ 308
         redir /mg400/ui /mg400/web/ 308
         forward_auth @mg400_ui 127.0.0.1:8009 {
-            uri /auth/verify
+            uri /auth/verify?equipment=dobot_mg400
             copy_headers X-Auth-User X-Auth-Role
         }
         handle_path /mg400/* {
@@ -198,7 +202,7 @@ http://:8080 {
         redir /ot2/hte/ /ot2/hte/ui/ 308
         redir /ot2/hte/ui /ot2/hte/ui/ 308
         forward_auth @ot2_hte 127.0.0.1:8009 {
-            uri /auth/verify
+            uri /auth/verify?equipment=ot2_hte
             # Projects feed the approval card's ELN project picker (/me).
             copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
         }
@@ -214,7 +218,7 @@ http://:8080 {
         redir /ot2/complexation/ /ot2/complexation/ui/ 308
         redir /ot2/complexation/ui /ot2/complexation/ui/ 308
         forward_auth @ot2_complexation 127.0.0.1:8009 {
-            uri /auth/verify
+            uri /auth/verify?equipment=ot2_complexation
             # Projects feed the approval card's ELN project picker (/me).
             copy_headers X-Auth-User X-Auth-Role X-Auth-Projects X-Auth-Pi-Projects
         }

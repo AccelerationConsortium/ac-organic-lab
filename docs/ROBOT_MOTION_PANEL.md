@@ -121,8 +121,12 @@ presents the signed-in operator as the device's trusted-edge identity:
 (`edge_secret_env` on the registry entry). The device accepts no cookie or
 api key of its own, so without that variable in the **dashboard API's**
 environment every tile action answers 401 while the panel keeps working
-(it goes through Caddy, which has the secret). The operator must also be on
-the device's `authorized_operators` list.
+(it goes through Caddy, which has the secret). Who may operate is decided
+centrally, never on the device: the operator needs a role on the equipment in
+the auth roster, checked by the dashboard for tile actions and by the edge's
+`forward_auth … uri /auth/verify?equipment=<key>` for the panel. Since
+2026-10-12 robot-motion keeps no operator list and refuses a config that still
+carries `authorized_operators`.
 
 ## Agent skills (joint trajectories)
 
