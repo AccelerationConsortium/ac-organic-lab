@@ -1510,6 +1510,34 @@ equipment:
       ligand_development: { w: 2, h: 1 }
     pills: {}
 
+  - id: flex_doser_head
+    name: Flex Doser Head
+    kind: solid_doser
+    adapter: http
+    protocol: "1.2"
+    # dose_every_well `doserhead-service` (head-only profile) on the Pi Zero 2W
+    # sdl2-pi0-flex-doser: tap-screw servo and N20 motor on a Seengreat
+    # PCA9685 HAT. The dosing half of the Ligand weigher/doser split; the
+    # balance is flex_plate_weigher on .81. Installed 2026-10-13 from a git
+    # bundle (systemd `doserhead`, `develop-modular` at 394f5bc); the first
+    # supervised `startup` is still pending and the dosing motor direction is
+    # unconfirmed. Hard claim enforcement; `startup` moves the screw to park.
+    # Its tile is the generic status card (EquipmentGrid id branch): the
+    # solid_doser tile drives the HTE station's gantry, lid, plate and wells,
+    # none of which this head has.
+    base_url: http://sdl2-pi0-flex-doser.tail6a1dd7.ts.net:8000
+    tailscale_ip: 100.64.254.110
+    status_path: /status
+    poll_timeout_seconds: 8.0
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: llms.txt, path: /llms.txt, kind: text }
+    tiles:
+      ligand_development: { w: 2, h: 1 }
+    pills: {}
+
   - id: gibbie_hotplate
     name: IKA Hotplate (Gibbie)
     kind: other
