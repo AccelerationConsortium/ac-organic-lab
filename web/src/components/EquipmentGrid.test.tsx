@@ -95,30 +95,27 @@ describe("EquipmentGrid dispatch for monitoring-only devices", () => {
     expect(screen.queryByText("HPLC_MONITOR_TILE")).toBeNull();
   });
 
-  it("gives the Process Chemistry UR arm a compact read-only card instead of the xArm tile", () => {
+  it("gives a monitoring-only robot arm outside robot-motion the generic read-only card", () => {
     render(
       <EquipmentGrid
-        snapshots={[snap("lle_ur5_arm", "robot_arm", { monitoring_only: true }, "UR5-CB3 Arm")]}
+        snapshots={[snap("some_monitored_arm", "robot_arm", { monitoring_only: true }, "Observed Arm")]}
       />,
     );
     expect(screen.queryByText("ROBOT_ARM_TILE")).toBeNull();
-    expect(screen.getByText("UR5-CB3 Arm")).toBeTruthy();
+    expect(screen.queryByText("UR_ARM_TILE")).toBeNull();
+    expect(screen.getByText("Observed Arm")).toBeTruthy();
     expect(screen.getByText("observed only")).toBeTruthy();
-    expect(screen.getByText("Read-only monitoring")).toBeTruthy();
     // Nothing to gate: no lock chip, no controls of any kind.
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
-  it.each(["lle_ur5_arm"])("never exposes xArm controls for %s after a failed poll", (id) => {
-    const failed = snap(id, "robot_arm", {});
-    failed.fetch_error = { kind: "timeout", message: "timed out" } as EquipmentSnapshot["fetch_error"];
-    render(<EquipmentGrid snapshots={[failed]} />);
+  it("keeps the Process Chemistry UR5 CB3 on the session tile even with the old monitor's monitoring_only flag", () => {
+    render(<EquipmentGrid snapshots={[snap("lle_ur5_arm", "robot_arm", { monitoring_only: true })]} />);
+    expect(screen.getByText("UR_ARM_TILE")).toBeTruthy();
     expect(screen.queryByText("ROBOT_ARM_TILE")).toBeNull();
-    expect(screen.getByText("Read-only monitoring")).toBeTruthy();
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
-  it.each(["ligand_ur5e", "ur3e_gibbie"])("gives %s its own session tile, never the xArm's, even after a failed poll", (id) => {
+  it.each(["ligand_ur5e", "ur3e_gibbie", "lle_ur5_arm"])("gives %s its own session tile, never the xArm's, even after a failed poll", (id) => {
     render(<EquipmentGrid snapshots={[snap(id, "robot_arm", {})]} />);
     expect(screen.getByText("UR_ARM_TILE")).toBeTruthy();
     expect(screen.queryByText("ROBOT_ARM_TILE")).toBeNull();

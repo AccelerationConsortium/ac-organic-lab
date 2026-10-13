@@ -233,3 +233,69 @@ describe("UrArmTile gating", () => {
     expect(screen.getByText(/Service unreachable/)).toBeTruthy();
   });
 });
+
+// The Process Chemistry UR5 CB3 (robot-motion-ur5cb3 on the LLE PC): the same
+// envelope shape, but PolyScope 3 has no Remote Control mode, no F/T sensor
+// and a Robotiq Hand-E, and the device reports `requires_init` while the
+// controller sits in a safeguard stop.
+function cb3Snapshot(over: Parameters<typeof snapshot>[0] = {}): EquipmentSnapshot {
+  const value = snapshot({ remote: null, ...over });
+  value.id = "lle_ur5_arm";
+  value.name = "UR5-CB3 Arm (Process Chemistry)";
+  value.pill = { link_label: "Open", link_href: "/ur5cb3/web/" } as EquipmentSnapshot["pill"];
+  value.status.equipment_id = "lle_ur5_arm";
+  value.status.equipment_name = "UR5-CB3 Arm (Process Chemistry)";
+  const details = value.status.details as Record<string, unknown>;
+  delete details["telemetry"];
+  details["gripper"] = {
+    ...(details["gripper"] as Record<string, unknown>),
+    model: "robotiq_hande",
+    name: "Robotiq Hand-E",
+    opening_mm: 25.0,
+  };
+  return value;
+}
+
+describe("UrArmTile for the Process Chemistry UR5 CB3", () => {
+  it("shows a safeguard-stopped arm as Needs init, not as an error", () => {
+    const value = cb3Snapshot({ allowed: ["control.stop"] });
+    value.status.equipment_status = "requires_init";
+    value.status.message = "Safeguard stop: clear it on the pendant";
+    (value.status.details as Record<string, unknown>)["safetystatus"] = "SAFEGUARD_STOP";
+    value.status.components = {
+      ...value.status.components,
+      safety: { connected: true, state: "safeguard_stop" },
+    };
+    render(<UrArmTile snapshot={value} />);
+    const pill = screen.getByText("Needs init");
+    expect(pill.className).toMatch(/amber/);
+    expect(pill.className).not.toMatch(/rose|red/);
+    expect(screen.queryByText("Error")).toBeNull();
+    expect(screen.getByText("safeguard_stop")).toBeTruthy();
+    expect(screen.getByText("lle_ur5_arm")).toBeTruthy();
+  });
+
+  it("has no pendant pill or Remote Control hint, since the CB3 has no such mode", () => {
+    render(<UrArmTile snapshot={cb3Snapshot({ allowed: ["control.stop"] })} />);
+    expect(screen.queryByText("Pendant")).toBeNull();
+    const init = button(/INIT/);
+    expect(init.disabled).toBe(true);
+    expect(init.title).not.toMatch(/Remote Control/);
+    expect(init.title).toMatch(/not offered by the device/);
+  });
+
+  it("connects and stops by its own id, and links to the /ur5cb3 panel", () => {
+    render(<UrArmTile snapshot={cb3Snapshot()} />);
+    fireEvent.click(button(/INIT/));
+    expect(postArmConnect).toHaveBeenCalledWith("lle_ur5_arm");
+    cleanup();
+    render(<UrArmTile snapshot={cb3Snapshot({ gripperBusy: true })} />);
+    fireEvent.click(button("STOP"));
+    expect(postArmStop).toHaveBeenCalledWith("lle_ur5_arm");
+    const link = screen.getByRole("link", { name: "Open control panel ↗" });
+    expect(link.getAttribute("href")).toBe("/ur5cb3/web/");
+    // No F/T sensor: no force pill; the Hand-E's opening still shows.
+    expect(screen.queryByText("Force")).toBeNull();
+    expect(screen.getByText("25.0 mm")).toBeTruthy();
+  });
+});

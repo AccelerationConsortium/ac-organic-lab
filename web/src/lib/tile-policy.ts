@@ -52,9 +52,10 @@ const DESTRUCTIVE_KINDS: ReadonlySet<Kind> = new Set<Kind>([
  * convention, not contract.
  */
 export function isReadOnlyUrArm(id: string | undefined): boolean {
-  // The robot-motion arms (ligand_ur5e, ur3e_gibbie) have their own session
-  // tile, which EquipmentGrid checks first; they stay here so a failed poll
-  // never falls through to the xArm tile. (gibbie_ur_arm, the Gibbie
+  // The robot-motion arms (ligand_ur5e, ur3e_gibbie, and lle_ur5_arm since it
+  // left the process-chem monitor) have their own session tile, which
+  // EquipmentGrid checks first; they stay here as the fallback, so a failed
+  // poll never falls through to the xArm tile. (gibbie_ur_arm, the Gibbie
   // monitor's probe of the same arm, left the registry on 2026-10-12.)
   return id === "lle_ur5_arm" || id === "ur3e_gibbie" || id === "ligand_ur5e";
 }

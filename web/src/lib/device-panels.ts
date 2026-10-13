@@ -39,6 +39,9 @@ export const DEVICE_PANEL_PATHS: Readonly<Record<string, string>> = Object.freez
   ligand_ur5e: "/ur5e/web/",
   // robot-motion's second instance on the Gibbie PC (:8075), the UR3e.
   ur3e_gibbie: "/ur3e/web/",
+  // robot-motion's third instance on the LLE PC (:8075), the Process
+  // Chemistry UR5 CB3.
+  lle_ur5_arm: "/ur5cb3/web/",
 });
 
 /** The device's own panel path, or `null` when it hosts no panel. */

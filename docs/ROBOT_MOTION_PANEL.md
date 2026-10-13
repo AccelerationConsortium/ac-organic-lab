@@ -6,8 +6,10 @@ for the device's arm session, STOP, the controller / safety / gripper
 readings, and the same orange **Open control panel ↗** link. Since 2026-10-06
 that link opens the device's own panel at the edge path **`/ur5e/web/`** in a
 new tab, exactly the arrangement the xArm uses at `/xarm5/web/`
-(`web/src/lib/device-panels.ts`). The Process Chemistry UR5-CB3 and Gibbie
-UR3e remain observation-only tiles (`UrMonitorTile`) without this link.
+(`web/src/lib/device-panels.ts`). The Gibbie UR3e (`ur3e_gibbie`) and the
+Process Chemistry UR5 CB3 (`lle_ur5_arm`) run their own robot-motion
+instances and use the same tile (sections below); no registered arm uses the
+observation-only `UrMonitorTile` any more.
 
 The panel itself is the shared xArm web UI served by the `robot-motion`
 service on the Prototyping PC (`sdl2-pc-05`, :8075); the robot-motion repo
@@ -42,6 +44,37 @@ the same PC) drives this arm over RTDE control during its runs, and a UR
 controller runs one control script at a time, so an arm session here and a
 Gibbie run exclude each other. Do not INIT while `gibbie_workflow` reads
 busy; a device-side interlock is a planned stage.
+
+## Process Chemistry UR5 CB3 (`lle_ur5_arm`)
+
+A third robot-motion instance runs on the LLE PC (`sdl2-pc-00-lle`, NSSM
+`robot-motion-ur5cb3`, Tailnet :8075) pointed at the Process Chemistry
+bench's UR5 CB3 (PolyScope 3.15.8, Robotiq Hand-E). The registry keeps the
+arm's existing id, `lle_ur5_arm`, and moves it off the read-only
+`process-chem-monitor` feed (`:8070/devices/lle_ur5_arm/status`, a
+Dashboard-Server-only probe; the monitor still serves that envelope, now
+unpolled) to the device's own `/status`. The dashboard treats it like the
+other two: `UrArmTile`, the orange panel link to the edge's `/ur5cb3/web/`,
+`edge_secret_env: ROBOT_MOTION_UR5CB3_EDGE_SHARED_SECRET` (its own secret,
+same two-places rule) and `control_dialect: root`.
+
+What differs on a CB3:
+
+- **No Remote Control mode.** PolyScope 3 has none, so the tile shows no
+  pendant pill and never hints at Remote Control; INIT follows the device's
+  `allowed_actions` alone.
+- **No F/T sensor**, so no force pill.
+- **Safeguard stop reads `requires_init`.** While the controller is in
+  `SAFEGUARD_STOP` the device reports `requires_init`, which the tile's
+  status pill shows as "Needs init" (amber), not as an error; the Safety row
+  shows the stop.
+- **No `trajectory.*` skills.** `skills_for("robot_arm", "lle_ur5_arm")`
+  carries none until joint trajectories have had a live test on the CB3.
+- Observation is RTDE receive and never seizes the arm; POST `/connect`
+  (INIT) opens the control interface, which uploads and runs a program on
+  the controller. `automated-lle` drives this arm during its runs, so an arm
+  session here and an LLE run exclude each other: do not INIT while the
+  bench is running.
 
 ## Edge route and identity
 
@@ -201,7 +234,8 @@ with normal dashboard chrome.
    answers `stop_requested`.
 
 Offline regression coverage: `web/src/components/UrArmTile.test.tsx` (session
-toggle, STOP gating, link target), `UrMonitorTile.test.tsx` (the two
-observation-only arms), `skills/tests/test_registry.py` (edge secret and
-dialect on the entry) and the robot-motion repo's `tests_robot_motion` suite
+toggle, STOP gating, link target, the CB3's `requires_init` pill),
+`UrMonitorTile.test.tsx` (the observation-only tile, which no registered
+arm uses now), `skills/tests/test_registry.py` (edge secret and dialect on
+each entry, the `/ur5cb3` edge block, no CB3 trajectory skills) and the robot-motion repo's `tests_robot_motion` suite
 (panel serving, title substitution, profile list, control gating).

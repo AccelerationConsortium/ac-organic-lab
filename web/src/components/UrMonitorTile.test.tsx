@@ -10,11 +10,11 @@ vi.mock("@/lib/user-auth", () => ({ useUserAuth: () => auth }));
 
 function snapshot(): EquipmentSnapshot {
   return {
-    id: "lle_ur5_arm", name: "UR5-CB3 Arm", kind: "robot_arm", adapter: "http",
+    id: "monitor_ur_arm", name: "UR5-CB3 Arm", kind: "robot_arm", adapter: "http",
     enabled: true, activity: "running", activity_source: "device", health: "healthy",
     mode: "production", simulated: false, fetched_at: new Date().toISOString(),
     status: {
-      protocol_version: "1.2", equipment_id: "lle_ur5_arm", equipment_name: "UR5-CB3 Arm",
+      protocol_version: "1.2", equipment_id: "monitor_ur_arm", equipment_name: "UR5-CB3 Arm",
       equipment_kind: "robot_arm", equipment_status: "busy", activity: "running",
       device_time: new Date().toISOString(), allowed_actions: [], required_actions: [],
       metrics: {}, components: {}, last_error: null, message: "Observed only",
@@ -27,8 +27,11 @@ afterEach(() => { cleanup(); auth.authenticated = true; auth.requestLogin.mockCl
 
 describe("read-only UR arms", () => {
   // The Ligand UR5e moved to UrArmTile on 2026-10-11 (its service has
-  // claim-gated control); its panel link is covered in UrArmTile.test.tsx.
-  it("does not add a workspace link to the Process Chemistry arm", () => {
+  // claim-gated control), the Gibbie UR3e on 2026-10-12 and the Process
+  // Chemistry UR5 CB3 (lle_ur5_arm) after it; their panel links are covered
+  // in UrArmTile.test.tsx. No registered arm reaches this tile now; the
+  // fixture keeps the process-chem monitor's envelope shape.
+  it("does not add a workspace link to a monitor-probed arm", () => {
     render(<UrMonitorTile snapshot={snapshot()} />);
     expect(screen.queryAllByRole("link")).toHaveLength(0);
     expect(screen.getByText("Read-only monitoring")).toBeTruthy();

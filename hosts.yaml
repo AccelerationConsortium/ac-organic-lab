@@ -209,7 +209,10 @@ hosts:
     note: >-
       Drives the Process Chemistry platform: the HPLC through the Agilent
       software on this PC, plus the EasyMax, the MT balance and the UR5-CB3
-      on the lab switch (192.168.254.5 here; campus 172.31.35.241). Lab-ops
+      on the lab switch (192.168.254.5 here; campus 172.31.35.241). Hosts
+      robot-motion-ur5cb3 (:8075, robot-motion's UR5 CB3 service,
+      lle_ur5_arm) next to the read-only process-chem-monitor (:8070),
+      which no longer feeds the arm's tile. Lab-ops
       key not yet authorized on it, so the console cannot open until it is
       (DEVICE_PC_SETUP §2.4). Only cmd is offered until WSL is confirmed
       present.

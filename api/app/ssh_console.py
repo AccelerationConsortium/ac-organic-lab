@@ -343,10 +343,11 @@ SSH_HOSTS: tuple[SshHost, ...] = (
         note=(
             "Drives the Gibbie multi-phase reaction bench (UR-3e arm, XPR "
             "balance, Opentrons Flex, IKA hotplate) and hosts the read-only "
-            "sdl2-gibbie-server monitor (:8070). On the lab switch at "
-            "192.168.254.79. The arm and balance are addressed on 192.168.1.x, "
-            "a segment this PC has no interface on yet (see ROADMAP). Only "
-            "cmd is offered until WSL is confirmed present."
+            "sdl2-gibbie-server monitor (:8070), mt-xpr-balance (:8081) and, "
+            "since 2026-10-12, robot-motion-ur3e (:8075, the UR3e's RTDE "
+            "observer, ur3e_gibbie). On the lab switch at 192.168.254.79, with "
+            "the UR3e at .89 and the XPR at .83. Only cmd is offered until WSL "
+            "is confirmed present."
         ),
         profiles=(
             SshProfile(id="cmd", label="cmd", args=(), description="Windows cmd.exe (the OpenSSH default shell)."),
@@ -364,9 +365,12 @@ SSH_HOSTS: tuple[SshHost, ...] = (
             "Drives the Process Chemistry platform: the HPLC through the "
             "Agilent software on this PC, plus the EasyMax, the MT balance and "
             "the UR5-CB3 on the lab switch (192.168.254.5 here; campus "
-            "172.31.35.241). Lab-ops key not yet authorized on it, so the "
-            "console cannot open until it is (DEVICE_PC_SETUP §2.4). Only cmd "
-            "is offered until WSL is confirmed present."
+            "172.31.35.241). Hosts robot-motion-ur5cb3 (:8075, robot-motion's "
+            "UR5 CB3 service, lle_ur5_arm) next to the read-only "
+            "process-chem-monitor (:8070), which no longer feeds the arm's "
+            "tile. Lab-ops key not yet authorized on it, so the console cannot "
+            "open until it is (DEVICE_PC_SETUP §2.4). Only cmd is offered until "
+            "WSL is confirmed present."
         ),
         profiles=(
             SshProfile(id="cmd", label="cmd", args=(), description="Windows cmd.exe (the OpenSSH default shell)."),
