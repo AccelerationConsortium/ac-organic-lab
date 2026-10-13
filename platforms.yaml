@@ -101,6 +101,8 @@ sections:
       # Right after the UR5e: the two-column grid then stacks it directly
       # under the arm (operator decision 2026-10-07).
       - flex_plate_weigher
+      # Right under the weigher it pairs with (2026-10-13).
+      - flex_doser_head
       - lumastir
       - lle_ph_unit
 

@@ -95,6 +95,10 @@ export function EquipmentGrid({ snapshots }: { snapshots: EquipmentSnapshot[] })
                     <EquipmentStatusCard snapshot={snapshot} />
                   ) : ["lle_xpr_balance", "gibbie_balance", "gibbie_xpr_balance"].includes(snapshot.id) ? (
                     <XprBalanceTile snapshot={snapshot} />
+                  ) : snapshot.id === "flex_doser_head" ? (
+                    // solid_doser, but a head only: SolidDoserTile is the HTE
+                    // station's (gantry, lid, plate, wells), so the generic card.
+                    <EquipmentStatusCard snapshot={snapshot} />
                   ) : snapshot.id === "lumastir" ? (
                     <LumastirTile snapshot={snapshot} />
                   ) : snapshot.id === "lle_easymax" ? (
