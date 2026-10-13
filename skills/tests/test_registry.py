@@ -123,6 +123,40 @@ def test_ur3e_gibbie_is_registered_like_the_ur5e() -> None:
     assert registry.by_id("gibbie_ur3e") is None
 
 
+def test_lle_ur5_arm_moved_to_robot_motion_like_the_ur3e() -> None:
+    registry = load_registry(REPO_ROOT / "equipment.yaml")
+    entry = registry.by_id("lle_ur5_arm")
+    assert entry is not None
+    assert entry.kind == "robot_arm" and entry.protocol == "1.2"
+    # robot-motion-ur5cb3 on the LLE PC, no longer the process-chem monitor's
+    # :8070/devices/lle_ur5_arm/status probe.
+    assert entry.base_url == "http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8075" and entry.status_path == "/status"
+    assert entry.tailscale_ip == "100.64.254.13"
+    assert entry.do_not_call_connect is True
+    assert entry.gateway_fronted is False  # the device answers for itself
+    assert entry.edge_secret_env == "ROBOT_MOTION_UR5CB3_EDGE_SHARED_SECRET"
+    assert entry.extras.get("control_dialect") == "root"
+    assert entry.pills.link_href == "/ur5cb3/web/" and not entry.pills.internal
+    assert "process_chemistry" in entry.tiles
+    assert {doc.path for doc in entry.documentation} >= {"/docs", "/openapi.json", "/agent-docs", "/llms.txt"}
+    config = yaml.safe_load((REPO_ROOT / "platforms.yaml").read_text(encoding="utf-8"))
+    section = next(s for s in config["sections"] if s["id"] == "process_chemistry")
+    assert "lle_ur5_arm" in section["equipment"]
+    # The edge block exists and is scoped to this equipment key with its own secret.
+    caddy = (REPO_ROOT / "deploy" / "Caddyfile.single-edge").read_text(encoding="utf-8")
+    assert "uri /auth/verify?equipment=lle_ur5_arm" in caddy
+    assert "header_up X-Edge-Auth {env.ROBOT_MOTION_UR5CB3_EDGE_SHARED_SECRET}" in caddy
+    assert "not path /ur5cb3/ws" in caddy
+
+
+def test_lle_ur5_arm_has_no_trajectory_skills_yet() -> None:
+    from lab_skills.skill_catalog.registry import skills_for
+
+    # Trajectories stay off on the CB3 until a live test there.
+    names = {d.name for d in skills_for("robot_arm", "lle_ur5_arm")}
+    assert not any(name.startswith("trajectory.") or name.startswith("ur.") for name in names)
+
+
 def test_bambu_gateway_and_printers_are_registered() -> None:
     registry = load_registry(REPO_ROOT / "equipment.yaml")
 

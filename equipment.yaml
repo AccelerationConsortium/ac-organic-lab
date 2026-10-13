@@ -1576,7 +1576,9 @@ equipment:
   # different config file; it has no /control/* surface, so every entry here is
   # `gateway_fronted: true` and an unreachable device reads `unknown` (§2.1)
   # and alerts as unreachable. The bench is driven by automated-lle and by
-  # ChemStation on that PC, never from here.
+  # ChemStation on that PC, never from here. Entries that have since moved to
+  # a service of their own on the same PC (lle_ur5_arm, lle_xpr_balance) say
+  # so in their comments.
   # -------------------------------------------------------------------------
 
   - id: lle_ur5_arm
@@ -1584,17 +1586,42 @@ equipment:
     kind: robot_arm
     adapter: http
     protocol: "1.2"
-    gateway_fronted: true
-    # UR Dashboard Server queries only, never RTDE (connecting the control
-    # interface uploads and runs a program, which would seize the arm).
-    # busy/running == a program playing on the controller.
-    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8070
+    # robot-motion's third instance (NSSM `robot-motion-ur5cb3` on the LLE PC,
+    # Tailnet :8075): the UR5e's service pointed at this bench's UR5 CB3
+    # (PolyScope 3.15.8, so no Remote Control mode and no F/T sensor; Robotiq
+    # Hand-E gripper). It observes over RTDE receive, which never seizes the
+    # arm, and opens the control interface (which uploads and runs a program
+    # on the controller) only on POST /connect, i.e. the tile's INIT. The tile
+    # is the UR5e's (UrArmTile): INIT/ON and STOP through the control
+    # passthrough as the trusted-edge identity, which needs this secret in the
+    # dashboard API's env as well as the edge's (same two-places rule as
+    # ligand_ur5e). automated-lle drives this arm during its runs, so an arm
+    # session here and an LLE run exclude each other. No trajectory.* skills
+    # until a live test on the CB3. The process-chem-monitor's Dashboard
+    # Server probe of this arm (:8070/devices/lle_ur5_arm/status, 2026-09-06)
+    # is no longer polled; the monitor still serves that envelope.
+    edge_secret_env: ROBOT_MOTION_UR5CB3_EDGE_SHARED_SECRET
+    extras:
+      control_dialect: root
+    gateway_fronted: false
+    base_url: http://sdl2-pc-00-lle.tail6a1dd7.ts.net:8075
     tailscale_ip: 100.64.254.13
-    status_path: /devices/lle_ur5_arm/status
-    poll_timeout_seconds: 8.0
+    status_path: /status
+    poll_timeout_seconds: 5.0
+    poll_interval_seconds: 15.0
+    do_not_call_connect: true
+    documentation:
+      - { label: Swagger UI, path: /docs, kind: swagger }
+      - { label: OpenAPI JSON, path: /openapi.json, kind: openapi }
+      - { label: Agent guide, path: /agent-docs, kind: markdown }
+      - { label: API reference, path: /agent-docs/api-reference, kind: markdown }
+      - { label: Agent discovery, path: /llms.txt, kind: text }
     tiles:
       process_chemistry: { w: 2, h: 1 }
-    pills: {}
+    pills:
+      # Edge-routed device panel (forward_auth gated, like /ur5e/web/).
+      link_label: "Open"
+      link_href: /ur5cb3/web/
 
   - id: lle_xpr_balance
     name: XPR Balance (Process Chemistry)

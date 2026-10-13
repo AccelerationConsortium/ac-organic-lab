@@ -84,18 +84,22 @@ function gripperTone(state: string | null): Tone {
 }
 
 /**
- * The Ligand Development UR5e (robot-motion on sdl2-pc-05). The device is a
- * STATUS_SPEC robot_arm whose *observation* (RTDE receive) is always on: its
- * equipment_status reads `ready` whenever the controller is up, so unlike the
- * xArm's RobotArmTile, "connected" here is the device's **arm session**
- * (`details.control_session.open`), which POST /connect opens and
- * /disconnect closes. Moves and the gripper then need the claim, which lives
- * in the device panel; this tile offers the claim-free lifecycle and the
- * safety floor, as the xArm tile does:
+ * The three robot-motion UR arms: the Ligand Development UR5e
+ * (`ligand_ur5e`, sdl2-pc-05), the Gibbie UR3e (`ur3e_gibbie`, sdl2-pc-04)
+ * and the Process Chemistry UR5 CB3 (`lle_ur5_arm`, sdl2-pc-00-lle). Each
+ * device is a STATUS_SPEC robot_arm whose *observation* (RTDE receive) is
+ * always on: its equipment_status follows the controller (`ready` when it is
+ * up, `requires_init` e.g. while the CB3 sits in a safeguard stop), shown as
+ * the status pill, so unlike the xArm's RobotArmTile, "connected" here is the
+ * device's **arm session** (`details.control_session.open`), which POST
+ * /connect opens and /disconnect closes. Moves and the gripper then need the
+ * claim, which lives in the device panel; this tile offers the claim-free
+ * lifecycle and the safety floor, as the xArm tile does:
  *
  *   - INIT / ON toggles the arm session (connect needs Remote Control on the
- *     pendant and no claim held by someone else; the device folds both into
- *     `allowed_actions`, which the button follows);
+ *     pendant, on the e-Series arms; the CB3 has no such mode, and no claim
+ *     held by someone else; the device folds both into `allowed_actions`,
+ *     which the button follows);
  *   - STOP is identity-only on the device and stops the arm, a trajectory
  *     and the gripper. Nothing moves without a session, except the gripper
  *     (its own socket), so STOP is offered when either is live;

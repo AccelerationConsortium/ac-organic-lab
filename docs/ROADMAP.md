@@ -132,6 +132,10 @@ service on the Gibbie PC (`robot-motion-ur3e`, :8075, registry id
 `ur3e_gibbie`, `UrArmTile`, `docs/ROBOT_MOTION_PANEL.md`), so the monitor's
 `gibbie_ur_arm` entry was retired from the registry the same day to keep one
 tile per arm; `sdl2-gibbie-server` still serves its envelope.
+The Process Chemistry UR5 CB3 followed: robot-motion's third instance
+(`robot-motion-ur5cb3`, :8075 on the LLE PC) now feeds `lle_ur5_arm`
+(`UrArmTile`, edge `/ur5cb3/`), and the `process-chem-monitor`'s
+`/devices/lle_ur5_arm/status` envelope is no longer polled.
 
 **Why the arm and balance are unreachable (traced 2026-09-06).** The Gibbie PC
 is on the lab switch at **192.168.254.79** (wired; the same segment as the Flex

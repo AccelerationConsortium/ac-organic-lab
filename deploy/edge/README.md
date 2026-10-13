@@ -35,6 +35,8 @@ Secrets are **not** in any file here. The Caddyfile references
 `{env.ROBOT_MOTION_EDGE_SHARED_SECRET}` (UR5e panel, `/ur5e`),
 `{env.ROBOT_MOTION_UR3E_EDGE_SHARED_SECRET}` (Gibbie UR3e panel, `/ur3e`;
 unset while that device is a read-only observer, so the header is empty),
+`{env.ROBOT_MOTION_UR5CB3_EDGE_SHARED_SECRET}` (Process Chemistry UR5 CB3
+panel, `/ur5cb3`; empty header until it is provisioned),
 `{env.OT2_EDGE_SECRET}`, `{env.BITACORADB_EDGE_SECRET}`,
 `{env.BAMBU_EDGE_SHARED_SECRET}`; the unit loads them from root-0600
 `EnvironmentFile`s (`/etc/device-gateway-staging/edge.env`,

@@ -178,6 +178,25 @@ http://:8080 {
                 header_up X-Edge-Auth {env.ROBOT_MOTION_UR3E_EDGE_SHARED_SECRET}
             }
         }
+        # Process Chemistry UR5 CB3 panel (lle_ur5_arm): robot-motion's third
+        # instance on the LLE PC :8075 (NSSM robot-motion-ur5cb3), same shape
+        # as /ur3e. ROBOT_MOTION_UR5CB3_EDGE_SHARED_SECRET is its own secret.
+        @ur5cb3_ui {
+            path /ur5cb3 /ur5cb3/*
+            not path /ur5cb3/ws
+        }
+        redir /ur5cb3 /ur5cb3/web/ 308
+        redir /ur5cb3/ /ur5cb3/web/ 308
+        redir /ur5cb3/web /ur5cb3/web/ 308
+        forward_auth @ur5cb3_ui 127.0.0.1:8009 {
+            uri /auth/verify?equipment=lle_ur5_arm
+            copy_headers X-Auth-User X-Auth-Role
+        }
+        handle_path /ur5cb3/* {
+            reverse_proxy sdl2-pc-00-lle.tail6a1dd7.ts.net:8075 {
+                header_up X-Edge-Auth {env.ROBOT_MOTION_UR5CB3_EDGE_SHARED_SECRET}
+            }
+        }
         @mg400_ui {
             path /mg400 /mg400/*
             not path /mg400/ws
