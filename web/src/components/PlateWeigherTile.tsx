@@ -17,6 +17,7 @@ import {
 import { useActionError } from "@/lib/use-action-error";
 import { useControlLock } from "@/lib/use-control-lock";
 import { LockButton } from "./ControlLock";
+import { StatusPill } from "./StatusPill";
 import { PositionPill, TileButton } from "./TileButton";
 import { TileShell } from "./TileShell";
 
@@ -186,7 +187,10 @@ export function PlateWeigherTile({ snapshot: polled }: { snapshot: EquipmentSnap
         stopTitle: "Halt the lift where it is.",
       }}
       headerRight={
-        <LockButton locked={locked} countdown={countdown} onToggle={toggle} noun="weigher" />
+        <>
+          <LockButton locked={locked} countdown={countdown} onToggle={toggle} noun="weigher" />
+          <StatusPill state={status} />
+        </>
       }
       footerLeft={
         claim

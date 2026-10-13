@@ -74,6 +74,14 @@ afterEach(() => {
 });
 
 describe("PlateWeigherTile", () => {
+  it("shows the device state as a status pill in the header, like every other tile", () => {
+    render(<PlateWeigherTile snapshot={snapshot()} />);
+    expect(screen.getByText("Ready")).toBeTruthy();
+    cleanup();
+    render(<PlateWeigherTile snapshot={snapshot({ equipment_status: "requires_init" })} />);
+    expect(screen.getByText("Needs init")).toBeTruthy();
+  });
+
   it("shows the last mass in the platebalance mass box with its stability word", () => {
     render(<PlateWeigherTile snapshot={snapshot()} />);
     expect(screen.getByLabelText("Last measured weight").textContent).toContain("1.2345");
