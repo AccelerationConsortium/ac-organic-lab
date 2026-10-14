@@ -619,6 +619,46 @@ describe("AssistantBubble control mode", () => {
     );
   });
 
+  it("keeps each plate-reader read of a plan, including when the plan halts", async () => {
+    const mocked = authorizeAssistantAction as unknown as ReturnType<typeof vi.fn>;
+    mocked
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ wells: { A1: 0.5, A2: null }, over_range: ["A2"] })
+      .mockRejectedValueOnce(new Error("503: reader busy"));
+    const readerPlan = {
+      type: "plan",
+      plan: {
+        ...PLAN.plan,
+        plan_id: "r1",
+        equipment_id: "cytation_5",
+        equipment_name: "BioTek Cytation 5",
+        kind: "plate_reader",
+        steps: [
+          { action: "plate.load", passthrough_action: "plate/load", args: { plate_id: "p-1", model: "square_96_19mm" } },
+          { action: "read.absorbance", passthrough_action: "read/absorbance", args: { wells: ["A1", "A2"], wavelength_nm: 300 } },
+          { action: "read.absorbance", passthrough_action: "read/absorbance", args: { wells: ["A1", "A2"], wavelength_nm: 305 } },
+        ],
+      },
+    };
+    installFetch([`data: ${JSON.stringify(readerPlan)}\n\n`, 'data: {"type":"done"}\n\n']);
+    await sendInControlMode("read the plate");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Approve these 3 steps" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+    await screen.findByText(/Plan halted/);
+
+    // The read that completed is kept; the failed one is not invented.
+    await screen.findByText(/Reader results · partial \(plan halted\)/);
+    expect(screen.getByText(/1\/2 reads · 2 well readings · last 300 nm/)).toBeTruthy();
+    expect(screen.getByText(/Over-range wells: absorbance 1/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Absorbance CSV" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Fluorescence CSV" }) as HTMLButtonElement).disabled).toBe(true);
+
+    // Closing the plan card does not drop the measurements.
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.getByText(/Reader results/)).toBeTruthy();
+  });
+
   it("shows a plate-reader measurement response without sending it back to the model", async () => {
     (
       authorizeAssistantAction as unknown as ReturnType<typeof vi.fn>

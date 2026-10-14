@@ -15,6 +15,16 @@ import { useVoiceInput } from "@/lib/use-voice-input";
 import { useUserAuth } from "@/lib/user-auth";
 import { downloadConversation, type ControlHistoryEvent } from "@/lib/assistant-transcript";
 import {
+  absorbanceCsv,
+  downloadText,
+  exportFilename,
+  fluorescenceCsv,
+  isReaderRead,
+  planHasReaderReads,
+  runRecord,
+  type ReaderRun,
+} from "@/lib/plan-readings";
+import {
   SessionsApiError,
   createSession,
   deleteSession,
@@ -534,6 +544,20 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
   // is its review/run state.
   const [plan, setPlan] = useState<Plan | null>(null);
   const [planRun, setPlanRun] = useState<PlanRun | null>(null);
+  // Plate-reader results from the last plan that read anything. Kept apart
+  // from the plan card so dismissing the card or a new proposal cannot drop
+  // measurements; only the operator discards them (or closing the tab).
+  const [readerRun, setReaderRun] = useState<ReaderRun | null>(null);
+  const [readerDownloaded, setReaderDownloaded] = useState(false);
+  useEffect(() => {
+    if (!readerRun || readerRun.readings.length === 0 || readerDownloaded) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [readerRun, readerDownloaded]);
   // null = still checking; once resolved, we know whether to render at all.
   // The bubble only renders if the backend's health endpoint reports it can
   // spawn `claude` (the Claude Code CLI subprocess backend). If the CLI
@@ -1597,7 +1621,35 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
 
   const runPlan = useCallback(async () => {
     if (!plan || !planRun || planRun.phase !== "approved" || planRunningRef.current || disposedRef.current) return;
+    const reads = planHasReaderReads(plan.kind, plan.steps);
+    if (
+      reads &&
+      readerRun &&
+      readerRun.readings.length > 0 &&
+      !readerDownloaded &&
+      !window.confirm("The previous plan's reader results have not been downloaded. Running this plan replaces them. Continue?")
+    ) {
+      return;
+    }
     planRunningRef.current = true;
+    if (reads) {
+      setReaderRun({
+        context: {
+          plan_id: plan.plan_id,
+          step_hash: plan.step_hash,
+          equipment_id: plan.equipment_id,
+          equipment_name: plan.equipment_name,
+          actor: plan.actor,
+          steps: plan.steps.map((s) => ({ action: s.action, args: s.args })),
+        },
+        started_at: new Date().toISOString(),
+        finished_at: null,
+        status: "running",
+        halt_reason: null,
+        readings: [],
+      });
+      setReaderDownloaded(false);
+    }
     recordControl(plan.turn_id, "sequence_started", {});
     const outcomes: StepOutcome[] = plan.steps.map(() => "pending");
     const messages: (string | null)[] = plan.steps.map(() => null);
@@ -1633,12 +1685,24 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
         // The same passthrough a tile click or a single Authorize uses —
         // per-equipment authz, the device's own 412/423, and the audit row
         // all apply per step; the plan ref joins the row to the approval.
-        await authorizeAssistantAction(
+        const response = await authorizeAssistantAction(
           plan.equipment_id,
           step.passthrough_action,
           step.args,
           { plan: `${plan.plan_id}#${i + 1}` }
         );
+        // The audit row keeps only the outcome; a read's response is the
+        // measurement, so it is kept here before the next step is sent.
+        if (isReaderRead(plan.kind, step.action)) {
+          const reading = {
+            index: i + 1,
+            action: step.action,
+            args: step.args,
+            received_at: new Date().toISOString(),
+            response,
+          };
+          setReaderRun((r) => r && { ...r, readings: [...r.readings, reading] });
+        }
         outcomes[i] = "ok";
         results.push({ index: i + 1, outcome: "ok" });
       } catch (e) {
@@ -1664,6 +1728,14 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
     }
     const phase: PlanPhase = haltReason ? "failed" : "executed";
     setPlanRun((r) => r && { ...r, phase, haltReason });
+    if (reads) {
+      setReaderRun((r) => r && {
+        ...r,
+        status: phase,
+        halt_reason: haltReason,
+        finished_at: new Date().toISOString(),
+      });
+    }
     recordControl(plan.turn_id, "sequence_finished", { status: phase, results, halt_reason: haltReason });
     planRunningRef.current = false;
     try {
@@ -1677,7 +1749,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
       setPlanRun((r) => r && { ...r, error: message });
       recordControl(plan.turn_id, "completion_report_failed", { message });
     }
-  }, [plan, planRun, recordControl]);
+  }, [plan, planRun, readerRun, readerDownloaded, recordControl]);
 
   const dismissPlan = useCallback(() => {
     if (!plan || !planRun || planRun.phase === "running") return;
@@ -1990,6 +2062,25 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
                 onApprove={() => void approvePlan()}
                 onRun={() => void runPlan()}
                 onDismiss={dismissPlan}
+              />
+            )}
+            {readerRun && (
+              <ReaderResultsPanel
+                run={readerRun}
+                downloaded={readerDownloaded}
+                onDownloaded={() => setReaderDownloaded(true)}
+                onDiscard={() => {
+                  if (readerRun.status === "running") return;
+                  if (
+                    !readerDownloaded &&
+                    readerRun.readings.length > 0 &&
+                    !window.confirm("Discard reader results that have not been downloaded?")
+                  ) {
+                    return;
+                  }
+                  setReaderRun(null);
+                  setReaderDownloaded(false);
+                }}
               />
             )}
             {authorizeResult && (
@@ -2446,6 +2537,95 @@ const STEP_TONE: Record<StepOutcome, string> = {
  *  reviewed*, which is what makes the audit row meaningful, and it keeps the
  *  last action before hardware moves from being a single click on a screen
  *  nobody read (same reasoning as the OT-2 gateway's plan panel). */
+/** Reader results captured by the plan runner, downloadable at any point —
+ *  during a run, after it finishes, and after it halts (partial data is kept).
+ *  Browser-only: nothing here reaches BitacoraDB on its own. */
+function ReaderResultsPanel({
+  run,
+  downloaded,
+  onDownloaded,
+  onDiscard,
+}: {
+  run: ReaderRun;
+  downloaded: boolean;
+  onDownloaded: () => void;
+  onDiscard: () => void;
+}) {
+  const record = runRecord(run);
+  const abs = record.absorbance;
+  const fl = record.fluorescence;
+  const overRange = Object.keys(abs.over_range_wells).length + Object.keys(fl.over_range_wells).length;
+  const unexpected = abs.unexpected_nulls.length + fl.unexpected_nulls.length;
+  const save = (part: "absorbance" | "fluorescence" | "record") => {
+    if (part === "record") {
+      downloadText(exportFilename(run, part), JSON.stringify(record, null, 2), "application/json");
+      onDownloaded();
+    } else {
+      downloadText(
+        exportFilename(run, part),
+        part === "absorbance" ? absorbanceCsv(run) : fluorescenceCsv(run),
+        "text/csv;charset=utf-8"
+      );
+    }
+  };
+  const button =
+    "rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700";
+  return (
+    <div
+      className="rounded-lg border border-emerald-300 bg-emerald-50 p-2 text-[13px] dark:border-emerald-700 dark:bg-emerald-950/40"
+      aria-label="reader results"
+    >
+      <div className="mb-1 font-semibold text-emerald-900 dark:text-emerald-100">
+        Reader results · {run.status === "running" ? "recording" : run.status === "executed" ? "complete" : "partial (plan halted)"}
+      </div>
+      <dl className="space-y-1 text-[13px] text-ink dark:text-slate-100">
+        <Row
+          label="Absorbance"
+          value={`${abs.completed_reads}/${abs.planned_reads} reads · ${abs.saved_well_readings} well readings${abs.last_saved ? ` · last ${abs.last_saved}` : ""}`}
+        />
+        <Row
+          label="Fluorescence"
+          value={`${fl.completed_reads}/${fl.planned_reads} reads · ${fl.saved_well_readings} well readings (RFU)${fl.last_saved ? ` · last ${fl.last_saved}` : ""}`}
+        />
+      </dl>
+      {overRange > 0 && (
+        <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+          Over-range wells: absorbance {Object.keys(abs.over_range_wells).length}, fluorescence{" "}
+          {Object.keys(fl.over_range_wells).length} — listed in the run record.
+        </p>
+      )}
+      {unexpected > 0 && (
+        <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">
+          {unexpected} null or missing value(s) the device did not name as over-range — see unexpected_nulls in the run record.
+        </p>
+      )}
+      <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-300">
+        Kept only in this tab. Download before closing it; these results are not recorded in BitacoraDB.
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button type="button" className={button} disabled={abs.completed_reads === 0} onClick={() => save("absorbance")}>
+          Absorbance CSV
+        </button>
+        <button type="button" className={button} disabled={fl.completed_reads === 0} onClick={() => save("fluorescence")}>
+          Fluorescence CSV
+        </button>
+        <button type="button" className={button} disabled={run.readings.length === 0} onClick={() => save("record")}>
+          Run record (JSON)
+        </button>
+        <button
+          type="button"
+          onClick={onDiscard}
+          disabled={run.status === "running"}
+          className="rounded px-2 py-1 text-xs text-ink-subtle hover:bg-emerald-100 disabled:opacity-60 dark:text-slate-300 dark:hover:bg-emerald-900/40"
+        >
+          Discard
+        </button>
+        {downloaded && <span className="text-xs text-emerald-700 dark:text-emerald-300">Run record downloaded</span>}
+      </div>
+    </div>
+  );
+}
+
 function PlanCard({
   plan,
   run,
