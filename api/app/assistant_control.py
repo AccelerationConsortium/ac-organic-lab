@@ -86,6 +86,7 @@ import copy
 import json
 import logging
 import os
+import re
 import secrets
 import sys
 from typing import Any
@@ -1375,12 +1376,98 @@ def _decline_proposal(reason_code: str, explanation: str) -> str:
     return _dumps({"declined": {"reason_code": code, "explanation": text}})
 
 
+class _SweepError(ValueError):
+    pass
+
+
+def _sweep_wells(spec: Any) -> list[str]:
+    """``"A1:H12"`` (a rectangle, row order) or an explicit list of wells."""
+    if isinstance(spec, list) and spec and all(isinstance(w, str) for w in spec):
+        return list(spec)
+    if not isinstance(spec, str):
+        raise _SweepError("wells must be a range like 'A1:H12' or a list of well names")
+    m = re.fullmatch(r"\s*([A-Pa-p])(\d{1,2})\s*:\s*([A-Pa-p])(\d{1,2})\s*", spec)
+    if not m:
+        raise _SweepError(f"wells range {spec!r} is not of the form 'A1:H12'")
+    r0, c0, r1, c1 = m.group(1).upper(), int(m.group(2)), m.group(3).upper(), int(m.group(4))
+    if r1 < r0 or c1 < c0 or c0 < 1:
+        raise _SweepError(f"wells range {spec!r} must run top-left to bottom-right")
+    return [f"{chr(r)}{c}" for r in range(ord(r0), ord(r1) + 1) for c in range(c0, c1 + 1)]
+
+
+def _sweep_points(spec: Any, what: str) -> list[float | int]:
+    """Inclusive ``start``..``stop`` by ``step``; the step must land on stop."""
+    if not isinstance(spec, dict):
+        raise _SweepError(f"{what} needs {{start_nm, stop_nm, step_nm}}")
+    try:
+        start, stop, step = (float(spec[k]) for k in ("start_nm", "stop_nm", "step_nm"))
+    except (KeyError, TypeError, ValueError):
+        raise _SweepError(f"{what} needs numeric start_nm, stop_nm and step_nm") from None
+    if step <= 0 or stop < start:
+        raise _SweepError(f"{what}: step_nm must be positive and stop_nm >= start_nm")
+    count = (stop - start) / step
+    if abs(count - round(count)) > 1e-9:
+        raise _SweepError(f"{what}: {step:g} nm steps from {start:g} do not land on {stop:g}")
+    values = (round(start + i * step, 6) for i in range(int(round(count)) + 1))
+    return [int(v) if v == int(v) else v for v in values]
+
+
+def _expand_reader_sweep(sweep: Any) -> list[dict[str, Any]]:
+    """Expand a plate-reader wavelength sweep into explicit read steps.
+
+    The reader has no spectrum verb: one read per wavelength (absorbance) or
+    per excitation/emission pair (fluorescence). Writing 96 wells into each of
+    a hundred-plus steps is a tool call a model may fail to emit, so the model
+    names the sweep and this expands it. Absorbance steps come first, each
+    scan ascending. The expanded steps then pass every per-step gate, and the
+    card shows (and the hash covers) exactly the expansion. Only the fields
+    named here reach the device — no gain, no absorbance focal height.
+    """
+    if not isinstance(sweep, dict):
+        raise _SweepError("reader_sweep must be an object")
+    unknown = set(sweep) - {"wells", "absorbance", "fluorescence"}
+    if unknown:
+        raise _SweepError(f"reader_sweep has unknown field(s): {', '.join(sorted(unknown))}")
+    wells = _sweep_wells(sweep.get("wells"))
+    steps: list[dict[str, Any]] = []
+    absorbance = sweep.get("absorbance")
+    if absorbance is not None:
+        if set(absorbance) - {"start_nm", "stop_nm", "step_nm"}:
+            raise _SweepError("absorbance takes only start_nm, stop_nm, step_nm")
+        steps += [
+            {"action": "read.absorbance", "args": {"wells": wells, "wavelength_nm": nm}}
+            for nm in _sweep_points(absorbance, "absorbance")
+        ]
+    fluorescence = sweep.get("fluorescence")
+    if fluorescence is not None:
+        if not isinstance(fluorescence, dict):
+            raise _SweepError("fluorescence must be an object")
+        allowed = {"excitation_nm", "emission", "focal_height_mm"}
+        if set(fluorescence) - allowed:
+            raise _SweepError("fluorescence takes only excitation_nm, emission, focal_height_mm")
+        if "excitation_nm" not in fluorescence:
+            raise _SweepError("fluorescence needs a fixed excitation_nm")
+        fixed = {"excitation_nm": fluorescence["excitation_nm"]}
+        if "focal_height_mm" in fluorescence:
+            fixed["focal_height_mm"] = fluorescence["focal_height_mm"]
+        steps += [
+            {"action": "read.fluorescence", "args": {"wells": wells, **fixed, "emission_nm": nm}}
+            for nm in _sweep_points(fluorescence.get("emission"), "fluorescence emission")
+        ]
+    if not steps:
+        raise _SweepError("reader_sweep needs absorbance and/or fluorescence")
+    return steps
+
+
 async def _propose_plan(
     registry: Registry,
     equipment_id: str,
     steps: list[dict[str, Any]] | None,
     reason: str,
     pattern: dict[str, Any] | None = None,
+    reader_sweep: dict[str, Any] | None = None,
+    prelude: list[dict[str, Any]] | None = None,
+    epilogue: list[dict[str, Any]] | None = None,
 ) -> str:
     """Validate an ordered multi-step sequence on ONE device and return a
     normalized plan proposal (Step 1i).
@@ -1412,6 +1499,15 @@ async def _propose_plan(
     equipment_id = entry.id
     if not entry.enabled or entry.maintenance is not None:
         return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
+    if reader_sweep is not None:
+        if entry.kind != "plate_reader":
+            return _err("invalid_step", f"reader_sweep is for plate readers; {equipment_id!r} is {entry.kind!r}")
+        if steps or pattern is not None:
+            return _err("invalid_step", "give either steps or a reader_sweep, not both")
+        try:
+            steps = [*(prelude or []), *_expand_reader_sweep(reader_sweep), *(epilogue or [])]
+        except _SweepError as exc:
+            return _err("invalid_step", f"reader_sweep: {exc}")
     if pattern is not None and not entry.runs_plans:
         return _err(
             "not_proposable",
@@ -1848,6 +1944,7 @@ def _build_server(registry: Registry):
         prelude: list[dict[str, Any]] | None = None,
         for_each_well: dict[str, Any] | None = None,
         epilogue: list[dict[str, Any]] | None = None,
+        reader_sweep: dict[str, Any] | None = None,
     ) -> str:
         """Propose an ORDERED multi-step sequence on ONE device that the
         operator approves and runs as a whole. Use this instead of several
@@ -1877,11 +1974,27 @@ def _build_server(registry: Registry):
         "overrides": {"H12": {"d": {...}}}} with optional ``prelude`` /
         ``epilogue`` step lists (tip pickup, tip drop). Put "{well}" where the
         well name goes; the device expands it and the operator reviews the
-        expansion. Never write a plate out as hundreds of steps."""
+        expansion. Never write a plate out as hundreds of steps.
+
+        Plate readers (spectra): the reader takes one wavelength per read, so
+        a scan goes as ``reader_sweep`` instead of ``steps``, and this server
+        expands it into explicit read steps the operator reviews:
+        {"wells": "A1:H12" | ["A1", ...],
+         "absorbance": {"start_nm": 300, "stop_nm": 800, "step_nm": 5},
+         "fluorescence": {"excitation_nm": 365, "focal_height_mm": 7.0,
+                          "emission": {"start_nm": 400, "stop_nm": 700, "step_nm": 5}}}
+        Either scan may be omitted; absorbance runs first, each ascending,
+        stop inclusive. Put plate.load / drawer.close in ``prelude``. Gain is
+        not a field on either read. Do not write such a sweep out by hand."""
 
         refused = _out_of_scope(registry, equipment_id)
         if refused:
             return refused
+        if reader_sweep is not None:
+            return await _propose_plan(
+                registry, equipment_id, steps, reason,
+                reader_sweep=reader_sweep, prelude=prelude, epilogue=epilogue,
+            )
         pattern = None
         if for_each_well is not None:
             pattern = {"prelude": prelude, "for_each_well": for_each_well, "epilogue": epilogue}

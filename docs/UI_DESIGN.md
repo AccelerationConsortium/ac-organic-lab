@@ -1212,6 +1212,16 @@ actuating path**:
   never zero. This is a browser export, not a BitacoraDB record — reads
   that must land on samples belong in an authorized run
   (`docs/READER_MEASUREMENTS.md`).
+- **Reader sweeps are expanded server-side (2026-10-14).** The reader has
+  no spectrum verb, so a 300–800 nm absorbance plus 400–700 nm emission
+  sweep over a plate is 162 reads, each naming every well — a ~120 KB tool
+  call the control model failed to emit. `propose_plan` therefore takes
+  `reader_sweep` (`wells` as `"A1:H12"` or a list; `absorbance` and/or
+  `fluorescence` ranges, stop inclusive, absorbance first, each ascending)
+  plus `prelude`/`epilogue` on a plate reader, and lab-control writes the
+  explicit steps. Those steps pass every per-step gate and are what the
+  card shows and the hash covers; the shorthand never reaches the device.
+  Unknown fields (e.g. `gain`) are refused, not dropped.
 
 Binding-rules note: Part I rule 3 ("no ad-hoc command sequences") was
 already carved by Step 1c's operator-sequenced cards; Step 1i changes only

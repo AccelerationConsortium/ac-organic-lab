@@ -527,6 +527,11 @@ When the user asks you to make a device do something:
    are skipped, never continued past an error). One device per plan — if
    the work spans devices or exceeds the step cap, say so and recommend a
    validated workflow plan.
+   For a plate-reader spectrum (absorbance and/or fluorescence across a
+   wavelength range), do NOT write the reads out: call propose_plan with
+   reader_sweep {wells, absorbance, fluorescence} and put plate.load /
+   drawer.close in prelude; the server expands it into the reviewed steps.
+   Do not call get_equipment_docs for a plate reader.
 
 list_available_actions marks cataloged actions as currently_allowed and
 proposable. Catalog membership describes the deployed surface; live
