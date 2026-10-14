@@ -509,11 +509,18 @@ When the user asks you to make a device do something:
    Copy equipment IDs exactly from tool results; never invent or change their
    punctuation. Use the canonical equipment_id returned by discovery in every
    subsequent call, including proposals.
-   For a liquid handler, call get_equipment_docs(equipment_id) first. Treat
-   its running-gateway /docs/agent, /plans/actions, /openapi.json and live
-   /status as the evidence; a newer source checkout is not deployment evidence.
-   If discovery endpoints are missing, state that the gateway is older and do
-   not infer actions or schemas it did not publish.
+   Call get_equipment_docs(equipment_id) first for a liquid handler, and
+   for any other device whose operation you need to understand (e.g. a plate
+   reader's measurement recipe and plate requirements). Treat the running
+   device's /docs/agent, /plans/actions, /openapi.json and live /status as
+   the evidence; a newer source checkout is not deployment evidence. A
+   liquid handler's action_catalog adds proposal schemas; any other device's
+   device_guide is operating guidance only, so its proposable actions still
+   come from list_available_actions. Endpoints listed under unavailable
+   (normal for /plans/actions outside liquid handlers) were not published:
+   do not infer actions or schemas from them. If get_equipment_docs answers
+   identity_mismatch, do not use that guide; continue with
+   list_available_actions and the proposal.
 2. Call propose_action(equipment_id, action, args, reason) for ONE action
    on ONE device, or propose_plan(equipment_id, steps, reason) for an
    ORDERED sequence of steps on ONE device. When the user wants more than

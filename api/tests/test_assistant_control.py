@@ -1528,6 +1528,141 @@ async def test_equipment_docs_are_read_only_running_gateway_evidence() -> None:
     assert pick["operator_only_fields"] == ["force"]
 
 
+def _mock_plate_reader_docs(guide: Any, *, actions_status: int = 404) -> None:
+    respx.get(f"{BENCH_BASE}/docs/agent").mock(return_value=httpx.Response(200, json=guide))
+    respx.get(f"{BENCH_BASE}/plans/actions").mock(return_value=httpx.Response(actions_status))
+    respx.get(f"{BENCH_BASE}/openapi.json").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "openapi": "3.1.0",
+                "info": {"title": "Cytation 5", "version": "0.2.0"},
+                "paths": {
+                    "/status": {"get": {}},
+                    "/control/read/absorbance": {"post": {}, "parameters": []},
+                },
+            },
+        )
+    )
+
+
+def _plate_reader_guide(**overrides: Any) -> dict[str, Any]:
+    # The Cytation 5's /docs/agent shape: no equipment_kind, discovery a dict.
+    guide = {
+        "documentation_version": "1.1.0",
+        "equipment_id": "plate_reader_test",
+        "discovery": {"status": "/status", "openapi": "/openapi.json"},
+        "agent_boundaries": ["Use the lab-skills SDK for hardware operations."],
+        "measurement_recipe": {"summary": "How to take a wavelength sweep."},
+        "plate_requirements": ["Confirm the physical plate with the operator."],
+        "action_schemas": {"paths": {"/control/read/absorbance": {"post": {}}}},
+    }
+    guide.update(overrides)
+    return guide
+
+
+@respx.mock
+async def test_equipment_docs_returns_a_plate_readers_own_guide() -> None:
+    # 2026-10-14: the assistant dead-ended on a valid Cytation read plan when
+    # this tool refused non-liquid-handlers; now it reads the device's guide.
+    _mock_bench_status("plate_reader", ["read.absorbance"])
+    guide = _plate_reader_guide()
+    _mock_plate_reader_docs(guide)
+    out = json.loads(
+        await ac._get_equipment_docs(_bench_registry("plate_reader"), "plate-reader_test")
+    )
+    assert "code" not in out
+    assert out["equipment_id"] == "plate_reader_test"
+    assert out["source"] == "running_device"
+    assert out["live_status"]["allowed_actions"] == ["read.absorbance"]
+    assert out["device_guide"] == guide  # as served, not normalized
+    assert "list_available_actions" in out["device_guide_note"]
+    assert "agent_docs" not in out and "action_catalog" not in out
+    assert out["openapi"]["paths"] == {"/status": ["get"], "/control/read/absorbance": ["post"]}
+    assert set(out["unavailable"]) == {"/plans/actions"}
+    assert "capability_warning" in out
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "overrides",
+    [{"equipment_id": "cytation_6"}, {"equipment_kind": "plate_sealer"}],
+)
+async def test_equipment_docs_refuses_a_guide_for_another_device(overrides) -> None:
+    _mock_bench_status("plate_reader", ["read.absorbance"])
+    _mock_plate_reader_docs(_plate_reader_guide(**overrides))
+    out = json.loads(
+        await ac._get_equipment_docs(_bench_registry("plate_reader"), "plate_reader_test")
+    )
+    assert out["code"] == "identity_mismatch"
+    assert "not applied" in out["error"]
+    assert "list_available_actions('plate_reader_test')" in out["error"]
+
+
+@respx.mock
+async def test_equipment_docs_refuses_a_guide_without_an_equipment_id() -> None:
+    _mock_bench_status("plate_reader", ["read.absorbance"])
+    guide = _plate_reader_guide()
+    guide.pop("equipment_id")
+    _mock_plate_reader_docs(guide)
+    out = json.loads(
+        await ac._get_equipment_docs(_bench_registry("plate_reader"), "plate_reader_test")
+    )
+    assert out["code"] == "identity_mismatch"
+    assert "names no equipment_id" in out["error"]
+
+
+@respx.mock
+async def test_equipment_docs_device_status_identity_still_checked() -> None:
+    respx.get(f"{BENCH_BASE}/status").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "equipment_id": "plate_reader_test",
+                "equipment_name": "reader",
+                "equipment_kind": "plate_sealer",
+                "equipment_status": "ready",
+                "device_time": "2026-10-14T12:00:00Z",
+            },
+        )
+    )
+    _mock_plate_reader_docs(_plate_reader_guide())
+    out = json.loads(
+        await ac._get_equipment_docs(_bench_registry("plate_reader"), "plate_reader_test")
+    )
+    assert out["code"] == "identity_mismatch"
+    assert "/status kind" in out["error"]
+
+
+@respx.mock
+async def test_equipment_docs_malformed_device_guide_fails_fast() -> None:
+    _mock_bench_status("plate_reader", ["read.absorbance"])
+    respx.get(f"{BENCH_BASE}/docs/agent").mock(return_value=httpx.Response(200, text="<html>"))
+    respx.get(f"{BENCH_BASE}/plans/actions").mock(return_value=httpx.Response(404))
+    respx.get(f"{BENCH_BASE}/openapi.json").mock(return_value=httpx.Response(404))
+    out = json.loads(
+        await ac._get_equipment_docs(_bench_registry("plate_reader"), "plate_reader_test")
+    )
+    assert out["code"] == "unreachable"
+    assert "device guide body is not valid" in out["error"]
+
+
+@respx.mock
+async def test_equipment_docs_device_transport_error_is_unreachable() -> None:
+    respx.get(f"{BENCH_BASE}/status").mock(side_effect=httpx.ConnectError("refused"))
+    out = json.loads(
+        await ac._get_equipment_docs(_bench_registry("plate_reader"), "plate_reader_test")
+    )
+    assert out["code"] == "unreachable"
+
+
+async def test_equipment_docs_unknown_equipment_still_refuses() -> None:
+    out = json.loads(
+        await ac._get_equipment_docs(_bench_registry("plate_reader"), "cytation_6")
+    )
+    assert out["code"] == "unknown_equipment"
+
+
 @respx.mock
 async def test_status_identity_mismatch_refuses_proposal() -> None:
     _mock_ot2_status(["home"])
