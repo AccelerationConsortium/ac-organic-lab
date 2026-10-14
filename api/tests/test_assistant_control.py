@@ -1305,19 +1305,25 @@ async def test_propose_plan_reader_sweep_expands_to_explicit_reviewed_steps() ->
 
     _mock_bench_status("plate_reader", list(_PLATE_READER_SURFACE))
     _mock_authz(True)
-    out = json.loads(
-        await ac._propose_plan(
-            _bench_registry("plate_reader"),
-            "plate_reader_test",
-            None,
-            "UV-Vis and emission spectra",
-            reader_sweep=_SWEEP,
-            prelude=[
-                {"action": "plate.load", "args": {"plate_id": "p-1", "model": "square_96_19mm"}},
-                {"action": "drawer.close"},
-            ],
-        )
+    raw = await ac._propose_plan(
+        _bench_registry("plate_reader"),
+        "plate_reader_test",
+        None,
+        "UV-Vis and emission spectra",
+        reader_sweep=_SWEEP,
+        prelude=[
+            {"action": "plate.load", "args": {"plate_id": "p-1", "model": "square_96_19mm"}},
+            {"action": "drawer.close"},
+        ],
     )
+    # The result returns through the model's tool channel (Hermes caps an
+    # MCP result at 50 000 chars), so it travels compacted...
+    assert len(raw) < 20_000
+    assert "steps" not in json.loads(raw)["plan"]
+    # ...and the engine expands it before anything renders or caches it.
+    from lab_assistant.engine import _plan_from_tool_result
+
+    out = {"plan": _plan_from_tool_result({"content": raw})}
     steps = out["plan"]["steps"]
     assert len(steps) == 2 + 101 + 61
     assert [s["action"] for s in steps[:3]] == ["plate.load", "drawer.close", "read.absorbance"]
@@ -1332,6 +1338,35 @@ async def test_propose_plan_reader_sweep_expands_to_explicit_reviewed_steps() ->
     assert set(fluorescence[0]["args"]) == {"wells", "excitation_nm", "emission_nm", "focal_height_mm"}
     assert fluorescence[0]["args"]["excitation_nm"] == 365
     assert out["plan"]["step_hash"] == ac.plan_step_hash(steps)
+
+
+def test_compact_steps_round_trips_mixed_plans() -> None:
+    from lab_assistant.plan_contract import compact_steps, expand_steps
+
+    def step(action, **args):
+        return {"action": action, "passthrough_action": action.replace(".", "/"), "args": args}
+
+    steps = [
+        step("plate.load", plate_id="p"),
+        step("read.absorbance", wells=["A1"], wavelength_nm=300),
+        step("read.absorbance", wells=["A1"], wavelength_nm=305),  # a run of 2 stays explicit
+        step("read.fluorescence", wells=["A1"], excitation_nm=365, emission_nm=400),
+        step("read.fluorescence", wells=["A1"], excitation_nm=365, emission_nm=405),
+        step("read.fluorescence", wells=["A1"], excitation_nm=365, emission_nm=410),
+        step("read.fluorescence", wells=["A2"], excitation_nm=365, emission_nm=410),
+        step("drawer.open"),
+    ]
+    compact = compact_steps(steps)
+    assert [("repeat" in c) for c in compact] == [False, False, False, True, False, False]
+    assert expand_steps(compact) == steps
+    assert ac.plan_step_hash(expand_steps(compact)) == ac.plan_step_hash(steps)
+
+
+def test_engine_drops_a_malformed_compact_plan() -> None:
+    from lab_assistant.engine import _plan_from_tool_result
+
+    bad = {"plan": {"plan_id": "x", "steps_compact": [{"repeat": {"action": "a"}}]}}
+    assert _plan_from_tool_result({"content": json.dumps(bad)}) is None
 
 
 @pytest.mark.parametrize(

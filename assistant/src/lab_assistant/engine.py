@@ -78,7 +78,13 @@ from pydantic import BaseModel, Field
 import httpx
 
 from . import device_chat
-from .plan_contract import MAX_PLAN_STEPS, PLAN_TTL_S, REFUSAL_CODES, plan_step_hash
+from .plan_contract import (
+    MAX_PLAN_STEPS,
+    PLAN_TTL_S,
+    REFUSAL_CODES,
+    expand_steps,
+    plan_step_hash,
+)
 from .scopes import SCOPABLE_KINDS, EquipmentScope, scope_system_prompt, scoped_control_env
 
 # Named for its former module so the service log reads exactly as before.
@@ -973,8 +979,19 @@ def _plan_from_tool_result(block: dict[str, Any]) -> dict[str, Any] | None:
     ``propose_plan`` returns ``{"plan": {...}}``."""
 
     for data in _json_payloads_from_tool_result(block):
-        if isinstance(data.get("plan"), dict):
-            return data["plan"]
+        plan = data.get("plan")
+        if isinstance(plan, dict):
+            if "steps_compact" not in plan:
+                return plan
+            # A sweep comes back compacted to fit the tool channel. Expand it
+            # before anything renders or caches it; record_plan still checks
+            # step_hash against the expanded steps.
+            try:
+                steps = expand_steps(plan["steps_compact"])
+            except ValueError:
+                logger.warning("assistant_plan ignored: malformed steps_compact in %r", plan.get("plan_id"))
+                return None
+            return {**{k: v for k, v in plan.items() if k != "steps_compact"}, "steps": steps}
     return None
 
 

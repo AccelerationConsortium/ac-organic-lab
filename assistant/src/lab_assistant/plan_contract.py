@@ -76,3 +76,98 @@ def plan_step_hash(steps: list[dict[str, Any]]) -> str:
         default=str,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+# A plan result travels back through the model's tool channel before it
+# becomes a card, and that channel caps a tool result (Hermes: 50 000 chars
+# for MCP tools). A plate-reader sweep is 160-odd reads each naming every
+# well — ~120 KB written out — so lab-control returns such a plan as
+# ``steps_compact``: explicit steps plus ``repeat`` runs in which exactly one
+# argument varies. The engine expands it back before anything caches or
+# renders the plan, and the cached plan is still refused unless its
+# ``step_hash`` matches the expanded steps.
+_STEP_KEYS = frozenset({"action", "passthrough_action", "args"})
+
+
+def compact_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Run-length encode consecutive steps that differ in one argument."""
+
+    def runnable(s: dict[str, Any]) -> bool:
+        return set(s) == _STEP_KEYS and isinstance(s["args"], dict)
+
+    out: list[dict[str, Any]] = []
+    i = 0
+    while i < len(steps):
+        first = steps[i]
+        if runnable(first) and i + 1 < len(steps) and runnable(steps[i + 1]):
+            nxt = steps[i + 1]
+            varying = [k for k in first["args"] if first["args"][k] != nxt["args"].get(k)]
+            if (
+                len(varying) == 1
+                and set(first["args"]) == set(nxt["args"])
+                and (first["action"], first["passthrough_action"]) == (nxt["action"], nxt["passthrough_action"])
+            ):
+                key = varying[0]
+                base = {k: v for k, v in first["args"].items() if k != key}
+                values = [first["args"][key]]
+                j = i + 1
+                while (
+                    j < len(steps)
+                    and runnable(steps[j])
+                    and (steps[j]["action"], steps[j]["passthrough_action"]) == (first["action"], first["passthrough_action"])
+                    and set(steps[j]["args"]) == set(first["args"])
+                    and all(steps[j]["args"][k] == v for k, v in base.items())
+                ):
+                    values.append(steps[j]["args"][key])
+                    j += 1
+                if len(values) >= 3:
+                    out.append({"repeat": {
+                        "action": first["action"],
+                        "passthrough_action": first["passthrough_action"],
+                        "args": base,
+                        "vary": key,
+                        "values": values,
+                    }})
+                    i = j
+                    continue
+        out.append(first)
+        i += 1
+    return out
+
+
+def expand_steps(segments: Any) -> list[dict[str, Any]]:
+    """Inverse of :func:`compact_steps`. Raises ``ValueError`` on any shape it
+    did not produce, so a malformed result never becomes a partial plan."""
+
+    if not isinstance(segments, list):
+        raise ValueError("steps_compact must be a list")
+    steps: list[dict[str, Any]] = []
+    for seg in segments:
+        if not isinstance(seg, dict):
+            raise ValueError("steps_compact entries must be objects")
+        if "repeat" in seg:
+            run = seg["repeat"]
+            if (
+                set(seg) != {"repeat"}
+                or not isinstance(run, dict)
+                or set(run) != {"action", "passthrough_action", "args", "vary", "values"}
+                or not isinstance(run["args"], dict)
+                or not isinstance(run["vary"], str)
+                or run["vary"] in run["args"]
+                or not isinstance(run["values"], list)
+                or not run["values"]
+            ):
+                raise ValueError("malformed repeat run in steps_compact")
+            steps.extend(
+                {
+                    "action": run["action"],
+                    "passthrough_action": run["passthrough_action"],
+                    "args": {**run["args"], run["vary"]: value},
+                }
+                for value in run["values"]
+            )
+        else:
+            if not {"action", "args"} <= set(seg):
+                raise ValueError("steps_compact step needs action and args")
+            steps.append(seg)
+    return steps
