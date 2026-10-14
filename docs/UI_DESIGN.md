@@ -1200,6 +1200,18 @@ actuating path**:
   where that is acceptable). Closing the tab mid-run stops sending steps —
   the human is supposed to be present. Cross-device work is still a
   workflow plan (§5.5).
+- **Reader results stay in the tab (2026-10-14).** The passthrough audit
+  keeps only a step's outcome, so a plan's `read.absorbance` /
+  `read.fluorescence` responses would otherwise be lost. The runner keeps
+  each one as it returns, in a results panel separate from the plan card
+  (dismissing the card or a new proposal does not drop them), with
+  absorbance and fluorescence CSVs and a JSON run record (plan, plate,
+  settings, timestamps, status, over-range wells, unexpected nulls, raw
+  responses) downloadable mid-run, after completion, or after a halt.
+  Values are raw; over-range is an empty value with `over_range=true`,
+  never zero. This is a browser export, not a BitacoraDB record — reads
+  that must land on samples belong in an authorized run
+  (`docs/READER_MEASUREMENTS.md`).
 
 Binding-rules note: Part I rule 3 ("no ad-hoc command sequences") was
 already carved by Step 1c's operator-sequenced cards; Step 1i changes only
