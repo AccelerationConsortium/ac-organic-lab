@@ -1287,6 +1287,98 @@ def test_proposable_plate_reader_equals_finite_surface() -> None:
     assert ac._PROPOSABLE["plate_reader"] == set(_PLATE_READER_SURFACE)
 
 
+_SWEEP = {
+    "wells": "A1:H12",
+    "absorbance": {"start_nm": 300, "stop_nm": 800, "step_nm": 5},
+    "fluorescence": {
+        "excitation_nm": 365,
+        "focal_height_mm": 7.0,
+        "emission": {"start_nm": 400, "stop_nm": 700, "step_nm": 5},
+    },
+}
+
+
+@respx.mock
+async def test_propose_plan_reader_sweep_expands_to_explicit_reviewed_steps() -> None:
+    """The model names the sweep; the server writes out every read, and the
+    card and hash cover the expansion, not the shorthand."""
+
+    _mock_bench_status("plate_reader", list(_PLATE_READER_SURFACE))
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_plan(
+            _bench_registry("plate_reader"),
+            "plate_reader_test",
+            None,
+            "UV-Vis and emission spectra",
+            reader_sweep=_SWEEP,
+            prelude=[
+                {"action": "plate.load", "args": {"plate_id": "p-1", "model": "square_96_19mm"}},
+                {"action": "drawer.close"},
+            ],
+        )
+    )
+    steps = out["plan"]["steps"]
+    assert len(steps) == 2 + 101 + 61
+    assert [s["action"] for s in steps[:3]] == ["plate.load", "drawer.close", "read.absorbance"]
+    absorbance = [s for s in steps if s["action"] == "read.absorbance"]
+    fluorescence = [s for s in steps if s["action"] == "read.fluorescence"]
+    assert [s["args"]["wavelength_nm"] for s in absorbance] == list(range(300, 801, 5))
+    assert [s["args"]["emission_nm"] for s in fluorescence] == list(range(400, 701, 5))
+    assert steps.index(fluorescence[0]) > steps.index(absorbance[-1])
+    wells = [f"{r}{c}" for r in "ABCDEFGH" for c in range(1, 13)]
+    assert all(s["args"]["wells"] == wells for s in absorbance + fluorescence)
+    assert set(absorbance[0]["args"]) == {"wells", "wavelength_nm"}
+    assert set(fluorescence[0]["args"]) == {"wells", "excitation_nm", "emission_nm", "focal_height_mm"}
+    assert fluorescence[0]["args"]["excitation_nm"] == 365
+    assert out["plan"]["step_hash"] == ac.plan_step_hash(steps)
+
+
+@pytest.mark.parametrize(
+    ("sweep", "needle"),
+    [
+        ({**_SWEEP, "absorbance": {"start_nm": 300, "stop_nm": 802, "step_nm": 5}}, "do not land"),
+        ({**_SWEEP, "absorbance": {"start_nm": 800, "stop_nm": 300, "step_nm": 5}}, "stop_nm >= start_nm"),
+        ({**_SWEEP, "fluorescence": {**_SWEEP["fluorescence"], "gain": 100}}, "only excitation_nm"),
+        ({**_SWEEP, "absorbance": {"start_nm": 300, "stop_nm": 800, "step_nm": 5, "gain": 1}}, "only start_nm"),
+        ({**_SWEEP, "wells": "H12:A1"}, "top-left"),
+        ({**_SWEEP, "speed": 1}, "unknown field"),
+        ({"wells": "A1:H12"}, "absorbance and/or fluorescence"),
+        ({**_SWEEP, "absorbance": {"start_nm": 225, "stop_nm": 235, "step_nm": 5}}, "step 1"),
+    ],
+)
+@respx.mock
+async def test_propose_plan_reader_sweep_refusals(sweep: dict, needle: str) -> None:
+    _mock_bench_status("plate_reader", list(_PLATE_READER_SURFACE))
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_plan(
+            _bench_registry("plate_reader"), "plate_reader_test", None, "", reader_sweep=sweep,
+        )
+    )
+    assert "error" in out and needle in out["error"], out
+
+
+@respx.mock
+async def test_propose_plan_reader_sweep_is_plate_reader_only_and_exclusive() -> None:
+    _mock_bench_status("shaker", ["shake.start"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_plan(
+            _bench_registry("shaker"), "shaker_test", None, "", reader_sweep=_SWEEP,
+        )
+    )
+    assert "reader_sweep is for plate readers" in out["error"]
+    _mock_bench_status("plate_reader", list(_PLATE_READER_SURFACE))
+    out = json.loads(
+        await ac._propose_plan(
+            _bench_registry("plate_reader"), "plate_reader_test",
+            [{"action": "drawer.close"}], "", reader_sweep=_SWEEP,
+        )
+    )
+    assert "not both" in out["error"]
+
+
 @respx.mock
 async def test_propose_plate_reader_absorbance_read() -> None:
     _mock_bench_status("plate_reader", list(_PLATE_READER_SURFACE))
