@@ -1638,6 +1638,7 @@ async def _propose_plan(
         # The written-out sweep exceeds the tool-result cap of the channel it
         # returns through; the engine expands this back (plan_contract).
         plan["steps_compact"] = compact_steps(plan.pop("steps"))
+        return json.dumps({"plan": plan}, default=str, separators=(",", ":"))
     return _dumps({"plan": plan})
 
 
@@ -1857,7 +1858,12 @@ def _build_server(registry: Registry):
 
         def register(fn):
             if enabled is None or fn.__name__ in enabled:
-                return server.tool()(fn)
+                # Text only. FastMCP otherwise also sends each str result as
+                # structuredContent {"result": <same text>}, which Hermes does
+                # not recognise as a duplicate and forwards too — doubling the
+                # result against its 5000-char stream-json tool_result cap, so
+                # a mid-sized plan arrived truncated and was dropped.
+                return server.tool(structured_output=False)(fn)
             return fn
 
         return register

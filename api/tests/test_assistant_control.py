@@ -1340,6 +1340,33 @@ async def test_propose_plan_reader_sweep_expands_to_explicit_reviewed_steps() ->
     assert out["plan"]["step_hash"] == ac.plan_step_hash(steps)
 
 
+async def test_lab_control_tools_return_text_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No structuredContent copy: Hermes forwards it beside the text, which
+    doubled a plan result past its 5000-char stream-json tool_result cap."""
+
+    monkeypatch.setenv("LAB_ACTOR", ACTOR)
+    server = ac._build_server(_registry())
+    assert all(t.outputSchema is None for t in await server.list_tools())
+    out = await server.call_tool("decline_proposal", {"reason_code": "informational", "explanation": "x"})
+    assert isinstance(out, list) and out[0].type == "text"
+
+
+@respx.mock
+async def test_reader_sweep_result_fits_the_hermes_stream_cap() -> None:
+    """The whole tool_result Hermes emits — {"result": <text>} — must stay
+    under its 5000-char cap, with room for a long reason."""
+
+    _mock_bench_status("plate_reader", list(_PLATE_READER_SURFACE))
+    _mock_authz(True)
+    raw = await ac._propose_plan(
+        _bench_registry("plate_reader"), "plate_reader_test", None, "r" * 300,
+        reader_sweep=_SWEEP,
+        prelude=[{"action": "plate.load", "args": {"plate_id": "vial-plate-seal-read-20261011T231147Z",
+                                                   "model": "square_96_19mm"}}, {"action": "drawer.close"}],
+    )
+    assert len(json.dumps({"result": raw}, ensure_ascii=False)) < 4000
+
+
 def test_compact_steps_round_trips_mixed_plans() -> None:
     from lab_assistant.plan_contract import compact_steps, expand_steps
 
