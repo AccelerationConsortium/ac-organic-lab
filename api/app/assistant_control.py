@@ -121,6 +121,7 @@ from lab_assistant.plan_contract import (  # noqa: F401
     MAX_PLAN_STEPS,
     PLAN_TTL_S,
     REFUSAL_CODES,
+    compact_steps,
     plan_step_hash,
 )
 
@@ -1633,6 +1634,10 @@ async def _propose_plan(
     merged_checks = _merge_deck_checks(deck_checks)
     if merged_checks:
         plan["deck_checks"] = merged_checks
+    if reader_sweep is not None:
+        # The written-out sweep exceeds the tool-result cap of the channel it
+        # returns through; the engine expands this back (plan_contract).
+        plan["steps_compact"] = compact_steps(plan.pop("steps"))
     return _dumps({"plan": plan})
 
 
