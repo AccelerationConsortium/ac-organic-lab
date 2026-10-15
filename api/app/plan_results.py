@@ -199,13 +199,23 @@ def experiment_artifacts(bundle: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _approval_text(bundle: dict[str, Any]) -> str:
+    from .plan_artifacts import SOURCE_OT2, bundle_source
+
+    if bundle_source(bundle) == SOURCE_OT2:
+        return "OT-2 gateway step approval (not a Run Authorization)"
+    return "dashboard assistant step approval (not a Run Authorization)"
+
+
 def experiment_meta(bundle: dict[str, Any]) -> dict[str, Any]:
+    from .plan_artifacts import bundle_source
+
     return {
         **experiment_artifacts(bundle),
         "unformatted": True,
         "created_by": "ac-organic-lab/plan_results",
-        "source": "ot2-gateway plan",
-        "approval": "OT-2 gateway step approval (not a Run Authorization)",
+        "source": bundle_source(bundle),
+        "approval": _approval_text(bundle),
         "plan_id": bundle["plan_id"],
         "device_id": bundle["device_id"],
         "equipment_id": bundle["equipment_id"],
@@ -223,13 +233,20 @@ def note_body(bundle: dict[str, Any]) -> str:
         weighed = (f" {stats['n']} wells weighed: mean {stats.get('mean_g')} g, "
                    f"range {stats.get('min_g')}-{stats.get('max_g')} g, CV {stats.get('cv_pct')}%.")
     halt = f" Halted: {bundle['halt_reason']}." if bundle.get("halt_reason") else ""
+    from .plan_artifacts import SOURCE_OT2, bundle_source, run_label
+
+    if bundle_source(bundle) == SOURCE_OT2:
+        ran = (f"approved and run from the OT-2 panel by {bundle['approved_by']} (a "
+               f"device-local step approval, not a Run Authorization)")
+    else:
+        ran = (f"approved in the dashboard assistant by {bundle['approved_by']} and run by the "
+               f"dashboard server (a step approval, not a Run Authorization)")
     return (
-        f"UNFORMATTED results of OT-2 plan {bundle['plan_id']} on {bundle['equipment_id']}: "
+        f"UNFORMATTED results of {run_label(bundle)} plan {bundle['plan_id']} on {bundle['equipment_id']}: "
         f"{bundle['status']}, {bundle['steps_ok']}/{bundle['steps_total']} steps ok "
         f"({bundle['steps_failed']} failed, {bundle['steps_skipped']} skipped).{halt}{weighed} "
-        f"Proposed by {bundle.get('proposed_by') or 'unknown'}; approved and run from the OT-2 "
-        f"panel by {bundle['approved_by']} (a device-local step approval, not a Run "
-        f"Authorization). Curate this Experiment: retitle it and add notes as needed."
+        f"Proposed by {bundle.get('proposed_by') or 'unknown'}; {ran}. "
+        f"Curate this Experiment: retitle it and add notes as needed."
     )
 
 
@@ -244,8 +261,10 @@ def note_data(bundle: dict[str, Any]) -> dict[str, Any]:
          "reading": r.get("reading"), "finished_at": r.get("finished_at")}
         for i, r in enumerate(results)
     ]
+    from .plan_artifacts import bundle_source
+
     return {
-        "source": "ot2-gateway plan",
+        "source": bundle_source(bundle),
         **{k: bundle.get(k) for k in (
             "plan_id", "device_id", "equipment_id", "gateway_version", "status", "halt_reason",
             "started_at", "finished_at", "steps_total", "steps_ok", "steps_failed",
@@ -338,7 +357,9 @@ async def file_one(journal: PlanResultsJournal, row: dict[str, Any],
         if experiment_id is None:
             hid = experiment_hid(bundle)
             started = bundle.get("started_at") or row["received_at"]
-            title = f"UNFORMATTED — OT-2 plan {plan_id} ({started[:10]})"
+            from .plan_artifacts import run_label
+
+            title = f"UNFORMATTED — {run_label(bundle)} plan {plan_id} ({started[:10]})"
 
             found_meta: Optional[dict[str, Any]] = None
 
@@ -382,7 +403,7 @@ async def file_one(journal: PlanResultsJournal, row: dict[str, Any],
         r.raise_for_status()
         existing = next(
             (n for n in r.json()
-             if (n.get("data") or {}).get("source") == "ot2-gateway plan"
+             if (n.get("data") or {}).get("source") == note_data(bundle)["source"]
              and (n.get("data") or {}).get("plan_id") == plan_id
              and (n.get("data") or {}).get("device_id") == device_id),
             None,
