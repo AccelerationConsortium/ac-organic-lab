@@ -609,6 +609,15 @@ export async function postPlateReaderStopTemperature(
   return controlPost(equipmentId, "incubator/stop", {});
 }
 
+/** Stop the active timed run (`run.stop`). The device finishes the
+ * measurement in flight, stops the shaker and applies the run's
+ * `on_complete` to the incubator. Idempotent. */
+export async function postPlateReaderStopRun(
+  equipmentId: string,
+): Promise<ControlAck> {
+  return controlPost(equipmentId, "run/stop", {});
+}
+
 // -- Plate weigher (weigh-every-plate: balance + plate lift + lid) ----------
 //
 // Routes mirror the device's `ROUTES` table (service/__init__.py). `read`

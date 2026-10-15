@@ -1574,6 +1574,50 @@ slot until the operator has resolved it), so the model asks in words and the
 card asks in print even when the model forgets.
 
 
+#### Step 1o — Cytation timed runs (2026-10-15, operator decision)
+
+The operator wanted "hold 60 °C for 6 h and read every 30 min" from the
+assistant. Composed from the existing verbs that is a plan of thirteen reads
+with waits between them — not expressible (plans have no wait step), and
+fragile if it were: the plan runner would have to live, and heartbeat a claim,
+for six hours. `agilent-cytation-server` now runs the schedule itself
+(`POST /control/run/start`, 202 at once): it sets the setpoint, waits for it,
+takes every measurement at each timepoint, optionally shakes between them, and
+cleans up on the way out. While a run is active the device advertises only the
+claim verbs, `run.list`, `run.get` and `run.stop`, and refuses everything else
+with 412 `run_in_progress`.
+
+| Proposable | Read tools (lab-history, both modes) | Tile |
+|---|---|---|
+| `run.start` (one card carries the whole schedule; the device owns timing and cleanup), `run.stop` | `list_plate_reader_runs`, `get_plate_reader_run` — progress and temperatures only | run progress row + **Stop run** |
+
+`run.start` passes the Step 1g criterion even though its body is nested: the
+complete schedule is on the card, and nothing after the click is sequenced by
+the browser or the model. **`run.stop` is the one exception to "stop verbs are
+never proposable"**, at the operator's request. The rule's purpose — a stop
+must stay reachable *without* the assistant — is kept by the tile's Stop run
+button, which is why that button shipped in the same change; stopping can
+only end the run after the measurement in flight, never start motion or heat.
+`incubator.stop` and the Cytation's `shake.start` / `shake.stop` stay out.
+
+The read tools return run telemetry — state, schedule vs actual times,
+temperature at each timepoint and over the hold, which measurements failed and
+why, over-range wells, image paths — and **not** the measured values, on the
+same reasoning that keeps `query_well_results` away from the assistant: tool
+output transits the model provider. The full record is at
+`GET /api/equipment/cytation_5/control/runs/{run_id}` (the ordinary claim-free
+GET passthrough) and on the device.
+
+Catalog parity: `skill_catalog/plate_reader.py` gains `run.start`, `run.stop`,
+`run.list` (`GET /control/runs`) and `run.get` (`GET /control/runs/{run_id}`);
+`RunStartArgs` is checked field-for-field against the device's JSON schema
+(identical at the time of writing). `PlateReaderClient` gains `run_start`,
+`run_stop`, `run_list`, `run_get`.
+
+Deploy order: the device first (until it is deployed it advertises none of
+these, so the allowlist entries are inert and the tile row stays hidden), then
+the dashboard API restart for the engine prompt and history tool list.
+
 #### Camera frames in the chat, and progress pills at the bottom (2026-09-04, operator request)
 
 Two things the operator asked for the same afternoon the assistant moved to a

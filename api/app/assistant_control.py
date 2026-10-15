@@ -70,7 +70,9 @@ Safety-floor actions are deliberately **not** proposable — they are operator
 buttons and must stay reachable without the assistant. That is the xArm's
 ``stop`` / ``connect`` / ``clear_errors``, and every kind's stop verb
 (``sash.stop``, ``shake.stop``, the press's ``stop``, the PlateLoc's
-``seal.stop``). Anything the resolver cannot map is refused.
+``seal.stop``). The single exception is the Cytation's ``run.stop`` (Step 1o,
+operator decision): proposable, while the tile's Stop-run button keeps it
+reachable without the assistant. Anything the resolver cannot map is refused.
 
 Transport
 ---------
@@ -395,6 +397,16 @@ _PROPOSABLE: dict[str, frozenset[str]] = {
     # operator-only (stop verbs are never proposable). Cytation `shake.start`
     # is still absent: unlike the Torrey Pines cycle it has no duration timer
     # and needs a later `shake.stop`, so it is not a standalone act.
+    #
+    # Step 1o (2026-10-15, operator decision): timed runs. `run.start` is one
+    # complete, bounded act — the DEVICE owns the schedule (setpoint, duration,
+    # interval, measurements, optional shaking) and its own cleanup, so the
+    # whole run fits on one card, unlike a client-sequenced shake.start/stop.
+    # `run.stop` is the one deliberate exception to "stop verbs are never
+    # proposable": the operator asked to stop runs from the assistant, and the
+    # rule's purpose — a stop must stay reachable WITHOUT the assistant — is
+    # kept by the Stop-run button on the Cytation tile. Stopping only ends the
+    # run after the measurement in flight; it cannot start motion or heat.
     "plate_reader": frozenset(
         {
             "startup",
@@ -409,6 +421,8 @@ _PROPOSABLE: dict[str, frozenset[str]] = {
             "read.luminescence",
             "imaging.capture",
             "incubator.set_temperature",
+            "run.start",
+            "run.stop",
         }
     ),
     # Step 1l (2026-09-02, operator request): the solid doser (dose_every_well,

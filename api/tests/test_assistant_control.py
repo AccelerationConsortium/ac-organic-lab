@@ -1240,9 +1240,12 @@ async def test_list_available_actions_camera_full_surface() -> None:
 # ---------------------------------------------------------------------------
 
 # Finite, card-evaluable Cytation actions. incubator.set_temperature is a
-# setpoint change (same class as shake.set_temperature). incubator.stop and
-# Cytation shake.start/stop stay operator/workflow-only: stop verbs are the
-# safety floor, and Cytation shaking has no duration timer.
+# setpoint change (same class as shake.set_temperature). run.start is one
+# device-scheduled timed run; run.stop is the operator-approved exception to
+# the stop-verb rule (Step 1o) — the tile's Stop run keeps it reachable without
+# the assistant. incubator.stop and Cytation shake.start/stop stay
+# operator/workflow-only: stop verbs are the safety floor, and Cytation
+# shaking has no duration timer.
 _PLATE_READER_SURFACE = {
     "startup": "startup",
     "shutdown": "shutdown",
@@ -1256,6 +1259,8 @@ _PLATE_READER_SURFACE = {
     "read.luminescence": "read/luminescence",
     "imaging.capture": "imaging/capture",
     "incubator.set_temperature": "incubator/set_temperature",
+    "run.start": "run/start",
+    "run.stop": "run/stop",
 }
 _PLATE_READER_WORKFLOW_ONLY = {
     "incubator.stop",
@@ -1478,6 +1483,74 @@ async def test_propose_plate_reader_incubator_set_temperature() -> None:
     assert prop["action"] == "incubator.set_temperature"
     assert prop["passthrough_action"] == "incubator/set_temperature"
     assert prop["args"] == {"celsius": 37.0}
+
+
+_SIX_HOUR_RUN = {
+    "temperature_c": 60.0,
+    "duration_s": 21600,
+    "interval_s": 1800,
+    "measurements": [
+        {"type": "absorbance", "wells": ["A1", "A2"], "wavelength_nm": 600},
+        {"type": "imaging", "wells": ["A1"], "channel": "brightfield"},
+    ],
+    "shake": {"pattern": "orbital", "displacement_mm": 3},
+}
+
+
+@respx.mock
+async def test_propose_plate_reader_timed_run() -> None:
+    """"Hold 60 C for 6 h and read every 30 min" is one card: the device owns
+    the schedule, so the whole nested body is what the operator authorizes."""
+    _mock_bench_status("plate_reader", ["run.start", "run.list", "run.get"])
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("plate_reader"),
+            "plate_reader_test",
+            "run.start",
+            _SIX_HOUR_RUN,
+            "hold 60 C for 6 h, absorbance + image every 30 min (13 timepoints)",
+        )
+    )
+    prop = out["proposal"]
+    assert prop["action"] == "run.start"
+    assert prop["passthrough_action"] == "run/start"
+    assert prop["args"] == _SIX_HOUR_RUN
+
+
+@respx.mock
+async def test_propose_plate_reader_timed_run_rejects_a_runaway_schedule() -> None:
+    _mock_bench_status("plate_reader", ["run.start"])
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("plate_reader"),
+            "plate_reader_test",
+            "run.start",
+            {**_SIX_HOUR_RUN, "interval_s": 1},
+            "",
+        )
+    )
+    assert out["code"] == "invalid_args"
+
+
+@respx.mock
+async def test_propose_plate_reader_run_stop_while_a_run_owns_the_device() -> None:
+    # During a run the device advertises only the claim verbs, the run reads
+    # and run.stop.
+    _mock_bench_status(
+        "plate_reader", ["claim", "heartbeat", "release", "run.list", "run.get", "run.stop"]
+    )
+    _mock_authz(True)
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("plate_reader"),
+            "plate_reader_test",
+            "run.stop",
+            {},
+            "operator asked to end the 60 C run early",
+        )
+    )
+    assert out["proposal"]["passthrough_action"] == "run/stop"
 
 
 @respx.mock

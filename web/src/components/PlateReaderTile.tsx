@@ -6,6 +6,7 @@ import {
   postPlateReaderSetTemperature,
   postPlateReaderShutdown,
   postPlateReaderStartup,
+  postPlateReaderStopRun,
   postPlateReaderStopTemperature,
 } from "@/lib/api";
 import { claimHolder, claimLabel, claimTitle } from "@/lib/claim";
@@ -220,6 +221,56 @@ function parseReader(snapshot: EquipmentSnapshot): ReaderState {
   };
 }
 
+/** `details.run`: the current or most recent timed run's progress, as the
+ * device publishes it (agilent-cytation-server `RunRecord.summary`). */
+interface RunSummary {
+  runId: string;
+  label: string | null;
+  state: string;
+  message: string | null;
+  temperatureC: number | null;
+  total: number;
+  done: number;
+  failed: number;
+  nextAt: string | null;
+}
+
+const ACTIVE_RUN_STATES = new Set(["equilibrating", "holding", "stopping"]);
+
+function parseRun(snapshot: EquipmentSnapshot): RunSummary | null {
+  const details = (snapshot.status.details ?? {}) as Record<string, unknown>;
+  const raw = details["run"];
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.run_id !== "string" || typeof r.state !== "string") return null;
+  const num = (v: unknown) => (typeof v === "number" ? v : null);
+  const str = (v: unknown) => (typeof v === "string" ? v : null);
+  return {
+    runId: r.run_id,
+    label: str(r.label),
+    state: r.state,
+    message: str(r.message),
+    temperatureC: num(r.temperature_c),
+    total: num(r.timepoints_total) ?? 0,
+    done: num(r.timepoints_done) ?? 0,
+    failed: num(r.timepoints_failed) ?? 0,
+    nextAt: str(r.next_timepoint_at),
+  };
+}
+
+function runTone(run: RunSummary): Tone {
+  if (ACTIVE_RUN_STATES.has(run.state)) return "neutral";
+  if (run.state === "failed" || run.state === "interrupted") return "warn";
+  return "muted";
+}
+
+function clockTime(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 function allowedActions(snapshot: EquipmentSnapshot): string[] {
   const raw = snapshot.status.allowed_actions;
   return Array.isArray(raw)
@@ -231,8 +282,8 @@ function allowedActions(snapshot: EquipmentSnapshot): string[] {
  * BioTek Cytation 5 (kind: plate_reader). Compact half-height tile: template
  * lifecycle banner (ON toggle — startup/shutdown; the device has no halt
  * endpoint, so no STOP), the four sub-system components as pills, an
- * incubator setpoint row, and the read counter. Read/imaging controls land
- * with the protocol-execution work.
+ * incubator setpoint row, the timed-run row (progress + Stop run), and the
+ * read counter. Read/imaging controls land with the protocol-execution work.
  */
 export function PlateReaderTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
   const reader = parseReader(snapshot);
@@ -259,6 +310,14 @@ export function PlateReaderTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       reader.incubatorState !== "disconnected");
   const canStopTemp =
     !locked && !claimed && advertised.includes("incubator.stop") && incubatorOn;
+  // A timed run holds the instrument for hours and rejects every other verb,
+  // so its stop lives on the tile: stopping must never depend on the
+  // assistant (which can also propose run.stop).
+  const run = parseRun(snapshot);
+  const runActive = run !== null && ACTIVE_RUN_STATES.has(run.state);
+  const canStopRun =
+    !locked && !claimed && runActive && run?.state !== "stopping" &&
+    advertised.includes("run.stop");
 
   return (
     <TileShell
@@ -374,6 +433,50 @@ export function PlateReaderTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
           Off
         </TileButton>
       </div>
+
+      {/* Timed run (hold a setpoint, measure on a schedule): progress while
+          one is active, how the last one ended otherwise. */}
+      {run && (
+        <div
+          className={`flex h-7 items-center gap-1.5 rounded-md border px-2 ${TONE_CLASSES[runTone(run)]}`}
+          title={[run.label, run.runId, run.message].filter(Boolean).join(" · ")}
+        >
+          <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
+            {runActive ? "Run" : "Last run"}
+          </span>
+          <span className="truncate text-xs font-semibold text-ink dark:text-slate-100 tabular-nums">
+            {run.state} · {run.done}/{run.total}
+            {run.failed > 0 ? ` (${run.failed} failed)` : ""}
+            {runActive && run.temperatureC !== null ? ` · ${run.temperatureC} °C` : ""}
+            {run.state === "holding" && clockTime(run.nextAt)
+              ? ` · next ${clockTime(run.nextAt)}`
+              : ""}
+          </span>
+          {runActive && (
+            <span className="ml-auto">
+              <TileButton
+                onClick={() =>
+                  exec(() => postPlateReaderStopRun(snapshot.id), {
+                    action: "run.stop",
+                  })
+                }
+                disabled={!canStopRun}
+                variant="danger"
+                size="small"
+                title={
+                  claim
+                    ? claimTitle(claim)
+                    : run.state === "stopping"
+                      ? "Stopping after the measurement in flight"
+                      : "Stop the timed run after the measurement in flight"
+                }
+              >
+                Stop run
+              </TileButton>
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Read counter — one line. */}
       <div className="flex items-center gap-1.5">

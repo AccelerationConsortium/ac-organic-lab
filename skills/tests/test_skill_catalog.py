@@ -898,3 +898,46 @@ def test_realsense_capture_is_scoped_to_the_xarm() -> None:
     assert {"label", "node_id", "tags", "protected"} <= set(fields)
     # Every argument is optional: a bare capture is the common case.
     assert all(not fields[name].is_required() for name in fields)
+
+
+def test_plate_reader_timed_run_skills() -> None:
+    """A timed run is two control verbs plus two claim-free reads, all under
+    /control so the dashboard's passthrough reaches them."""
+    import pytest
+    from pydantic import ValidationError
+
+    from lab_skills.skill_catalog import SKILL_REGISTRY
+    from lab_skills.skill_catalog.plate_reader import RunStartArgs
+
+    by_name = {d.name: d for d in SKILL_REGISTRY["plate_reader"]}
+    assert by_name["run.start"].endpoint == "/control/run/start"
+    assert by_name["run.stop"].endpoint == "/control/run/stop"
+    assert (by_name["run.list"].method, by_name["run.list"].endpoint) == ("GET", "/control/runs")
+    get = by_name["run.get"]
+    assert get.method == "GET"
+    assert get.resolve_path({"run_id": "run-20261015T140000Z-1a2b"}) == (
+        "/control/runs/run-20261015T140000Z-1a2b", {},
+    )
+
+    six_hours = RunStartArgs.model_validate({
+        "temperature_c": 60, "duration_s": 21600, "interval_s": 1800,
+        "measurements": [
+            {"type": "absorbance", "wells": ["A1"], "wavelength_nm": 600},
+            {"type": "imaging", "wells": ["A1"], "channel": "brightfield"},
+        ],
+        "shake": {"pattern": "orbital", "displacement_mm": 3},
+    })
+    assert six_hours.measurements[1].type == "imaging"
+    for bad in (
+        {"interval_s": 1},  # 21601 timepoints
+        {"temperature_c": 90},
+        {"measurements": [{"type": "absorbance", "wells": ["A1"], "wavelength_nm": 600, "gain": 2}]},
+        {"measurements": [{"type": "spectrum", "wells": ["A1"]}]},
+    ):
+        body = {
+            "temperature_c": 60, "duration_s": 21600, "interval_s": 1800,
+            "measurements": [{"type": "absorbance", "wells": ["A1"], "wavelength_nm": 600}],
+            **bad,
+        }
+        with pytest.raises(ValidationError):
+            RunStartArgs.model_validate(body)

@@ -135,7 +135,10 @@ HISTORY_TOOLS = os.environ.get(
     "ASSISTANT_HISTORY_TOOLS",
     "list_equipment_now,get_equipment_status,record_observation,"
     "query_equipment_events,query_service_uptime,query_sensor_readings,"
-    "tail_journald,capture_camera_snapshot",
+    "tail_journald,capture_camera_snapshot,"
+    # Timed-run PROGRESS only — the tools strip measured values (see
+    # app/mcp_server.py), so they stay on the telemetry side of the line above.
+    "list_plate_reader_runs,get_plate_reader_run",
 )
 # Chemical stock (bitácora's /inventory API, read-only) rides its own server
 # in both modes; see app/inventory_mcp.py for the contract-stability note.
@@ -486,6 +489,13 @@ lab-history:
 * query_service_uptime -- reachability transitions + overall uptime % over a
   window for one device.
 * query_sensor_readings -- environmental sensor history (~1/min).
+* list_plate_reader_runs / get_plate_reader_run -- timed runs on a plate
+  reader (e.g. cytation_5: "hold 60 C for 6 h, read every 30 min"): state,
+  timepoints done/total, next timepoint, temperature at each timepoint and
+  over the hold, which measurements failed and why, over-range wells, image
+  paths. Measured values are NOT returned (experiment data stays on the
+  dashboard) — say so if asked for them. The current run's summary is also in
+  get_equipment_status as details.run.
 * tail_journald -- last N lines of one of the dashboard's systemd units.
 * capture_camera_snapshot -- ONE still from a lab camera's live stream
   (camera_id: an equipment id of kind "camera"; lens: one of its
@@ -626,7 +636,9 @@ allowed_actions describes what can start in the present state.
 Safety-floor actions must stay reachable without you and are never
 proposable: the xArm's stop / connect / clear_errors, and every device's
 stop verb (sash.stop, shake.stop, the press's stop, the PlateLoc's
-seal.stop). If the user wants something stopped, point them at the
+seal.stop). The one exception is the Cytation's run.stop (operator
+decision): you may propose it when the user asks to stop a timed run; the
+tile's Stop run button remains the way to stop it without you. If the user wants something stopped, point them at the
 device's operator control — do not propose an alternative action to
 "work around" a stop.
 
@@ -635,7 +647,8 @@ Proposable kinds beyond the xArm: the OT-2 (liquid_handler), the fume hood
 shake.set_temperature, shake.set_speed), the press (init, press.up,
 press.down, plate.in, plate.out), cameras (ptz, preset/save, preset/goto,
 privacy, streaming), the Cytation plate reader (finite lifecycle, drawer,
-plate-record, read, imaging, and incubator.set_temperature), the PlateLoc sealer
+plate-record, read, imaging, incubator.set_temperature, and timed runs:
+run.start / run.stop), the PlateLoc sealer
 (startup, shutdown, stage.in, stage.out, seal.set_temperature,
 seal.set_time, seal.start), and the solid doser (startup, shutdown, home,
 tare, plate.set, plate.load, plate.unload, lid.open, lid.close, plate.raise,
@@ -667,6 +680,26 @@ shake.start: Cytation shaking has no duration timer and needs a later
 shake.stop, so the complete start/use/stop sequence belongs in a
 human-authorized workflow. Never propose incubator.stop or shake.stop;
 they are safety-floor controls.
+
+Holding a temperature while measuring over time ("60 C for 6 h, read every
+30 min", "incubate and image hourly") is ONE run.start proposal, never a
+plan of reads and waits — the device runs the schedule itself, needs no one
+watching, and returns at once. Its body: temperature_c (18-65; omit to leave
+the incubator alone), duration_s and interval_s in SECONDS (6 h = 21600,
+30 min = 1800), and measurements, a list of read bodies each with a "type":
+{"type": "absorbance", wells, wavelength_nm}, {"type": "fluorescence", wells,
+excitation_nm, emission_nm}, {"type": "luminescence", wells}, or
+{"type": "imaging", wells, channel, ...imaging.capture settings}. Optional:
+shake {pattern, displacement_mm} to shake between timepoints (it is the
+only safe way to shake on this device for long), on_complete
+("stop_temperature" default, or "hold_temperature"), label,
+wait_for_setpoint (default true: the clock starts once the setpoint is
+reached). Timepoints fall at 0, interval, 2*interval, ... and at the end, so
+6 h every 30 min is 13 timepoints — state that count in the reason. A plate
+must be loaded and the drawer closed first (propose plate.load / drawer.close
+before it if needed). While a run is active the device refuses every other
+hardware action; only run.stop is allowed. Follow progress with
+get_plate_reader_run.
 
 For the PlateLoc (kind plate_sealer), use the live schemas for startup,
 shutdown, stage.in, stage.out, seal.set_temperature, seal.set_time, and
