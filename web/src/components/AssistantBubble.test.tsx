@@ -160,7 +160,7 @@ type ExtraRoute = (url: string, method: string, init?: RequestInit) => Promise<u
 
 function installFetch(
   chatFrames: string[],
-  opts: { open?: boolean; savedSessions?: boolean; routes?: ExtraRoute } = {},
+  opts: { open?: boolean; savedSessions?: boolean; routes?: ExtraRoute; health?: Record<string, unknown> } = {},
 ) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -173,6 +173,7 @@ function installFetch(
         json: async () => ({
           configured: true, model: "sonnet", backend: "claude-code-cli",
           saved_sessions: opts.savedSessions ?? true,
+          ...opts.health,
         }),
       });
     }
@@ -854,6 +855,37 @@ describe("AssistantBubble control mode", () => {
     expect(screen.queryByText(/\[object Object\]/)).toBeNull();
   });
 
+
+  it("offers a model picker per mode and sends only a non-default pick", async () => {
+    sessionStorage.clear();
+    const fetchMock = installFetch(['data: {"type":"done"}\n\n'], {
+      health: { models: ["sonnet", "qwen/qwen3-max"], control_models: ["sonnet", "claude-cli:opus"] },
+    });
+    await openPanel();
+    const picker = (await screen.findByLabelText("Model")) as HTMLSelectElement;
+    expect([...picker.options].map((o) => o.value)).toEqual(["sonnet", "qwen/qwen3-max"]);
+    const chatBodies = () =>
+      fetchMock.mock.calls
+        .filter((c) => String(c[0]).includes("/api/assistant/chat"))
+        .map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+    const sendText = async (text: string) => {
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: text } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).toBeNull());
+    };
+    await sendText("default");
+    expect(chatBodies()[0].model).toBeUndefined();
+    fireEvent.change(picker, { target: { value: "qwen/qwen3-max" } });
+    await sendText("picked");
+    expect(chatBodies()[1].model).toBe("qwen/qwen3-max");
+    // Control has its own list; the Ask pick does not carry over.
+    const control = await screen.findByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const controlPicker = (await screen.findByLabelText("Model")) as HTMLSelectElement;
+    expect([...controlPicker.options].map((o) => o.value)).toEqual(["sonnet", "claude-cli:opus"]);
+    expect(controlPicker.value).toBe("sonnet");
+  });
 
   it("shows the backing model under the chat box and a disabled Clear chip when empty", async () => {
     // jsdom sessionStorage survives across tests; drop turns persisted by

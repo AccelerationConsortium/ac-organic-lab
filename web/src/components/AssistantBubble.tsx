@@ -268,6 +268,20 @@ const PLAN_POLL_MS = 2000;
 /** How often an open panel looks for other plans running on the server. */
 const ACTIVE_RUNS_POLL_MS = 15000;
 const ELN_PROJECT_KEY = "ac-assistant-eln-project-v1";
+const MODEL_KEY = "ac-assistant-model-v1";
+
+/** The model to name in a chat request: the operator's non-default pick for
+ *  this mode, if it is still offered; otherwise none (the server's default). */
+function chosenModel(
+  mode: Mode,
+  choice: { ask: string | null; control: string | null },
+  info: { models?: string[]; controlModels?: string[] } | null,
+): string | null {
+  if (mode === "plan") return null;
+  const offered = (mode === "control" ? info?.controlModels : info?.models) ?? [];
+  const picked = choice[mode];
+  return picked && picked !== offered[0] && offered.includes(picked) ? picked : null;
+}
 
 function planRunFromServer(run: ServerRun): PlanRun {
   const active = RUN_ACTIVE.has(run.status);
@@ -672,7 +686,28 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
   const [backendInfo, setBackendInfo] = useState<{
     model?: string;
     backend?: string;
+    /** The picker's choices per mode, default first (ASSISTANT_MODELS /
+     *  ASSISTANT_CONTROL_MODELS); one entry means no picker. */
+    models?: string[];
+    controlModels?: string[];
   } | null>(null);
+  // The operator's pick per mode; null = the mode's default. Per tab, like
+  // the device panel's picker.
+  const [modelChoice, setModelChoice] = useState<{ ask: string | null; control: string | null }>({
+    ask: null,
+    control: null,
+  });
+  const chooseModel = useCallback((which: "ask" | "control", model: string) => {
+    setModelChoice((prev) => {
+      const next = { ...prev, [which]: model };
+      try {
+        sessionStorage.setItem(MODEL_KEY, JSON.stringify(next));
+      } catch {
+        /* storage unavailable: the pick holds until reload */
+      }
+      return next;
+    });
+  }, []);
   // Pixel coords of the panel's top-left corner. Null while the user hasn't
   // dragged yet -- we compute a default on first open from the viewport
   // size. Persisted to sessionStorage so the panel stays where the user
@@ -748,7 +783,20 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
         const body = await r.json();
         if (!cancelled) {
           setConfigured(Boolean(body?.configured));
-          setBackendInfo({ model: body?.model, backend: body?.backend });
+          const models: string[] = Array.isArray(body?.models) ? body.models : [];
+          const controlModels: string[] = Array.isArray(body?.control_models) ? body.control_models : [];
+          setBackendInfo({ model: body?.model, backend: body?.backend, models, controlModels });
+          let saved: { ask?: unknown; control?: unknown } = {};
+          try {
+            saved = JSON.parse(sessionStorage.getItem(MODEL_KEY) ?? "{}") ?? {};
+          } catch {
+            /* nothing saved, or storage unavailable: the defaults */
+          }
+          setModelChoice({
+            ask: typeof saved.ask === "string" && models.includes(saved.ask) ? saved.ask : null,
+            control:
+              typeof saved.control === "string" && controlModels.includes(saved.control) ? saved.control : null,
+          });
           setSavedSessionsAvailable(Boolean(body?.saved_sessions));
         }
       } catch {
@@ -1317,6 +1365,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
       stopSpeaking();
 
       try {
+        const pickedModel = chosenModel(mode, modelChoice, backendInfo);
         const res = await fetch(planTarget ? sessionTurnsUrl(planTarget.id) : "/api/assistant/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1330,6 +1379,9 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
               : {
                   mode,
                   conversation_owner: owner,
+                  // Only a non-default pick is sent; the server refuses one
+                  // it does not offer (422) instead of answering with another.
+                  ...(pickedModel ? { model: pickedModel } : {}),
                   messages: nextTurns
                     .filter((t) => t.role === "user" || (t.role === "assistant" && t.text))
                     // Context is bounded separately from the downloadable history.
@@ -1419,7 +1471,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
         setSending(false);
       }
     },
-    [turns, sending, mode, owner, planSession, planReadOnly, clearProposal, clearPlan, stopSpeaking, refreshSessions]
+    [turns, sending, mode, owner, planSession, planReadOnly, clearProposal, clearPlan, stopSpeaking, refreshSessions, modelChoice, backendInfo]
   );
 
   /** Stop the in-flight turn. Aborting the fetch closes the SSE response,
@@ -2485,11 +2537,35 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
             {voice.error && (
               <p className="mt-1 text-xs text-red-600 dark:text-red-400">{voice.error}</p>
             )}
-            {backendInfo?.model && (
-              <p className="mt-1 text-center text-xs text-ink-subtle dark:text-slate-400">
-                Hermes agents: {backendInfo.model}
-              </p>
-            )}
+            {(() => {
+              const which = mode === "control" ? "control" : mode === "ask" ? "ask" : null;
+              const offered = (which === "control" ? backendInfo?.controlModels : backendInfo?.models) ?? [];
+              if (which && offered.length > 1) {
+                return (
+                  <label className="mt-1 flex items-center justify-center gap-1.5 text-xs text-ink-subtle dark:text-slate-400">
+                    Model
+                    <select
+                      aria-label="Model"
+                      value={modelChoice[which] ?? offered[0]}
+                      disabled={sending}
+                      onChange={(e) => chooseModel(which, e.target.value)}
+                      className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-ink focus:border-purple-500 focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    >
+                      {offered.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                );
+              }
+              return backendInfo?.model ? (
+                <p className="mt-1 text-center text-xs text-ink-subtle dark:text-slate-400">
+                  Hermes agents: {backendInfo.model}
+                </p>
+              ) : null;
+            })()}
           </form>
           <ResizeHandle corner="se" mode={mode} onPointerDown={onResizeStart("se")} />
         </div>
