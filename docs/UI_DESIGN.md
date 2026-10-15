@@ -778,12 +778,12 @@ resume or modify a plan: those routes require a human session the model
 cannot present, and no lab-control tool reaches them. What changes is only
 *who sends the approved steps* — the server instead of the tab — so the plan
 survives a closed tab, and its records and read results are kept server-side
-and filed in the notebook. **Contract status: not yet covered.** Part I
-rule 3's device-run exception names a *device gateway* running its own step
-list; the dashboard server is a client of the device, so server-run plans need
-a human-approved amendment to Part I rule 3 before they are deployed. Until
-then the browser runner (`NEXT_PUBLIC_ASSISTANT_BROWSER_PLAN_RUNNER=true`) is
-the configuration that matches the contract as written.
+and filed in the notebook. **Contract status:** AGENTIC_LAB_DESIGN Part I
+rule 3, *dashboard-run step approvals* (added 2026-10-15, operator decision).
+The device-run exception names a *device gateway* running its own step list,
+and the dashboard server is a client of the device, so this needed its own
+clause. The browser runner (`NEXT_PUBLIC_ASSISTANT_BROWSER_PLAN_RUNNER=true`)
+remains the fallback.
 
 This is the whole safety argument, and it is a property of the toolset rather
 than of the prompt — the same guarantee §2.1 already requires of this tier.
@@ -1320,10 +1320,10 @@ close the browser, and find the run — and its results — afterwards.
   browser reported, plus `executor: server`), beside the per-step
   `control_action` rows.
 
-Binding-rules note: unlike Step 1i, this **is** a change the binding contract
-must authorize — see §5.1, "Contract status". The human still reviews the
-exact steps and starts the run; the server sending them is what Part I
-rule 3's device-run exception does not yet name.
+Binding-rules note: unlike Step 1i, this is a change the binding contract had
+to authorize, and it does so in Part I rule 3's *dashboard-run step approvals*
+clause (2026-10-15) — see §5.1, "Contract status". The human still reviews
+the exact steps and starts the run; the server sends them.
 
 #### Step 1j — the terminal-call contract (2026-08-25)
 

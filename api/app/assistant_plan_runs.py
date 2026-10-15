@@ -50,11 +50,9 @@ The rules, all enforced here and none delegated to the browser:
    BitacoraDB as an UNFORMATTED Experiment by its retry loop, with the
    approver's own standing — the same path OT-2 gateway plans take.
 
-Contract status: AGENTIC_LAB_DESIGN Part I rule 3's device-run exception
-names a *device gateway* running its own step list; this server is a client of
-the device. Deploying server-run plans needs a human-approved amendment there
-(UI_DESIGN §5.1); ``NEXT_PUBLIC_ASSISTANT_BROWSER_PLAN_RUNNER=true`` keeps the
-browser runner meanwhile.
+Contract status: AGENTIC_LAB_DESIGN Part I rule 3, *dashboard-run step
+approvals* (added 2026-10-15). ``NEXT_PUBLIC_ASSISTANT_BROWSER_PLAN_RUNNER=true``
+keeps the browser runner as the fallback.
 """
 
 from __future__ import annotations

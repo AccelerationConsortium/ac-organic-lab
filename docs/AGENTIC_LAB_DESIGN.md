@@ -69,6 +69,16 @@ situation isn't covered, stop and ask a human.
    device, not a client; the SDK boundary and claim rules apply unchanged to
    everything that reaches it, including the dashboard's chat engine, whose
    only device write is creating such a draft.
+   *Dashboard-run step approvals (added 2026-10-15, operator decision):* the
+   dashboard server may execute an ad-hoc single-device step list proposed in
+   the assistant's Control mode, approved by a human with the hash of exactly
+   the steps shown and started by that same human from a verified browser
+   session, under a device claim it takes as that human and holds for the
+   whole run. The model can never approve, start or resume such a run.
+   Rules 2 and 4 apply to every step (the device's live `allowed_actions` are
+   re-checked before each one, and the first refusal or error halts the run);
+   the run is recorded as an UNFORMATTED Experiment, never a Run Authorization
+   or a registered Plan, and stays single-device.
 4. **Respect claims.** Acquire equipment through the SDK's claim mechanism;
    never operate equipment claimed by another session, and release claims
    when done.
