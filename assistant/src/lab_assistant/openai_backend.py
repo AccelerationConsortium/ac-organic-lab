@@ -503,10 +503,12 @@ async def run_openai_turn(
     on_plan: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
     extra_system_prompt: str | None = None,
     scope: EquipmentScope | None = None,
+    model: str | None = None,
 ) -> AsyncIterator[bytes]:
     key = api_key()
     include_control = control and bool(actor) and scope is None
-    model = OPENAI_CONTROL_MODEL if include_control else OPENAI_MODEL
+    # ``model``: the operator's pick, already validated by the engine.
+    model = model or (OPENAI_CONTROL_MODEL if include_control else OPENAI_MODEL)
     if key is None:
         yield _sse(
             {

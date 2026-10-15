@@ -747,8 +747,10 @@ trail. **Step 1b (2026-08-12)** extends the resolver to the OT-2, and
 **Step 1c (same day)** to that device's full advertised surface behind a
 field-level guard — see §5.3b. **Step 1i (2026-08-20)** lets one proposal
 carry an ordered multi-step *plan* on one device, approved as a whole and run
-step by step from the browser — see §5.3b. Step 2 (autonomy) is sketched at
-the end and is **not** approved.
+step by step from the browser — see §5.3b. **Step 1n (2026-10-15)** moves that
+run to the dashboard server: the operator approves and starts, the server
+executes, holding the device for the whole plan — see Step 1n under §5.3b.
+Step 2 (autonomy) is sketched at the end and is **not** approved.
 
 **Temporary conversation update (deployed 2026-09-06):** the bubble warns that
 chat is temporary and offers Markdown/JSON downloads. Exports include available
@@ -759,12 +761,29 @@ logout/account changes clear the chat and live cards. Audit records remain.
 is implemented as §5.10 below (ASSISTANT_PERSISTENCE.md step 2). The proposed
 routine-control exception (that document's §2) is still not enabled.
 
-### 5.1 The commitment: the assistant proposes, the browser executes
+### 5.1 The commitment: the assistant proposes, a human approves and starts
 
 In Step 1 no model-driven code path makes a device *act* — the one exception, since 2026-10-05, is creating a *draft* on a device that runs its own human-approved plans (AGENTIC_LAB_DESIGN Part I rule 3, device-run step approvals); the model can never approve, run or modify an approved plan. The model's most
 privileged act is producing a **validated proposal object**; actuation happens
 when the operator clicks *Authorize*, over the existing
 `/api/equipment/{id}/control/{action}` passthrough.
+
+*Server-run plans (2026-10-15, Step 1n):* a multi-step plan the operator has
+approved by hash is **started** by that operator — from a verified browser
+session, holding authorization on the device and a fresh device claim — and
+then **executed by the dashboard server** (`api/app/assistant_plan_runs.py`),
+which holds the claim for the whole plan and sends each step through the same
+passthrough path a click uses. The model still can never approve, start, run,
+resume or modify a plan: those routes require a human session the model
+cannot present, and no lab-control tool reaches them. What changes is only
+*who sends the approved steps* — the server instead of the tab — so the plan
+survives a closed tab, and its records and read results are kept server-side
+and filed in the notebook. **Contract status:** AGENTIC_LAB_DESIGN Part I
+rule 3, *dashboard-run step approvals* (added 2026-10-15, operator decision).
+The device-run exception names a *device gateway* running its own step list,
+and the dashboard server is a client of the device, so this needed its own
+clause. The browser runner (`NEXT_PUBLIC_ASSISTANT_BROWSER_PLAN_RUNNER=true`)
+remains the fallback.
 
 This is the whole safety argument, and it is a property of the toolset rather
 than of the prompt — the same guarantee §2.1 already requires of this tier.
@@ -1177,7 +1196,9 @@ actuating path**:
   with 409, a different operator with 403, an unknown/expired id with 404.
   The approval is a **review record** (`assistant_plan_approved`: who agreed
   to which steps), not a permission grant.
-- **Run: the browser executes, step by step.** §5.1's commitment holds
+- **Run: the browser executes, step by step.** *(Superseded by Step 1n,
+  2026-10-15: the server executes; this browser loop remains as the fallback
+  runner.)* §5.1's commitment holds
   verbatim: no model-driven code path POSTs to a device *to act* (the device
   panel's chat creates a *draft* on a gateway that runs its own
   human-approved plans — the exception §5.1 names). The browser sends
@@ -1192,7 +1213,9 @@ actuating path**:
   effort. Two clicks per plan (Approve, then Run), not one: approving
   records what was reviewed, and it keeps the last action before hardware
   moves from being a single click on a screen nobody read.
-- **What it deliberately does not do.** No claim is held across the plan
+- **What it deliberately does not do.** *(Step 1n changes the first and
+  third points for server-run plans: the plan holds one claim throughout, and
+  a closed tab no longer stops it.)* No claim is held across the plan
   (the passthrough is per-request by design, ARCHITECTURE §"dashboard
   writer"); another session can take the device between steps, and the
   device's 423 then halts the plan — same as clicking through cards. No
@@ -1229,6 +1252,78 @@ the *granularity* of the human approval (one review per sequence instead of
 per step), never the existence of the hardware gate — the loosening Part II
 §"trust ladder" names as the intended direction. The human still authorizes
 every hardware action and the audit names them.
+
+#### Step 1n — server-run plans: a human approves and starts, the server executes (2026-10-15, operator request)
+
+Step 1i ran an approved plan from the browser that approved it, so closing the
+tab stopped it between steps, and every read result lived only in that tab. An
+84-step Cytation plan is an hour at the bench. Step 1n runs the same approved
+steps from the dashboard server, modeled on the OT-2 gateway's `PlanExecutor`
+(`opentrons-server/src/opentrons_server/gateway/plans.py`): fire the plan,
+close the browser, and find the run — and its results — afterwards.
+
+- **Start (`POST /api/assistant/plans/{id}/execute`, body `{step_hash,
+  eln_project?}`).** Refused unless: the plan was approved (the Step 1i
+  approval, still in memory only) and the hash sent back is the approved
+  one (409); the caller is the operator who approved it (403); their ac_auth
+  **browser session** re-verifies with the sidecar, cookie only, so an API
+  key or a script cannot start a plan (401); they hold authorization on the
+  device (403, fail-closed 503); and a **fresh device claim** succeeds — 409/
+  423 while anyone else holds the device. Devices with no claim protocol
+  (STATUS_SPEC v1.0, e.g. the cameras) are refused with
+  `no_claim_protocol`, and the bubble runs those in the browser instead. The
+  approval is spent on start: an id cannot start twice.
+- **The plan holds the device.** The claim is taken as the approver under
+  session `assistant-plan-<id>` (what the device shows in `claimed_by`) and
+  heartbeated until the run ends — the counterpart of the OT-2's
+  `ClaimManager.hand_to_plan`. The device-side owner stays the approver's
+  verified identity, because a device binds a claim to the identity the edge
+  vouched for; the run record names the holder `automation (approved by …)`.
+  While it runs nobody else can take control, including the approver's own
+  tile clicks. A heartbeat that fails its budget halts the plan at the next
+  boundary.
+- **Each step takes the ordinary path.** `control._proxy` with the plan's
+  claim token: per-equipment authz per step, per-kind timeouts, the device's
+  412/423, the `control_action` row with `origin: assistant-plan` and
+  `plan: <id>#<step>`. Before each step the device's live `allowed_actions`
+  are re-read (through the SDK, not the poll cache); a step the device does
+  not offer right now is never sent and halts the plan. First error halts;
+  the rest are `skipped`.
+- **Record first.** The run record is durable SQLite
+  (`assistant_plan_runs.sqlite3` beside `lab.db`), rewritten when each step
+  starts and when it ends, with every `read.*` step's full response. A save
+  that fails stops the plan before the next step. On restart, a run left in
+  progress becomes `interrupted` and its in-flight step `unknown` — software
+  cannot tell whether that step happened — and nothing is resumed or
+  repeated. The approval itself is not persisted, as on the OT-2.
+- **Operator verbs.** `pause`, `stop`, `abort` — any signed-in user;
+  `resume` — the approver only, since resuming moves hardware. None of them
+  interrupts the step in flight (a synchronous device call completes and
+  keeps its real outcome) and none is a hardware stop: that stays each
+  device's safety-floor button, reachable without a claim. Pausing keeps the
+  claim.
+- **Following and reconnecting.** `GET /api/assistant/plans/{id}/run` (the
+  record; read responses only to the approver and admins) and
+  `GET /api/assistant/plan-runs?active=true`. The bubble polls every 2 s;
+  reopening the dashboard brings back the card of a plan the operator
+  started, and lists other running plans with Pause and Stop.
+- **The notebook.** The approved card offers an ELN project picker (the
+  roster projects that exist in BitacoraDB, as on the OT-2 panel). With one
+  chosen (membership checked at start), the finished or interrupted run is
+  journaled in `plan_results` and filed in BitacoraDB as an UNFORMATTED
+  Experiment, retried across restarts, under the approver's own standing —
+  never a Run Authorization or a registered Plan. Without one, the run record
+  is the only copy. Read values ride the note's step results; nominal
+  plate/well names do not create samples (`docs/READER_MEASUREMENTS.md`).
+- **Audit.** `assistant_plan_started`, `assistant_plan_paused`/`_resumed`/
+  `_stopped`/`_aborted`, and `assistant_plan_finished` (same shape the
+  browser reported, plus `executor: server`), beside the per-step
+  `control_action` rows.
+
+Binding-rules note: unlike Step 1i, this is a change the binding contract had
+to authorize, and it does so in Part I rule 3's *dashboard-run step approvals*
+clause (2026-10-15) — see §5.1, "Contract status". The human still reviews
+the exact steps and starts the run; the server sends them.
 
 #### Step 1j — the terminal-call contract (2026-08-25)
 

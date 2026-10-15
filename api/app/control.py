@@ -535,6 +535,7 @@ async def _acquire_claim_with_fallback(
     equipment_id: str,
     owner: str,
     candidates: list[dict[str, str]],
+    session_id: str | None = None,
 ) -> tuple[str, float, dict[str, str]]:
     """Claim, trying each credential until one is not rejected as unknown.
 
@@ -547,7 +548,7 @@ async def _acquire_claim_with_fallback(
         try:
             token, heartbeat_interval_s = await _acquire_claim(
                 client, base_url, status_path, equipment_id, owner,
-                extra_headers=headers or None,
+                extra_headers=headers or None, session_id=session_id,
             )
             return token, heartbeat_interval_s, headers
         except HTTPException as exc:
@@ -691,6 +692,7 @@ async def _acquire_claim(
     equipment_id: str,
     owner: str,
     extra_headers: dict[str, str] | None = None,
+    session_id: str | None = None,
 ) -> tuple[str, float]:
     """POST /control/claim and return its token and heartbeat interval.
 
@@ -703,7 +705,7 @@ async def _acquire_claim(
     claim_url = _control_url(base_url, status_path, "claim")
     body = {
         "owner": owner,
-        "session_id": str(uuid.uuid4()),
+        "session_id": session_id or str(uuid.uuid4()),
         "ttl_s": _CLAIM_TTL_SECONDS,
     }
     try:

@@ -156,16 +156,24 @@ function json(status: number, body: unknown) {
   return Promise.resolve({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
 }
 
-function installFetch(chatFrames: string[], opts: { open?: boolean; savedSessions?: boolean } = {}) {
+type ExtraRoute = (url: string, method: string, init?: RequestInit) => Promise<unknown> | undefined;
+
+function installFetch(
+  chatFrames: string[],
+  opts: { open?: boolean; savedSessions?: boolean; routes?: ExtraRoute; health?: Record<string, unknown> } = {},
+) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    const extra = opts.routes?.(url, method, init);
+    if (extra) return extra;
     if (url.includes("/api/assistant/health")) {
       return Promise.resolve({
         ok: true,
         json: async () => ({
           configured: true, model: "sonnet", backend: "claude-code-cli",
           saved_sessions: opts.savedSessions ?? true,
+          ...opts.health,
         }),
       });
     }
@@ -250,7 +258,13 @@ beforeEach(() => {
   });
 });
 
+/** The legacy browser runner (UI_DESIGN §5.3b fallback). */
+function useBrowserRunner() {
+  process.env.NEXT_PUBLIC_ASSISTANT_BROWSER_PLAN_RUNNER = "true";
+}
+
 afterEach(() => {
+  delete process.env.NEXT_PUBLIC_ASSISTANT_BROWSER_PLAN_RUNNER;
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -350,7 +364,8 @@ describe("temporary assistant conversations", () => {
     expect(download.mock.calls[0][0]).toHaveLength(44);
   });
 
-  it("does not submit the next step after the operator changes accounts", async () => {
+  it("browser runner: does not submit the next step after the operator changes accounts", async () => {
+    useBrowserRunner();
     let finishFirst!: (value: { ok: boolean }) => void;
     vi.mocked(authorizeAssistantAction).mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }));
     installFetch([`data: ${JSON.stringify(PLAN)}\n\n`, 'data: {"type":"done"}\n\n']);
@@ -369,7 +384,8 @@ describe("temporary assistant conversations", () => {
     }));
   });
 
-  it("shows a completion-report failure without changing the physical outcome", async () => {
+  it("browser runner: shows a completion-report failure without changing the physical outcome", async () => {
+    useBrowserRunner();
     vi.mocked(finishAssistantPlan).mockRejectedValueOnce(new Error("service unavailable"));
     installFetch([`data: ${JSON.stringify(PLAN)}\n\n`, 'data: {"type":"done"}\n\n']);
     await openPanel();
@@ -557,7 +573,8 @@ describe("AssistantBubble control mode", () => {
     expect(screen.queryByText(/Connection lost/)).toBeNull();
   });
 
-  it("renders a plan card, approves it by hash, then runs the steps in order (Step 1i)", async () => {
+  it("browser runner: renders a plan card, approves it by hash, then runs the steps in order (Step 1i)", async () => {
+    useBrowserRunner();
     installFetch([
       'data: {"type":"text","delta":"Proposing a route."}\n\n',
       `data: ${JSON.stringify(PLAN)}\n\n`,
@@ -591,7 +608,8 @@ describe("AssistantBubble control mode", () => {
     );
   });
 
-  it("halts a plan at the first refused step and skips the rest", async () => {
+  it("browser runner: halts a plan at the first refused step and skips the rest", async () => {
+    useBrowserRunner();
     (authorizeAssistantAction as unknown as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({ ok: true })
       .mockRejectedValueOnce(new Error("412: not reachable from here"));
@@ -619,7 +637,8 @@ describe("AssistantBubble control mode", () => {
     );
   });
 
-  it("keeps each plate-reader read of a plan, including when the plan halts", async () => {
+  it("browser runner: keeps each plate-reader read of a plan, including when the plan halts", async () => {
+    useBrowserRunner();
     const mocked = authorizeAssistantAction as unknown as ReturnType<typeof vi.fn>;
     mocked
       .mockResolvedValueOnce({ ok: true })
@@ -837,6 +856,37 @@ describe("AssistantBubble control mode", () => {
   });
 
 
+  it("offers a model picker per mode and sends only a non-default pick", async () => {
+    sessionStorage.clear();
+    const fetchMock = installFetch(['data: {"type":"done"}\n\n'], {
+      health: { models: ["sonnet", "qwen/qwen3-max"], control_models: ["sonnet", "claude-cli:opus"] },
+    });
+    await openPanel();
+    const picker = (await screen.findByLabelText("Model")) as HTMLSelectElement;
+    expect([...picker.options].map((o) => o.value)).toEqual(["sonnet", "qwen/qwen3-max"]);
+    const chatBodies = () =>
+      fetchMock.mock.calls
+        .filter((c) => String(c[0]).includes("/api/assistant/chat"))
+        .map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+    const sendText = async (text: string) => {
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: text } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).toBeNull());
+    };
+    await sendText("default");
+    expect(chatBodies()[0].model).toBeUndefined();
+    fireEvent.change(picker, { target: { value: "qwen/qwen3-max" } });
+    await sendText("picked");
+    expect(chatBodies()[1].model).toBe("qwen/qwen3-max");
+    // Control has its own list; the Ask pick does not carry over.
+    const control = await screen.findByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const controlPicker = (await screen.findByLabelText("Model")) as HTMLSelectElement;
+    expect([...controlPicker.options].map((o) => o.value)).toEqual(["sonnet", "claude-cli:opus"]);
+    expect(controlPicker.value).toBe("sonnet");
+  });
+
   it("shows the backing model under the chat box and a disabled Clear chip when empty", async () => {
     // jsdom sessionStorage survives across tests; drop turns persisted by
     // earlier ones so this panel opens genuinely empty.
@@ -1027,6 +1077,147 @@ describe("AssistantBubble control mode", () => {
     expect(screen.queryByText(/connection lost/i)).toBeNull();
   });
 
+});
+
+/** A server run record (api/app/assistant_plan_runs.py) for PLAN. */
+function serverRun(
+  status: string,
+  outcomes: string[],
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const p = PLAN.plan;
+  return {
+    plan_id: p.plan_id, equipment_id: p.equipment_id, equipment_name: p.equipment_name, kind: p.kind,
+    status, paused: status === "paused", approved_by: "alice@example.edu",
+    owner: "automation (approved by alice@example.edu)", started_at: "2026-10-15T12:00:00Z",
+    finished_at: null, halt_reason: null, eln_project: null, notebook: null,
+    steps_total: 3, steps_ok: outcomes.filter((o) => o === "ok").length,
+    current_step: outcomes.indexOf("running") + 1 || null,
+    step_hash: PLAN_HASH, reason: p.reason, steps: p.steps,
+    results: outcomes.map((outcome, i) => ({
+      index: i + 1, action: p.steps[i].action, outcome, status_code: null, message: null,
+      started_at: null, finished_at: null,
+    })),
+    ...extra,
+  };
+}
+
+describe("AssistantBubble server-run plans (UI_DESIGN §5.3b)", () => {
+  async function sendInControlMode(text: string) {
+    await openPanel();
+    const control = await screen.findByRole("button", { name: "Control" });
+    await waitFor(() => expect((control as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(control);
+    const box = screen.getByPlaceholderText(/operate a device/i);
+    fireEvent.change(box, { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  }
+
+  function planRoutes(state: {
+    execute?: () => Promise<unknown>;
+    run: () => Record<string, unknown>;
+    active?: () => unknown[];
+    projects?: string[];
+  }): ExtraRoute {
+    return (url, method) => {
+      if (url.endsWith("/api/assistant/plans/p1/execute") && method === "POST") {
+        return state.execute ? state.execute() : json(202, state.run());
+      }
+      if (url.endsWith("/api/assistant/plans/p1/run")) return json(200, state.run());
+      if (/\/api\/assistant\/plans\/p1\/(pause|resume|stop)$/.test(url)) return json(200, state.run());
+      if (url.includes("/api/assistant/plan-runs")) return json(200, state.active ? state.active() : []);
+      if (url.includes("/api/assistant/eln-projects")) {
+        return json(200, { configured: true, projects: state.projects ?? [] });
+      }
+      return undefined;
+    };
+  }
+
+  it("Run starts the plan on the server and follows it; the browser sends no step", async () => {
+    let current = serverRun("executing", ["running", "pending", "pending"]);
+    const fetchMock = installFetch([`data: ${JSON.stringify(PLAN)}\n\n`, 'data: {"type":"done"}\n\n'], {
+      routes: planRoutes({ run: () => current }),
+    });
+    await sendInControlMode("fetch the plate");
+    fireEvent.click(await screen.findByRole("button", { name: "Approve these 3 steps" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+
+    await screen.findByText(/Running on the dashboard server/);
+    const execute = sessionCalls(fetchMock, "POST", /\/plans\/p1\/execute$/);
+    expect(execute).toHaveLength(1);
+    expect(JSON.parse(String((execute[0][1] as RequestInit).body))).toEqual({ step_hash: PLAN_HASH, eln_project: null });
+    current = serverRun("executed", ["ok", "ok", "ok"], { finished_at: "2026-10-15T12:01:00Z" });
+    await screen.findByText(/All 3 steps ran/, {}, { timeout: 4000 });
+    expect(authorizeAssistantAction).not.toHaveBeenCalled();
+    expect(finishAssistantPlan).not.toHaveBeenCalled();
+  });
+
+  it("offers Pause and Stop while it runs, and only its approver gets Resume", async () => {
+    let current = serverRun("executing", ["running", "pending", "pending"]);
+    const fetchMock = installFetch([`data: ${JSON.stringify(PLAN)}\n\n`, 'data: {"type":"done"}\n\n'], {
+      routes: planRoutes({ run: () => current }),
+    });
+    await sendInControlMode("fetch the plate");
+    fireEvent.click(await screen.findByRole("button", { name: "Approve these 3 steps" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+    current = serverRun("paused", ["running", "pending", "pending"]);
+    fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
+    await screen.findByText(/Pausing after the step in progress/);
+    expect(sessionCalls(fetchMock, "POST", /\/plans\/p1\/pause$/)).toHaveLength(1);
+    current = serverRun("aborted", ["ok", "skipped", "skipped"], { halt_reason: "stopped by alice@example.edu" });
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await screen.findByText(/Plan stopped/);
+    expect(sessionCalls(fetchMock, "POST", /\/plans\/p1\/stop$/)).toHaveLength(1);
+    expect(screen.getByText(/Halted: stopped by alice@example.edu/)).toBeTruthy();
+  });
+
+  it("falls back to the browser runner for a device the server cannot hold", async () => {
+    installFetch([`data: ${JSON.stringify(PLAN)}\n\n`, 'data: {"type":"done"}\n\n'], {
+      routes: planRoutes({
+        run: () => serverRun("executing", ["pending", "pending", "pending"]),
+        execute: () => json(409, { detail: { code: "no_claim_protocol", message: "no claims" } }),
+      }),
+    });
+    await sendInControlMode("fetch the plate");
+    fireEvent.click(await screen.findByRole("button", { name: "Approve these 3 steps" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+    await screen.findByText(/All 3 steps ran/);
+    expect(authorizeAssistantAction).toHaveBeenCalledTimes(3);
+  });
+
+  it("files the results in the chosen ELN project", async () => {
+    const fetchMock = installFetch([`data: ${JSON.stringify(PLAN)}\n\n`, 'data: {"type":"done"}\n\n'], {
+      routes: planRoutes({ run: () => serverRun("executing", ["running", "pending", "pending"]), projects: ["Plate QC"] }),
+    });
+    await sendInControlMode("fetch the plate");
+    fireEvent.click(await screen.findByRole("button", { name: "Approve these 3 steps" }));
+    const picker = await screen.findByLabelText("ELN project");
+    fireEvent.change(picker, { target: { value: "Plate QC" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await screen.findByText(/Running on the dashboard server/);
+    const execute = sessionCalls(fetchMock, "POST", /\/plans\/p1\/execute$/);
+    expect(JSON.parse(String((execute[0][1] as RequestInit).body)).eln_project).toBe("Plate QC");
+  });
+
+  it("brings back the card of a plan it started after the tab was closed", async () => {
+    const running = serverRun("executing", ["ok", "running", "pending"]);
+    installFetch([], {
+      routes: planRoutes({ run: () => running, active: () => [running] }),
+    });
+    await openPanel();
+    await screen.findByText(/Running plan · 3 steps/);
+    expect(screen.getByText(/Running on the dashboard server/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+  });
+
+  it("lists another operator's running plan with Pause and Stop but no Resume", async () => {
+    const theirs = serverRun("paused", ["ok", "pending", "pending"], { approved_by: "bob@example.edu" });
+    installFetch([], { routes: planRoutes({ run: () => theirs, active: () => [theirs] }) });
+    await openPanel();
+    await screen.findByText(/bob@example.edu's plan is paused on UFactory xArm5/);
+    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+  });
 });
 
 describe("AssistantBubble resize", () => {

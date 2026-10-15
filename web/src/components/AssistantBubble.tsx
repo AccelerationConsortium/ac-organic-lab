@@ -25,6 +25,20 @@ import {
   type ReaderRun,
 } from "@/lib/plan-readings";
 import {
+  PlanRunApiError,
+  RUN_ACTIVE,
+  browserPlanRunnerForced,
+  executePlan,
+  getPlanRun,
+  listActivePlanRuns,
+  listElnProjects,
+  planRunVerb,
+  type PlanRunVerb,
+  type ServerRun,
+  type ServerRunStatus,
+  type ServerRunSummary,
+} from "@/lib/assistant-plan-runs";
+import {
   SessionsApiError,
   createSession,
   deleteSession,
@@ -196,7 +210,8 @@ interface PlanStep {
 
 /** A validated, ordered multi-step plan on ONE device from lab-control's
  *  `propose_plan` (UI_DESIGN §5 Step 1i). Approved as a whole — by the hash
- *  of exactly these steps — then run by this browser one step at a time. */
+ *  of exactly these steps — then started here and run by the dashboard
+ *  server (§5.3b), or, as a fallback, by this browser one step at a time. */
 interface Plan {
   turn_id?: string;
   plan_id: string;
@@ -227,7 +242,8 @@ interface Plan {
 }
 
 type PlanPhase = "draft" | "approving" | "approved" | "running" | "executed" | "failed";
-type StepOutcome = "pending" | "running" | "ok" | "failed" | "skipped";
+/** `unknown`: the dashboard restarted while the step was in flight. */
+type StepOutcome = "pending" | "running" | "ok" | "failed" | "skipped" | "unknown";
 
 /** Where a plan card is in its life, kept beside the immutable Plan. */
 interface PlanRun {
@@ -237,6 +253,94 @@ interface PlanRun {
   haltReason: string | null;
   error: string | null;
   expired: boolean;
+  /** Set once the server runs it (§5.3b): the run record's own state. */
+  server?: {
+    status: ServerRunStatus;
+    paused: boolean;
+    approvedBy: string;
+    elnProject: string | null;
+    notebook: { state: string; error?: string } | null;
+  };
+}
+
+/** How often a tab follows a server-run plan. */
+const PLAN_POLL_MS = 2000;
+/** How often an open panel looks for other plans running on the server. */
+const ACTIVE_RUNS_POLL_MS = 15000;
+const ELN_PROJECT_KEY = "ac-assistant-eln-project-v1";
+const MODEL_KEY = "ac-assistant-model-v1";
+
+/** The model to name in a chat request: the operator's non-default pick for
+ *  this mode, if it is still offered; otherwise none (the server's default). */
+function chosenModel(
+  mode: Mode,
+  choice: { ask: string | null; control: string | null },
+  info: { models?: string[]; controlModels?: string[] } | null,
+): string | null {
+  if (mode === "plan") return null;
+  const offered = (mode === "control" ? info?.controlModels : info?.models) ?? [];
+  const picked = choice[mode];
+  return picked && picked !== offered[0] && offered.includes(picked) ? picked : null;
+}
+
+function planRunFromServer(run: ServerRun): PlanRun {
+  const active = RUN_ACTIVE.has(run.status);
+  return {
+    phase: active ? "running" : run.status === "executed" ? "executed" : "failed",
+    outcomes: run.results.map((r) => r.outcome),
+    messages: run.results.map((r) => r.message),
+    haltReason: active ? null : run.halt_reason,
+    error: null,
+    expired: false,
+    server: {
+      status: run.status,
+      paused: run.paused,
+      approvedBy: run.approved_by,
+      elnProject: run.eln_project,
+      notebook: run.notebook,
+    },
+  };
+}
+
+/** A card for a plan this tab did not propose (reconnecting to a run). */
+function planFromServer(run: ServerRun): Plan {
+  return {
+    plan_id: run.plan_id,
+    equipment_id: run.equipment_id,
+    equipment_name: run.equipment_name,
+    kind: run.kind,
+    steps: run.steps,
+    step_hash: run.step_hash,
+    reason: run.reason ?? "",
+    actor: run.approved_by,
+    expires_in_s: 0,
+    device_state: { equipment_status: "running on the dashboard server", activity: run.status, message: null },
+  };
+}
+
+/** The reader panel's view of a server-run plan's stored read responses. */
+function readerRunFromServer(run: ServerRun): ReaderRun | null {
+  if (!planHasReaderReads(run.kind, run.steps)) return null;
+  const active = RUN_ACTIVE.has(run.status);
+  return {
+    context: {
+      plan_id: run.plan_id,
+      step_hash: run.step_hash,
+      equipment_id: run.equipment_id,
+      equipment_name: run.equipment_name,
+      actor: run.approved_by,
+      steps: run.steps.map((s) => ({ action: s.action, args: s.args })),
+    },
+    started_at: run.started_at,
+    finished_at: run.finished_at,
+    status: active ? "running" : run.status === "executed" ? "executed" : "failed",
+    halt_reason: active ? null : run.halt_reason,
+    readings: run.results.flatMap((r) => {
+      const step = run.steps[r.index - 1];
+      if (!step || r.outcome !== "ok" || r.response == null || !isReaderRead(run.kind, r.action)) return [];
+      return [{ index: r.index, action: r.action, args: step.args, received_at: r.finished_at ?? "", response: r.response }];
+    }),
+  };
 }
 
 type Mode = "ask" | "control" | "plan";
@@ -549,15 +653,27 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
   // measurements; only the operator discards them (or closing the tab).
   const [readerRun, setReaderRun] = useState<ReaderRun | null>(null);
   const [readerDownloaded, setReaderDownloaded] = useState(false);
+  // True when the reader results above came from a server-run plan: they are
+  // kept in its run record (and the notebook), so closing the tab loses nothing.
+  const [readerOnServer, setReaderOnServer] = useState(false);
+  // §5.3b: the plan this tab is following on the server, polled until it ends.
+  const [serverRunId, setServerRunId] = useState<string | null>(null);
+  // Other plans running on the server (another tab, another operator) —
+  // anyone signed in may pause or stop them.
+  const [otherRuns, setOtherRuns] = useState<ServerRunSummary[]>([]);
+  // The approval card's ELN picker: null while unknown, [] when there is
+  // nothing to file into. "" means "do not file".
+  const [elnProjects, setElnProjects] = useState<string[] | null>(null);
+  const [elnChoice, setElnChoice] = useState("");
   useEffect(() => {
-    if (!readerRun || readerRun.readings.length === 0 || readerDownloaded) return;
+    if (!readerRun || readerRun.readings.length === 0 || readerDownloaded || readerOnServer) return;
     const warn = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [readerRun, readerDownloaded]);
+  }, [readerRun, readerDownloaded, readerOnServer]);
   // null = still checking; once resolved, we know whether to render at all.
   // The bubble only renders if the backend's health endpoint reports it can
   // spawn `claude` (the Claude Code CLI subprocess backend). If the CLI
@@ -570,7 +686,28 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
   const [backendInfo, setBackendInfo] = useState<{
     model?: string;
     backend?: string;
+    /** The picker's choices per mode, default first (ASSISTANT_MODELS /
+     *  ASSISTANT_CONTROL_MODELS); one entry means no picker. */
+    models?: string[];
+    controlModels?: string[];
   } | null>(null);
+  // The operator's pick per mode; null = the mode's default. Per tab, like
+  // the device panel's picker.
+  const [modelChoice, setModelChoice] = useState<{ ask: string | null; control: string | null }>({
+    ask: null,
+    control: null,
+  });
+  const chooseModel = useCallback((which: "ask" | "control", model: string) => {
+    setModelChoice((prev) => {
+      const next = { ...prev, [which]: model };
+      try {
+        sessionStorage.setItem(MODEL_KEY, JSON.stringify(next));
+      } catch {
+        /* storage unavailable: the pick holds until reload */
+      }
+      return next;
+    });
+  }, []);
   // Pixel coords of the panel's top-left corner. Null while the user hasn't
   // dragged yet -- we compute a default on first open from the viewport
   // size. Persisted to sessionStorage so the panel stays where the user
@@ -646,7 +783,20 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
         const body = await r.json();
         if (!cancelled) {
           setConfigured(Boolean(body?.configured));
-          setBackendInfo({ model: body?.model, backend: body?.backend });
+          const models: string[] = Array.isArray(body?.models) ? body.models : [];
+          const controlModels: string[] = Array.isArray(body?.control_models) ? body.control_models : [];
+          setBackendInfo({ model: body?.model, backend: body?.backend, models, controlModels });
+          let saved: { ask?: unknown; control?: unknown } = {};
+          try {
+            saved = JSON.parse(sessionStorage.getItem(MODEL_KEY) ?? "{}") ?? {};
+          } catch {
+            /* nothing saved, or storage unavailable: the defaults */
+          }
+          setModelChoice({
+            ask: typeof saved.ask === "string" && models.includes(saved.ask) ? saved.ask : null,
+            control:
+              typeof saved.control === "string" && controlModels.includes(saved.control) ? saved.control : null,
+          });
           setSavedSessionsAvailable(Boolean(body?.saved_sessions));
         }
       } catch {
@@ -1215,6 +1365,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
       stopSpeaking();
 
       try {
+        const pickedModel = chosenModel(mode, modelChoice, backendInfo);
         const res = await fetch(planTarget ? sessionTurnsUrl(planTarget.id) : "/api/assistant/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1228,6 +1379,9 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
               : {
                   mode,
                   conversation_owner: owner,
+                  // Only a non-default pick is sent; the server refuses one
+                  // it does not offer (422) instead of answering with another.
+                  ...(pickedModel ? { model: pickedModel } : {}),
                   messages: nextTurns
                     .filter((t) => t.role === "user" || (t.role === "assistant" && t.text))
                     // Context is bounded separately from the downloadable history.
@@ -1317,7 +1471,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
         setSending(false);
       }
     },
-    [turns, sending, mode, owner, planSession, planReadOnly, clearProposal, clearPlan, stopSpeaking, refreshSessions]
+    [turns, sending, mode, owner, planSession, planReadOnly, clearProposal, clearPlan, stopSpeaking, refreshSessions, modelChoice, backendInfo]
   );
 
   /** Stop the in-flight turn. Aborting the fetch closes the SSE response,
@@ -1600,7 +1754,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
     }
   }, [proposal, authorizing, proposalExpired, clearProposal, recordControl]);
 
-  // ---- Plan card: approve (by hash) → run (this browser, step by step) ----
+  // ---- Plan card: approve (by hash) → run (the server, §5.3b) ----
 
   const approvePlan = useCallback(async () => {
     if (!plan || !planRun || planRun.phase !== "draft" || planRun.expired) return;
@@ -1619,12 +1773,17 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
     }
   }, [plan, planRun, recordControl]);
 
-  const runPlan = useCallback(async () => {
+  // The legacy runner: this browser sends each step itself, so closing the tab
+  // stops the plan between steps. Kept behind NEXT_PUBLIC_ASSISTANT_BROWSER_
+  // PLAN_RUNNER, and used for a device the server cannot hold (no claims).
+  const runPlanInBrowser = useCallback(async (opts: { confirmed?: boolean } = {}) => {
     if (!plan || !planRun || planRun.phase !== "approved" || planRunningRef.current || disposedRef.current) return;
     const reads = planHasReaderReads(plan.kind, plan.steps);
     if (
+      !opts.confirmed &&
       reads &&
       readerRun &&
+      !readerOnServer &&
       readerRun.readings.length > 0 &&
       !readerDownloaded &&
       !window.confirm("The previous plan's reader results have not been downloaded. Running this plan replaces them. Continue?")
@@ -1649,6 +1808,7 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
         readings: [],
       });
       setReaderDownloaded(false);
+      setReaderOnServer(false);
     }
     recordControl(plan.turn_id, "sequence_started", {});
     const outcomes: StepOutcome[] = plan.steps.map(() => "pending");
@@ -1749,7 +1909,171 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
       setPlanRun((r) => r && { ...r, error: message });
       recordControl(plan.turn_id, "completion_report_failed", { message });
     }
-  }, [plan, planRun, readerRun, readerDownloaded, recordControl]);
+  }, [plan, planRun, readerRun, readerDownloaded, readerOnServer, recordControl]);
+
+  // The plan whose card is open, for callbacks that outlive a render.
+  const planRef = useRef<Plan | null>(null);
+  planRef.current = plan;
+
+  /** Mirror one server run record onto the card and the reader panel. */
+  const applyServerRun = useCallback((run: ServerRun) => {
+    if (planRef.current?.plan_id !== run.plan_id) return;
+    setPlanRun(planRunFromServer(run));
+    const reader = readerRunFromServer(run);
+    if (reader) {
+      setReaderRun(reader);
+      setReaderOnServer(true);
+    }
+    if (!RUN_ACTIVE.has(run.status)) {
+      planRunningRef.current = false;
+      setServerRunId(null);
+      recordControl(planRef.current?.turn_id, "sequence_finished", {
+        status: run.status, executor: "server", halt_reason: run.halt_reason,
+        results: run.results.map(({ index, outcome, status_code, message }) => ({ index, outcome, status_code, message })),
+      });
+    }
+  }, [recordControl]);
+
+  // Run = ask the server to start it. From here the server holds the device
+  // and sends the steps; this tab only follows (and may pause/stop).
+  const runPlanOnServer = useCallback(async () => {
+    if (!plan || !planRun || planRun.phase !== "approved" || planRunningRef.current || disposedRef.current) return;
+    const reads = planHasReaderReads(plan.kind, plan.steps);
+    if (
+      reads &&
+      readerRun &&
+      readerRun.readings.length > 0 &&
+      !readerDownloaded &&
+      !readerOnServer &&
+      !window.confirm("The previous plan's reader results have not been downloaded. Running this plan replaces them. Continue?")
+    ) {
+      return;
+    }
+    planRunningRef.current = true;
+    setPlanRun((r) => r && { ...r, phase: "running", error: null });
+    recordControl(plan.turn_id, "sequence_started", { executor: "server", eln_project: elnChoice || null });
+    try {
+      const run = await executePlan(plan.plan_id, plan.step_hash, elnChoice || null);
+      if (planExpiryRef.current) {
+        clearTimeout(planExpiryRef.current);
+        planExpiryRef.current = null;
+      }
+      setServerRunId(run.plan_id);
+      applyServerRun(run);
+    } catch (e) {
+      planRunningRef.current = false;
+      if (e instanceof PlanRunApiError && e.code === "no_claim_protocol") {
+        recordControl(plan.turn_id, "sequence_server_refused", { code: e.code, message: e.message });
+        void runPlanInBrowser({ confirmed: true });
+        return;
+      }
+      const msg = e instanceof PlanRunApiError ? `${e.status}: ${e.message}` : (e as Error).message;
+      setPlanRun((r) => r && { ...r, phase: "approved", error: msg });
+    }
+  }, [plan, planRun, readerRun, readerDownloaded, readerOnServer, elnChoice, recordControl, applyServerRun, runPlanInBrowser]);
+
+  const runPlan = browserPlanRunnerForced() ? runPlanInBrowser : runPlanOnServer;
+
+  // Follow the server run until it ends. A failed poll is shown and retried;
+  // it says nothing about the plan, which keeps running regardless.
+  useEffect(() => {
+    if (!serverRunId) return;
+    let stopped = false;
+    const id = setInterval(() => {
+      void getPlanRun(serverRunId).then(
+        (run) => { if (!stopped) applyServerRun(run); },
+        (e: Error) => {
+          if (!stopped) setPlanRun((r) => r && { ...r, error: `Lost contact with the run; retrying (${e.message})` });
+        },
+      );
+    }, PLAN_POLL_MS);
+    return () => { stopped = true; clearInterval(id); };
+  }, [serverRunId, applyServerRun]);
+
+  const planVerb = useCallback(async (planId: string, verb: PlanRunVerb) => {
+    try {
+      await planRunVerb(planId, verb);
+      if (planRef.current?.plan_id === planId) applyServerRun(await getPlanRun(planId));
+      else setOtherRuns(await listActivePlanRuns());
+    } catch (e) {
+      const msg = e instanceof PlanRunApiError ? `${e.status}: ${e.message}` : (e as Error).message;
+      if (planRef.current?.plan_id === planId) setPlanRun((r) => r && { ...r, error: msg });
+      else setError(msg);
+    }
+  }, [applyServerRun]);
+
+  // Reconnect: a plan this operator started keeps running after the tab
+  // closed; reopening the dashboard brings its card back. Other active runs
+  // are listed (anyone may pause/stop them) while the panel is open.
+  const reconnectedRef = useRef(false);
+  useEffect(() => {
+    if (!owner || !configured || browserPlanRunnerForced()) return;
+    if (reconnectedRef.current && !open) return;
+    let stopped = false;
+    const refresh = async () => {
+      let runs: ServerRunSummary[];
+      try {
+        runs = await listActivePlanRuns();
+      } catch {
+        return; // nothing to show; the runs themselves are unaffected
+      }
+      if (stopped) return;
+      if (!reconnectedRef.current) {
+        reconnectedRef.current = true;
+        const mine = runs.find((r) => r.approved_by === owner);
+        if (mine && !planRef.current && !planRunningRef.current) {
+          try {
+            const run = await getPlanRun(mine.plan_id);
+            if (stopped || planRef.current) return;
+            const restored = planFromServer(run);
+            planRef.current = restored;
+            planRunningRef.current = RUN_ACTIVE.has(run.status);
+            setPlan(restored);
+            applyServerRun(run);
+            if (RUN_ACTIVE.has(run.status)) setServerRunId(run.plan_id);
+          } catch {
+            /* the run is listed below instead */
+          }
+        }
+      }
+      setOtherRuns(runs);
+    };
+    void refresh();
+    if (!open) return () => { stopped = true; };
+    const id = setInterval(() => void refresh(), ACTIVE_RUNS_POLL_MS);
+    return () => { stopped = true; clearInterval(id); };
+  }, [owner, configured, open, applyServerRun]);
+
+  // The ELN picker: loaded once a plan is approved and about to run.
+  useEffect(() => {
+    if (planRun?.phase !== "approved" || elnProjects !== null || browserPlanRunnerForced()) return;
+    let stopped = false;
+    listElnProjects().then(
+      ({ configured: ok, projects }) => {
+        if (stopped) return;
+        const list = ok ? projects : [];
+        setElnProjects(list);
+        let remembered = "";
+        try {
+          remembered = localStorage.getItem(`${ELN_PROJECT_KEY}:${owner ?? ""}`) ?? "";
+        } catch {
+          /* storage unavailable: no remembered choice */
+        }
+        setElnChoice(list.includes(remembered) ? remembered : "");
+      },
+      () => { if (!stopped) setElnProjects([]); },
+    );
+    return () => { stopped = true; };
+  }, [planRun?.phase, elnProjects, owner]);
+
+  const chooseEln = useCallback((project: string) => {
+    setElnChoice(project);
+    try {
+      localStorage.setItem(`${ELN_PROJECT_KEY}:${owner ?? ""}`, project);
+    } catch {
+      /* storage unavailable: the choice holds for this card only */
+    }
+  }, [owner]);
 
   const dismissPlan = useCallback(() => {
     if (!plan || !planRun || planRun.phase === "running") return;
@@ -2055,6 +2379,16 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
                 onDismiss={clearProposal}
               />
             )}
+            {otherRuns
+              .filter((r) => r.plan_id !== plan?.plan_id)
+              .map((r) => (
+                <OtherRunRow
+                  key={r.plan_id}
+                  run={r}
+                  mine={r.approved_by === owner}
+                  onVerb={(verb) => void planVerb(r.plan_id, verb)}
+                />
+              ))}
             {plan && planRun && (
               <PlanCard
                 plan={plan}
@@ -2062,6 +2396,12 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
                 onApprove={() => void approvePlan()}
                 onRun={() => void runPlan()}
                 onDismiss={dismissPlan}
+                onVerb={(verb) => void planVerb(plan.plan_id, verb)}
+                serverRun={!browserPlanRunnerForced()}
+                elnProjects={elnProjects}
+                elnChoice={elnChoice}
+                onElnChoice={chooseEln}
+                isApprover={planRun.server ? planRun.server.approvedBy === owner : true}
               />
             )}
             {readerRun && (
@@ -2197,11 +2537,35 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
             {voice.error && (
               <p className="mt-1 text-xs text-red-600 dark:text-red-400">{voice.error}</p>
             )}
-            {backendInfo?.model && (
-              <p className="mt-1 text-center text-xs text-ink-subtle dark:text-slate-400">
-                Hermes agents: {backendInfo.model}
-              </p>
-            )}
+            {(() => {
+              const which = mode === "control" ? "control" : mode === "ask" ? "ask" : null;
+              const offered = (which === "control" ? backendInfo?.controlModels : backendInfo?.models) ?? [];
+              if (which && offered.length > 1) {
+                return (
+                  <label className="mt-1 flex items-center justify-center gap-1.5 text-xs text-ink-subtle dark:text-slate-400">
+                    Model
+                    <select
+                      aria-label="Model"
+                      value={modelChoice[which] ?? offered[0]}
+                      disabled={sending}
+                      onChange={(e) => chooseModel(which, e.target.value)}
+                      className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-ink focus:border-purple-500 focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    >
+                      {offered.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                );
+              }
+              return backendInfo?.model ? (
+                <p className="mt-1 text-center text-xs text-ink-subtle dark:text-slate-400">
+                  Hermes agents: {backendInfo.model}
+                </p>
+              ) : null;
+            })()}
           </form>
           <ResizeHandle corner="se" mode={mode} onPointerDown={onResizeStart("se")} />
         </div>
@@ -2520,6 +2884,7 @@ const STEP_GLYPH: Record<StepOutcome, string> = {
   ok: "✓",
   failed: "×",
   skipped: "–",
+  unknown: "?",
 };
 
 const STEP_TONE: Record<StepOutcome, string> = {
@@ -2528,11 +2893,50 @@ const STEP_TONE: Record<StepOutcome, string> = {
   ok: "text-emerald-700 dark:text-emerald-400",
   failed: "text-rose-700 dark:text-rose-400",
   skipped: "text-slate-400 line-through dark:text-slate-400",
+  unknown: "text-amber-700 dark:text-amber-300",
 };
+
+/** A plan running on the server that is not this tab's card: another
+ *  operator's, or this operator's from another tab. Anyone may pause or stop
+ *  it; only its approver resumes (the server enforces both). */
+function OtherRunRow({
+  run,
+  mine,
+  onVerb,
+}: {
+  run: ServerRunSummary;
+  mine: boolean;
+  onVerb: (verb: PlanRunVerb) => void;
+}) {
+  const step = run.current_step ?? Math.min(run.steps_ok + 1, run.steps_total);
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-purple-200 bg-purple-50/60 px-2 py-1 text-xs text-purple-900 dark:border-purple-800 dark:bg-purple-950/30 dark:text-purple-100">
+      <span className="min-w-0 flex-1">
+        {mine ? "Your plan" : `${run.approved_by}'s plan`} {run.paused ? "is paused" : "is running"} on{" "}
+        {run.equipment_name} · step {step}/{run.steps_total}
+      </span>
+      {run.paused ? (
+        mine && (
+          <button type="button" onClick={() => onVerb("resume")} className="rounded px-2 py-0.5 hover:bg-purple-100 dark:hover:bg-purple-900/40">
+            Resume
+          </button>
+        )
+      ) : (
+        <button type="button" onClick={() => onVerb("pause")} className="rounded px-2 py-0.5 hover:bg-purple-100 dark:hover:bg-purple-900/40">
+          Pause
+        </button>
+      )}
+      <button type="button" onClick={() => onVerb("stop")} className="rounded px-2 py-0.5 text-rose-700 hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-950/40">
+        Stop
+      </button>
+    </div>
+  );
+}
 
 /** The multi-step sibling of ProposalCard (UI_DESIGN §5 Step 1i). Same
  *  authoritative-fields-first layout; the whole ordered list is reviewed at
- *  once and approved by hash, then run step by step from this browser. Two
+ *  once and approved by hash, then started here and run by the dashboard
+ *  server (§5.3b; this browser only as the fallback runner). Two
  *  clicks — Approve, then Run — not one: approving records *what was
  *  reviewed*, which is what makes the audit row meaningful, and it keeps the
  *  last action before hardware moves from being a single click on a screen
@@ -2632,12 +3036,25 @@ function PlanCard({
   onApprove,
   onRun,
   onDismiss,
+  onVerb,
+  serverRun,
+  elnProjects,
+  elnChoice,
+  onElnChoice,
+  isApprover,
 }: {
   plan: Plan;
   run: PlanRun;
   onApprove: () => void;
   onRun: () => void;
   onDismiss: () => void;
+  onVerb: (verb: PlanRunVerb) => void;
+  /** Run starts the plan on the server (§5.3b) rather than in this tab. */
+  serverRun: boolean;
+  elnProjects: string[] | null;
+  elnChoice: string;
+  onElnChoice: (project: string) => void;
+  isApprover: boolean;
 }) {
   const busy = run.phase === "approving" || run.phase === "running";
   const settled = run.phase === "executed" || run.phase === "failed";
@@ -2700,16 +3117,24 @@ function PlanCard({
       </div>
     );
   }
+  const server = run.server;
   const title =
     run.phase === "executed"
       ? "Plan finished"
-      : run.phase === "failed"
-        ? "Plan halted"
-        : run.phase === "running"
-          ? "Running plan"
-          : run.phase === "approved"
-            ? "Plan approved"
-            : "Authorize plan";
+      : server?.status === "aborted"
+        ? "Plan stopped"
+        : server?.status === "interrupted"
+          ? "Plan interrupted"
+          : run.phase === "failed"
+            ? "Plan halted"
+            : server?.paused
+              ? "Plan paused"
+              : run.phase === "running"
+                ? "Running plan"
+                : run.phase === "approved"
+                  ? "Plan approved"
+                  : "Authorize plan";
+  const inFlight = run.outcomes.includes("running");
   return (
     <div className="rounded-lg border border-purple-300 bg-purple-50 p-2 text-[13px] dark:border-purple-700 dark:bg-purple-950/40">
       <div className="mb-1 flex items-center justify-between">
@@ -2782,6 +3207,43 @@ function PlanCard({
           All {okCount} steps ran.
         </p>
       )}
+      {server && run.phase === "running" && (
+        <p className="mt-1 text-xs text-purple-800 dark:text-purple-300">
+          {server.paused
+            ? inFlight
+              ? "Pausing after the step in progress. The plan keeps the device until it is resumed or stopped."
+              : "Paused between steps. The plan keeps the device until it is resumed or stopped."
+            : "Running on the dashboard server, which holds the device: you can close this tab."}{" "}
+          Pause and Stop take effect after the step in progress; neither is a hardware stop.
+        </p>
+      )}
+      {server && run.phase !== "running" && server.elnProject && (
+        <p className="mt-1 text-xs text-purple-800 dark:text-purple-300">
+          {server.notebook?.state === "pending" || server.notebook?.state === "filed"
+            ? `Results sent to the notebook (${server.elnProject}).`
+            : server.notebook?.error
+              ? `Results were not sent to the notebook: ${server.notebook.error}. The run record keeps them.`
+              : `Results will be filed in the notebook (${server.elnProject}).`}
+        </p>
+      )}
+      {serverRun && run.phase === "approved" && elnProjects && elnProjects.length > 0 && (
+        <label className="mt-2 flex items-center gap-2 text-xs text-purple-900 dark:text-purple-100">
+          File results in
+          <select
+            aria-label="ELN project"
+            value={elnChoice}
+            onChange={(e) => onElnChoice(e.target.value)}
+            className="min-w-0 flex-1 rounded border border-purple-300 bg-white px-1 py-0.5 text-xs dark:border-purple-700 dark:bg-slate-900"
+          >
+            <option value="">Do not file (run record only)</option>
+            {elnProjects.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {run.expired && run.phase === "draft" && !run.error && (
         <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
           This plan expired. Ask again to get a fresh one.
@@ -2807,9 +3269,41 @@ function PlanCard({
             disabled={busy}
             className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
           >
-            {run.phase === "running" ? `Running ${okCount + 1}/${plan.steps.length}…` : "Run"}
+            {run.phase === "running"
+              ? `${server?.paused ? "Paused at" : "Running"} ${Math.min(okCount + 1, plan.steps.length)}/${plan.steps.length}…`
+              : "Run"}
           </button>
         ) : null}
+        {server && run.phase === "running" && (
+          <>
+            {server.paused ? (
+              isApprover && (
+                <button
+                  type="button"
+                  onClick={() => onVerb("resume")}
+                  className="rounded px-2 py-1 text-xs text-purple-900 hover:bg-purple-100 dark:text-purple-100 dark:hover:bg-purple-900/40"
+                >
+                  Resume
+                </button>
+              )
+            ) : (
+              <button
+                type="button"
+                onClick={() => onVerb("pause")}
+                className="rounded px-2 py-1 text-xs text-purple-900 hover:bg-purple-100 dark:text-purple-100 dark:hover:bg-purple-900/40"
+              >
+                Pause
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onVerb("stop")}
+              className="rounded px-2 py-1 text-xs text-rose-700 hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-950/40"
+            >
+              Stop
+            </button>
+          </>
+        )}
         <button
           type="button"
           onClick={onDismiss}

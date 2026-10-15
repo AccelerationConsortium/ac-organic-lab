@@ -15,7 +15,7 @@ import os
 import socket
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional
 
 import httpx
 from lab_skills import (
@@ -61,6 +61,7 @@ from .hosts import build_hosts_router
 from .labware import build_labware_router
 from .ssh_console import build_ssh_router
 from .plan_results import build_plan_results_router
+from .assistant_plan_runs import build_plan_runs_router
 from .presentation import (
     AggregatorHealth,
     EquipmentList,
@@ -595,9 +596,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             _uptime_poll_loop(aggregator, db, registry, notifier=notifier)
         )
 
+    # Approved assistant plans run here, not in the browser (UI_DESIGN §5.3b).
+    # Approvals stay in memory (ASSISTANT_PLANS); run records are durable,
+    # and a run a previous process left in progress is marked interrupted.
+    from .assistant_plan_runs import PlanRunner, PlanRunStore, plan_runs_path
+    app.state.assistant_plan_runner = PlanRunner(
+        app, ASSISTANT_PLANS, PlanRunStore(plan_runs_path(db_path)))
+    await app.state.assistant_plan_runner.recover()
+
     try:
         yield
     finally:
+        await app.state.assistant_plan_runner.shutdown()
         plan_results_task.cancel()
         camera_task.cancel()
         try:
@@ -663,7 +673,11 @@ app.include_router(build_history_router())
 app.include_router(build_plan_results_router())
 # Read-only Claude assistant -- streams chat over SSE, has tool access to
 # the history DB and a whitelisted set of systemd journals. See assistant.py.
-app.include_router(build_assistant_router())
+# One approval registry, shared with the server-side plan runner below.
+ASSISTANT_PLANS: dict[str, dict[str, Any]] = {}
+app.include_router(build_assistant_router(plans=ASSISTANT_PLANS))
+# Approved plans execute on the server (assistant_plan_runs.py).
+app.include_router(build_plan_runs_router())
 # Plan mode: named, owner-private saved planning sessions (assistant_sessions.py).
 app.include_router(build_assistant_sessions_router())
 app.include_router(build_voice_router())

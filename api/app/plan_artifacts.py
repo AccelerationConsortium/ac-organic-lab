@@ -33,6 +33,11 @@ from typing import Any, Iterable
 import yaml
 
 PROTOCOL_PREFIX = "asrun"
+#: Where a bundle came from: an OT-2 gateway's own plan (the default, and every
+#: bundle before 2026-10-15) or a plan the dashboard ran server-side
+#: (``assistant_plan_runs.py``). Only the labels differ.
+SOURCE_OT2 = "ot2-gateway plan"
+SOURCE_DASHBOARD = "dashboard-assistant plan"
 _PLACEHOLDERS = {"{row}": "{well_row}", "{column}": "{well_column}"}
 _IDENT = re.compile(r"[^a-z0-9_]+")
 
@@ -40,6 +45,17 @@ _IDENT = re.compile(r"[^a-z0-9_]+")
 def _ident(text: str) -> str:
     out = _IDENT.sub("_", str(text).lower()).strip("_")
     return out if out and out[0].isalpha() else f"p_{out}"
+
+
+def bundle_source(bundle: dict[str, Any]) -> str:
+    return str(bundle.get("source") or SOURCE_OT2)
+
+
+def run_label(bundle: dict[str, Any]) -> str:
+    """``OT-2`` for a gateway plan; the device's name for a dashboard-run one."""
+    if bundle_source(bundle) == SOURCE_OT2:
+        return "OT-2"
+    return str(bundle.get("equipment_name") or bundle["equipment_id"])
 
 
 def artifact_name(bundle: dict[str, Any]) -> str:
@@ -96,7 +112,7 @@ def as_run_protocol(bundle: dict[str, Any]) -> dict[str, Any]:
     warnings: list[str] = []
     labware = (bundle.get("plate_report") or {}).get("labware")
     description = (
-        f"As-run record of OT-2 plan {bundle['plan_id']} on {bundle['equipment_id']} "
+        f"As-run record of {run_label(bundle)} plan {bundle['plan_id']} on {bundle['equipment_id']} "
         f"({bundle.get('status')}, {bundle.get('steps_ok')}/{bundle.get('steps_total')} steps ok), "
         f"generated from the plan record. Numbers are what ran, not parameters; this is "
         f"not an authored protocol until a human has reviewed and merged it."
@@ -145,7 +161,8 @@ def as_run_protocol(bundle: dict[str, Any]) -> dict[str, Any]:
     else:
         for i, step in enumerate(plan.get("steps") or [], start=1):
             step_action = f"{action_id}_s{i:03d}"
-            actions[step_action] = {"role": "liquid_handler", "skill": step["action"],
+            actions[step_action] = {"role": str(bundle.get("kind") or "liquid_handler"),
+                                    "skill": step["action"],
                                     "args": _translate(step.get("args") or {})}
             steps.append({"step_id": f"s{i:03d}", "action": step_action})
         if labware:
@@ -183,7 +200,7 @@ def design_skeleton(bundle: dict[str, Any]) -> str:
     stats = report.get("stats") or {}
     readout = "mass (g) per well, plate balance" if stats.get("n") else "TODO"
     lines = [
-        f"# Design skeleton generated from OT-2 plan {bundle['plan_id']} ({bundle.get('started_at', '')[:10]}).",
+        f"# Design skeleton generated from {run_label(bundle)} plan {bundle['plan_id']} ({(bundle.get('started_at') or '')[:10]}).",
         "# Every TODO below is scientific intent the run cannot supply — fill it in or",
         "# delete the line; the agent never guesses these (it does not decide chemistry).",
         f"design: {name}",
@@ -256,7 +273,7 @@ def well_samples(bundle: dict[str, Any]) -> list[dict[str, Any]]:
         meta = {k: cell.get(k) for k in ("mass_g", "deviation_pct", "volume_ul", "implied_volume_ul",
                                           "stable", "status", "repeat_weighings") if cell.get(k) is not None}
         meta.update({"plate": labware, "well": well, "plan_id": bundle["plan_id"],
-                     "device_id": bundle["device_id"], "source": "ot2-gateway plan", "unit": "g"})
+                     "device_id": bundle["device_id"], "source": bundle_source(bundle), "unit": "g"})
         out.append({
             "hid": f"{labware}:{well}",
             "title": f"{labware} {well} — {cell['mass_g']} g",

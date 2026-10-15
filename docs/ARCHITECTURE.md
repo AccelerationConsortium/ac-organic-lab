@@ -322,6 +322,12 @@ Three pieces:
     outside the repo tree so Claude Code doesn't auto-load the ~50k-token
     `CLAUDE.md` doc bundle on every turn. Per-mode models via
     `ASSISTANT_CLAUDE_MODEL` / `ASSISTANT_CLAUDE_CONTROL_MODEL`.
+    Since 2026-10-15 the bubble may also pick a model per turn from
+    `ASSISTANT_MODELS` / `ASSISTANT_CONTROL_MODELS` (default first; an entry
+    is `<model>` for the mode's backend or `<backend>:<model>`, so one list
+    can mix Claude, OpenRouter and Hermes). An unlisted model is refused
+    (422); Claude entries are offered only while Claude Code can reach its
+    API host from the API unit. `/api/assistant/health` lists the choices.
   - **`openai`** (`assistant_openai.py`, added 2026-08-13): speaks the
     OpenAI chat-completions protocol to any compatible endpoint (default
     OpenRouter) and runs its own tool loop over the **same** stdio MCP

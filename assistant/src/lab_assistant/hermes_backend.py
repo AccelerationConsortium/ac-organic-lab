@@ -82,7 +82,9 @@ def control_events(event):
 
 
 async def run_hermes_turn(messages, *, control=False, actor=None, on_proposal=None,
-                          on_plan=None, extra_system_prompt=None, scope=None):
+                          on_plan=None, extra_system_prompt=None, scope=None, model=None):
+    # ``model``: the operator's pick, already validated by the engine.
+    model = model or MODEL
     if control and not actor:
         yield _sse({'type': 'error', 'message': 'Control requires a verified signed-in user.'})
         return
@@ -95,6 +97,7 @@ async def run_hermes_turn(messages, *, control=False, actor=None, on_proposal=No
     with tempfile.TemporaryDirectory(prefix='hermes-turn-', dir=_runtime_dir()) as home:
         root = Path(home)
         config = turn_config(actor, extra_system_prompt, control=control, scope=scope)
+        config['model']['default'] = model
         (root / 'config.yaml').write_text(json.dumps(config))
         # JSON is valid YAML. Secrets are passed only in the child environment.
         (root / 'query.txt').write_text(_format_prompt(messages))
@@ -104,7 +107,7 @@ async def run_hermes_turn(messages, *, control=False, actor=None, on_proposal=No
         env = {k: os.environ[k] for k in keep if k in os.environ}
         env.update(HOME=home, HERMES_HOME=home, OPENROUTER_API_KEY=os.environ['ASSISTANT_HERMES_API_KEY'])
         args = [BINARY, 'chat', '--query-file', str(root / 'query.txt'), '--format', 'stream-json',
-                '--model', MODEL, '--provider', 'openrouter', '--toolsets',
+                '--model', model, '--provider', 'openrouter', '--toolsets',
                 ','.join(config['mcp_servers']), '--ignore-rules', '--max-turns', '12']
         proc = None
         try:
