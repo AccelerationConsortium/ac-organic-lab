@@ -421,3 +421,55 @@ async def test_plate_reader_imaging_and_shake_round_trip() -> None:
     assert stop.call_count == 1
     assert captured["capture"]["channel"] == "brightfield"
     assert captured["capture"]["gain"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_plate_reader_timed_run_round_trip() -> None:
+    entry = _entry("cytation_5", kind="plate_reader", base_url="http://c.test:8040")
+    registry = Registry(equipment=[entry])
+    record = {"run_id": "run-20261015T140000Z-1a2b", "state": "equilibrating",
+              "timepoints_total": 13}
+    captured: dict = {}
+
+    def _record_start(request: httpx.Request) -> httpx.Response:
+        captured["start"] = json.loads(request.content)
+        return httpx.Response(202, json=record)
+
+    with respx.mock(base_url=entry.base_url) as router:
+        router.post("/control/run/start").mock(side_effect=_record_start)
+        stop = router.post("/control/run/stop").mock(
+            return_value=httpx.Response(200, json={**record, "state": "stopping"})
+        )
+        listing = router.get("/control/runs").mock(return_value=httpx.Response(200, json=[record]))
+        get = router.get("/control/runs/run-20261015T140000Z-1a2b").mock(
+            return_value=httpx.Response(200, json={**record, "state": "stopped", "timepoints": []})
+        )
+        async with Lab.connect(registry=registry) as lab:
+            reader = lab.get(entry.id)
+            started = await reader.run_start(
+                temperature_c=60, duration_s=21600, interval_s=1800,
+                measurements=[{"type": "absorbance", "wells": ["A1"], "wavelength_nm": 600}],
+                on_complete="hold_temperature",
+            )
+            stopped = await reader.run_stop()
+            runs = await reader.run_list()
+            final = await reader.run_get(started.run_id)
+            with pytest.raises(Exception):
+                await reader.run_get("../state")
+
+    assert captured["start"]["temperature_c"] == 60
+    assert captured["start"]["on_complete"] == "hold_temperature"
+    assert captured["start"]["measurements"][0]["type"] == "absorbance"
+    assert stopped.state == "stopping"
+    assert runs[0]["run_id"] == record["run_id"]
+    assert final.state == "stopped"
+    assert stop.call_count == listing.call_count == get.call_count == 1
+
+
+def test_plate_reader_run_start_validates_locally() -> None:
+    from pydantic import ValidationError
+
+    from lab_skills.skill_catalog.plate_reader import RunStartArgs
+
+    with pytest.raises(ValidationError):
+        RunStartArgs(duration_s=21600, interval_s=1800, measurements=[])

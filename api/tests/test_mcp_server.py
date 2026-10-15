@@ -180,7 +180,8 @@ async def test_build_server_registers_only_included_tools(monkeypatch):
         "LAB_HISTORY_TOOLS",
         "list_equipment_now,get_equipment_status,record_observation,"
         "query_equipment_events,query_service_uptime,query_sensor_readings,"
-        "tail_journald,capture_camera_snapshot",
+        "tail_journald,capture_camera_snapshot,"
+        "list_plate_reader_runs,get_plate_reader_run",
     )
     names = {t.name for t in await _build_server().list_tools()}
     assert names == ALL_TOOLS - {"query_runs", "query_well_results"}
@@ -312,3 +313,82 @@ async def test_capture_camera_snapshot_unknown_camera_or_lens_lists_the_options(
 
 def test_capture_camera_snapshot_is_a_registered_tool_name():
     assert "capture_camera_snapshot" in _ms.ALL_TOOLS
+
+
+# ---------------------------------------------------------------------------
+# Plate-reader timed runs: progress yes, measured values no
+# ---------------------------------------------------------------------------
+
+_RUN_RECORD = {
+    "run_id": "run-20261015T140000Z-1a2b",
+    "state": "holding",
+    "timepoints_total": 13,
+    "request": {"temperature_c": 60.0},
+    "timepoints": [
+        {
+            "index": 0, "offset_s": 0.0, "temperature_c": 60.1, "ok": False,
+            "scheduled_at": "2026-10-15T14:30:00Z", "started_at": "2026-10-15T14:30:01Z",
+            "finished_at": "2026-10-15T14:31:00Z",
+            "measurements": [
+                {"type": "absorbance", "ok": True, "error": None,
+                 "result": {"wells": {"A1": 0.42, "A2": None}, "over_range": ["A2"]}},
+                {"type": "imaging", "ok": False, "error": "A2: camera timeout",
+                 "result": {"captures": [{"well": "A1", "image_path": "C:/captures/a1.png",
+                                          "pixel_stats": {"max": 4000}}],
+                            "errors": {"A2": "camera timeout"}}},
+            ],
+        }
+    ],
+    "temperature_log": [
+        {"at": "2026-10-15T14:00:00Z", "celsius": 25.0, "phase": "equilibrating"},
+        {"at": "2026-10-15T14:30:00Z", "celsius": 59.8, "phase": "timepoint"},
+        {"at": "2026-10-15T14:31:00Z", "celsius": 60.3, "phase": "holding"},
+    ],
+}
+
+
+def test_run_telemetry_strips_measured_values():
+    out = _ms._run_telemetry(_RUN_RECORD)
+    text = _json.dumps(out)
+    assert "0.42" not in text and "pixel_stats" not in text
+    absorbance, imaging = out["timepoints"][0]["measurements"]
+    assert absorbance == {
+        "type": "absorbance", "ok": True, "error": None, "started_at": None,
+        "finished_at": None, "wells_measured": 2, "over_range": ["A2"],
+    }
+    assert imaging["images"] == [{"well": "A1", "image_path": "C:/captures/a1.png"}]
+    assert imaging["image_errors"] == {"A2": "camera timeout"}
+    assert out["timepoints"][0]["temperature_c"] == 60.1
+    # The hold range ignores the ramp up from ambient.
+    assert out["temperature"]["hold_min_c"] == 59.8
+    assert out["temperature"]["hold_max_c"] == 60.3
+
+
+async def test_get_plate_reader_run_refuses_a_path_like_id():
+    out = _json.loads(await _ms._get_plate_reader_run("cytation_5", "../state"))
+    assert "invalid run id" in out["error"]
+
+
+async def test_get_plate_reader_run_reads_the_device(monkeypatch, tmp_path):
+    registry = tmp_path / "equipment.yaml"
+    registry.write_text(
+        "equipment:\n"
+        "  - id: cytation_5\n    name: Cytation\n    kind: plate_reader\n"
+        "    adapter: http\n    protocol: '1.2'\n    base_url: http://reader.test:8040\n"
+        "    status_path: /status\n"
+    )
+    monkeypatch.setenv("LAB_REGISTRY_PATH", str(registry))
+    with respx.mock(base_url="http://reader.test:8040") as router:
+        router.get("/control/runs/run-20261015T140000Z-1a2b").mock(
+            return_value=Response(200, json=_RUN_RECORD)
+        )
+        router.get("/control/runs").mock(
+            return_value=Response(200, json=[{"run_id": _RUN_RECORD["run_id"], "state": "holding"}])
+        )
+        got = _json.loads(
+            await _ms._get_plate_reader_run("cytation_5", "run-20261015T140000Z-1a2b")
+        )
+        listed = _json.loads(await _ms._list_plate_reader_runs("cytation_5"))
+    assert got["state"] == "holding"
+    assert "0.42" not in _json.dumps(got)
+    assert listed["runs"][0]["run_id"] == _RUN_RECORD["run_id"]

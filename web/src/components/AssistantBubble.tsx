@@ -1735,10 +1735,13 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
       recordControl(proposal.turn_id, "action_response", { action: proposal.action, outcome: "ok" });
       // Read/imaging responses are the useful output of operating a plate
       // reader. Keep them browser-side and visible; the assistant model's turn
-      // has already ended, so scientific values are not fed back to it.
+      // has already ended, so scientific values are not fed back to it. A
+      // timed run's response is its record (run_id, state, schedule), which
+      // is what the operator needs to find the run on the tile afterwards.
       setAuthorizeResponse(
         proposal.kind === "plate_reader" &&
           (proposal.action.startsWith("read.") ||
+            proposal.action.startsWith("run.") ||
             proposal.action === "imaging.capture")
           ? response
           : null

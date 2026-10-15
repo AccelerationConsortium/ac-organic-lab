@@ -19,8 +19,10 @@ vi.mock("@/lib/use-control-lock", () => ({
 
 const postPlateReaderSetTemperature = vi.fn<(id: string, celsius: number) => Promise<{ ok: boolean }>>(async () => ({ ok: true }));
 const postPlateReaderStopTemperature = vi.fn<(id: string) => Promise<{ ok: boolean }>>(async () => ({ ok: true }));
+const postPlateReaderStopRun = vi.fn<(id: string) => Promise<{ ok: boolean }>>(async () => ({ ok: true }));
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<object>()),
+  postPlateReaderStopRun: (id: string) => postPlateReaderStopRun(id),
   postPlateReaderSetTemperature: (id: string, celsius: number) =>
     postPlateReaderSetTemperature(id, celsius),
   postPlateReaderStopTemperature: (id: string) =>
@@ -34,6 +36,7 @@ function snapshot(over: {
   actual_c?: number | null;
   setpoint_c?: number | null;
   claimed_by?: { session_id: string; owner: string; expires_at: string } | null;
+  run?: Record<string, unknown> | null;
 }): EquipmentSnapshot {
   const metrics: Record<string, { value: number; unit: string }> = {};
   if (over.actual_c != null) {
@@ -66,6 +69,7 @@ function snapshot(over: {
       details: {
         temperature_range_c: { min: 4, max: 45 },
         claimed_by: over.claimed_by ?? null,
+        run: over.run ?? null,
       },
       metrics,
       components: {
@@ -86,6 +90,69 @@ afterEach(() => {
   cleanup();
   postPlateReaderSetTemperature.mockClear();
   postPlateReaderStopTemperature.mockClear();
+  postPlateReaderStopRun.mockClear();
+});
+
+const HOLDING_RUN = {
+  run_id: "run-20261015T140000Z-1a2b",
+  label: "solubility 60C",
+  state: "holding",
+  message: null,
+  temperature_c: 60,
+  timepoints_total: 13,
+  timepoints_done: 3,
+  timepoints_failed: 0,
+  next_timepoint_at: "2026-10-15T15:30:00Z",
+};
+
+describe("PlateReaderTile timed runs", () => {
+  it("shows progress and stops an active run", () => {
+    render(
+      <PlateReaderTile
+        snapshot={snapshot({
+          equipment_status: "busy",
+          allowed_actions: ["claim", "heartbeat", "release", "run.list", "run.get", "run.stop"],
+          run: HOLDING_RUN,
+        })}
+      />,
+    );
+    expect(screen.getByText(/holding · 3\/13 · 60 °C · next/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
+    expect(postPlateReaderStopRun).toHaveBeenCalledWith("cytation_5");
+  });
+
+  it("does not offer a second stop while the run is already stopping", () => {
+    render(
+      <PlateReaderTile
+        snapshot={snapshot({
+          equipment_status: "busy",
+          allowed_actions: ["run.stop"],
+          run: { ...HOLDING_RUN, state: "stopping" },
+        })}
+      />,
+    );
+    expect(
+      (screen.getByRole("button", { name: "Stop run" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("reports how the last run ended, without a stop button", () => {
+    render(
+      <PlateReaderTile
+        snapshot={snapshot({
+          run: { ...HOLDING_RUN, state: "failed", timepoints_failed: 3, message: "3 consecutive timepoints failed" },
+        })}
+      />,
+    );
+    expect(screen.getByText("Last run")).toBeTruthy();
+    expect(screen.getByText(/failed · 3\/13 \(3 failed\)/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
+  });
+
+  it("shows nothing when the device has never run one", () => {
+    render(<PlateReaderTile snapshot={snapshot({})} />);
+    expect(screen.queryByText(/Run/)).toBeNull();
+  });
 });
 
 describe("PlateReaderTile incubator controls", () => {

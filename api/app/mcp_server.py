@@ -47,6 +47,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import shutil
 from datetime import datetime, timezone
 from typing import Any
@@ -110,6 +111,8 @@ ALL_TOOLS = frozenset(
         "query_well_results",
         "tail_journald",
         "capture_camera_snapshot",
+        "list_plate_reader_runs",
+        "get_plate_reader_run",
     }
 )
 
@@ -237,6 +240,94 @@ async def _get_equipment_status(equipment_id: str) -> str:
             ),
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Plate-reader timed runs (agilent-cytation-server GET /control/runs[/{id}])
+#
+# A run is a device-side schedule: hold a setpoint, measure every N minutes.
+# Its PROGRESS is platform telemetry (state, timepoints done, temperatures,
+# which measurements failed) and is what these tools return. Its RESULTS
+# (absorbance / fluorescence values, image pixels) are experiment data, kept
+# out of the model's context for the same reason query_well_results is
+# excluded from the assistant (see assistant.HISTORY_TOOLS): everything a tool
+# returns transits the model provider. The full record stays on the device and
+# on the dashboard.
+# ---------------------------------------------------------------------------
+
+_RUN_ID_PATTERN = re.compile(r"^run-[0-9A-Za-z-]{1,64}$")
+_RUN_TEMPERATURE_TAIL = 30
+
+
+def _plate_reader_client(lab: Any, equipment_id: str) -> Any:
+    from lab_skills import PlateReaderClient
+
+    client = lab.get(equipment_id)
+    if not isinstance(client, PlateReaderClient):
+        raise ValueError(f"{equipment_id!r} is not a plate reader")
+    return client
+
+
+def _run_telemetry(record: dict[str, Any]) -> dict[str, Any]:
+    """A run record with the measured values removed (see the note above)."""
+
+    out = {k: v for k, v in record.items() if k not in ("timepoints", "temperature_log")}
+    timepoints = []
+    for tp in record.get("timepoints") or []:
+        measurements = []
+        for m in tp.get("measurements") or []:
+            result = m.get("result") or {}
+            row: dict[str, Any] = {
+                "type": m.get("type"), "ok": m.get("ok"), "error": m.get("error"),
+                "started_at": m.get("started_at"), "finished_at": m.get("finished_at"),
+            }
+            if "wells" in result:
+                row["wells_measured"] = len(result.get("wells") or {})
+                row["over_range"] = result.get("over_range") or []
+            if "captures" in result:
+                row["images"] = [
+                    {"well": c.get("well"), "image_path": c.get("image_path")}
+                    for c in result.get("captures") or []
+                ]
+                row["image_errors"] = result.get("errors") or {}
+            measurements.append(row)
+        timepoints.append({**{k: v for k, v in tp.items() if k != "measurements"},
+                           "measurements": measurements})
+    out["timepoints"] = timepoints
+    log = record.get("temperature_log") or []
+    held = [s["celsius"] for s in log
+            if s.get("phase") != "equilibrating" and isinstance(s.get("celsius"), (int, float))]
+    out["temperature"] = {
+        "samples": len(log),
+        "hold_min_c": min(held) if held else None,
+        "hold_max_c": max(held) if held else None,
+        "recent": log[-_RUN_TEMPERATURE_TAIL:],
+    }
+    return out
+
+
+async def _list_plate_reader_runs(equipment_id: str) -> str:
+    from lab_skills import Lab, load_registry
+
+    try:
+        async with Lab.connect(registry=load_registry()) as lab:
+            runs = await _plate_reader_client(lab, equipment_id).run_list()
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"could not list runs on {equipment_id!r}: {exc}"})
+    return json.dumps({"equipment_id": equipment_id, "runs": runs}, default=str)
+
+
+async def _get_plate_reader_run(equipment_id: str, run_id: str) -> str:
+    from lab_skills import Lab, load_registry
+
+    if not _RUN_ID_PATTERN.match(run_id or ""):
+        return json.dumps({"error": f"invalid run id {run_id!r}"})
+    try:
+        async with Lab.connect(registry=load_registry()) as lab:
+            record = await _plate_reader_client(lab, equipment_id).run_get(run_id)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"could not read run {run_id!r} on {equipment_id!r}: {exc}"})
+    return json.dumps(_run_telemetry(record.model_dump(mode="json")), default=str)
 
 
 async def _record_observation(equipment_id: str, observation: str) -> str:
@@ -672,6 +763,27 @@ def _build_server():
         """Per-well dispense results for one dosing run."""
 
         return await _query_well_results(run_id)
+
+    @tool
+    async def list_plate_reader_runs(equipment_id: str) -> str:
+        """Recent timed runs on a plate reader (kind plate_reader, e.g.
+        cytation_5), newest first: run_id, state (equilibrating, holding,
+        stopping, completed, stopped, failed, interrupted), setpoint,
+        timepoints done/total, next timepoint, last temperature. Use for "is
+        the 60 C run still going" or "how did last night's run end"."""
+
+        return await _list_plate_reader_runs(equipment_id)
+
+    @tool
+    async def get_plate_reader_run(equipment_id: str, run_id: str) -> str:
+        """Progress of ONE timed run: per-timepoint schedule vs actual times,
+        the temperature at each timepoint, which measurements succeeded or
+        failed (with the error), over-range wells, image paths, and the hold
+        temperature range. Measured VALUES are deliberately not included —
+        they are experiment data and stay on the dashboard; say so if asked
+        for them."""
+
+        return await _get_plate_reader_run(equipment_id, run_id)
 
     @tool
     async def tail_journald(unit: str, lines: int = 50) -> str:

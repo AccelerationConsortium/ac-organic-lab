@@ -15,7 +15,9 @@ Acceptance target::
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
+from urllib.parse import quote
 
 from ..client import EquipmentClient
 from ..skill_catalog.plate_reader import (
@@ -26,6 +28,10 @@ from ..skill_catalog.plate_reader import (
     LuminescenceArgs,
     PlateLoadArgs,
     PlateUnloadArgs,
+    RunGetArgs,
+    RunRecord,
+    RunStartArgs,
+    RunStopArgs,
     ShakeArgs,
     ShakeStopArgs,
     ShutdownArgs,
@@ -193,6 +199,52 @@ class PlateReaderClient(EquipmentClient):
 
     async def shake_stop(self) -> Any:
         return await self.command("/control/shake/stop", ShakeStopArgs())
+
+    # ---- timed runs --------------------------------------------------
+
+    async def run_start(
+        self,
+        *,
+        duration_s: float,
+        interval_s: float,
+        measurements: Sequence[Mapping[str, Any]],
+        temperature_c: float | None = None,
+        shake: Mapping[str, Any] | None = None,
+        **options: Any,
+    ) -> Any:
+        """Hold ``temperature_c`` for ``duration_s`` and measure every
+        ``interval_s``; the device runs the schedule and this returns at once.
+
+        ``measurements`` are read bodies with a ``type`` (``absorbance``,
+        ``fluorescence``, ``luminescence`` or ``imaging``). ``options`` are the
+        remaining :class:`RunStartArgs` fields (``wait_for_setpoint``,
+        ``on_complete``, ``label``, ...), validated locally like the rest.
+        """
+
+        return await self.command(
+            "/control/run/start",
+            RunStartArgs(
+                duration_s=duration_s,
+                interval_s=interval_s,
+                measurements=list(measurements),
+                temperature_c=temperature_c,
+                shake=shake,
+                **options,
+            ),
+            response_schema=RunRecord,
+        )
+
+    async def run_stop(self) -> Any:
+        return await self.command("/control/run/stop", RunStopArgs(), response_schema=RunRecord)
+
+    async def run_list(self) -> Any:
+        return await self.command("/control/runs", method="GET")
+
+    async def run_get(self, run_id: str) -> Any:
+        RunGetArgs(run_id=run_id)
+        return await self.command(
+            f"/control/runs/{quote(run_id, safe='')}", method="GET", response_schema=RunRecord
+        )
 
 
 __all__ = ["PlateReaderClient"]
