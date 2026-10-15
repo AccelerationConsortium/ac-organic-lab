@@ -1537,6 +1537,55 @@ async def test_propose_plate_reader_timed_run_with_spectra() -> None:
     assert out["proposal"]["args"] == body
 
 
+_SPECTRA = [
+    {"type": "absorbance_sweep", "wells": ["A1"], "start_nm": 300, "stop_nm": 800, "step_nm": 10},
+    {"type": "fluorescence_emission_sweep", "wells": ["A1"], "excitation_nm": 360,
+     "start_nm": 400, "stop_nm": 700, "step_nm": 10},
+]
+
+
+@respx.mock
+async def test_run_start_card_carries_the_timing_estimate() -> None:
+    _mock_bench_status("plate_reader", ["run.start"])
+    _mock_authz(True)
+    fits = json.loads(await ac._propose_action(
+        _bench_registry("plate_reader"), "plate_reader_test", "run.start",
+        {**_SIX_HOUR_RUN, "measurements": _SPECTRA}, "",
+    ))["proposal"]["run_estimate"]
+    assert fits == {
+        "calls_per_timepoint": 82, "estimated_timepoint_s": 1494.0 + 10.0,  # + shake cycle
+        "interval_s": 1800, "timepoints": 13, "overruns": False, "warning": None,
+    }
+    late = json.loads(await ac._propose_action(
+        _bench_registry("plate_reader"), "plate_reader_test", "run.start",
+        {**_SIX_HOUR_RUN, "interval_s": 1200, "measurements": _SPECTRA}, "",
+    ))["proposal"]["run_estimate"]
+    assert late["overruns"] is True and late["timepoints"] == 19
+    assert "timepoints will run back to back" in late["warning"]
+
+
+@respx.mock
+async def test_a_plan_ending_in_run_start_carries_its_estimate() -> None:
+    _mock_bench_status("plate_reader", list(_PLATE_READER_SURFACE))
+    _mock_authz(True)
+    plan = json.loads(await ac._propose_plan(
+        _bench_registry("plate_reader"), "plate_reader_test",
+        [
+            {"action": "plate.load", "args": {"plate_id": "p-1", "model": "square_96_19mm"}},
+            {"action": "drawer.close"},
+            {"action": "run.start", "args": {**_SIX_HOUR_RUN, "measurements": _SPECTRA}},
+        ],
+        "load, then 6 h of spectra",
+    ))["plan"]
+    assert plan["run_estimate"]["step_index"] == 2
+    assert plan["run_estimate"]["calls_per_timepoint"] == 82
+
+
+def test_no_estimate_for_other_actions() -> None:
+    assert ac._run_estimate("plate_reader", "read.absorbance", {}) is None
+    assert ac._run_estimate("shaker", "run.start", _SIX_HOUR_RUN) is None
+
+
 @respx.mock
 async def test_propose_plate_reader_timed_run_rejects_a_runaway_schedule() -> None:
     _mock_bench_status("plate_reader", ["run.start"])

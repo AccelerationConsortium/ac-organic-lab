@@ -689,7 +689,14 @@ the incubator alone), duration_s and interval_s in SECONDS (6 h = 21600,
 30 min = 1800), and measurements, a list of read bodies each with a "type":
 {"type": "absorbance", wells, wavelength_nm}, {"type": "fluorescence", wells,
 excitation_nm, emission_nm}, {"type": "luminescence", wells}, or
-{"type": "imaging", wells, channel, ...imaging.capture settings}. Optional:
+{"type": "imaging", wells, channel, ...imaging.capture settings}, or a
+spectrum as ONE step: {"type": "absorbance_sweep", wells, start_nm, stop_nm,
+step_nm} or {"type": "fluorescence_emission_sweep", wells, excitation_nm,
+start_nm, stop_nm, step_nm}. Never write a spectrum out one wavelength per
+step. There is no step limit (at most 500 reads per timepoint). The card
+shows the estimated time per timepoint against the interval; if it says the
+measurements overrun, tell the user plainly that later timepoints will start
+late, and offer a longer interval or fewer wells/wavelengths. Optional:
 shake {pattern, displacement_mm} to shake between timepoints (it is the
 only safe way to shake on this device for long), on_complete
 ("stop_temperature" default, or "hold_temperature"), label,
@@ -699,7 +706,8 @@ reached). Timepoints fall at 0, interval, 2*interval, ... and at the end, so
 must be loaded and the drawer closed first (propose plate.load / drawer.close
 before it if needed). While a run is active the device refuses every other
 hardware action; only run.stop is allowed. Follow progress with
-get_plate_reader_run.
+get_plate_reader_run; when it reports timepoints_overrun or warnings, say
+the run is running late and by how much.
 
 For the PlateLoc (kind plate_sealer), use the live schemas for startup,
 shutdown, stage.in, stage.out, seal.set_temperature, seal.set_time, and

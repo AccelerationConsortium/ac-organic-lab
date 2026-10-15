@@ -149,6 +149,35 @@ describe("PlateReaderTile timed runs", () => {
     expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
   });
 
+  it("warns when timepoints overrun the interval", () => {
+    const late = "Timepoint 2 (t = 60 min) finished 4.0 min after timepoint 3 was due";
+    render(
+      <PlateReaderTile
+        snapshot={snapshot({
+          equipment_status: "busy",
+          allowed_actions: ["run.stop"],
+          run: { ...HOLDING_RUN, timepoints_overrun: 2, warnings: [late] },
+        })}
+      />,
+    );
+    const text = screen.getByText(/late ×2/);
+    expect(text).toBeTruthy();
+    expect(text.closest("div")?.getAttribute("title")).toContain(late);
+  });
+
+  it("says a run may run late when only the start-time estimate warned", () => {
+    render(
+      <PlateReaderTile
+        snapshot={snapshot({
+          equipment_status: "busy",
+          allowed_actions: ["run.stop"],
+          run: { ...HOLDING_RUN, timepoints_overrun: 0, warnings: ["Each timepoint is estimated at ~34 min"] },
+        })}
+      />,
+    );
+    expect(screen.getByText(/may run late/)).toBeTruthy();
+  });
+
   it("shows nothing when the device has never run one", () => {
     render(<PlateReaderTile snapshot={snapshot({})} />);
     expect(screen.queryByText(/Run/)).toBeNull();

@@ -347,6 +347,24 @@ _RUN_RECORD = {
 }
 
 
+def test_run_telemetry_summarizes_a_sweep_without_its_values():
+    record = {**_RUN_RECORD, "timepoints": [{
+        "index": 0, "offset_s": 0.0, "ok": False, "overrun_s": 240.0,
+        "measurements": [{"type": "absorbance_sweep", "ok": False, "error": "450 nm: refused",
+                          "result": {"spectrum": [
+                              {"wavelength_nm": 400, "wells": {"A1": 0.731}, "over_range": []},
+                              {"wavelength_nm": 410, "wells": {"A1": None}, "over_range": ["A1"]},
+                          ], "errors": {"450": "refused"}}}],
+    }]}
+    row = _ms._run_telemetry(record)["timepoints"][0]
+    assert row["overrun_s"] == 240.0
+    sweep = row["measurements"][0]
+    assert sweep["wavelengths_measured"] == [400, 410]
+    assert sweep["over_range"] == {"410": ["A1"]}
+    assert sweep["wavelength_errors"] == {"450": "refused"}
+    assert "0.731" not in _json.dumps(row)
+
+
 def test_run_telemetry_strips_measured_values():
     out = _ms._run_telemetry(_RUN_RECORD)
     text = _json.dumps(out)
