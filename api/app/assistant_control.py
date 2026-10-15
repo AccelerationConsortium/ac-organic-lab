@@ -87,6 +87,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -697,6 +698,44 @@ def _merge_deck_checks(checks: list[dict[str, Any] | None]) -> list[dict[str, An
             current["slots"] = check["slots"]
             current.pop("unreachable", None)
     return list(merged.values())
+
+
+def _run_estimate(kind: str | None, action: str, args: dict[str, Any]) -> dict[str, Any] | None:
+    """For a Cytation ``run.start``: how long each timepoint should take
+    against its interval, so the card says before Authorize when the
+    measurements will not fit (the device repeats it in the 202's
+    ``warnings`` and flags every timepoint that actually overruns).
+
+    Uses the catalog's mirror of the device's per-call costs — an estimate,
+    shown, never used to refuse.
+    """
+
+    if kind != "plate_reader" or action != "run.start":
+        return None
+    from lab_skills.skill_catalog.plate_reader import RunStartArgs
+
+    try:
+        run = RunStartArgs.model_validate(args)
+    except ValidationError:
+        return None
+    estimate = run.estimated_timepoint_s()
+    steps = math.floor(run.duration_s / run.interval_s + 1e-9)
+    timepoints = steps + 1 + (1 if steps * run.interval_s < run.duration_s - 1e-6 else 0)
+    overruns = estimate > run.interval_s
+    return {
+        "calls_per_timepoint": run.calls_per_timepoint(),
+        "estimated_timepoint_s": estimate,
+        "interval_s": run.interval_s,
+        "timepoints": timepoints,
+        "overruns": overruns,
+        "warning": (
+            f"Each timepoint is estimated at ~{estimate / 60:.1f} min but the "
+            f"interval is {run.interval_s / 60:g} min: timepoints will run back "
+            "to back and later ones will start late."
+            if overruns
+            else None
+        ),
+    }
 
 
 def _resolve(
@@ -1361,6 +1400,9 @@ async def _propose_action(
     merged_checks = _merge_deck_checks(deck_checks)
     if merged_checks:
         proposal["deck_checks"] = merged_checks
+    estimate = _run_estimate(entry.kind, action, resolved_args)
+    if estimate is not None:
+        proposal["run_estimate"] = estimate
     return _dumps({"proposal": proposal})
 
 
@@ -1640,6 +1682,11 @@ async def _propose_plan(
     merged_checks = _merge_deck_checks(deck_checks)
     if merged_checks:
         plan["deck_checks"] = merged_checks
+    for index, step in enumerate(resolved_steps):
+        estimate = _run_estimate(entry.kind, step["action"], step["args"])
+        if estimate is not None:
+            plan["run_estimate"] = {**estimate, "step_index": index}
+            break
     if reader_sweep is not None:
         # The written-out sweep exceeds the tool-result cap of the channel it
         # returns through; the engine expands this back (plan_contract).

@@ -233,6 +233,10 @@ interface RunSummary {
   done: number;
   failed: number;
   nextAt: string | null;
+  /** Timepoints that finished after the next one was due. */
+  overrun: number;
+  /** Device reminders: an estimated overrun at start, then each real one. */
+  warnings: string[];
 }
 
 const ACTIVE_RUN_STATES = new Set(["equilibrating", "holding", "stopping"]);
@@ -255,10 +259,18 @@ function parseRun(snapshot: EquipmentSnapshot): RunSummary | null {
     done: num(r.timepoints_done) ?? 0,
     failed: num(r.timepoints_failed) ?? 0,
     nextAt: str(r.next_timepoint_at),
+    overrun: num(r.timepoints_overrun) ?? 0,
+    warnings: Array.isArray(r.warnings)
+      ? r.warnings.filter((w): w is string => typeof w === "string")
+      : [],
   };
 }
 
 function runTone(run: RunSummary): Tone {
+  // Running late is the one thing the operator must notice mid-run: the
+  // measurements take longer than the interval, so timepoints slip.
+  if (run.overrun > 0 || (ACTIVE_RUN_STATES.has(run.state) && run.warnings.length > 0))
+    return "warn";
   if (ACTIVE_RUN_STATES.has(run.state)) return "neutral";
   if (run.state === "failed" || run.state === "interrupted") return "warn";
   return "muted";
@@ -439,7 +451,9 @@ export function PlateReaderTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
       {run && (
         <div
           className={`flex h-7 items-center gap-1.5 rounded-md border px-2 ${TONE_CLASSES[runTone(run)]}`}
-          title={[run.label, run.runId, run.message].filter(Boolean).join(" · ")}
+          title={[run.label, run.runId, run.message, run.warnings.at(-1)]
+            .filter(Boolean)
+            .join(" · ")}
         >
           <span className="shrink-0 text-[10px] uppercase tracking-wider text-ink-subtle dark:text-slate-400">
             {runActive ? "Run" : "Last run"}
@@ -451,6 +465,11 @@ export function PlateReaderTile({ snapshot }: { snapshot: EquipmentSnapshot }) {
             {run.state === "holding" && clockTime(run.nextAt)
               ? ` · next ${clockTime(run.nextAt)}`
               : ""}
+            {run.overrun > 0
+              ? ` · late ×${run.overrun}`
+              : run.warnings.length > 0 && runActive
+                ? " · may run late"
+                : ""}
           </span>
           {runActive && (
             <span className="ml-auto">

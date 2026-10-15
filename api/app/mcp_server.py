@@ -284,6 +284,14 @@ def _run_telemetry(record: dict[str, Any]) -> dict[str, Any]:
             if "wells" in result:
                 row["wells_measured"] = len(result.get("wells") or {})
                 row["over_range"] = result.get("over_range") or []
+            if "spectrum" in result:
+                points = result.get("spectrum") or []
+                row["wavelengths_measured"] = [p.get("wavelength_nm") for p in points]
+                row["over_range"] = {
+                    str(p.get("wavelength_nm")): p.get("over_range")
+                    for p in points if p.get("over_range")
+                }
+                row["wavelength_errors"] = result.get("errors") or {}
             if "captures" in result:
                 row["images"] = [
                     {"well": c.get("well"), "image_path": c.get("image_path")}

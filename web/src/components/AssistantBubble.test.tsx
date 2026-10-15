@@ -507,6 +507,38 @@ describe("AssistantBubble control mode", () => {
     expect(screen.getByText(/Check the physical deck matches this before authorizing/)).toBeTruthy();
   });
 
+  it("shows a Cytation run's timing, and warns before Authorize when it overruns", async () => {
+    const run = {
+      type: "proposal",
+      proposal: {
+        equipment_id: "cytation_5",
+        equipment_name: "BioTek Cytation 5",
+        kind: "plate_reader",
+        action: "run.start",
+        passthrough_action: "run/start",
+        args: { temperature_c: 60, duration_s: 21600, interval_s: 1200, measurements: [] },
+        reason: "60 C for 6 h, spectra every 20 min",
+        actor: "alice@example.edu",
+        expires_in_s: 120,
+        device_state: { equipment_status: "ready", activity: "idle", message: null },
+        run_estimate: {
+          calls_per_timepoint: 82,
+          estimated_timepoint_s: 1494,
+          interval_s: 1200,
+          timepoints: 19,
+          overruns: true,
+          warning: "Each timepoint is estimated at ~24.9 min but the interval is 20 min: timepoints will run back to back and later ones will start late.",
+        },
+      },
+    };
+    installFetch([`data: ${JSON.stringify(run)}\n\n`, 'data: {"type":"done"}\n\n']);
+    await sendInControlMode("hold 60 C for 6 h and take spectra every 20 min");
+
+    await screen.findByText("Authorize action");
+    expect(screen.getByText(/19 timepoints, every 20 min · ~25 min each \(82 reads, estimated\)/)).toBeTruthy();
+    expect(screen.getByText(/timepoints will run back to back/)).toBeTruthy();
+  });
+
   it("shows a captured camera frame in the turn, with the progress pills at the bottom", async () => {
     installFetch([
       'data: {"type":"tool_use","name":"capture_camera_snapshot"}\n\n',

@@ -199,6 +199,22 @@ interface Proposal {
   };
   resolved_locations?: ResolvedLocation[];
   deck_checks?: DeckCheck[];
+  /** Cytation `run.start` only: per-timepoint estimate vs interval. */
+  run_estimate?: RunEstimate;
+}
+
+/** How long a Cytation timed run's timepoint should take, from lab-control
+ * (assistant_control._run_estimate). An estimate the card shows so an
+ * overrun is seen before Authorize; the device never refuses on it. */
+interface RunEstimate {
+  calls_per_timepoint: number;
+  estimated_timepoint_s: number;
+  interval_s: number;
+  timepoints: number;
+  overruns: boolean;
+  warning: string | null;
+  /** Which plan step is the run.start (plans only). */
+  step_index?: number;
 }
 
 /** One step of a plan: the same shape as a Proposal's action triple. */
@@ -230,6 +246,8 @@ interface Plan {
   };
   resolved_locations?: ResolvedLocation[];
   deck_checks?: DeckCheck[];
+  /** Set when a step is a Cytation `run.start` (see Proposal.run_estimate). */
+  run_estimate?: RunEstimate;
   /** Step 6: the draft was created on a device that runs its own plans.
    *  Approval and execution live in that device's panel; this card is a
    *  read-only receipt with a link, never an Approve/Run surface. */
@@ -2792,6 +2810,32 @@ function formatDeck(check: DeckCheck): string {
 /** The deck-check block shared by the proposal and plan cards: one "Deck now"
  *  row per device plus the request to check the physical deck. An OT-2 that
  *  could not be read is said so, not hidden — the check is then by eye. */
+function minutes(seconds: number): string {
+  return `${(seconds / 60).toFixed(seconds < 600 ? 1 : 0)} min`;
+}
+
+function RunEstimateRows({ estimate }: { estimate?: RunEstimate }) {
+  if (!estimate) return null;
+  return (
+    <>
+      <dl className="mt-1 space-y-1 text-[13px] text-ink dark:text-slate-100">
+        <Row
+          label="Timing"
+          value={`${estimate.timepoints} timepoints, every ${minutes(estimate.interval_s)} · ~${minutes(
+            estimate.estimated_timepoint_s,
+          )} each (${estimate.calls_per_timepoint} reads, estimated)`}
+        />
+      </dl>
+      {estimate.overruns && (
+        <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+          {estimate.warning ??
+            "The measurements are estimated to take longer than the interval."}
+        </p>
+      )}
+    </>
+  );
+}
+
 function DeckCheckRows({ checks }: { checks: DeckCheck[] }) {
   if (checks.length === 0) return null;
   return (
@@ -2876,6 +2920,7 @@ function ProposalCard({
         />
       </dl>
       <DeckCheckRows checks={proposal.deck_checks ?? []} />
+      <RunEstimateRows estimate={proposal.run_estimate} />
       {clearsDeck && (
         <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
           Clears the entire deck declaration — every slot is unset.
@@ -3191,6 +3236,7 @@ function PlanCard({
         />
       </dl>
       <DeckCheckRows checks={plan.deck_checks ?? []} />
+      <RunEstimateRows estimate={plan.run_estimate} />
       <ol className="mt-1 flex flex-col gap-1" aria-label="plan steps">
         {plan.steps.map((s, i) => {
           const outcome = run.outcomes[i] ?? "pending";
