@@ -86,7 +86,6 @@ import httpx
 
 from . import device_chat
 from .plan_contract import (
-    MAX_PLAN_STEPS,
     PLAN_TTL_S,
     REFUSAL_CODES,
     expand_steps,
@@ -563,7 +562,7 @@ HARD RULES FOR EVERY CONTROL REQUEST (do not skip):
        operator nothing. If you did not call the tool, there is no button.
    (b) decline_proposal(reason_code, explanation) — when you will not or
        cannot propose. reason_code is one of: not_proposable, safety_floor,
-       cross_device, too_many_steps, needs_human, device_unavailable,
+       cross_device, needs_human, device_unavailable,
        unsafe_state, informational (a purely informational exchange with no
        action to propose), other. explanation is ONE line the operator reads
        on screen; still give the fuller reasoning in your text.
@@ -610,10 +609,10 @@ When the user asks you to make a device do something:
    from the device's live allowed_actions — for a plan only the FIRST step
    must be allowed right now; later steps are checked live by the device as
    they run. `reason` is a short human-facing justification. The operator
-   approves a plan's step list as shown, then runs it; the browser sends the
+   approves a plan's step list as shown, then runs it; the dashboard sends the
    steps in order and stops at the first one the device refuses (the rest
-   are skipped, never continued past an error). One device per plan — if
-   the work spans devices or exceeds the step cap, say so and recommend a
+   are skipped, never continued past an error). There is no step limit. One
+   device per plan — if the work spans devices, say so and recommend a
    validated workflow plan.
    For a plate-reader spectrum (absorbance and/or fluorescence across a
    wavelength range), do NOT write the reads out: call propose_plan with
@@ -732,8 +731,7 @@ proposable by you. Under that boundary:
   then runs it, and the device re-checks each step live as it is sent — the
   run stops at the first refusal and the remaining steps are skipped. Use a
   single propose_action only when the user asks for one step. If the work
-  exceeds the step cap or spans devices, say so and recommend a validated
-  workflow plan.
+  spans devices, say so and recommend a validated workflow plan.
 - Preserve the gateway's tip selection and tracking. Use the observed
   details.snapshot labware/pipette names, details.tip_racks and
   details.mounted_tips; never substitute details.session_recipe.
@@ -889,7 +887,7 @@ class PlanFinishRequest(BaseModel):
     to what and how far it got."""
 
     status: Literal["executed", "failed", "aborted"]
-    results: list[PlanStepResult] = Field(default_factory=list, max_length=MAX_PLAN_STEPS)
+    results: list[PlanStepResult] = Field(default_factory=list)
     halt_reason: str | None = Field(default=None, max_length=500)
 
 

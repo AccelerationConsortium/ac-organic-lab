@@ -118,7 +118,6 @@ from lab_assistant.scopes import SCOPABLE_KINDS, project_actions_to_scope
 # The plan vocabulary shared with the chat engine (lab_assistant.plan_contract):
 # re-exported here because this module and its tests use them by these names.
 from lab_assistant.plan_contract import (  # noqa: F401
-    MAX_PLAN_STEPS,
     PLAN_TTL_S,
     REFUSAL_CODES,
     compact_steps,
@@ -141,7 +140,6 @@ DECLINE_REASON_CODES = frozenset(
         "not_proposable",
         "safety_floor",
         "cross_device",
-        "too_many_steps",
         "needs_human",
         "device_unavailable",
         "unsafe_state",
@@ -1513,17 +1511,11 @@ async def _propose_plan(
         return _err(
             "not_proposable",
             f"{equipment_id!r} runs plans from the browser; a for_each_well pattern needs a "
-            f"device that runs its own plans — write the steps out (at most {MAX_PLAN_STEPS})",
+            f"device that runs its own plans — write the steps out",
         )
     if pattern is None:
         if not isinstance(steps, list) or not steps:
             return _err("empty_plan", "a plan needs at least one step ({action, args})")
-        if len(steps) > MAX_PLAN_STEPS and not entry.runs_plans:
-            return _err(
-                "too_many_steps",
-                f"a plan may carry at most {MAX_PLAN_STEPS} steps (got {len(steps)}); "
-                "split the work, or recommend a validated workflow plan",
-            )
     elif steps:
         return _err("invalid_step", "give either steps or a for_each_well pattern, not both")
 
@@ -1970,7 +1962,7 @@ def _build_server(registry: Registry):
         {"action": <name from list_available_actions>, "args": {...}} in
         execution order. Later steps may depend on earlier ones — only the
         first step must be in the device's current allowed_actions. One
-        device per plan, at most 256 steps; safety-floor actions
+        device per plan, any number of steps; safety-floor actions
         (stop verbs, the xArm's connect/clear_errors) are never proposable.
         Returns an ``error`` + ``code`` object (with the failing ``step``
         number) when refused.
@@ -2016,11 +2008,10 @@ def _build_server(registry: Registry):
         """End a control-mode reply WITHOUT proposing. Call this whenever the
         user's request will not get a propose_action/propose_plan call this
         turn: the action is out of scope or safety-floor, spans devices,
-        exceeds the step cap, the device is unavailable, the state is unsafe
+        the device is unavailable, the state is unsafe
         — or the exchange was purely informational and there is simply no
         action to propose (reason_code "informational"). ``reason_code`` is
-        one of: not_proposable, safety_floor, cross_device, too_many_steps,
-        needs_human, device_unavailable, unsafe_state, informational, other.
+        one of: not_proposable, safety_floor, cross_device, needs_human, device_unavailable, unsafe_state, informational, other.
         ``explanation`` is ONE line the operator reads on screen. Every
         control-mode reply must end with exactly one terminal call —
         propose_action, propose_plan, or this."""
@@ -2061,7 +2052,6 @@ __all__ = [
     "run",
     "PROPOSAL_TTL_S",
     "PLAN_TTL_S",
-    "MAX_PLAN_STEPS",
     "REFUSAL_CODES",
     "DECLINE_REASON_CODES",
     "plan_step_hash",
