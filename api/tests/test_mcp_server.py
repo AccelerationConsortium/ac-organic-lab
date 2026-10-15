@@ -383,7 +383,9 @@ async def test_get_plate_reader_run_reads_the_device(monkeypatch, tmp_path):
             return_value=Response(200, json=_RUN_RECORD)
         )
         router.get("/control/runs").mock(
-            return_value=Response(200, json=[{"run_id": _RUN_RECORD["run_id"], "state": "holding"}])
+            return_value=Response(
+                200, json={"runs": [{"run_id": _RUN_RECORD["run_id"], "state": "holding"}]}
+            )
         )
         got = _json.loads(
             await _ms._get_plate_reader_run("cytation_5", "run-20261015T140000Z-1a2b")

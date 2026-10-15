@@ -237,8 +237,17 @@ class PlateReaderClient(EquipmentClient):
     async def run_stop(self) -> Any:
         return await self.command("/control/run/stop", RunStopArgs(), response_schema=RunRecord)
 
-    async def run_list(self) -> Any:
-        return await self.command("/control/runs", method="GET")
+    async def run_list(self) -> list[dict[str, Any]]:
+        """Recent run summaries, newest first.
+
+        The device wraps them as ``{"runs": [...]}`` — the dashboard's control
+        passthrough relays JSON objects only — while its first build returned
+        a bare list. Accept either, so device and SDK can deploy in any order.
+        """
+        body = await self.command("/control/runs", method="GET")
+        if isinstance(body, dict):
+            return list(body.get("runs") or [])
+        return list(body or [])
 
     async def run_get(self, run_id: str) -> Any:
         RunGetArgs(run_id=run_id)
