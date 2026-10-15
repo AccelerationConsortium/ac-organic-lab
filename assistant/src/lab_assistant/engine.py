@@ -1430,7 +1430,7 @@ def _sse_response(stream: AsyncIterator[bytes]) -> StreamingResponse:
     )
 
 
-def build_assistant_router() -> APIRouter:
+def build_assistant_router(plans: dict[str, dict[str, Any]] | None = None) -> APIRouter:
     router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
     # Step 1i: plans the assistant proposed, keyed by plan_id, held only until
@@ -1440,7 +1440,10 @@ def build_assistant_router() -> APIRouter:
     # What the store buys is that the approve route can check the hash the
     # operator sends against the plan the tool actually produced (409 on a
     # mismatch), and that the audit rows name the same plan end to end.
-    plans: dict[str, dict[str, Any]] = {}
+    # The dashboard passes the same dict to its server-side plan runner
+    # (api/app/assistant_plan_runs.py), which spends an approval from here.
+    if plans is None:
+        plans = {}
 
     def _sweep_plans() -> None:
         now = time.monotonic()
@@ -1922,6 +1925,8 @@ def build_assistant_router() -> APIRouter:
                 detail="the plan changed since it was displayed — re-read it and approve again",
             )
         rec["approved_at"] = time.time()
+        # Only the approver may start it server-side (assistant_plan_runs.py).
+        rec["approved_by"] = actor
         # Running a long plan and reporting back takes a while; keep the record
         # for another TTL from the approval rather than from the proposal.
         rec["expires_at"] = time.monotonic() + PLAN_TTL_S
@@ -1957,6 +1962,8 @@ def build_assistant_router() -> APIRouter:
         actor = request.headers.get("x-auth-user")
         rec = _plan_record(plan_id, actor)
         plan = rec["plan"]
+        if rec.get("starting"):
+            raise HTTPException(status_code=409, detail="this plan is being started on the server")
         if body.status != "aborted" and rec["approved_at"] is None:
             raise HTTPException(status_code=409, detail="this plan was never approved")
         plans.pop(plan_id, None)
