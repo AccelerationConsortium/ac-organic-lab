@@ -1519,6 +1519,25 @@ async def test_propose_plate_reader_timed_run() -> None:
 
 
 @respx.mock
+async def test_propose_plate_reader_timed_run_with_spectra() -> None:
+    """A spectrum per timepoint is two sweep steps; 82 reads is not refused."""
+    _mock_bench_status("plate_reader", ["run.start"])
+    _mock_authz(True)
+    body = {**_SIX_HOUR_RUN, "measurements": [
+        {"type": "absorbance_sweep", "wells": ["A1"], "start_nm": 300, "stop_nm": 800, "step_nm": 10},
+        {"type": "fluorescence_emission_sweep", "wells": ["A1"], "excitation_nm": 360,
+         "start_nm": 400, "stop_nm": 700, "step_nm": 10},
+    ]}
+    out = json.loads(
+        await ac._propose_action(
+            _bench_registry("plate_reader"), "plate_reader_test", "run.start", body,
+            "60 C for 6 h, abs 300-800 + em 400-700 every 30 min",
+        )
+    )
+    assert out["proposal"]["args"] == body
+
+
+@respx.mock
 async def test_propose_plate_reader_timed_run_rejects_a_runaway_schedule() -> None:
     _mock_bench_status("plate_reader", ["run.start"])
     out = json.loads(

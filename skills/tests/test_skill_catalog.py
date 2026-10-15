@@ -941,3 +941,31 @@ def test_plate_reader_timed_run_skills() -> None:
         }
         with pytest.raises(ValidationError):
             RunStartArgs.model_validate(body)
+
+
+def test_plate_reader_run_takes_a_spectrum_per_timepoint() -> None:
+    """No step cap: a full absorbance + emission spectrum is two sweep steps
+    (82 reads). The estimate matches the device's (control_args.py)."""
+    import pytest
+    from pydantic import ValidationError
+
+    from lab_skills.skill_catalog.plate_reader import RunStartArgs
+
+    spectrum = [
+        {"type": "absorbance_sweep", "wells": ["A1"], "start_nm": 300, "stop_nm": 800, "step_nm": 10},
+        {"type": "fluorescence_emission_sweep", "wells": ["A1"], "excitation_nm": 360,
+         "start_nm": 400, "stop_nm": 700, "step_nm": 10},
+    ]
+    args = RunStartArgs.model_validate(
+        {"temperature_c": 60, "duration_s": 21600, "interval_s": 1800, "measurements": spectrum}
+    )
+    assert args.calls_per_timepoint() == 82
+    assert args.estimated_timepoint_s() == 51 * 14 + 31 * 25 + 5
+    many = [{"type": "absorbance", "wells": ["A1"], "wavelength_nm": 300 + i} for i in range(82)]
+    assert RunStartArgs.model_validate(
+        {"duration_s": 60, "interval_s": 60, "measurements": many}
+    ).calls_per_timepoint() == 82
+    with pytest.raises(ValidationError):  # 770 calls: malformed, not an experiment
+        RunStartArgs.model_validate({"duration_s": 60, "interval_s": 60, "measurements": [
+            {"type": "absorbance_sweep", "wells": ["A1"], "start_nm": 230, "stop_nm": 999, "step_nm": 1}
+        ]})

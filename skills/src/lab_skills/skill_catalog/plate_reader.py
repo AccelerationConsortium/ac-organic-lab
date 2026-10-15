@@ -238,18 +238,55 @@ class ImagingCaptureResult(BaseModel):
 
 _RUN_MAX_DURATION_S = 7 * 24 * 3600.0
 _RUN_MAX_TIMEPOINTS = 2000
+# Instrument calls per timepoint (a sweep counts one per wavelength): only a
+# guard against a malformed request — a full spectrum pair is 82.
+_RUN_MAX_CALLS_PER_TIMEPOINT = 500
+
+# Rough per-call costs, mirrored from the device (control_args.py _EST_*), so
+# a card can say how long a timepoint will take before it is authorized.
+_EST_ABSORBANCE_S = 14.0
+_EST_FLUORESCENCE_S = 25.0
+_EST_LUMINESCENCE_S = 30.0
+_EST_CAPTURE_S = 5.0
+_EST_AUTOFOCUS_S = 30.0
+_EST_AUTO_EXPOSURE_S = 15.0
+_EST_TIMEPOINT_OVERHEAD_S = 5.0
+_EST_SHAKE_CYCLE_S = 10.0
+
+
+def _sweep_wavelengths(start_nm: float, stop_nm: float, step_nm: float) -> list[float]:
+    count = math.floor((stop_nm - start_nm) / step_nm + 1e-9)
+    return [round(start_nm + k * step_nm, 3) for k in range(count + 1)]
 
 
 class RunAbsorbanceStep(AbsorbanceArgs):
     type: Literal["absorbance"]
 
+    def instrument_calls(self) -> int:
+        return 1
+
+    def estimated_s(self) -> float:
+        return _EST_ABSORBANCE_S
+
 
 class RunFluorescenceStep(FluorescenceArgs):
     type: Literal["fluorescence"]
 
+    def instrument_calls(self) -> int:
+        return 1
+
+    def estimated_s(self) -> float:
+        return _EST_FLUORESCENCE_S
+
 
 class RunLuminescenceStep(LuminescenceArgs):
     type: Literal["luminescence"]
+
+    def instrument_calls(self) -> int:
+        return 1
+
+    def estimated_s(self) -> float:
+        return _EST_LUMINESCENCE_S + self.integration_time_s * len(self.wells)
 
 
 class RunImagingStep(_ImagingSettings):
@@ -258,9 +295,81 @@ class RunImagingStep(_ImagingSettings):
     type: Literal["imaging"]
     wells: list[str] = Field(..., min_length=1, max_length=96)
 
+    def instrument_calls(self) -> int:
+        return len(self.wells)
+
+    def estimated_s(self) -> float:
+        per_well = (
+            _EST_CAPTURE_S
+            + (_EST_AUTOFOCUS_S if self.autofocus else 0.0)
+            + (_EST_AUTO_EXPOSURE_S if self.auto_exposure else 0.0)
+        )
+        return per_well * len(self.wells)
+
+
+class RunAbsorbanceSweepStep(_StrictArgs):
+    """An absorbance spectrum: one read per wavelength from start_nm to
+    stop_nm in step_nm steps (stop included when the step lands on it)."""
+
+    type: Literal["absorbance_sweep"]
+    wells: list[str] = Field(..., min_length=1, max_length=96)
+    start_nm: float = Field(..., ge=_ABS_NM[0], le=_ABS_NM[1])
+    stop_nm: float = Field(..., ge=_ABS_NM[0], le=_ABS_NM[1])
+    step_nm: float = Field(..., gt=0, le=_ABS_NM[1] - _ABS_NM[0])
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "RunAbsorbanceSweepStep":
+        if self.stop_nm < self.start_nm:
+            raise ValueError("stop_nm must not be below start_nm")
+        return self
+
+    def wavelengths(self) -> list[float]:
+        return _sweep_wavelengths(self.start_nm, self.stop_nm, self.step_nm)
+
+    def instrument_calls(self) -> int:
+        return len(self.wavelengths())
+
+    def estimated_s(self) -> float:
+        return _EST_ABSORBANCE_S * self.instrument_calls()
+
+
+class RunFluorescenceEmissionSweepStep(_StrictArgs):
+    """An emission spectrum at fixed excitation: one read per emission
+    wavelength from start_nm to stop_nm in step_nm steps."""
+
+    type: Literal["fluorescence_emission_sweep"]
+    wells: list[str] = Field(..., min_length=1, max_length=96)
+    excitation_nm: float = Field(..., ge=_EX_NM[0], le=_EX_NM[1])
+    start_nm: float = Field(..., ge=_EM_NM[0], le=_EM_NM[1])
+    stop_nm: float = Field(..., ge=_EM_NM[0], le=_EM_NM[1])
+    step_nm: float = Field(..., gt=0, le=_EM_NM[1] - _EM_NM[0])
+    focal_height_mm: float = Field(default=7.0, ge=_FOCAL_MM[0], le=_FOCAL_MM[1])
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "RunFluorescenceEmissionSweepStep":
+        if self.stop_nm < self.start_nm:
+            raise ValueError("stop_nm must not be below start_nm")
+        return self
+
+    def wavelengths(self) -> list[float]:
+        return _sweep_wavelengths(self.start_nm, self.stop_nm, self.step_nm)
+
+    def instrument_calls(self) -> int:
+        return len(self.wavelengths())
+
+    def estimated_s(self) -> float:
+        return _EST_FLUORESCENCE_S * self.instrument_calls()
+
 
 RunMeasurement = Annotated[
-    Union[RunAbsorbanceStep, RunFluorescenceStep, RunLuminescenceStep, RunImagingStep],
+    Union[
+        RunAbsorbanceStep,
+        RunFluorescenceStep,
+        RunLuminescenceStep,
+        RunImagingStep,
+        RunAbsorbanceSweepStep,
+        RunFluorescenceEmissionSweepStep,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -285,7 +394,13 @@ class RunStartArgs(_StrictArgs):
     )
     interval_s: float = Field(..., gt=0, description="Time between timepoints.")
     measurements: list[RunMeasurement] = Field(
-        ..., min_length=1, max_length=16, description="Taken in order at every timepoint.",
+        ...,
+        min_length=1,
+        max_length=200,
+        description=(
+            "Taken in order at every timepoint. A sweep step is one read per "
+            "wavelength; at most 500 instrument calls per timepoint in all."
+        ),
     )
     wait_for_setpoint: bool = True
     setpoint_tolerance_c: float = Field(default=0.5, gt=0, le=5.0)
@@ -308,7 +423,23 @@ class RunStartArgs(_StrictArgs):
                 f"Schedule has more than {_RUN_MAX_TIMEPOINTS} timepoints; "
                 "lengthen interval_s or shorten duration_s"
             )
+        calls = self.calls_per_timepoint()
+        if calls > _RUN_MAX_CALLS_PER_TIMEPOINT:
+            raise ValueError(
+                f"{calls} instrument calls per timepoint exceeds "
+                f"{_RUN_MAX_CALLS_PER_TIMEPOINT}; this looks like a malformed "
+                "request (a sweep step is one call per wavelength)"
+            )
         return self
+
+    def calls_per_timepoint(self) -> int:
+        return sum(m.instrument_calls() for m in self.measurements)
+
+    def estimated_timepoint_s(self) -> float:
+        total = _EST_TIMEPOINT_OVERHEAD_S + sum(m.estimated_s() for m in self.measurements)
+        if self.shake is not None:
+            total += _EST_SHAKE_CYCLE_S
+        return round(total, 1)
 
 
 class RunStopArgs(BaseModel):
@@ -576,6 +707,8 @@ __all__ = [
     "PlateUnloadArgs",
     "ReadResult",
     "RunAbsorbanceStep",
+    "RunAbsorbanceSweepStep",
+    "RunFluorescenceEmissionSweepStep",
     "RunFluorescenceStep",
     "RunGetArgs",
     "RunImagingStep",
