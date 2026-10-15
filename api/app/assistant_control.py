@@ -110,6 +110,7 @@ from lab_skills.deck_slots import (
     touched_slots,
 )
 from lab_skills.exceptions import (
+    DocumentIdentityMismatch,
     EquipmentInMaintenance,
     EquipmentUnreachable,
     LabError,
@@ -946,6 +947,16 @@ async def _read_status_and_discovery(registry: Registry, equipment_id: str):
     return status, discovery
 
 
+async def _read_status_and_device_guide(registry: Registry, equipment_id: str):
+    """Read live state and a device-specific guide over one SDK session."""
+
+    async with Lab.connect(registry=registry) as lab:
+        client = lab.get(equipment_id)
+        status = await client.status()
+        discovery = await client.discover_device_guide()
+    return status, discovery
+
+
 def _identity_problem(entry: EquipmentEntry, status: Any, docs: Any | None = None) -> str | None:
     """Return a truthful mismatch instead of applying one robot's schemas to another."""
 
@@ -1026,30 +1037,40 @@ def _resolve_equipment_id(registry: Registry, equipment_id: str) -> EquipmentEnt
 
 
 async def _get_equipment_docs(registry: Registry, equipment_id: str) -> str:
-    """Return running-gateway guidance plus the live safety/state envelope."""
+    """Return the running device's guidance plus the live safety/state envelope.
+
+    Liquid-handler gateways publish the SDK-shaped ``AgentDocumentation`` and
+    are read through ``discover()``. Every other kind is read through
+    ``discover_device_guide()``, which keeps the device's own ``/docs/agent``
+    shape as served and refuses one that does not name this equipment
+    (EQUIP_GUIDE §1 Step B3). Missing endpoints are reported, never filled in.
+    """
 
     entry = _resolve_equipment_id(registry, equipment_id)
     if entry is None:
         return _err("unknown_equipment", f"no equipment with id {equipment_id!r}")
     equipment_id = entry.id
-    if entry.kind != "liquid_handler":
-        return _err(
-            "capability_unknown",
-            "equipment documentation discovery is currently defined for liquid handlers",
-        )
+    gateway = entry.kind == "liquid_handler"
+    read = _read_status_and_discovery if gateway else _read_status_and_device_guide
     try:
-        status, discovery = await _read_status_and_discovery(registry, equipment_id)
+        status, discovery = await read(registry, equipment_id)
     except EquipmentInMaintenance:
         return _err("disabled", f"{equipment_id!r} is disabled or under maintenance")
+    except DocumentIdentityMismatch as exc:
+        return _err(
+            "identity_mismatch",
+            f"{exc.message}; the guide was not applied. The device's live "
+            f"allowed_actions still come from list_available_actions({equipment_id!r}).",
+        )
     except (EquipmentUnreachable, LabError) as exc:
         return _err("unreachable", f"could not discover {equipment_id!r}: {exc}")
 
-    problem = _identity_problem(entry, status, discovery.agent_docs)
+    problem = _identity_problem(entry, status, discovery.agent_docs if gateway else None)
     if problem:
         return _err("identity_mismatch", problem)
     payload: dict[str, Any] = {
         "equipment_id": entry.id,
-        "source": "running_gateway",
+        "source": "running_gateway" if gateway else "running_device",
         "live_status": {
             "equipment_id": status.equipment_id,
             "equipment_kind": status.equipment_kind,
@@ -1061,10 +1082,17 @@ async def _get_equipment_docs(registry: Registry, equipment_id: str) -> str:
         },
         "unavailable": discovery.unavailable,
     }
-    if discovery.agent_docs is not None:
+    if gateway and discovery.agent_docs is not None:
         agent_docs = discovery.agent_docs.model_dump(mode="json")
         agent_docs.pop("actions", None)
         payload["agent_docs"] = agent_docs
+    if not gateway and discovery.guide is not None:
+        payload["device_guide"] = discovery.guide.document
+        payload["device_guide_note"] = (
+            "Device-specific /docs/agent, exactly as served. It explains how to "
+            "operate this device; it does not make an action proposable. Proposals "
+            "still use list_available_actions and the live allowed_actions."
+        )
     if discovery.action_catalog is not None:
         catalog = discovery.action_catalog.model_dump(mode="json")
         for item in catalog["actions"]:
@@ -1090,8 +1118,9 @@ async def _get_equipment_docs(registry: Registry, equipment_id: str) -> str:
         }
     if discovery.unavailable:
         payload["capability_warning"] = (
-            "This reachable gateway predates one or more discovery endpoints. "
-            "Do not infer actions or schemas that the running deployment did not publish."
+            "This reachable deployment does not publish one or more discovery "
+            "endpoints (see unavailable). Do not infer actions or schemas that the "
+            "running deployment did not publish."
         )
     return _dumps(payload)
 
@@ -1923,12 +1952,20 @@ def _build_server(registry: Registry):
 
     @tool()
     async def get_equipment_docs(equipment_id: str) -> str:
-        """Read a liquid handler's live status and its self-published
-        ``/docs/agent``, ``/plans/actions`` and ``/openapi.json`` documents.
-        This is read-only. Missing endpoints are reported as an older gateway,
-        never filled from a source checkout or assumed from the local SDK.
-        Read this before proposing liquid-handler work, and resolve installed
-        labware/pipettes from ``live_status.details.snapshot``."""
+        """Read a device's live status and its self-published ``/docs/agent``,
+        ``/plans/actions`` and ``/openapi.json`` (as a path/method summary).
+        Read-only, for every kind. A liquid-handler gateway returns typed
+        ``agent_docs`` and its proposal ``action_catalog``; resolve installed
+        labware/pipettes from ``live_status.details.snapshot``. Any other
+        device returns its own guide as ``device_guide`` (e.g. a plate
+        reader's measurement recipe and plate requirements): follow its
+        operating guidance, but it does not make an action proposable — that
+        is still list_available_actions. Endpoints a device does not publish
+        are listed under ``unavailable`` (a plate reader normally has no
+        ``/plans/actions``); never fill them from a source checkout or the
+        local SDK. An ``identity_mismatch`` means the guide names another
+        device (or none) and was not applied; list_available_actions remains
+        the next step."""
 
         refused = _out_of_scope(registry, equipment_id)
         if refused:

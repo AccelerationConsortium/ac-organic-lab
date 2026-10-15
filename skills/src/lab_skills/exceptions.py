@@ -56,6 +56,22 @@ class CapabilityUnavailable(LabError):
         self.message = message
 
 
+class DocumentIdentityMismatch(LabError):
+    """A reachable device served a document that does not name this equipment.
+
+    Raised when a device-specific guide's ``equipment_id`` is missing or names
+    another device (or its ``equipment_kind``, when present, is another kind).
+    Applying it would hand one device's guidance to another, so this is a
+    refusal, not an older deployment.
+    """
+
+    def __init__(self, equipment_id: str, path: str, message: str) -> None:
+        super().__init__(f"{equipment_id}: {path} {message}")
+        self.equipment_id = equipment_id
+        self.path = path
+        self.message = f"{path} {message}"
+
+
 class CommandOutcomeUnknown(LabError):
     """A control command was sent and no answer arrived in time.
 
@@ -236,6 +252,7 @@ __all__ = [
     "CapabilityUnavailable",
     "ClaimRejected",
     "Degraded",
+    "DocumentIdentityMismatch",
     "EquipmentBusy",
     "EquipmentInMaintenance",
     "EquipmentUnreachable",

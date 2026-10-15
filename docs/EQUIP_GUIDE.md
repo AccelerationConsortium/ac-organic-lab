@@ -183,13 +183,33 @@ them. Keep operating facts in a shared source or check the two for consistency.
 **Compatibility.** Preserve existing documentation URLs, media types, and JSON
 schemas, including `/docs/agent`, `/plans/actions`, `/capabilities`, and legacy
 Markdown guides such as `/agent-guide`. Add the new paths without renaming or
-repurposing old ones. `EquipmentClient.discover()` currently fetches
-`/docs/agent`, `/plans/actions`, and `/openapi.json`; it does not fetch
-`/capabilities`, `/llms.txt`, or the Markdown guides, nor use the registry's
-documentation list for discovery. A JSON guide's presence alone does not prove
-SDK compatibility: `AgentDocumentation` requires `documentation_version` and
-`equipment_kind`. Preserve device-specific shapes and verify any claimed SDK
-compatibility separately; do not normalize legacy documents as part of this
+repurposing old ones. The SDK has two read paths for `/docs/agent`, each
+also fetching `/plans/actions` and `/openapi.json`; neither fetches
+`/capabilities`, `/llms.txt`, or the Markdown guides, nor uses the registry's
+documentation list for discovery. In both, HTTP 404/405 is reported under
+`unavailable`; transport errors and malformed bodies raise.
+
+- `EquipmentClient.discover()` is the strict, typed gateway path.
+  `AgentDocumentation` requires `documentation_version` and `equipment_kind`
+  (the Opentrons gateways). A JSON guide's presence alone does not prove SDK
+  compatibility: a guide of another shape fails validation here.
+- `EquipmentClient.discover_device_guide()` reads any other device's guide
+  through `device_guide()`, which returns the served JSON object unchanged as
+  `DeviceGuide.document`. Its only check is identity: `equipment_id` must
+  equal the registry entry's id, and `equipment_kind`, if present, its kind;
+  otherwise it raises `DocumentIdentityMismatch`. A guide that names no
+  `equipment_id` cannot be tied to the device and is refused the same way.
+  The Cytation 5's guide (`measurement_recipe`, `plate_requirements`,
+  `action_schemas`, `agent_boundaries`, `discovery` as a dict) is read here.
+
+The dashboard assistant's `get_equipment_docs` uses `discover()` for
+liquid handlers and `discover_device_guide()` for every other kind. A device
+guide is operating guidance: it never makes an action proposable, which stays
+the local catalog plus live `allowed_actions`. The two paths are kept separate
+on purpose (2026-10-14): loosening `AgentDocumentation` to accept every guide
+would silently normalize device-specific shapes and weaken the typed gateway
+contract. Preserve device-specific shapes; to serve a device guide, include its
+`equipment_id`. Do not normalize legacy documents as part of this
 documentation migration.
 
 **Packaging.** Ship authored Markdown inside the importable package and read it

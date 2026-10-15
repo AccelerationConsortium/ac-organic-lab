@@ -15,15 +15,16 @@ ergonomic sugar over this primitive.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import httpx
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from .exceptions import (
     BadRequest,
     CapabilityUnavailable,
     CommandOutcomeUnknown,
+    DocumentIdentityMismatch,
     EquipmentBusy,
     EquipmentUnreachable,
     RequiresInit,
@@ -31,12 +32,17 @@ from .exceptions import (
 from .discovery import (
     ActionCatalog,
     AgentDocumentation,
+    DeviceGuide,
+    DeviceGuideDiscovery,
     EquipmentDiscovery,
     OpenAPIDocument,
 )
 from .models import EquipmentStatus, HealthResponse, ProbeResponse
 from .registry import EquipmentEntry
 
+
+# A device-specific guide is accepted as any JSON object (DeviceGuide).
+_JSON_OBJECT = TypeAdapter(dict[str, Any])
 
 # Substrings inside an HTTP 4xx detail body that identify the
 # "device hardware not initialized / not connected" condition. Mapped to
@@ -109,20 +115,53 @@ class EquipmentClient:
         """Return ``GET /docs/agent`` from a self-documenting gateway."""
 
         return await self._fetch_document(
-            "/docs/agent", AgentDocumentation, label="agent documentation"
+            "/docs/agent", AgentDocumentation.model_validate, label="agent documentation"
         )
 
     async def action_catalog(self) -> ActionCatalog:
         """Return the gateway's proposal schemas from ``GET /plans/actions``."""
 
-        return await self._fetch_document("/plans/actions", ActionCatalog, label="action catalog")
+        return await self._fetch_document(
+            "/plans/actions", ActionCatalog.model_validate, label="action catalog"
+        )
 
     async def openapi(self) -> OpenAPIDocument:
         """Return the running device's ``GET /openapi.json`` document."""
 
         return await self._fetch_document(
-            "/openapi.json", OpenAPIDocument, label="OpenAPI document"
+            "/openapi.json", OpenAPIDocument.model_validate, label="OpenAPI document"
         )
+
+    async def device_guide(self) -> DeviceGuide:
+        """Return a device-specific ``GET /docs/agent`` guide as served JSON.
+
+        For devices whose guide is not :class:`AgentDocumentation`-shaped
+        (EQUIP_GUIDE §1 Step B3 keeps such shapes as they are). The body must
+        be a JSON object whose ``equipment_id`` is this registry entry's id,
+        and whose ``equipment_kind``, if present, is this entry's kind;
+        otherwise :class:`DocumentIdentityMismatch` is raised. Nothing else in
+        the guide is validated or rewritten.
+        """
+
+        path = "/docs/agent"
+        document = await self._fetch_document(
+            path, _JSON_OBJECT.validate_python, label="device guide"
+        )
+        served_id = document.get("equipment_id")
+        if served_id is None:
+            raise DocumentIdentityMismatch(
+                self._entry.id, path, "names no equipment_id, so it cannot be tied to this device"
+            )
+        if served_id != self._entry.id:
+            raise DocumentIdentityMismatch(
+                self._entry.id, path, f"identifies {served_id!r}, expected {self._entry.id!r}"
+            )
+        served_kind = document.get("equipment_kind")
+        if served_kind is not None and served_kind != self._entry.kind:
+            raise DocumentIdentityMismatch(
+                self._entry.id, path, f"kind is {served_kind!r}, expected {self._entry.kind!r}"
+            )
+        return DeviceGuide(equipment_id=served_id, document=document)
 
     async def discover(self) -> EquipmentDiscovery:
         """Read all optional documentation endpoints without hiding old versions.
@@ -132,31 +171,44 @@ class EquipmentClient:
         failures still raise because they do not establish an older version.
         """
 
-        async def optional(path: str, fetch):
+        docs, actions, openapi, unavailable = await self._gather_documents(
+            self.agent_documentation
+        )
+        return EquipmentDiscovery(
+            agent_docs=docs, action_catalog=actions, openapi=openapi, unavailable=unavailable
+        )
+
+    async def discover_device_guide(self) -> DeviceGuideDiscovery:
+        """``discover()`` for devices that publish a device-specific guide.
+
+        Reads ``/docs/agent`` through :meth:`device_guide` instead of the typed
+        gateway model, plus the same ``/plans/actions`` and ``/openapi.json``.
+        Absence (404/405) is recorded under ``unavailable``; everything else,
+        including an identity mismatch, raises.
+        """
+
+        guide, actions, openapi, unavailable = await self._gather_documents(self.device_guide)
+        return DeviceGuideDiscovery(
+            guide=guide, action_catalog=actions, openapi=openapi, unavailable=unavailable
+        )
+
+    async def _gather_documents(self, fetch_guide):
+        async def optional(fetch):
             try:
                 return await fetch(), None
             except CapabilityUnavailable as exc:
                 return None, exc.message
 
-        docs, actions, openapi = await asyncio.gather(
-            optional("/docs/agent", self.agent_documentation),
-            optional("/plans/actions", self.action_catalog),
-            optional("/openapi.json", self.openapi),
+        results = await asyncio.gather(
+            optional(fetch_guide), optional(self.action_catalog), optional(self.openapi)
         )
         unavailable = {
             path: reason
-            for path, (_, reason) in zip(
-                ("/docs/agent", "/plans/actions", "/openapi.json"),
-                (docs, actions, openapi),
-            )
+            for path, (_, reason) in zip(("/docs/agent", "/plans/actions", "/openapi.json"), results)
             if reason is not None
         }
-        return EquipmentDiscovery(
-            agent_docs=docs[0],
-            action_catalog=actions[0],
-            openapi=openapi[0],
-            unavailable=unavailable,
-        )
+        guide, actions, openapi = (value for value, _ in results)
+        return guide, actions, openapi, unavailable
 
     # -- Control-side: generic typed POST ------------------------------------
 
@@ -374,7 +426,7 @@ class EquipmentClient:
                 f"{url} {label} body does not match the spec: {exc}",
             ) from exc
 
-    async def _fetch_document(self, path: str, model: type, *, label: str):
+    async def _fetch_document(self, path: str, validate: Callable[[Any], Any], *, label: str):
         """Fetch one optional JSON document, distinguishing old deployments."""
 
         url = self._url(path)
@@ -395,7 +447,7 @@ class EquipmentClient:
                 f"{url} returned HTTP {response.status_code}: {response.text[:200]}",
             )
         try:
-            return model.model_validate(response.json())
+            return validate(response.json())
         except (ValueError, ValidationError) as exc:
             raise EquipmentUnreachable(
                 self._entry.id,
