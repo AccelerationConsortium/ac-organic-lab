@@ -856,6 +856,42 @@ describe("AssistantBubble control mode", () => {
   });
 
 
+  it("resends a past message, and Edit puts it back in the box", async () => {
+    sessionStorage.clear();
+    const fetchMock = installFetch(['data: {"type":"text","delta":"ok"}\n\n', 'data: {"type":"done"}\n\n']);
+    await openPanel();
+    const box = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "which devices are down?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).toBeNull());
+    const userTexts = () =>
+      fetchMock.mock.calls
+        .filter((c) => String(c[0]).includes("/api/assistant/chat"))
+        .map((c) => {
+          const msgs = JSON.parse(String((c[1] as RequestInit).body)).messages;
+          return msgs[msgs.length - 1].content;
+        });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Resend this message" }));
+    await waitFor(() => expect(userTexts()).toEqual(["which devices are down?", "which devices are down?"]));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).toBeNull());
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit this message" })[0]);
+    expect(box.value).toBe("which devices are down?");
+    expect(userTexts()).toHaveLength(2); // Edit never sends by itself
+  });
+
+  it("expands and collapses the message box", async () => {
+    installFetch([]);
+    await openPanel();
+    const box = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    expect(box.rows).toBe(2);
+    fireEvent.click(screen.getByRole("button", { name: "Expand message box" }));
+    expect(box.rows).toBe(10);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse message box" }));
+    expect(box.rows).toBe(2);
+  });
+
   it("offers a model picker per mode and sends only a non-default pick", async () => {
     sessionStorage.clear();
     const fetchMock = installFetch(['data: {"type":"done"}\n\n'], {
