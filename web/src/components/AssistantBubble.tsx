@@ -565,6 +565,10 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
   // The text of the last user message sent, so a Retry can re-submit it
   // without the user retyping.
   const lastInputRef = useRef("");
+  // The composer: a taller box for long prompts (also drag-resizable), and a
+  // handle so Edit can put a past message back into it.
+  const [inputExpanded, setInputExpanded] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   // Ask (read-only) vs Control (propose-only) vs Plan (saved sessions).
   // Deliberately NOT persisted: resets to Ask on reload / panel close
   // (UI_DESIGN §5.2). The server decides the real toolset from the verified
@@ -2367,6 +2371,20 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
                   turn.role === "assistant"
                 }
                 now={now}
+                onResend={
+                  turn.role === "user" && turn.text.trim() && !sending && !planLocked
+                    ? () => void sendMessage(turn.text)
+                    : undefined
+                }
+                onEdit={
+                  turn.role === "user" && turn.text.trim() && !sending && !planLocked
+                    ? () => {
+                        setInput(turn.text);
+                        if (turn.text.includes("\n") || turn.text.length > 160) setInputExpanded(true);
+                        requestAnimationFrame(() => inputRef.current?.focus());
+                      }
+                    : undefined
+                }
               />
             ))}
             {proposal && (
@@ -2489,7 +2507,10 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
                   {voice.state === "recording" ? "◼" : voice.state === "transcribing" ? "…" : "🎤"}
                 </button>
               )}
+              <div className="relative flex-1 self-stretch">
               <textarea
+                ref={inputRef}
+                aria-label="Message"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -2511,10 +2532,24 @@ function AssistantBubbleInner({ owner }: { owner: string | null }) {
                         ? "Ask me to operate a device…"
                         : "Ask about the lab…"
                 }
-                rows={2}
+                rows={inputExpanded ? 10 : 2}
                 disabled={sending || planLocked}
-                className={`flex-1 resize-none rounded border border-slate-300 bg-white px-2 py-1 text-[13px] text-ink shadow-inner focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${focusClass}`}
+                className={`block h-full max-h-[50vh] min-h-[3rem] w-full resize-y rounded border border-slate-300 bg-white py-1 pl-2 pr-6 text-[13px] text-ink shadow-inner focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 ${focusClass}`}
               />
+              <button
+                type="button"
+                onClick={() => {
+                  setInputExpanded((v) => !v);
+                  inputRef.current?.style.removeProperty("height");
+                  inputRef.current?.focus();
+                }}
+                aria-label={inputExpanded ? "Collapse message box" : "Expand message box"}
+                title={inputExpanded ? "Collapse message box" : "Expand message box (or drag the corner)"}
+                className="absolute right-1 top-1 rounded px-1 text-xs leading-none text-ink-subtle hover:bg-slate-100 hover:text-ink dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+              >
+                {inputExpanded ? "⤡" : "⤢"}
+              </button>
+              </div>
               {sending ? (
                 <button
                   type="button"
@@ -3468,6 +3503,8 @@ function Turn({
   turn,
   live = false,
   now,
+  onResend,
+  onEdit,
 }: {
   turn: ChatTurn;
   /** True only for the turn currently streaming. Gates the phase pill, so a
@@ -3475,6 +3512,11 @@ function Turn({
    *  pill that pulses forever. */
   live?: boolean;
   now?: number;
+  /** A user message: send the same text again as a new turn, in the current
+   *  mode. Absent while a turn is running or the composer is locked. */
+  onResend?: () => void;
+  /** A user message: put its text back in the box to change before sending. */
+  onEdit?: () => void;
 }) {
   const isUser = turn.role === "user";
   // While a pill is pulsing it already says "working"; the placeholder
@@ -3559,6 +3601,32 @@ function Turn({
           className={turn.text || turn.images?.length ? "mt-1.5" : ""}
         />
       </div>
+      {isUser && (onResend || onEdit) && (
+        <div className="flex flex-col items-end justify-end gap-0.5 pl-1 text-[11px] text-ink-subtle dark:text-slate-400">
+          {onResend && (
+            <button
+              type="button"
+              onClick={onResend}
+              aria-label="Resend this message"
+              title="Send this message again (in the current mode)"
+              className="rounded px-1 hover:bg-slate-100 hover:text-ink dark:hover:bg-slate-800 dark:hover:text-slate-100"
+            >
+              ↻
+            </button>
+          )}
+          {onEdit && (
+            <button
+              type="button"
+              onClick={onEdit}
+              aria-label="Edit this message"
+              title="Put this message back in the box to edit and resend"
+              className="rounded px-1 hover:bg-slate-100 hover:text-ink dark:hover:bg-slate-800 dark:hover:text-slate-100"
+            >
+              ✎
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
