@@ -5,7 +5,10 @@ import pytest
 from fastapi import FastAPI
 
 from app import assistant, assistant_openai
-from app.assistant_control import MAX_PLAN_STEPS, plan_step_hash
+from app.assistant_control import plan_step_hash
+
+# No step limit: a report as long as the plan always reaches the audit.
+LONG_PLAN = 1000
 
 
 async def test_stale_tab_cannot_send_another_owners_history(monkeypatch):
@@ -29,7 +32,7 @@ async def test_stale_tab_cannot_send_another_owners_history(monkeypatch):
 async def test_full_size_completion_report_reaches_audit(monkeypatch, status):
     steps = [
         {"action": "move.a", "passthrough_action": "graph/move_to", "args": {"node_id": "a"}}
-        for _ in range(MAX_PLAN_STEPS)
+        for _ in range(LONG_PLAN)
     ]
     plan = {
         "plan_id": "report-test", "actor": "alice@example.edu",
@@ -64,15 +67,11 @@ async def test_full_size_completion_report_reaches_audit(monkeypatch, status):
         assert response.status_code == 200
         response = await client.post("/api/assistant/plans/report-test/approve", json={"step_hash": plan["step_hash"]})
         assert response.status_code == 200
-        results = [{"index": i + 1, "outcome": "ok"} for i in range(MAX_PLAN_STEPS)]
+        results = [{"index": i + 1, "outcome": "ok"} for i in range(LONG_PLAN)]
         if status == "failed":
             results[-2]["outcome"] = "failed"
             results[-1]["outcome"] = "skipped"
-        # Oversize bodies and a different identity cannot consume the report.
-        response = await client.post("/api/assistant/plans/report-test/finish", json={
-            "status": status, "results": results + [{"index": MAX_PLAN_STEPS + 1, "outcome": "skipped"}],
-        })
-        assert response.status_code == 422
+        # A different identity cannot consume the report.
         response = await client.post("/api/assistant/plans/report-test/finish", headers={"X-Auth-User": "bob@example.edu"}, json={
             "status": status, "results": results,
         })
@@ -82,5 +81,5 @@ async def test_full_size_completion_report_reaches_audit(monkeypatch, status):
         event, payload = events[-1]
         assert event == "assistant_plan_finished"
         assert payload["status"] == status
-        assert len(payload["results"]) == MAX_PLAN_STEPS
+        assert len(payload["results"]) == LONG_PLAN
         assert payload["results"][-1]["outcome"] == results[-1]["outcome"]

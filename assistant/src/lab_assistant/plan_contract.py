@@ -15,9 +15,9 @@ from typing import Any
 # finish; the dashboard keeps the plan record for this long from proposal
 # (extended by the same amount on approval) before dropping it.
 PLAN_TTL_S = 600
-# Review-ability bound. A card nobody can read end to end is a rubber stamp;
-# past this the model is told to split the work or recommend a workflow plan.
-MAX_PLAN_STEPS = 256
+# There is no step limit (removed 2026-10-15, operator decision; it was 40,
+# then 256). A plan is still one device, reviewed and approved as a whole by
+# the hash of exactly its steps.
 
 # Every machine code a propose_action / propose_plan refusal can carry (the
 # ``_err`` calls in the propose paths). assistant.py matches tool-result
@@ -37,7 +37,6 @@ REFUSAL_CODES = frozenset(
         "forbidden_field",
         "not_authorized",
         "empty_plan",
-        "too_many_steps",
         "invalid_step",
         # Step 1m: a slot argument naming another device's place, or a
         # registry place with several keys on this device.

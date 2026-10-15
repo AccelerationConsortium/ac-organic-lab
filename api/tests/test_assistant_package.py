@@ -31,7 +31,7 @@ def test_the_plan_vocabulary_has_one_definition():
 
     from app import assistant, assistant_control
 
-    for name in ("MAX_PLAN_STEPS", "PLAN_TTL_S", "REFUSAL_CODES", "plan_step_hash"):
+    for name in ("PLAN_TTL_S", "REFUSAL_CODES", "plan_step_hash"):
         assert getattr(assistant_control, name) is getattr(plan_contract, name)
         assert getattr(assistant, name) is getattr(plan_contract, name)
 

@@ -1893,11 +1893,11 @@ async def test_propose_plan_shape_and_size_limits() -> None:
     _mock_authz(True)
     assert json.loads(await ac._propose_plan(_registry(), "xarm", [], ""))["code"] == "empty_plan"
     assert json.loads(await ac._propose_plan(_registry(), "xarm", None, ""))["code"] == "empty_plan"
-    too_many = [{"action": "move.uplc_draw_home"}] * (ac.MAX_PLAN_STEPS + 1)
-    assert (
-        json.loads(await ac._propose_plan(_registry(), "xarm", too_many, ""))["code"]
-        == "too_many_steps"
-    )
+    # No step limit (2026-10-15): a long plan is proposed, all of it hashed.
+    long_plan = [{"action": "move.uplc_draw_home"}] * 1000
+    proposed = json.loads(await ac._propose_plan(_registry(), "xarm", long_plan, ""))["plan"]
+    assert len(proposed["steps"]) == 1000
+    assert proposed["step_hash"] == ac.plan_step_hash(proposed["steps"])
     out = json.loads(
         await ac._propose_plan(_registry(), "xarm", [{"action": "move.uplc_draw_home"}, "stop"], "")
     )
