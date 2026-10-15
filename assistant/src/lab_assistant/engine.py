@@ -18,6 +18,13 @@ Configuration
 * ``ASSISTANT_CLAUDE_CONTROL_MODEL`` -- model for Control-mode turns only
   (default: same as ``ASSISTANT_CLAUDE_MODEL``). Lets a deployment run Ask
   mode on a faster model (e.g. ``haiku``) without dropping proposal turns.
+* ``ASSISTANT_MODELS`` / ``ASSISTANT_CONTROL_MODELS`` -- further models the
+  bubble's picker may choose per mode (comma lists; unset offers only the
+  default). An entry is ``<model>`` for that mode's backend or
+  ``<backend>:<model>`` (``claude-cli``, ``openai``, ``hermes``). The default
+  is always offered first and is what a turn without ``model`` uses. A model
+  outside the list is refused (422), never swapped for the default, and Claude
+  entries are offered only while Claude Code can answer from this host.
 * ``ASSISTANT_BACKEND`` / ``ASSISTANT_CONTROL_BACKEND`` -- which engine
   answers each mode: ``claude-cli`` (default; this module's subprocess) or
   ``openai`` (``assistant_openai.py``: any OpenAI-compatible endpoint, e.g.
@@ -138,6 +145,81 @@ INVENTORY_TOOL_GLOB = "mcp__lab-inventory__*"
 # of its tools actuates; the model's most privileged act is returning a
 # validated proposal the operator then authorizes in the browser.
 CONTROL_TOOL_GLOB = "mcp__lab-control__*"
+
+
+MODEL_BACKENDS = ("claude-cli", "openai", "hermes")
+
+
+class ModelOption(BaseModel):
+    """One model the bubble may pick: ``id`` is what the request names."""
+
+    id: str
+    backend: str
+    model: str
+
+
+def _default_option(control: bool) -> ModelOption:
+    """Today's model for the mode — what a turn without ``model`` gets."""
+    from . import hermes_backend, openai_backend
+
+    backend = CONTROL_BACKEND if control else DEFAULT_BACKEND
+    if backend == "hermes":
+        model = hermes_backend.MODEL
+    elif backend == "openai":
+        model = openai_backend.OPENAI_CONTROL_MODEL if control else openai_backend.OPENAI_MODEL
+    else:
+        model = CONTROL_MODEL if control else DEFAULT_MODEL
+    return ModelOption(id=model, backend=backend, model=model)
+
+
+def _configured_options(control: bool) -> list[ModelOption]:
+    """The default, then the setting's entries in order (duplicates dropped).
+    A prefix that is not a backend name is part of the model id (OpenRouter
+    ids may carry ``:variant``)."""
+    default = _default_option(control)
+    raw = os.environ.get("ASSISTANT_CONTROL_MODELS" if control else "ASSISTANT_MODELS", "")
+    out = [default]
+    for entry in (e.strip() for e in raw.split(",")):
+        if not entry:
+            continue
+        backend, sep, model = entry.partition(":")
+        if sep and backend in MODEL_BACKENDS and model:
+            option = ModelOption(id=entry, backend=backend, model=model)
+        else:  # a bare id, or an OpenRouter id such as vendor/model:variant
+            option = ModelOption(id=entry, backend=default.backend, model=entry)
+        if option.backend == default.backend and option.model == default.model:
+            continue
+        if all(o.id != option.id for o in out):
+            out.append(option)
+    return out
+
+
+async def offered_models(control: bool) -> tuple[list[ModelOption], list[str]]:
+    """What the picker may offer for the mode right now, default first, and why
+    any configured entry is missing. The default is always offered (today's
+    behaviour); other entries need their backend ready here — Claude both
+    logged in and able to reach its API host (device_chat, commit 482da3c)."""
+    from . import hermes_backend, openai_backend
+
+    options = _configured_options(control)
+    out, reasons = [options[0]], []
+    claude_reason: str | None | bool = False  # False: not probed yet
+    for option in options[1:]:
+        if option.backend == "claude-cli":
+            if claude_reason is False:
+                binary = _claude_binary()
+                claude_reason = ("claude CLI is not installed on the dashboard host" if binary is None
+                                 else await device_chat.claude_unavailable_reason(binary))
+            reason = claude_reason
+        elif option.backend == "openai":
+            reason = None if openai_backend.api_key() else "ASSISTANT_OPENAI_API_KEY is not set"
+        else:
+            reason = None if hermes_backend.configured() else "Hermes is not configured"
+        if reason:
+            reasons.append(f"{option.id}: {reason}")
+        else:
+            out.append(option)
+    return out, reasons
 
 
 def _repo_root() -> Path:
@@ -823,6 +905,9 @@ class ChatRequest(BaseModel):
     # (assistant_sessions.py) — it is not a value here because its history is
     # rebuilt server-side, never sent by the client.
     mode: Literal["ask", "control"] = "ask"
+    # One of the mode's offered models (``/api/assistant/health`` ``models`` /
+    # ``control_models``); omitted means the mode's default, as before.
+    model: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class DeviceChatRequest(BaseModel):
@@ -1161,6 +1246,7 @@ async def _run_claude(
     on_plan: "Callable[[dict[str, Any]], Awaitable[None]] | None" = None,
     extra_system_prompt: str | None = None,
     scope: EquipmentScope | None = None,
+    model: str | None = None,
 ) -> AsyncIterator[bytes]:
     binary = _claude_binary()
     if binary is None:
@@ -1176,7 +1262,8 @@ async def _run_claude(
         return
 
     include_control = control and bool(actor) and scope is None
-    model = CONTROL_MODEL if include_control else DEFAULT_MODEL
+    # ``model``: the operator's pick, already validated by the chat route.
+    model = model or (CONTROL_MODEL if include_control else DEFAULT_MODEL)
     prompt = _format_prompt(messages)
     mcp_config_path = _write_mcp_config(include_control=include_control, actor=actor, scope=scope)
     # The per-turn config binds this turn's actor; it must not outlive the
@@ -1486,6 +1573,8 @@ def build_assistant_router(plans: dict[str, dict[str, Any]] | None = None) -> AP
         # the Ask-mode backend's readiness (Ask is the default surface).
         configured = (assistant_hermes.configured() if DEFAULT_BACKEND == "hermes" else
                       assistant_openai.api_key() is not None if ask_openai else binary is not None)
+        ask_models, ask_missing = await offered_models(False)
+        control_models, control_missing = await offered_models(True)
         return {
             "configured": configured,
             "backend": DEFAULT_BACKEND,
@@ -1495,6 +1584,11 @@ def build_assistant_router(plans: dict[str, dict[str, Any]] | None = None) -> AP
             "control_model": (
                 assistant_hermes.MODEL if CONTROL_BACKEND == "hermes" else assistant_openai.OPENAI_CONTROL_MODEL if ctl_openai else CONTROL_MODEL
             ),
+            # The bubble's picker, default first (ASSISTANT_MODELS /
+            # ASSISTANT_CONTROL_MODELS), and why any configured one is missing.
+            "models": [o.id for o in ask_models],
+            "control_models": [o.id for o in control_models],
+            "models_unavailable": ask_missing + [m for m in control_missing if m not in ask_missing],
             "allowed_tools": f"{ALLOWED_TOOL_GLOB} {INVENTORY_TOOL_GLOB}",
             "cwd": _claude_cwd(),
             # Plan mode (saved sessions, assistant_sessions.py) needs its
@@ -1546,14 +1640,34 @@ def build_assistant_router(plans: dict[str, dict[str, Any]] | None = None) -> AP
         control = body.mode == "control" and bool(actor) and not control_open
 
         backend = CONTROL_BACKEND if control else DEFAULT_BACKEND
+        choice: ModelOption | None = None
+        if body.model is not None:
+            # Refused rather than quietly answered by the default, so the
+            # operator never believes one model answered when another did
+            # (the OT-2 gateway's AssistantConfig.with_model rule).
+            offered, reasons = await offered_models(control)
+            choice = next((o for o in offered if o.id == body.model), None)
+            if choice is None:
+                why = f" ({'; '.join(reasons)})" if reasons else ""
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"model {body.model!r} is not offered for {'Control' if control else 'Ask'}; "
+                           f"offered: {[o.id for o in offered]}{why}",
+                )
+            if choice == offered[0]:
+                choice = None  # the default: the runner picks it exactly as before
+            else:
+                backend = choice.backend
         runner = _runner_for(backend)
+        runner_kwargs: dict[str, Any] = {"model": choice.model} if choice else {}
 
         logger.info(
-            "assistant chat: user=%s mode=%s->%s backend=%s messages=%d",
+            "assistant chat: user=%s mode=%s->%s backend=%s model=%s messages=%d",
             actor or "unauthenticated(dev-open)",
             body.mode,
             "control" if control else "ask",
             backend,
+            choice.model if choice else "default",
             len(body.messages),
         )
 
@@ -1654,6 +1768,7 @@ def build_assistant_router(plans: dict[str, dict[str, Any]] | None = None) -> AP
                     actor=actor,
                     on_proposal=record_proposal if control else None,
                     on_plan=record_plan if control else None,
+                    **runner_kwargs,
                 ):
                     yield frame
             except asyncio.CancelledError:
