@@ -440,7 +440,12 @@ async def test_plate_reader_timed_run_round_trip() -> None:
         stop = router.post("/control/run/stop").mock(
             return_value=httpx.Response(200, json={**record, "state": "stopping"})
         )
-        listing = router.get("/control/runs").mock(return_value=httpx.Response(200, json=[record]))
+        listing = router.get("/control/runs").mock(
+            side_effect=[
+                httpx.Response(200, json={"runs": [record]}),
+                httpx.Response(200, json=[record]),  # the device's first build
+            ]
+        )
         get = router.get("/control/runs/run-20261015T140000Z-1a2b").mock(
             return_value=httpx.Response(200, json={**record, "state": "stopped", "timepoints": []})
         )
@@ -453,6 +458,7 @@ async def test_plate_reader_timed_run_round_trip() -> None:
             )
             stopped = await reader.run_stop()
             runs = await reader.run_list()
+            legacy = await reader.run_list()
             final = await reader.run_get(started.run_id)
             with pytest.raises(Exception):
                 await reader.run_get("../state")
@@ -462,8 +468,10 @@ async def test_plate_reader_timed_run_round_trip() -> None:
     assert captured["start"]["measurements"][0]["type"] == "absorbance"
     assert stopped.state == "stopping"
     assert runs[0]["run_id"] == record["run_id"]
+    assert legacy == runs
     assert final.state == "stopped"
-    assert stop.call_count == listing.call_count == get.call_count == 1
+    assert stop.call_count == get.call_count == 1
+    assert listing.call_count == 2
 
 
 def test_plate_reader_run_start_validates_locally() -> None:
